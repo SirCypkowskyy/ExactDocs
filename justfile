@@ -38,6 +38,10 @@ web-dev:
 dev:
     trap 'kill 0' EXIT; uv run exactdocs serve --reload & (cd {{ web }} && pnpm dev) & wait
 
+# New Alembic revision in the one history owned by bootstrap: `just migration "add jobs table"`
+migration message:
+    uv run alembic -c packages/exactdocs/alembic.ini revision -m "{{ message }}"
+
 # ---------------------------------------------------------------- quality
 
 # Format Python and web code

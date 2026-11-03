@@ -32,14 +32,16 @@ source = "uv-dynamic-versioning"
 # The kernel is released in lockstep with the app.
 dependencies = [
     "exactdocs-kernel=={{ version }}",
+    "aiosqlite>=0.21",
+    "alembic>=1.16",
     "cyclopts>=4",
     "fastapi>=0.120",
     "fastmcp>=4",
     "mcp>=2",
     "platformdirs>=4",
-    "platformdirs>=4",
     "pydantic>=2.12",
     "pydantic-settings>=2.11",
+    "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.38",
 ]
 

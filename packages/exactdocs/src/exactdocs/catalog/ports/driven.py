@@ -16,3 +16,7 @@ class LibraryRepository(Protocol):
     async def get(self, name: LibraryName) -> Library | None:
         """Return the library with this exact name, or ``None``."""
         ...
+
+    async def save(self, library: Library) -> None:
+        """Store the library, replacing any earlier entry with the same name."""
+        ...

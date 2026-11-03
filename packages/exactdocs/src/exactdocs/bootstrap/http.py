@@ -15,6 +15,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.database import current_revision
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
@@ -36,6 +37,7 @@ class Health(BaseModel):
 
     status: str
     version: str
+    schema_revision: str | None
 
 
 def create_app(container: Container) -> FastAPI:
@@ -53,7 +55,7 @@ def create_app(container: Container) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-        async with mcp_app.lifespan(mcp_app):
+        async with container.running(), mcp_app.lifespan(mcp_app):
             yield
 
     app = FastAPI(
@@ -75,7 +77,8 @@ def create_app(container: Container) -> FastAPI:
 
     @api.get("/health", tags=["system"])
     async def health() -> Health:
-        return Health(status="ok", version=__version__)
+        revision = await current_revision(container.engine)
+        return Health(status="ok", version=__version__, schema_revision=revision)
 
     v1 = APIRouter(prefix="/v1")
     v1.include_router(
