@@ -50,7 +50,7 @@ for i in "$@"; do
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
     apt-get install -y -q --no-install-recommends \
-      ca-certificates curl git jq unzip zstd docker.io docker-buildx qemu-user-static binfmt-support
+      ca-certificates curl git jq unzip zstd build-essential libatomic1 docker.io docker-buildx qemu-user-static binfmt-support
     install -d -m 0755 /etc/apt/keyrings
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
     echo 'deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main' \

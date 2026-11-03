@@ -91,7 +91,7 @@ jobs:
       UV_DYNAMIC_VERSIONING_BYPASS: ${{ needs.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
       - uses: actions/download-artifact@v8
         with:
           name: web-dist
@@ -125,7 +125,7 @@ jobs:
     permissions:
       id-token: write # PyPI trusted publishing, no API token stored anywhere
     steps:
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
       - uses: actions/download-artifact@v8
         with:
           name: python-dist
@@ -178,7 +178,7 @@ jobs:
           sbom: true
           cache-from: type=gha,scope=exactdocs
           cache-to: type=gha,scope=exactdocs,mode=max
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2 # upstream has no floating major tag
       - name: Sign image (keyless)
         run: cosign sign --yes "${{ needs.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
 
