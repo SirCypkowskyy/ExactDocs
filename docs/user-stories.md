@@ -202,7 +202,7 @@ These are good ideas that do not belong to the main loop yet.
 | Idea | Why later |
 |---|---|
 | Import from `llms.txt` / `llms-full.txt` | A second source type; the git importer comes first |
-| Crawl documentation websites (domain allowlist, SSRF protection) | Needs a crawler, rate limiting and HTML-to-Markdown conversion |
+| Crawl documentation websites | Needs a crawler, rate limiting and HTML-to-Markdown conversion |
 | Resolve library docs from package registries (PyPI, npm) and lockfiles | Requires a curated registry that maps packages to repos and paths |
 | Prebuilt, signed index snapshots and a public registry of popular libraries | Depends on the registry and a stable index format |
 | Context7-compatible tool aliases | Useful for migration once the MCP tools are stable |
