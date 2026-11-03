@@ -34,9 +34,11 @@ docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
 uvx exactdocs serve
 ```
 
-Open <http://localhost:3000>, or add your first library from the CLI:
+Open <http://localhost:3000> and create the first account (or run `exactdocs admin create`).
+Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
 ```bash
+exactdocs token create --name cli          # once; or log in with `exactdocs login`
 exactdocs add https://github.com/acme/payments --ref v1.4.0 --path docs/ --path README.md
 exactdocs add git@bitbucket.org:acme/platform.git --ref main --path "docs/**/*.md"
 ```
@@ -58,22 +60,26 @@ Repositories that ship a `context7.json` get their folders and exclusions pre-se
 }
 ```
 
-`exactdocs config --client claude|cursor|vscode` prints a ready-to-paste snippet. For a local,
-single-user setup without a network port: `uvx exactdocs serve --stdio`.
+Create tokens in the UI (**Settings → Tokens**) or with `exactdocs token create`;
+`exactdocs config --client claude|cursor|vscode` prints a ready-to-paste snippet with a new token.
+For a local setup without a network port: `uvx exactdocs serve --stdio` (no token needed).
 
 ## MCP tools
 
 | Tool | Purpose |
 |---|---|
 | `resolve-library-id(libraryName, query)` | context7-compatible: find a library ID such as `/acme/payments` |
-| `query-docs(libraryId, query, language?)` | context7-compatible: relevant docs for `/owner/repo` or an exact version `/owner/repo/v1.4.0` |
+| `query-docs(libraryId, query, language?)` | context7-compatible: relevant docs for `/owner/repo` (the library's default version) or an exact version `/owner/repo/v1.4.0` |
 | `list_libraries()` | Libraries and imported versions you can access |
-| `list_articles(library, version, path_prefix?, tags?)` | The article tree of a version |
-| `read_article(library, version, path)` | A full article, verbatim |
-| `search_docs(library, version, query, tags?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
+| `list_articles(library, version?, path_prefix?, tags?)` | The article tree of a version |
+| `read_article(library, version?, path)` | A full article, verbatim |
+| `search_docs(library, version?, query, tags?, mode?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
 | `read_chunk(chunk_id)` | Fetch a neighboring section of a search result |
 
-Hosts that support MCP Apps (Claude, ChatGPT) can render articles and results as UI.
+Library IDs are `/owner/repo`; without a version, a library's **default version** is used (set per
+library; initially the highest imported semver tag, else the default branch), and every response
+says which version answered. Hosts that support MCP Apps (Claude, ChatGPT) can render articles
+and results as UI.
 All tools are read-only, and everything returned is marked as external content.
 
 ## Retrieval
@@ -108,7 +114,8 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_METRICS` | `off` | `on` exposes a Prometheus endpoint at `/metrics` |
 
 Git credentials for private repositories (token or SSH deploy key) are set per library in the UI
-or CLI and stored encrypted.
+or CLI and stored encrypted with `EXACTDOCS_SECRET_KEY` (generated in the data volume on first
+run if unset).
 
 ## Teams and access
 
@@ -120,8 +127,9 @@ identity-provider groups:
 | **viewer** | see the library in the UI and in MCP |
 | **contributor** | also edit it: tags, paths, chunking, versions, re-sync |
 | **admin** | also delete it and manage access |
-| **creator** | the owner: also remove admins and transfer ownership |
+| **creator** | the single owner (whoever created it): also remove admins and transfer ownership |
 
+Who may create libraries is an instance-level permission mapped from users or IdP groups.
 MCP tokens act as their user, so an agent sees exactly the libraries its user may view.
 Libraries can also be declared in an `exactdocs.sources.yaml` in your own repo, and docs repos can
 trigger a sync with a webhook on push.
