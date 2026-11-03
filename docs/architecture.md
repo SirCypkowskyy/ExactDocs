@@ -128,4 +128,4 @@ web/src/
 
 A feature mirrors a backend use case or domain view. Features never import each other; if two
 need the same thing it moves to `shared` (when generic) or stays duplicated (when it is business
-logic that only looks the same). Details: [web/README.md](../web/README.md).
+logic that only looks the same). Details: [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md).

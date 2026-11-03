@@ -1,0 +1,124 @@
+# ExactDocs task runner. `just` lists recipes; `just check` runs everything CI runs.
+# Requires: uv, Node 26 + pnpm 12, Docker (for docker-*). Recipes are bash; on Windows they run
+# in Git Bash at its default install path (plain `bash` there is usually WSL's).
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-euo", "pipefail", "-c"]
+set dotenv-load := true
+
+image := "exactdocs:local"
+web := "web"
+
+# List recipes
+default:
+    @just --list --unsorted
+
+# ---------------------------------------------------------------- setup
+
+# Install Python (all groups) and web dependencies
+setup:
+    uv sync --all-groups
+    cd {{ web }} && pnpm install
+
+# ---------------------------------------------------------------- run
+
+# Backend with auto-reload on :3000 (API, /mcp, and the UI if it was built)
+serve *args:
+    uv run exactdocs serve --reload {{ args }}
+
+# MCP over stdio, as an agent would launch it
+serve-stdio:
+    uv run exactdocs serve --stdio
+
+# Vite dev server on :5173, proxying /api and /mcp to :3000
+web-dev:
+    cd {{ web }} && pnpm dev
+
+# Backend and web dev server together (Ctrl+C stops both)
+dev:
+    trap 'kill 0' EXIT; uv run exactdocs serve --reload & (cd {{ web }} && pnpm dev) & wait
+
+# ---------------------------------------------------------------- quality
+
+# Format Python and web code
+fmt:
+    uv run ruff format .
+    uv run ruff check --fix .
+    cd {{ web }} && pnpm format
+
+# Lint without changing files (ruff, ty, biome, fallow, react-doctor)
+lint:
+    uv run ruff format --check .
+    uv run ruff check .
+    uv run ty check
+    cd {{ web }} && pnpm lint
+
+# Python tests: unit, integration, architecture (pass extra pytest args)
+test *args:
+    uv run pytest {{ args }}
+
+# Architecture rules only (ArchUnitPython)
+arch:
+    uv run pytest packages/exactdocs/tests/architecture -q
+
+# Acceptance scenarios (behave); e.g. `just bdd packages/exactdocs/features/search.feature`
+bdd *args:
+    uv run behave {{ args }}
+
+# Web unit tests (vitest)
+web-test:
+    cd {{ web }} && pnpm test
+
+# Everything CI runs, in CI order
+check: lint test bdd web-test web-build docs-build
+
+# ---------------------------------------------------------------- build
+
+# Production build of the web UI into web/dist
+web-build:
+    cd {{ web }} && pnpm build
+
+# Wheels + sdists for both packages, UI bundled; version from git unless given: `just build 0.2.0`
+build version="": web-build
+    rm -rf packages/exactdocs/src/exactdocs/_web dist
+    cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
+    if [ -n "{{ version }}" ]; then export UV_DYNAMIC_VERSIONING_BYPASS="{{ version }}"; fi;       uv build --all-packages --out-dir dist
+
+# Build the Docker image for the local platform
+docker-build version="0.0.0.dev0":
+    docker build -f deploy/Dockerfile --build-arg VERSION={{ version }} -t {{ image }} .
+
+# Run the local image on :3000 with a named data volume
+docker-run: docker-build
+    docker run --rm -it -p 3000:3000 -v exactdocs-data:/data {{ image }}
+
+# ---------------------------------------------------------------- docs
+
+# Live preview of the documentation site on :8000
+docs:
+    uv run --only-group docs zensical serve
+
+# Build the documentation site into site/ (strict, like CI)
+docs-build:
+    uv run --only-group docs zensical build --clean --strict
+
+# ---------------------------------------------------------------- repo
+
+# Sync GitHub labels from .github/labels.yml
+labels:
+    .agents/skills/working-on-issues/scripts/sync-labels.sh
+
+# Show whether an issue can be claimed (see .agents/skills/claiming-issues)
+issue-status number:
+    .agents/skills/claiming-issues/scripts/status.sh {{ number }}
+
+# Tag a release on the current branch after checks: `just release 0.2.0` (main) or `0.2.0.dev1` (develop)
+release version: check
+    case "{{ version }}" in *.dev*) want=develop ;; *) want=main ;; esac;       branch=$(git rev-parse --abbrev-ref HEAD);       [ "$branch" = "$want" ] || { echo "v{{ version }} must be tagged on $want, not $branch" >&2; exit 1; };       git fetch origin "$want" --quiet;       [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$want")" ] || { echo "local $want differs from origin/$want" >&2; exit 1; }
+    git tag -a "v{{ version }}" -m "v{{ version }}"
+    git push origin "v{{ version }}"
+    @echo "Release workflow: gh run list --workflow release.yml --limit 1"
+
+# Remove build outputs and caches
+clean:
+    rm -rf dist site reports {{ web }}/dist packages/exactdocs/src/exactdocs/_web .pytest_cache .ruff_cache

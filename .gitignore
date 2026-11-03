@@ -12,6 +12,9 @@ coverage.xml
 htmlcov/
 reports/
 
+# Zensical output
+site/
+
 # Built web UI bundled into the wheel / image (see web/README.md)
 packages/exactdocs/src/exactdocs/_web/
 

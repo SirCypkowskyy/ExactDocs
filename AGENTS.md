@@ -34,10 +34,13 @@ Read the matching skill **before** starting the task. They live in `.agents/skil
 
 ## Commands
 
+`justfile` wraps everything (`just` lists recipes):
+
 ```bash
-uv sync
-uv run ruff format . && uv run ruff check . && uv run ty check
-uv run pytest && uv run behave
-cd web && pnpm install && pnpm lint && pnpm test && pnpm build
-uv run exactdocs serve --reload        # :3000 (API, /mcp, UI if built)
+just setup                 # install everything
+just check                 # everything CI runs; must pass before a PR
+just fmt                   # format Python + web
+just test -k <expr>        # pytest;  just bdd  # behave;  just arch  # architecture rules
+just serve                 # :3000 (API, /mcp, UI if built);  just dev  # + Vite on :5173
+just docs                  # documentation site preview (Zensical)
 ```

@@ -2,23 +2,21 @@
 
 ## Setup
 
-Requirements: [uv](https://docs.astral.sh/uv/) (it installs Python 3.14), Node 26 LTS, pnpm 12.
+Requirements: [uv](https://docs.astral.sh/uv/) (it installs Python 3.14), Node 26 LTS, pnpm 12,
+[just](https://just.systems). On Windows, recipes run in Git Bash.
 
 ```bash
-uv sync                                   # Python workspace + dev tools
-(cd web && pnpm install)
-uv run exactdocs serve --reload           # API + MCP on :3000
-(cd web && pnpm dev)                      # UI on :5173, proxies /api and /mcp to :3000
+just setup        # uv sync --all-groups + pnpm install
+just dev          # API + MCP on :3000 and the UI on :5173 (proxies /api and /mcp)
+just              # list every recipe
 ```
 
 ## Checks (the same ones CI runs)
 
 ```bash
-uv run ruff format . && uv run ruff check .
-uv run ty check
-uv run pytest                              # unit, integration, architecture
-uv run behave                              # acceptance scenarios
-(cd web && pnpm lint && pnpm test && pnpm build)
+just check        # lint (ruff, ty, biome, fallow, react-doctor), pytest, behave, vitest, builds
+just fmt          # auto-format Python and web code
+just test -k version     just bdd     just arch     just docs
 ```
 
 ## Workflow
