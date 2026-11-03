@@ -40,7 +40,7 @@ Then add your first library in the UI or from the CLI, which talks to the server
 ```bash
 exactdocs login http://localhost:3000       # stores the server URL and a new API token
 exactdocs add https://github.com/acme/payments --ref v1.4.0 --path docs/ --path README.md
-exactdocs add git@bitbucket.org:acme/platform.git --ref main --path "docs/**/*.md"
+exactdocs add https://bitbucket.org/acme/platform --ref main --path "docs/**/*.md"
 ```
 
 ExactDocs splits every article by its headings and keeps the library in sync (re-sync a branch
@@ -76,7 +76,7 @@ For a local setup without a network port: `uvx exactdocs serve --stdio` (no toke
 | `search_docs(library, version?, query, tags?, mode?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
 | `read_chunk(chunk_id)` | Fetch a neighboring section of a search result |
 
-Library IDs are `/owner/repo`; without a version, a library's **default version** is used (the highest imported stable semver tag, else the default branch, unless pinned), and every response
+Library IDs are `/owner/repo`; without a version, a library's **default version** is used (the highest imported stable semver tag, else the default branch, else the most recently imported version, unless pinned), and every response
 says which version answered. Planned: hosts that support MCP Apps (Claude, ChatGPT) will
 render articles and results as UI.
 All tools are read-only, and everything returned is marked as external content.
@@ -102,7 +102,8 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXACTDOCS_DATABASE_URL` | `sqlite:///data/exactdocs.db` | SQLite path or PostgreSQL URL |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file or PostgreSQL URL; the data directory is `/data` in Docker and the platform user-data directory for `uvx` |
+| `EXACTDOCS_SECRET_KEY` | generated in the data directory | Encrypts stored git credentials |
 | `EXACTDOCS_AUTH_MODE` | `local` | `local` (single admin account) or `oidc` (teams) |
 | `EXACTDOCS_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` | – | Required for `oidc` |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |
@@ -236,6 +237,7 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports & ada
 
 - [ ] Optional embeddings (hybrid search), reranker, LLM with HyDE
 - [ ] Agentic tree retrieval with a pydantic-ai agent and a query cache
+- [ ] Retrieval eval suite (Pydantic Evals) comparing modes
 - [ ] MCP Apps (rendered articles in Claude / ChatGPT)
 - [ ] PostgreSQL, OIDC/OAuth, sharing with viewer / contributor / admin / creator roles
 - [ ] `exactdocs.sources.yaml`, webhooks, OpenTelemetry and Prometheus metrics
@@ -243,7 +245,7 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports & ada
 **Later**
 
 - [ ] `llms.txt` and website crawling, package-registry and lockfile resolution
-- [ ] Prebuilt index snapshots, accuracy eval suite, more formats (reST, AsciiDoc, notebooks)
+- [ ] Prebuilt index snapshots, more formats (reST, AsciiDoc, notebooks)
 
 ## Contributing
 

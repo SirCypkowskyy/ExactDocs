@@ -25,7 +25,8 @@ Written as **"As _actor_, I want _capability_, because _reason_."** with short a
 | **Version** | A library imported at one git ref (tag, branch or commit), resolved to a commit SHA. Addressed as the library ID followed by the ref: `/acme/payments/v1.4.0`, `/acme/payments/release/1.4` (everything after the two ID segments is the ref). |
 | **Default version** | What `/owner/repo` without a ref means: automatically the highest imported **stable** semver tag (pre-releases such as `-rc`, `-beta` excluded), else the default-branch version if imported, else the most recently imported version; it moves when a higher stable tag is imported, unless the owner pinned a version (LIB-10). Every response states the version it used. |
 | **Article** | One Markdown file of a library version, addressed by its path in the repo. |
-| **Chunk** | A section of an article, by default one heading and its content. Chunk ID = hash(version ID, article path, heading path, content hash): scoped to one version, so `read_chunk` and neighbors are never ambiguous. On a branch re-sync, unchanged chunks keep their ID; changed or removed ones answer `stale_chunk`. |
+| **Chunk** | A section of an article, by default one heading and its content. Chunk ID = hash(version ID, article path, heading path, occurrence index, content hash): scoped to one version, so `read_chunk` and neighbors are never ambiguous. On a branch re-sync, unchanged chunks keep their ID; changed or removed ones answer `stale_chunk`. |
+| **Version in responses** | ExactDocs tools return it as a field; the context7-compatible tools state it in the external-content notice block (MCP-07), so their payload stays context7-shaped. |
 | **Verbatim** | The original Markdown, except that invisible control characters (zero-width, bidi) are removed on import. |
 
 Naming: the context7-compatible MCP tools keep context7's names and arguments
@@ -100,16 +101,16 @@ part of an acceptance criterion that can wait.
 - **[AUTH-01]** As a user starting ExactDocs for the first time, I want to create the first (admin) account in the web UI or with `exactdocs admin create`, because even a single-user instance on a network port must not be open to anyone.
     - Acceptance: until an account exists, the UI shows only the setup page and the API refuses everything else; local accounts use hashed passwords; the UI has login and logout, sessions expire, and `exactdocs admin reset-password` (local command) recovers a lost password.
 - **[AUTH-02]** As a user, I want to create, list and revoke API tokens in the UI and with `exactdocs token create|list|revoke`, because my agent (MCP over HTTP), the CLI and REST clients need credentials.
-    - Acceptance: a token is shown once, stored hashed, can have an expiry, and is accepted by MCP, REST and the CLI; stdio MCP (`exactdocs serve --stdio`) needs no token.
+    - Acceptance: a token is shown once, stored hashed, can have an expiry, and is accepted by MCP, REST and the CLI; stdio MCP (`exactdocs serve --stdio`) needs no token; `exactdocs login <url>` asks for username and password, calls a REST endpoint that issues a named API token, and stores it in the CLI config (`--token` accepts an existing token instead).
 - **[CLI-01]** As a user, I want the CLI to work as a client of the server's REST API (`/api/v1`, see Decisions) (server URL and token from flags, env, or a config file written by `exactdocs login`), because the CLI should behave exactly like the UI and work against a remote instance too.
-    - Acceptance: every command goes through the REST API except the local ones: `serve`, `admin create`, `admin reset-password`, `reindex`, `backup` and `restore`; a CLI action and the same UI action produce identical results.
+    - Acceptance: every command goes through the REST API except the local ones: `serve`, `admin create` and `admin reset-password` (plus `reindex`, `backup` and `restore` once RUN-04 and OPS-02 exist); a CLI action and the same UI action produce identical results.
 
 ### Add a library
 
 - **[LIB-01]** As a user, I want to add a library by pasting a git URL (GitHub, Bitbucket, GitLab, Gitea or any HTTPS/SSH git server), because my documentation lives in repositories, not on one hosting platform.
     - Acceptance: `https://github.com/org/repo`, `https://bitbucket.org/org/repo`, `git@host:org/repo.git` and a self-hosted HTTPS URL are accepted; the URL is checked (reachable, a git repo) before anything is saved; the default library ID follows the Terms rules.
 - **[LIB-02]** As a user, I want to choose which docs to import with a folder or glob patterns (`docs/`, `**/*.md`, `README.md`, exclusions like `docs/archive/**`), because a repo holds far more than documentation.
-    - Acceptance: matching `.md` / `.mdx` files are imported; exclusions win over inclusions; an empty selection means `**/*.md`. *MVP-2:* images referenced by imported articles are imported too (size-capped) so they render without access to the git host.
+    - Acceptance: matching `.md` / `.mdx` files are imported; exclusions win over inclusions; an empty selection means `**/*.{md,mdx}`. *MVP-2:* images referenced by imported articles are imported too (size-capped) so they render without access to the git host.
 - **[LIB-03]** *(MVP-2)* As a user, I want to preview the matching file tree (count and size) before importing, because I want to fix a wrong pattern before waiting for an import.
     - Acceptance: after entering URL, ref and patterns, the UI and `exactdocs add --dry-run` list the files that would be imported, without storing anything.
 - **[LIB-04]** As a user, I want to pick the git ref to import (tag, branch or commit), because docs must match the version of the code I work with.
@@ -119,19 +120,19 @@ part of an acceptance criterion that can wait.
 - **[LIB-06]** *(MVP-2)* As a user, I want ExactDocs to honor a `context7.json` in the repository (`projectTitle`, `description`, `folders`, `excludeFolders`, `excludeFiles`, `rules`, `previousVersions`), because many projects already describe their docs for context7 and I shouldn't repeat that.
     - Acceptance: when the file exists it pre-fills title, description and path selection (all still editable); `previousVersions` are offered for import; `rules` are stored and returned by `query-docs`.
 - **[LIB-07]** As a user, I want each library to have a title and description, because agents choose libraries by them in `resolve-library-id`.
-    - Acceptance: defaults come from the README's first heading and paragraph, else the repo name; both are editable. *MVP-2:* `context7.json` values take precedence.
+    - Acceptance: defaults come from the root README's first heading and paragraph (the root README is always fetched for this, even outside the selected paths), else the repo name; both are editable. *MVP-2:* `context7.json` values take precedence.
 - **[LIB-08]** As a user, I want the same from the CLI (`exactdocs add <git-url> --id /acme/payments --ref v1.4.0 --path docs/`), because I script my setup.
     - Acceptance: `exactdocs libraries` lists what the UI shows (CLI-01).
-- **[LIB-09]** As a user, I want to edit a library's paths, ref, tag rules or chunking settings, because my first selection is rarely perfect.
-    - Acceptance: settings apply to the whole library: saving re-processes every version in the background (only re-chunks when only chunking changed, without re-fetching); the previous state is served until the atomic swap (IMP-05).
+- **[LIB-09]** As a user, I want to edit a library's paths and path tag rules (TAG-02), because my first selection is rarely perfect.
+    - Acceptance: settings apply to the whole library: saving re-processes every version in the background; the previous state is served until the atomic swap (IMP-05). Versions are added with LIB-11 and removed with SYNC-03. *MVP-2:* editing chunking settings (IMP-03) only re-chunks, without re-fetching.
 - **[LIB-10]** *(MVP-2)* As a library owner, I want to pin the default version, because the newest tag is not always the one my team uses.
     - Acceptance: a pinned default stays until unpinned; unpinned, it follows the *Default version* rule; the UI and `list_libraries` show whether it is pinned.
 - **[LIB-11]** As a user, I want to add another version (ref) to an existing library, because I need `v1.3.0` next to `v1.4.0`.
-    - Acceptance: in the UI and with `exactdocs version add /acme/payments v1.3.0`; same validation as LIB-04; uses the library's paths, tag rules and chunking.
+    - Acceptance: in the UI and with `exactdocs version add /acme/payments v1.3.0`; same validation as LIB-04; uses the library's paths, path tag rules (TAG-02) and chunking.
 
 ### Import and chunking
 
-- **[IMP-01]** As ExactDocs, I want to fetch only what is needed (shallow clone of the chosen ref, sparse checkout of the selected paths and referenced images), because large monorepos must not take minutes or gigabytes to import.
+- **[IMP-01]** As ExactDocs, I want to fetch only what is needed (shallow clone of the chosen ref, sparse checkout of the selected paths and the root README; *MVP-2:* referenced images), because large monorepos must not take minutes or gigabytes to import.
     - Acceptance: importing `docs/` from a large repo transfers only that ref's objects; no full history is cloned.
 - **[IMP-02]** As ExactDocs, I want to chunk each article by its Markdown headings (document-structure chunking), keeping each chunk's heading path, because header-based chunks are almost always the best retrieval unit for documentation.
     - Acceptance: by default one chunk = one heading and its content, built with [Chonkie](https://github.com/chonkie-inc/chonkie)'s Markdown recipe; code blocks and tables are never split; every chunk stores article path, heading path (`Guide > Install > Docker`) and position; chunk IDs follow the Terms rule.
@@ -186,7 +187,7 @@ part of an acceptance criterion that can wait.
 - **[MCP-04]** As an AI agent, I want every search result to carry its location and its neighbors, and to fetch a neighbor chunk or the whole parent article, because a matching section often needs the one before or after it.
     - Acceptance: results include `chunk_id`, `article_path`, `heading_path`, `position`/`total`, `prev_chunk_id`, `next_chunk_id`, commit SHA and link; `read_chunk(chunk_id)` returns a chunk verbatim; a `chunk_id` from before a re-sync returns an explicit `stale_chunk` error. *MVP-2:* the error includes the new location when one exists.
 - **[MCP-05]** As an AI agent, I want `search_docs(library, version?, query, tags?, mode?)` to use the best available pipeline (or the mode I ask for) and say how results were found, because I should get the best results the instance can give, and know how.
-    - Acceptance: one result shape for every mode: chunks as in MCP-04, plus `retrieval_mode` (`bm25`, `hybrid`, `hybrid_hyde`, `agentic`), `reranked: true|false` and a `coverage` block (candidates considered, candidates reranked, whether the search was complete or cut short by a limit), so the agent can tell "nothing exists" from "not everything was checked"; agentic results also carry `justification` and `explored_path`; asking for a `mode` that is not configured returns a tool error listing the available modes; a version with no match returns an explicit empty result, never another version.
+    - Acceptance: one result shape for every mode: chunks as in MCP-04, plus `retrieval_mode` (`bm25`, `hybrid`, `hybrid_hyde`, `agentic`), `reranked: true|false` and a `coverage` block (candidates considered, candidates reranked, whether the search was complete or cut short by a limit), an optional `fallback_reason` (e.g. LLM budget reached, reranker timeout), so the agent can tell "nothing exists" from "not everything was checked"; agentic results also carry `justification` and `explored_path`; asking for a `mode` that is not configured returns a tool error listing the available modes; a version with no match returns an explicit empty result, never another version.
 - **[MCP-06]** *(MVP-2)* As a user, I want a ready-to-paste MCP config for my agent, because hand-written JSON is where setups break.
     - Acceptance: `exactdocs config --client claude|cursor|vscode` prints a working snippet with the URL and a newly created token (AUTH-02).
 - **[MCP-07]** As a user, I want agent-facing text treated as untrusted, because a doc file can contain instructions aimed at my agent.
@@ -200,7 +201,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
 - **[C7-01]** As an AI agent, I want `resolve-library-id(libraryName, query)` to turn a library name into a library ID, ranked by relevance to my task, because that is the first call every context7-style prompt makes.
     - Acceptance: same tool name and arguments as context7; returns matching libraries with ID, title, description, versions, article and chunk counts; `query` influences ranking; a CI contract test checks that the tool name and argument schema are a superset of a vendored copy of context7's schema, pinned to a context7 version and updated deliberately.
 - **[C7-02]** As an AI agent, I want `query-docs(libraryId, query, language?)` to return the relevant documentation for a library ID, because that is the second call every context7-style prompt makes.
-    - Acceptance: same tool name and arguments as context7; `/owner/repo` uses the default version and `/owner/repo/<ref>` exactly that version (never another one); `language` ranks code examples in that language first; uses the library's or instance's retrieval mode; *MVP-2:* includes the library's `rules` (from `context7.json`); the response stays within a configurable size budget (default ~10k tokens, estimated as characters / 4, no tokenizer dependency); a recorded context7 session (both tools, real arguments) replays without errors.
+    - Acceptance: same tool name and arguments as context7; `/owner/repo` uses the default version and `/owner/repo/<ref>` exactly that version (never another one); `language` ranks code examples in that language first; uses the instance's retrieval mode (*Next:* the library's, RET-06); *MVP-2:* includes the library's `rules` (from `context7.json`); the response stays within a configurable size budget (default ~10k tokens, estimated as characters / 4, no tokenizer dependency); a recorded context7 session (both tools, real arguments) replays without errors.
 - **[C7-03]** *(MVP-2)* As a user, I want CLI commands mirroring `ctx7` (`exactdocs library <name> <query>`, `exactdocs docs <libraryId> <query>`), because I want to check from the terminal what my agent would get.
     - Acceptance: output matches the corresponding MCP tool results.
 - **[C7-04]** *(MVP-2)* As a user integrating ExactDocs into other tools, I want a REST API equivalent to context7's (search libraries, get docs for a library ID and query), because not every integration speaks MCP.
@@ -219,8 +220,11 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
 
 ### Run it
 
+- **[RUN-05]** As a maintainer, I want a versioned acceptance fixture repository, because search, chunking and version-isolation criteria need stable, known content to test against.
+    - Acceptance: `tests/fixtures/docs-repo` is built into a git repository during tests, with two tags (`v1.3.0`, `v1.4.0`) and one branch; it contains code blocks, tables, front matter, MDX, both admonition syntaxes and identifiers (`snake_case`, `camelCase`, `--flag`, `pkg.mod.fn`), with a table of queries and their expected top sections; SRCH-01, SRCH-02, IMP-02, the chunker decision and RET-09 test against it.
+
 - **[RUN-01]** As a user, I want to start ExactDocs with one command (`uvx exactdocs serve` or one `docker run`) and browse my first library within five minutes, because I won't adopt a tool that takes an afternoon to set up.
-    - Acceptance: from a clean machine with no models and no API keys, the acceptance fixture repo (this repository's `docs/`) is browsable and searchable within five minutes on SQLite; data lives in `/data` (Docker) or the platform user-data directory (`uvx`), see Decisions.
+    - Acceptance: from a clean machine with no models and no API keys, this repository's `docs/` (the smoke demo) is browsable and searchable within five minutes on SQLite; data lives in `/data` (Docker) or the platform user-data directory (`uvx`), see Decisions.
 - **[RUN-02]** As a user, I want the package and image to stay small, with no bundled ML models or LLMs, because many machines will only ever use BM25.
     - Acceptance: no model weights in the wheel or image; ML client libraries load only when a provider is configured.
 - **[RUN-03]** As a user, I want everything to stay on my machine or server, because my docs and queries are private.
