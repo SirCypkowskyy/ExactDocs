@@ -1,15 +1,14 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.routing import Route
-from starlette.types import Scope
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
@@ -20,6 +19,7 @@ from exactdocs_kernel import ConflictError, DomainError, NotFoundError, Validati
 
 # Built web UI, copied into the package by CI / the Docker build (see web/README.md).
 WEB_DIST = Path(__file__).parent.parent / "_web"
+MCP_PATH = "/mcp"
 
 _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     NotFoundError: 404,
@@ -37,7 +37,14 @@ class Health(BaseModel):
 
 def create_app(container: Container) -> FastAPI:
     """Build the single HTTP service: REST API, MCP (Streamable HTTP) and the web UI."""
-    mcp_app = build_mcp(container).http_app(path="/mcp")
+    settings = container.settings
+    mcp_app = build_mcp(container).http_app(
+        path=MCP_PATH,
+        # DNS-rebinding guard: only localhost plus the hosts/origins the operator configured.
+        host_origin_protection=True,
+        allowed_hosts=settings.allowed_hosts or None,
+        allowed_origins=settings.allowed_origins or None,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -64,27 +71,29 @@ def create_app(container: Container) -> FastAPI:
     api.include_router(v1)
     app.include_router(api)
 
-    # Exact route (no /mcp -> /mcp/ redirect); the MCP app keeps its own middleware.
-    app.router.routes.append(Route("/mcp", endpoint=mcp_app))
+    # Exact routes, no redirects; the MCP app keeps its own middleware. `/mcp/` is what some
+    # hosts (e.g. ChatGPT) are configured with.
+    app.router.routes.append(Route(MCP_PATH, endpoint=mcp_app))
+    app.router.routes.append(Route(f"{MCP_PATH}/", endpoint=_RewritePath(mcp_app, MCP_PATH)))
     if WEB_DIST.is_dir():
-        app.mount("/", SpaStaticFiles(directory=WEB_DIST, html=True), name="web")
+        # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
+        app.frontend("/", directory=WEB_DIST, fallback="index.html")
     return app
+
+
+@dataclass(frozen=True, slots=True)
+class _RewritePath:
+    """ASGI wrapper that serves another path's app (an alias without a redirect)."""
+
+    app: ASGIApp
+    path: str
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        aliased = {**scope, "path": self.path, "raw_path": self.path.encode()}
+        await self.app(aliased, receive, send)
 
 
 async def _domain_error_handler(_: Request, exc: Exception) -> Response:
     status = next((s for t, s in _STATUS_BY_ERROR.items() if isinstance(exc, t)), 400)
     code = exc.code if isinstance(exc, DomainError) else "error"
     return JSONResponse({"error": code, "detail": str(exc)}, status_code=status)
-
-
-class SpaStaticFiles(StaticFiles):
-    """Serve the built UI; unknown paths fall back to ``index.html`` for client routing."""
-
-    async def get_response(self, path: str, scope: Scope) -> Response:
-        """Return the file, or the SPA shell when it does not exist."""
-        try:
-            return await super().get_response(path, scope)
-        except HTTPException as exc:
-            if exc.status_code != 404 or path.startswith(("api/", "mcp")):  # ruff: ignore[magic-value-comparison]
-                raise
-            return await super().get_response("index.html", scope)

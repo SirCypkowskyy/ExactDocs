@@ -1,7 +1,8 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from fastmcp import Client
 
 from exactdocs.bootstrap.container import Container
@@ -62,3 +63,51 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
     assert set(tools) == {"list_libraries", "search_docs"}
     assert all(tool.annotations and tool.annotations.read_only_hint for tool in tools.values())
     assert result.structured_content is not None
+
+
+INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "test", "version": "1"},
+    },
+}
+MCP_HEADERS = {"accept": "application/json, text/event-stream"}
+
+
+@pytest.fixture
+def localhost_client(container: Container) -> Iterator[TestClient]:
+    # TestClient runs the app (and the MCP session manager's lifespan) in one event loop.
+    with TestClient(create_app(container), base_url="http://localhost") as client:
+        yield client
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+def test_mcp_endpoint_answers_on_both_paths_without_redirect(
+    localhost_client: TestClient, path: str
+) -> None:
+    response = localhost_client.post(
+        path, json=INITIALIZE, headers=MCP_HEADERS, follow_redirects=False
+    )
+
+    assert response.status_code == 200
+
+
+def test_mcp_rejects_unknown_hosts(localhost_client: TestClient) -> None:
+    response = localhost_client.post(
+        "/mcp", json=INITIALIZE, headers={**MCP_HEADERS, "host": "evil.example"}
+    )
+
+    assert response.status_code in {400, 403, 421}
+
+
+def test_settings_defaults_are_local_and_private(tmp_path_factory: pytest.TempPathFactory) -> None:
+    data_dir = tmp_path_factory.mktemp("data")
+    settings = Settings(data_dir=data_dir)
+
+    assert settings.telemetry == "off"
+    assert settings.metrics is False
+    assert settings.effective_database_url == f"sqlite:///{(data_dir / 'exactdocs.db').as_posix()}"

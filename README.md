@@ -110,7 +110,7 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_RERANKER_URL`, `_MODEL`, `_API_KEY` | – | Optional reranker endpoint (Cohere-compatible, Jina, TEI) |
 | `EXACTDOCS_LLM_URL`, `_MODEL`, `_API_KEY`, `_PROXY` | – | Optional OpenAI-compatible LLM; enables HyDE and agentic retrieval |
 | `EXACTDOCS_RETRIEVAL_MODE` | `auto` | `auto` (best available pipeline), `bm25`, `hybrid`, `hybrid_hyde` or `agentic` |
-| `EXACTDOCS_TELEMETRY` | `off` | `off` or `otlp` (OpenTelemetry export) |
+| `EXACTDOCS_TELEMETRY` | `off` | `off` or `otlp` (OpenTelemetry export to your collector; never to any cloud) |
 | `EXACTDOCS_METRICS` | `off` | `on` exposes a Prometheus endpoint at `/metrics` |
 
 Git credentials for private repositories (token or SSH deploy key) are set per library in the UI
