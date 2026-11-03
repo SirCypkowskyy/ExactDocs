@@ -32,6 +32,8 @@ def _env(**extra: str) -> dict[str, str]:
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_ATTR_NOSYSTEM": "1",
+        # git also reads $XDG_CONFIG_HOME/git/{ignore,attributes}, even with GIT_CONFIG_GLOBAL unset
+        "XDG_CONFIG_HOME": os.devnull,
         "GIT_TERMINAL_PROMPT": "0",
         "LC_ALL": "C",
         "no_proxy": "127.0.0.1",
@@ -44,8 +46,11 @@ def git_bytes(*args: str, cwd: Path | None = None, check: bool = True, **env: st
     git_bin = shutil.which("git")
     assert git_bin, "git is required"
     run = subprocess.run(
-        [git_bin, *args], cwd=cwd, env=_env(**env), capture_output=True, check=check
+        [git_bin, *args], cwd=cwd, env=_env(**env), capture_output=True, check=False
     )
+    if check and run.returncode:
+        message = f"git {' '.join(args)} exited with {run.returncode}: {run.stderr.decode()}"
+        raise RuntimeError(message)
     return run.stdout
 
 
@@ -148,7 +153,12 @@ def _handler(root: Path) -> type[http.server.BaseHTTPRequestHandler]:
             git_bin = shutil.which("git")
             assert git_bin, "git is required"
             out = subprocess.run(
-                [git_bin, "http-backend"], input=body, env=env, capture_output=True, check=False
+                [git_bin, "http-backend"],
+                input=body,
+                env=env,
+                capture_output=True,
+                check=False,
+                timeout=60,
             ).stdout
             head, _, payload = out.partition(b"\r\n\r\n")
             headers = [line.split(": ", 1) for line in head.decode().split("\r\n")]

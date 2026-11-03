@@ -33,7 +33,7 @@ def test_something(docs_repo):  # pytest, session scoped: tests/conftest.py
 In behave, `context.fixture_repo` has the same three attributes (`features/environment.py`).
 `file_url` is `file:///.../fixture/docs-repo`; `http_url` is
 `http://127.0.0.1:<port>/fixture/docs-repo.git`, served by `git http-backend`, with filters and
-fetching commits by SHA enabled. To build it by hand (the CI smoke job does this):
+fetching commits by SHA enabled. To build it by hand, for example for a smoke test with the repository mounted into a container:
 
 ```bash
 python packages/exactdocs/tests/fixtures/fixture_repo.py /tmp/out/fixture/docs-repo   # prints the refs
@@ -95,8 +95,13 @@ Rules for content:
       v1.4.0: {article: docs/guide/configuration.md, heading_path: [Configuration, Connection pool]}
 ```
 
-- `heading_path` starts at the H1 and ends at the section that must rank first.
+- `heading_path` starts at the H1 and ends at the section that must rank first. Decoys are
+  deliberate: other articles mention the same terms (`retry_policy` is also a row of the
+  `client.mdx` table), so ranking has something to get wrong.
 - `null` means the version has no hit at all; leave a version out to not assert it.
+- Optional keys on a query entry are the extension point for the ranking suite (E5-04), for
+  example `tags: [api, auth]` (a tag-filtered query) or `top_n: 3` (the section must be among the
+  first three). They are not implemented yet and unknown keys are ignored.
 - Versions are `v1.3.0`, `v1.4.0` and `next`. `test_fixture_repo.py` checks that every entry
   points at a heading that exists and contains the query, so a typo fails fast. Whether the
   section really ranks first is asserted by the ranking suite (E5-04), not here.

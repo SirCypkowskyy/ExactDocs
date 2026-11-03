@@ -2,12 +2,12 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from fixture_repo import DocsRepo, served
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.models import Library, LibraryName, Version
+from fixture_repo import DocsRepo, served
 
 DEMO_LIBRARIES = [
     Library(name=LibraryName("/fastapi/fastapi"), versions=frozenset({Version("0.115")})),

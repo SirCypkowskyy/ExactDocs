@@ -43,6 +43,17 @@ def test_shas_do_not_depend_on_where_or_who_builds(tmp_path: Path) -> None:
     assert local_refs(other) == GOLDEN_SHAS
 
 
+def test_shas_do_not_depend_on_the_developers_global_git_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "xdg"
+    (config / "git").mkdir(parents=True)
+    (config / "git" / "ignore").write_text("*.png\n*.mdx\n")
+    (config / "git" / "attributes").write_text("* text eol=crlf\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    assert local_refs(build(tmp_path / "hostile")) == GOLDEN_SHAS
+
+
 @pytest.mark.parametrize("transport", ["file_url", "http_url"])
 def test_git_servers_list_the_same_refs(docs_repo: DocsRepo, transport: str) -> None:
     listed = refs(git("ls-remote", "--heads", "--tags", getattr(docs_repo, transport)))
