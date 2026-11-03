@@ -1,15 +1,18 @@
 """Conventions of the REST API under ``/api/v1``: the error envelope and the OpenAPI document."""
 
 import json
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute, iter_route_contexts
 from pydantic import BaseModel, ConfigDict
-from starlette.responses import Response
+from starlette.exceptions import HTTPException
+from starlette.responses import PlainTextResponse, Response
 
 from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
 
@@ -54,9 +57,34 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def add_error_handlers(app: FastAPI) -> None:
-    """Answer every ``DomainError`` and request validation failure with ``ErrorResponse``."""
+    """Answer every error under ``/api`` with ``ErrorResponse``; UI paths keep the defaults."""
     app.add_exception_handler(DomainError, _domain_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
+    app.add_exception_handler(HTTPException, _http_error)
+    app.add_exception_handler(Exception, _unhandled_error)
+
+
+def _is_api(request: Request) -> bool:
+    return request.url.path.startswith("/api/")
+
+
+async def _http_error(request: Request, exc: Exception) -> Response:
+    """Unknown route (404), wrong method (405) and other framework-raised errors."""
+    if not isinstance(exc, HTTPException):
+        return await _unhandled_error(request, exc)
+    if not _is_api(request):
+        return await http_exception_handler(request, exc)
+    slug = HTTPStatus(exc.status_code).phrase.lower().replace(" ", "_")
+    body = ErrorResponse(error=slug, detail=str(exc.detail))
+    return JSONResponse(body.model_dump(), status_code=exc.status_code, headers=exc.headers)
+
+
+async def _unhandled_error(request: Request, _: Exception) -> Response:
+    """Last resort; the exception itself is still re-raised by Starlette for logging."""
+    if not _is_api(request):
+        return PlainTextResponse("Internal Server Error", status_code=500)
+    body = ErrorResponse(error="internal_error", detail="internal server error")
+    return JSONResponse(body.model_dump(), status_code=500)
 
 
 async def _domain_error(_: Request, exc: Exception) -> Response:

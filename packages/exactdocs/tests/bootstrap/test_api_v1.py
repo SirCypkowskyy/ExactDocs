@@ -123,3 +123,57 @@ async def test_refs_only_ever_come_last_and_article_paths_are_query_parameters(
                 assert i == len(segments) - 1, f"{path}: the ref must be the last segment"
         if any(p["name"] == "path" for p in op.get("parameters", [])):
             assert all(p["in"] == "query" for p in op["parameters"] if p["name"] in {"path", "ref"})
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "status", "error"),
+    [
+        ("GET", "/api/v1/nope", 404, "not_found"),
+        ("POST", "/api/v1/libraries", 405, "method_not_allowed"),
+        ("GET", "/api/nope", 404, "not_found"),
+    ],
+)
+async def test_framework_errors_under_api_use_the_envelope(
+    client: httpx.AsyncClient, method: str, path: str, status: int, error: str
+) -> None:
+    response = await client.request(method, path)
+
+    assert response.status_code == status
+    assert response.json()["error"] == error
+    assert response.json()["detail"]
+
+
+async def test_unhandled_errors_under_api_are_500_envelopes(app) -> None:
+    async def boom() -> None:
+        msg = "secret internals"
+        raise RuntimeError(msg)
+
+    app.add_api_route("/api/v1/boom", boom)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        response = await client.get("/api/v1/boom")
+
+    assert response.status_code == 500
+    assert "secret" not in response.text
+    assert response.json() == {
+        "error": "internal_error",
+        "detail": "internal server error",
+        "fields": [],
+    }
+
+
+async def test_ui_paths_keep_the_spa_fallback_and_default_404(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "index.html").write_text("<div id=root></div>")
+    monkeypatch.setattr("exactdocs.bootstrap.http.WEB_DIST", tmp_path)
+    app = create_app(Container.build(Settings()))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        page = await client.get("/libraries/x", headers={"accept": "text/html"})
+        missing = await client.get("/assets/missing.js")
+
+    assert page.status_code == 200
+    assert "id=root" in page.text
+    assert missing.status_code == 404
+    assert "error" not in missing.text

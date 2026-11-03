@@ -12,7 +12,7 @@ MAX_LIMIT = 200
 
 
 class InvalidCursorError(ValidationError):
-    """The cursor was not issued by this API (tampered with, truncated, or from another list)."""
+    """The cursor is not a well-formed cursor (malformed encoding). It is encoded, not signed."""
 
     code = "invalid_cursor"
 
@@ -34,9 +34,14 @@ def paginate[T](
     """Return the page of ``items`` after ``cursor``.
 
     ``items`` must already be sorted ascending by the unique ``key``; the cursor encodes the last
-    key served, so inserts and deletes between requests never skip or repeat an item.
+    key served, so inserts and deletes between requests never skip or repeat an item. Apply any
+    authorization filter before calling: a cursor only narrows what is passed in.
     """
-    # ponytail: in-memory scan; SQL-backed lists push `key > :after LIMIT :n` into the query.
+    # ponytail: in-memory scan; SQL-backed lists push `key > :after LIMIT :n` into the query,
+    # ordered like Python compares str (SQLite's BINARY collation does for UTF-8).
+    if not 1 <= limit <= MAX_LIMIT:
+        msg = f"limit must be between 1 and {MAX_LIMIT}, got {limit}"
+        raise ValueError(msg)
     after = _decode(cursor) if cursor is not None else None
     rest = [item for item in items if after is None or key(item) > after]
     page, more = rest[:limit], len(rest) > limit

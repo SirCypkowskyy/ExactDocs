@@ -1,6 +1,6 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,10 +24,13 @@ class LibrarySummary(_Dto):
         return cls(name=library.name, versions=[str(v) for v in sorted(library.versions)])
 
 
+Limit = Annotated[int, Field(ge=1, le=MAX_LIMIT)]
+
+
 class ListLibrariesQuery(_Dto):
     """One page of libraries: ``limit`` items after the opaque ``cursor`` of the previous page."""
 
-    limit: int = Field(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT)
+    limit: Limit = DEFAULT_LIMIT
     cursor: str | None = None
 
 

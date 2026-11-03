@@ -32,3 +32,9 @@ def test_cursor_is_keyset_so_a_deleted_item_does_not_shift_the_next_page() -> No
 def test_foreign_cursor_is_rejected(cursor: str) -> None:
     with pytest.raises(InvalidCursorError):
         paginate(KEYS, key=str, limit=2, cursor=cursor)
+
+
+@pytest.mark.parametrize("limit", [0, -1, 201])
+def test_limit_outside_bounds_is_a_programming_error(limit: int) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        paginate(KEYS, key=str, limit=limit, cursor=None)
