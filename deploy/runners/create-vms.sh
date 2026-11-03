@@ -16,8 +16,8 @@ runner_sha256=670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945 #
 [ $# -gt 0 ] || set -- 1 2
 
 if ! sudo lxc profile show "$profile" >/dev/null 2>&1; then
-  sudo lxc profile create "$profile"
-  sudo lxc profile edit "$profile" <<'YAML'
+  # Without a TTY, `profile create` reads the profile YAML from stdin.
+  sudo lxc profile create "$profile" <<'YAML'
 description: ExactDocs GitHub Actions runners (isolated VMs)
 config:
   boot.autostart: "true"
