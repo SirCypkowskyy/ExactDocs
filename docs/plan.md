@@ -442,6 +442,20 @@ into the container), E10-03b and RET-09 (E11-02).
 
 ---
 
+#### E1 · MVP-2
+
+### E1-07 · chore: Python conventions for constants, docstrings and data classes are enforced automatically
+
+**Milestone** MVP-2 · **Labels** `type: chore` `status: triage` `area: backend` · **Area** backend (all Python packages) · **Stories** - (engineering quality) · **Depends on** - · **Size** L · **Issue** [#121](https://github.com/SirCypkowskyy/ExactDocs/issues/121)
+
+**Context.** Many agents write code in parallel; conventions must be checked by CI, not reviewers.
+
+- [ ] constants only in `constants.py` or a `constants/` package (`__init__.py` re-exporting private topic modules like `_auth.py`, `_identity.py`); each typed `Final[...]` with an attribute docstring
+- [ ] private by default: non-API modules, functions, classes and constants are `_private`; public APIs re-exported via `__init__.py`
+- [ ] every function and method, private ones included, has a Google-style docstring with `Args:` and `Returns:` (and `Raises:`) whenever it has them; ruff `convention = "google"`, DOC201/DOC501 re-enabled
+- [ ] every dataclass is `frozen=True, slots=True, kw_only=True` unless marked `# conventions: allow-... -- <reason>`; every dataclass and pydantic field has an attribute docstring; pydantic models use `use_attribute_docstrings=True`
+- [ ] enforced by an AST checker in `tests/architecture/test_conventions.py` with good/bad fixtures per rule; existing code brought into compliance; rules documented in `docs/architecture.md`
+
 ## E2 Accounts & tokens
 
 ### E2-01 · feat: a fresh instance only offers setup until the first admin account exists
