@@ -19,7 +19,6 @@ def parse_fixture(name: str):
         ("notes.md", "notes"),  # file name
         ("setext.md", "Setext Title"),  # setext H1; "# not a heading" in a fence is skipped
         ("code-first.md", "exactdocs CLI"),  # a fenced comment is not an H1; code span is text
-        ("crlf.md", "CRLF Title"),
         ("blank-title.md", "Blank Title Falls Through"),
         ("empty-front-matter.md", "After empty front matter"),
         ("mdx-page.mdx", "Tabs example"),
@@ -44,7 +43,9 @@ def test_front_matter_is_metadata_and_not_part_of_the_body() -> None:
 
 
 def test_crlf_front_matter_is_split_off_without_touching_the_body() -> None:
-    assert parse_fixture("crlf.md").body == "Body\r\n"
+    article = parse_article("a.md", "---\r\ntitle: CRLF Title\r\n---\r\nBody\r\n")
+
+    assert (article.title, article.body) == ("CRLF Title", "Body\r\n")
 
 
 @pytest.mark.parametrize("name", ["malformed.md", "not-a-mapping.md"])
