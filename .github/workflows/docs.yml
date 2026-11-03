@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-      - name: Build (strict: broken links and warnings fail)
+      - name: Build (strict mode, warnings and broken links fail)
         run: uv run --only-group docs zensical build --clean --strict
       - uses: actions/upload-pages-artifact@v5
         with:
