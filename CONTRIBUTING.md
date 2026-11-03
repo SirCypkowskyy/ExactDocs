@@ -23,7 +23,8 @@ just test -k version     just bdd     just arch     just docs
 
 1. Every change starts from an issue written with the templates (Feature or Bug). See
    [.agents/skills/writing-issues](.agents/skills/writing-issues/SKILL.md).
-2. Branch from `develop`: `feat/<issue>-<slug>` or `fix/<issue>-<slug>`.
+2. Branch from `develop`: `feature/<issue>-<slug>`, `bugfix/<issue>-<slug>` or `docs/<issue>-<slug>`.
+   PRs into `develop` are **squash-merged**; `develop` → `main` uses a merge commit or rebase.
 3. Turn the issue's *Expected behavior* into a behave scenario, then unit tests, then code.
 4. Open a PR into `develop` with `Closes #<issue>`. CI must be green.
 

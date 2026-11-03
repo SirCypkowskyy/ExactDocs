@@ -26,7 +26,7 @@ Read the matching skill **before** starting the task. They live in `.agents/skil
 
 - Domains never import each other or `bootstrap`; ports are `Protocol`s; no `abc.ABC`
   (docs/architecture.md). Architecture tests must stay green.
-- Work happens on `feat/<issue>-<slug>` / `fix/<issue>-<slug>` branches from `develop`; PRs go to
+- Work happens on `feature/<issue>-<slug>` / `bugfix/<issue>-<slug>` / `docs/<issue>-<slug>` branches from `develop`; PRs go to
   `develop`. Never push to `main` or `develop` directly, never delete them, never force-push them.
 - Claim an issue before working on it; release it when you stop.
 - No AI attribution in commits, PRs or issues (no `Co-Authored-By`, no "Generated with").

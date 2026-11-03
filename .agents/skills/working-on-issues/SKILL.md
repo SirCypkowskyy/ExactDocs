@@ -22,11 +22,11 @@ From an up-to-date `develop`:
 
 ```bash
 git switch develop && git pull --ff-only
-git switch -c feat/<n>-<short-slug>     # or fix/<n>-<slug>, chore/<n>-<slug>, docs/<n>-<slug>
+git switch -c feature/<n>-<short-slug>     # or bugfix/<n>-<slug>, docs/<n>-<slug>, chore/<n>-<slug>
 ```
 
 When several agents run in parallel, each one uses its own git worktree
-(`git worktree add ../exactdocs-<n> -b feat/<n>-<slug> develop`).
+(`git worktree add ../exactdocs-<n> -b feature/<n>-<slug> develop`).
 
 ## 3. Test first, then code
 

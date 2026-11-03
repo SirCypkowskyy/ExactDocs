@@ -4,11 +4,15 @@
 
 | Branch | Purpose | Protection |
 |---|---|---|
-| `main` | released code; every commit is releasable | cannot be deleted or force-pushed |
-| `develop` | integration branch; feature branches merge here | cannot be deleted or force-pushed |
-| `feat/<issue>-<slug>`, `fix/<issue>-<slug>`, `chore/...` | one issue each, from `develop` | none |
+| `main` | released code; every commit is releasable | no deletion, no force-push; changes only through a PR, merged with **merge commit** or **rebase** |
+| `develop` | integration branch; feature branches merge here | no deletion, no force-push; changes only through a PR, merged with **squash** |
+| `feature/<issue>-<slug>`, `bugfix/<issue>-<slug>`, `docs/<issue>-<slug>`, `chore/<issue>-<slug>` | one issue each, from `develop` | none |
 
-Flow: `feat/12-version-filter` → PR into `develop` → PR `develop` → `main` → tag on `main`.
+Flow: `feature/12-version-filter` → PR into `develop` (squash: one commit per issue) → PR
+`develop` → `main` (merge commit or rebase, keeping the squashed history) → tag on `main`.
+
+The merge methods are enforced by repository rulesets on the target branch, so they apply to every
+PR into it, whatever the source branch (a rare `main` → `develop` back-merge is squashed too).
 
 ## Versions (SemVer + PEP 440)
 
@@ -46,6 +50,15 @@ git switch develop && git pull && git tag v0.1.3.dev1 && git push origin v0.1.3.
 
 Creating a release in the GitHub UI with a new tag works too: it pushes the tag, the workflow
 runs, and it attaches the distributions to that release.
+
+## Image retention
+
+`.github/workflows/ghcr-retention.yml` keeps the registry small: the **5 newest dev images**
+(`X.Y.Z.devN`) and the **10 newest stable images** (`X.Y.Z`); a multi-arch image is removed with
+its platform images, cosign signature and attestations, and untagged leftovers are deleted. It
+runs after every release, weekly, and on demand (`gh workflow run ghcr-retention.yml -f
+dry-run=true` shows what would be deleted). Change `KEEP_DEV` / `KEEP_STABLE` in the workflow to
+adjust. PyPI releases are never deleted.
 
 ## What the release workflow does
 

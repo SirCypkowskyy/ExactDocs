@@ -1,7 +1,10 @@
 # Delivery plan
 
 This plan turns the [user stories](user-stories.md) into **GitHub issues** (Feature format),
-grouped into **epics** and **milestones**. It is a proposal: nothing here is filed yet.
+grouped into **epics** and **milestones**. It is **filed on GitHub** (2026-11-04): the
+[milestones](https://github.com/SirCypkowskyy/ExactDocs/milestones), 12 epics (`type: epic`,
+#1-#12) with the features as sub-issues (#13-#115), and "blocked by" links for the *Depends on*
+lines. GitHub is now the source of truth for status; this page keeps the rationale.
 
 It holds **103 feature issues** plus **12 epic tracking issues**:
 

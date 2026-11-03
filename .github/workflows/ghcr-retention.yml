@@ -1,0 +1,66 @@
+# Keeps ghcr.io/sircypkowskyy/exactdocs small: the 5 newest dev images (X.Y.Z.devN) and the 10
+# newest stable images (X.Y.Z). Multi-arch indexes, their platform images, cosign signatures and
+# SBOM/provenance attestations are removed together; untagged leftovers are deleted.
+# See docs/releasing.md.
+name: GHCR retention
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  schedule:
+    - cron: "17 3 * * 1" # weekly, Monday 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Only log what would be deleted
+        type: boolean
+        default: true
+
+concurrency:
+  group: ghcr-retention
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  KEEP_DEV: 5
+  KEEP_STABLE: 10
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    steps:
+      - name: Dev images (X.Y.Z.devN), keep the newest ${{ env.KEEP_DEV }}
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2 # upstream has no floating major tag
+        with:
+          package: exactdocs
+          use-regex: true
+          # stable images are not considered in this pass
+          exclude-tags: '^(latest|\d+\.\d+|\d+\.\d+\.\d+)$'
+          keep-n-tagged: ${{ env.KEEP_DEV }}
+          delete-untagged: false
+          dry-run: ${{ inputs.dry-run || false }}
+
+      - name: Stable images (X.Y.Z), keep the newest ${{ env.KEEP_STABLE }}
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          package: exactdocs
+          use-regex: true
+          # dev images are not considered in this pass
+          exclude-tags: '(^dev$|\.dev\d+)'
+          keep-n-tagged: ${{ env.KEEP_STABLE }}
+          delete-untagged: false
+          dry-run: ${{ inputs.dry-run || false }}
+
+      - name: Untagged leftovers, orphaned signatures and partial images
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        with:
+          package: exactdocs
+          delete-untagged: true
+          delete-orphaned-images: true
+          delete-partial-images: true
+          delete-ghost-images: true
+          dry-run: ${{ inputs.dry-run || false }}
