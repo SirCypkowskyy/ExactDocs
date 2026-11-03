@@ -55,17 +55,18 @@ runs, and it attaches the distributions to that release.
 2. **web**: `pnpm build`.
 3. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
-4. **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token), kernel first.
+4. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
 5. **image**: multi-arch (`linux/amd64` emulated, `linux/arm64` native) build, push, SBOM +
    provenance attestations, keyless **cosign** signature.
 6. **github-release**: creates or updates the release with the distributions.
 
 ## One-time setup
 
-1. On PyPI, add a *pending trusted publisher* for **both** projects `exactdocs` and
-   `exactdocs-kernel`: owner `SirCypkowskyy`, repository `ExactDocs`, workflow `release.yml`,
-   environment `pypi`.
-2. In the repo, create the `pypi` environment (Settings → Environments). Optionally restrict it to
-   tags `v*` and add yourself as a required reviewer.
+1. PyPI trusted publishers (done 2026-11-03), owner `SirCypkowskyy`, repository `ExactDocs`,
+   workflow `release.yml`: `exactdocs-kernel` with environment `pypi`, `exactdocs` with
+   environment `pypi-exactdocs`. PyPI allows only one pending publisher per
+   repository + workflow + environment, hence two environments and two publish jobs.
+2. GitHub environments `pypi` and `pypi-exactdocs` exist and accept deployments from tags `v*`
+   only. Optionally add yourself as a required reviewer on both.
 3. After the first image push, set the ghcr.io package visibility (private by default) and link it
    to the repository.

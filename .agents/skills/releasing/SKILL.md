@@ -35,6 +35,6 @@ Watch it: `gh run watch $(gh run list --workflow release.yml --limit 1 --json da
 - **"neither vX.Y.Z nor vX.Y.Z.devN"** or **"must point at a commit on main/develop"**: wrong tag.
   Delete it (`git push origin :refs/tags/vX` and `git tag -d vX`) and tag the right commit.
   Never delete a tag whose packages already reached PyPI; PyPI versions are immutable. Bump instead.
-- **PyPI 403 / invalid-publisher**: the trusted publisher on PyPI or the `pypi` environment is
+- **PyPI 403 / invalid-publisher**: the trusted publisher on PyPI or the `pypi` / `pypi-exactdocs` environment is
   missing (see docs/releasing.md, one-time setup).
 - Re-run only failed jobs: `gh run rerun <id> --failed`.

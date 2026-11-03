@@ -115,13 +115,16 @@ jobs:
           path: dist/
           retention-days: 30
 
-  pypi:
-    name: Publish to PyPI
+  # One job and one GitHub environment per PyPI project: PyPI allows only one pending trusted
+  # publisher per (repository, workflow, environment). The kernel goes first because the app
+  # pins exactdocs-kernel==<same version>.
+  pypi-kernel:
+    name: Publish exactdocs-kernel to PyPI
     needs: [meta, python]
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     environment:
       name: pypi
-      url: https://pypi.org/project/exactdocs/${{ needs.meta.outputs.version }}/
+      url: https://pypi.org/project/exactdocs-kernel/${{ needs.meta.outputs.version }}/
     permissions:
       id-token: write # PyPI trusted publishing, no API token stored anywhere
     steps:
@@ -130,8 +133,23 @@ jobs:
         with:
           name: python-dist
           path: dist
-      # Kernel first: the app pins exactdocs-kernel==<same version>.
       - run: uv publish --trusted-publishing always dist/exactdocs_kernel-*
+
+  pypi:
+    name: Publish exactdocs to PyPI
+    needs: [meta, pypi-kernel]
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    environment:
+      name: pypi-exactdocs
+      url: https://pypi.org/project/exactdocs/${{ needs.meta.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
       - run: uv publish --trusted-publishing always dist/exactdocs-*
 
   image:
@@ -184,7 +202,7 @@ jobs:
 
   github-release:
     name: GitHub Release
-    needs: [meta, python, pypi, image]
+    needs: [meta, python, pypi-kernel, pypi, image]
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     permissions:
       contents: write
