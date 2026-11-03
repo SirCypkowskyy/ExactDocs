@@ -13,20 +13,31 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.rest import v1_openapi_json
 from exactdocs.bootstrap.settings import Settings
 
+pytestmark = pytest.mark.usefixtures("demo_catalog")
+
 COMMITTED_SPEC = Path(__file__).parents[4] / "web" / "openapi.json"
 HTTP_METHODS = {"get", "put", "post", "delete", "patch"}
 
 
 @pytest.fixture
-def app():
-    return create_app(Container.build(Settings()))
+def container() -> Container:
+    return Container.build(Settings())
 
 
 @pytest.fixture
-async def client(app) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
-    ) as client:
+def app(container: Container):
+    return create_app(container)
+
+
+@pytest.fixture
+async def client(app, container: Container) -> AsyncIterator[httpx.AsyncClient]:
+    # ASGITransport does not run the app's lifespan, which is what migrates the database.
+    async with (
+        container.running(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
         yield client
 
 
