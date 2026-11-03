@@ -20,8 +20,8 @@ Written as **"As _actor_, I want _capability_, because _reason_."** with short a
 
 | Term | Meaning |
 |---|---|
-| **Library** | One imported documentation set: a git repository + the selected paths. Has a unique name. |
-| **Version** | A library imported at one git ref (tag, branch or commit), resolved to a commit SHA. |
+| **Library** | One imported documentation set: a git repository + the selected paths. Its ID is context7-style, `/owner/repo` by default (from the git URL), and can be renamed. |
+| **Version** | A library imported at one git ref (tag, branch or commit), resolved to a commit SHA. Addressed as `/owner/repo/<ref>`, e.g. `/acme/payments/v1.4.0`. |
 | **Article** | One Markdown file of a library version, addressed by its path in the repo. |
 | **Chunk** | A section of an article, by default one heading and its content. |
 
@@ -59,8 +59,8 @@ pointing it at an endpoint you choose, and the retrieval pipeline upgrades itsel
 
 ### 1. Add a library
 
-- **[LIB-01]** As a user, I want to add a library by pasting a git URL (GitHub, Bitbucket, GitLab, Gitea or any HTTPS/SSH git server) and giving it a name, because my documentation lives in repositories, not on one hosting platform.
-    - Acceptance: `https://github.com/org/repo`, `https://bitbucket.org/org/repo`, `git@host:org/repo.git` and a self-hosted HTTPS URL are accepted; the URL is checked (reachable, a git repo) before anything is saved; library names are unique.
+- **[LIB-01]** As a user, I want to add a library by pasting a git URL (GitHub, Bitbucket, GitLab, Gitea or any HTTPS/SSH git server), because my documentation lives in repositories, not on one hosting platform.
+    - Acceptance: `https://github.com/org/repo`, `https://bitbucket.org/org/repo`, `git@host:org/repo.git` and a self-hosted HTTPS URL are accepted; the URL is checked (reachable, a git repo) before anything is saved; the library ID defaults to `/org/repo` and must be unique.
 - **[LIB-02]** As a user, I want to choose which docs to import with a folder or glob patterns (`docs/`, `**/*.md`, `README.md`, exclusions like `docs/archive/**`), because a repo holds far more than documentation.
     - Acceptance: only matching `.md` / `.mdx` files are imported; exclusions win over inclusions; an empty selection means `**/*.md`.
 - **[LIB-03]** As a user, I want to preview the matching file tree (count and size) before importing, because I want to fix a wrong pattern before waiting for an import.
@@ -69,7 +69,9 @@ pointing it at an endpoint you choose, and the retrieval pipeline upgrades itsel
     - Acceptance: the ref is resolved to a commit SHA at import time and stored with every article; the UI offers the repo's tags and branches.
 - **[LIB-05]** As a user, I want to import from private repositories with a personal access token or SSH deploy key, because most internal docs are not public.
     - Acceptance: credentials are stored encrypted, never shown again after saving, never logged, and sent only to that library's host.
-- **[LIB-06]** As a user, I want the same from the CLI (`exactdocs add <git-url> --name my-lib --ref v1.4.0 --path docs/`), because I script my setup and use ExactDocs without the UI.
+- **[LIB-06]** As a user, I want ExactDocs to honor a `context7.json` in the repository (`folders`, `excludeFolders`, `excludeFiles`, `rules`, `previousVersions`) as the default selection, because many projects already describe their docs for context7 and I shouldn't repeat that.
+    - Acceptance: when the file exists, its folders and exclusions pre-fill the path selection (still editable); `previousVersions` are offered as versions to import; `rules` are stored and returned by `query-docs`.
+- **[LIB-07]** As a user, I want the same from the CLI (`exactdocs add <git-url> --id /acme/payments --ref v1.4.0 --path docs/`), because I script my setup and use ExactDocs without the UI.
     - Acceptance: the CLI and the UI create identical libraries; `exactdocs libraries` lists them.
 
 ### 2. Import and chunking
@@ -126,12 +128,31 @@ pointing it at an endpoint you choose, and the retrieval pipeline upgrades itsel
     - Acceptance: `search_docs` results include `chunk_id`, `article_path`, `heading_path`, `position`/`total`, `prev_chunk_id`, `next_chunk_id`, commit SHA and link; `read_chunk(chunk_id)` returns a neighbor verbatim; `read_article` works with the result's path.
 - **[MCP-05]** As an AI agent, I want `search_docs(library, version, query, tags?)` to use the best retrieval mode available and say which one answered, because I should get the best results the instance can give, and know how they were found.
     - Acceptance: results include `retrieval_mode` (`bm25`, `hybrid`, `hybrid_hyde`, `agentic`); a version with no match returns an explicit empty result, never another version.
+### 7. context7 parity
+
+ExactDocs offers **at least the same MCP tools, arguments and IDs as context7**, so it can
+replace it without changing agent prompts or rules. The ExactDocs-specific tools above
+(`list_libraries`, `list_articles`, `read_article`, `read_chunk`) come on top.
+
+- **[C7-01]** As an AI agent, I want a `resolve-library-id(libraryName, query)` tool that turns a library name into a context7-compatible ID, ranked by relevance to my task, because that is the first call every context7-style prompt makes.
+    - Acceptance: same tool name and arguments as context7; returns matching libraries with ID (`/owner/repo`), title, description, available versions, article and chunk counts; `query` influences the ranking.
+- **[C7-02]** As an AI agent, I want a `query-docs(libraryId, query, language?)` tool that returns the relevant documentation for a library ID, because that is the second call every context7-style prompt makes.
+    - Acceptance: same tool name and arguments as context7; `libraryId` accepts `/owner/repo` (latest imported version) and `/owner/repo/<version>` (exact version, never another one); `language` ranks code examples in that language first; uses the same retrieval pipeline as `search_docs` and includes the library's `rules` when present.
+- **[C7-03]** As a user, I want CLI commands mirroring `ctx7` (`exactdocs library <name> <query>`, `exactdocs docs <libraryId> <query>`), because I want to check from the terminal what my agent would get.
+    - Acceptance: output matches the corresponding MCP tool results.
+- **[C7-04]** As a developer integrating ExactDocs into other tools, I want a REST API equivalent to context7's (search libraries, get docs for a library ID and query), because not every integration speaks MCP.
+    - Acceptance: documented endpoints under `/api/v1` return the same data as the two MCP tools; they use the same tokens and access rules.
+- **[C7-05]** As a user switching from context7, I want ExactDocs to answer the same tool calls my agent already makes, because I only want to change the server URL in my MCP config.
+    - Acceptance: a recorded context7 session (both tools, real arguments) replays against ExactDocs without errors; a CI contract test checks tool names and argument schemas against context7's.
+
+### 8. Agent setup
+
 - **[MCP-06]** As a user, I want a ready-to-paste MCP config for my agent, because hand-written JSON is where setups break.
     - Acceptance: `exactdocs config --client claude|cursor|vscode` prints a working snippet; stdio mode (`uvx exactdocs serve --stdio`) needs no token.
 - **[MCP-07]** As a user, I want agent-facing text treated as untrusted (invisible Unicode stripped, results marked as external content), because a doc file can contain instructions aimed at my agent.
     - Acceptance: every MCP result is wrapped in an external-content marker; zero-width and bidi control characters are removed on import.
 
-### 7. Keep it in sync
+### 9. Keep it in sync
 
 - **[SYNC-01]** As a user, I want to re-sync a library with one click (or `exactdocs sync <library>`), because docs change and I want the latest state of a branch.
     - Acceptance: a branch re-imports only when its head moved; unchanged articles are not re-chunked or re-embedded.
@@ -140,7 +161,7 @@ pointing it at an endpoint you choose, and the retrieval pipeline upgrades itsel
 - **[SYNC-03]** As a user, I want to remove a version or a whole library, because I don't want stale docs found by me or my agent.
     - Acceptance: after removal nothing from it appears in browse, search or MCP results.
 
-### 8. Run it
+### 10. Run it
 
 - **[RUN-01]** As a user, I want to start ExactDocs with one command (`uvx exactdocs serve` or one `docker run`) and browse my first library within five minutes, because I won't adopt a tool that takes an afternoon to set up.
     - Acceptance: from a clean machine with no models and no API keys, the first library is browsable and BM25-searchable within five minutes on SQLite.
@@ -205,6 +226,5 @@ These are good ideas that do not belong to the main loop yet.
 | Crawl documentation websites | Needs a crawler, rate limiting and HTML-to-Markdown conversion |
 | Resolve library docs from package registries (PyPI, npm) and lockfiles | Requires a curated registry that maps packages to repos and paths |
 | Prebuilt, signed index snapshots and a public registry of popular libraries | Depends on the registry and a stable index format |
-| Context7-compatible tool aliases | Useful for migration once the MCP tools are stable |
 | Accuracy eval suite in CI (recall@k, wrong-version rate) per retrieval mode | Starts once retrieval modes exist and need comparing |
 | Other formats: reStructuredText, AsciiDoc, Jupyter notebooks | Markdown covers most repositories |
