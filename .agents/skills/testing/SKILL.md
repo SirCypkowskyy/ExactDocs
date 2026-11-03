@@ -25,6 +25,8 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   for ports and no inheritance (see `FakeIndexedVersions` in `tests/retrieval/`).
 - **Assert outcomes, not calls.** Check returned DTOs and raised errors, not which methods were called.
 - **Version is a hard filter**: anything touching retrieval gets a "wrong version gets nothing" test.
+- **Import and search tests use the fixture docs repository** (`packages/exactdocs/tests/fixtures/docs-repo/`):
+  pytest fixture `docs_repo`, behave `context.fixture_repo`; read its README before changing content.
 - **A bug fix starts with a failing test** that reproduces the issue.
 - **New driven adapter** (e.g. SQLite repository): add it to the adapter contract test so it runs
   the same cases as the in-memory one.

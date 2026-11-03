@@ -1,0 +1,55 @@
+# query -> the section that must rank first, per version.
+#   <version>: {article, heading_path}   the expected top section (article path is repo-relative)
+#   <version>: null                      the version has no hit at all
+#   <version> missing                    not asserted for that version
+# Versions are the tags v1.3.0, v1.4.0 and the branch next. A heading path starts at the H1.
+queries:
+  - query: snake_case
+    expected:
+      v1.3.0: &snake {article: docs/reference/naming.md, heading_path: [Naming conventions, snake_case]}
+      v1.4.0: *snake
+  - query: camelCase
+    expected:
+      v1.3.0: &camel {article: docs/reference/naming.md, heading_path: [Naming conventions, camelCase]}
+      v1.4.0: *camel
+  - query: "--flag"
+    expected:
+      v1.3.0: &flag {article: docs/reference/naming.md, heading_path: [Naming conventions, --flag]}
+      v1.4.0: *flag
+  - query: pkg.mod.fn
+    expected:
+      v1.3.0: &dotted {article: docs/reference/naming.md, heading_path: [Naming conventions, pkg.mod.fn]}
+      v1.4.0: *dotted
+  - query: connection_pool
+    expected:
+      v1.3.0: &pool {article: docs/guide/configuration.md, heading_path: [Configuration, Connection pool]}
+      v1.4.0: *pool
+  - query: "--dry-run"
+    expected:
+      v1.3.0: &dry {article: docs/guide/configuration.md, heading_path: [Configuration, Command line]}
+      v1.4.0: *dry
+  - query: rotating tokens
+    expected:
+      v1.3.0: &rotate {article: docs/guide/auth.md, heading_path: [Authentication, Rotating tokens]}
+      v1.4.0: *rotate
+  - query: docker
+    expected:
+      v1.3.0: {article: docs/guide/setup.md, heading_path: [Guide, Install, Docker]}
+      v1.4.0: {article: docs/guide/install.md, heading_path: [Guide, Install, Docker]}
+  - query: crème brûlée
+    expected:
+      v1.3.0: &latin {article: docs/legacy/latin1.md, heading_path: [Journal de bord, Paiements récents]}
+      v1.4.0: *latin
+  - query: retry_policy
+    expected:
+      v1.3.0: null
+      v1.4.0: {article: docs/guide/resilience.md, heading_path: [Resilience, Retry policy, retry_policy]}
+  - query: max_retries
+    expected:
+      v1.3.0: null
+      v1.4.0: {article: docs/guide/resilience.md, heading_path: [Resilience, Retry policy, max_retries]}
+  - query: podman
+    expected:
+      v1.3.0: null
+      v1.4.0: null
+      next: {article: docs/guide/install.md, heading_path: [Guide, Install, Podman]}

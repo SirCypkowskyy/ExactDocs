@@ -1,6 +1,8 @@
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from fixture_repo import DocsRepo, served
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
@@ -30,3 +32,14 @@ async def demo_catalog() -> None:
         repository = SqliteLibraryRepository(container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)
+
+
+@pytest.fixture(scope="session")
+def docs_repo(tmp_path_factory: pytest.TempPathFactory) -> Generator[DocsRepo]:
+    """The fixture docs repository, built once per run.
+
+    Yields:
+        The repository path and its ``file://`` and HTTP URLs.
+    """
+    with served(tmp_path_factory.mktemp("fixtures")) as repo:
+        yield repo
