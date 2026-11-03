@@ -1,8 +1,8 @@
 """Retrieval value objects. Pure Python: no frameworks, no I/O."""
 
-from itertools import groupby
 import unicodedata
 from dataclasses import dataclass
+from itertools import groupby
 
 from exactdocs.retrieval.errors import EmptySearchTextError
 
