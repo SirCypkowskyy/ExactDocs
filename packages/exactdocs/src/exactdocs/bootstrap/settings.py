@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from platformdirs import user_data_path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 # Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS.
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     port: int = 3000
     # Docker sets EXACTDOCS_DATA_DIR=/data; `uvx` uses the platform user-data directory.
     data_dir: Path = Field(default_factory=_default_data_dir)
+    # Overrides the SQLite file in the data directory, e.g. `sqlite:////srv/exactdocs.db`.
     database_url: str | None = None
     auth_mode: Literal["local", "oidc"] = "local"
     telemetry: Literal["off", "otlp"] = "off"
@@ -42,8 +44,14 @@ class Settings(BaseSettings):
 
     @property
     def effective_database_url(self) -> str:
-        """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory."""
-        return self.database_url or f"sqlite:///{(self.data_dir / 'exactdocs.db').as_posix()}"
+        """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory (aiosqlite driver)."""
+        if self.database_url:
+            url = make_url(self.database_url)
+        else:
+            url = URL.create("sqlite", database=(self.data_dir / "exactdocs.db").as_posix())
+        if url.get_backend_name() == "sqlite":
+            url = url.set(drivername="sqlite+aiosqlite")
+        return url.render_as_string(hide_password=False)
 
     @property
     def trusted_hosts(self) -> list[str]:

@@ -85,6 +85,10 @@ ignore = [
     "implicit-namespace-package",
 ]
 "**/features/**" = ["assert", "D", "ANN", "FBT", "implicit-namespace-package"]
+# Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
+"**/migrations/versions/**" = ["D"]
+# Every test must start in its own empty data directory (see packages/exactdocs/tests/conftest.py).
+"**/conftest.py" = ["pytest-fixture-autouse"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

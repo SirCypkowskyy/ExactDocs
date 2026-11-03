@@ -47,6 +47,12 @@ Then build it in `bootstrap/container.py` (pick its driven adapters) and expose 
 `bootstrap/http.py` and `bootstrap/mcp.py`. The architecture tests pick the new folder up
 automatically.
 
+## Persist something (SQLite)
+
+See *Persistence* in `docs/architecture.md`: tables prefixed with the domain, an Alembic revision
+in `bootstrap/migrations/versions` (`just migration "..."`), a `sqlite.py` driven adapter that
+takes the `AsyncEngine`, and a case in the adapter contract test next to the memory adapter.
+
 ## One domain needs another
 
 Don't import it. In the **consumer**, declare a driven port in its own words:
@@ -69,7 +75,7 @@ duplicate a small type rather than couple two domains.
 ## Patterns we use
 
 - Structural typing: a test double or adapter is any class with the right methods.
-- `NewType` ids, `typing.Self` factories (`InMemoryLibraryRepository.of(...)`, `.demo()`).
+- `NewType` ids, `typing.Self` factories (`InMemoryLibraryRepository.of(...)`).
 - Explicit composition root; no DI container, no globals, no module-level singletons.
 - Domain errors subclass kernel errors; HTTP mapping lives only in `bootstrap/http.py`.
 - Python 3.14: no `from __future__ import annotations`, no `TYPE_CHECKING` imports.

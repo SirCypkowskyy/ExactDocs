@@ -28,7 +28,16 @@ OPTIONAL = {"errors"}
 LAYERS = ["errors", "models", "dtos", "ports", "use_cases", "module"]
 # Layers are optional per domain (e.g. `errors`) and may be a module or a package.
 _ALLOW_EMPTY = CheckOptions(allow_empty_tests=True)
-FRAMEWORKS = ["fastapi*", "fastmcp*", "starlette*", "uvicorn*", "httpx*", "sqlalchemy*", "dbos*"]
+DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*"]
+FRAMEWORKS = [
+    "fastapi*",
+    "fastmcp*",
+    "starlette*",
+    "uvicorn*",
+    "httpx*",
+    "dbos*",
+    *DATABASE_LIBRARIES,
+]
 
 
 def _path(domain: str, part: str = "") -> str:
@@ -143,6 +152,23 @@ def test_core_is_framework_free(domain: str, layer: str, framework: str) -> None
             .because("frameworks belong in adapters and bootstrap"),
             _ALLOW_EMPTY,
         )
+
+
+@pytest.mark.parametrize("domain", DOMAINS)
+@pytest.mark.parametrize("library", DATABASE_LIBRARIES)
+def test_database_libraries_live_only_in_driven_adapters_and_bootstrap(
+    domain: str, library: str
+) -> None:
+    # The core is covered by `test_core_is_framework_free`; driving adapters are checked here.
+    assert_passes(
+        project_files(SRC)
+        .in_path(_path(domain, "adapters/driving"))
+        .should_not()
+        .depend_on_external_modules()
+        .matching(library)
+        .because("persistence belongs to driven adapters; the schema to bootstrap"),
+        _ALLOW_EMPTY,
+    )
 
 
 @pytest.mark.parametrize("domain", DOMAINS)

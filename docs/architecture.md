@@ -97,6 +97,37 @@ either. Frameworks live in adapters and `bootstrap`.
 Naming follows Alistair Cockburn's own terms from *Hexagonal Architecture Explained* (2024):
 **driving** / **driven** ports and adapters, rather than primary/secondary or inbound/outbound.
 
+## Persistence: one data directory, one database
+
+Everything ExactDocs stores lives in the **data directory**: `EXACTDOCS_DATA_DIR`, which the Docker
+image sets to `/data`, else the platform user-data directory (so `uvx` and stdio MCP share it).
+`bootstrap/database.py` creates it, refuses to start if it is not writable, and opens one SQLite
+file in it (`EXACTDOCS_DATABASE_URL` overrides the path): SQLAlchemy **Core**, async, no ORM,
+on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
+
+- **Each domain owns its tables**, prefixed with its name (`catalog_libraries`, `retrieval_...`).
+  Foreign keys only between tables of the same domain; another domain's IDs are held by value
+  and its tables are never read.
+- **One Alembic history, owned by `bootstrap`** (`bootstrap/migrations/versions`), run on start
+  (`Container.running()`) and reported by `/api/health` as `schema_revision`. A domain's
+  revision is plain `op.create_table(...)`, not an import of the adapter's `Table` objects, so
+  old revisions never change. Use `op.batch_alter_table` to change an existing table,
+  `op.execute("CREATE VIRTUAL TABLE ... USING fts5(...)")` for FTS5. `migrate()` runs the
+  revisions in one `BEGIN IMMEDIATE` transaction with `foreign_keys` off (a batch alteration
+  recreates the table, and with the pragma on SQLite would cascade-delete the rows of tables
+  that reference it) and fails, rolling back, if `PRAGMA foreign_key_check` finds a violation
+  before the commit.
+- **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
+  `down_revision` to the current head if you rebased over another revision (a test fails if the
+  history ever has two heads), then write the adapter.
+- **Adapters** live in `adapters/driven/sqlite.py`, take the `AsyncEngine` and describe their
+  tables with Core `Table` objects (`catalog.adapters.driven.sqlite` is the reference). They run
+  in the same adapter contract test as the in-memory adapter. SQLAlchemy, Alembic and aiosqlite
+  are imported only by driven adapters and `bootstrap` (architecture test).
+- Tests build a container on an empty temporary data directory (`tests/conftest.py` points
+  `EXACTDOCS_DATA_DIR` at one for every test) and seed data through the repository, so the
+  catalog starts empty in production.
+
 ## Python conventions
 
 - **`Protocol`, not ABC.** Ports are structural. Adapters and use cases never inherit from them;

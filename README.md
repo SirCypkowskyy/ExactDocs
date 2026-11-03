@@ -102,7 +102,8 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file or PostgreSQL URL; the data directory is `/data` in Docker and the platform user-data directory for `uvx` |
+| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, later the secret key and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision |
 | `EXACTDOCS_SECRET_KEY` | generated in the data directory | Encrypts stored git credentials |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |

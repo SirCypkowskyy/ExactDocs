@@ -8,6 +8,7 @@ from cyclopts import App, Parameter
 
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
@@ -26,9 +27,9 @@ def serve(
     """Run the server: web UI + REST API + MCP over HTTP, or MCP only over stdio."""
     settings = Settings()
     if stdio:
-        mcp = build_mcp(Container.build(settings))
-        asyncio.run(mcp.run_stdio_async(show_banner=False))
+        asyncio.run(_serve_stdio(settings))
         return
+    _check_startup(settings)
     uvicorn.run(
         "exactdocs.bootstrap.cli:asgi_app",
         factory=True,
@@ -38,6 +39,26 @@ def serve(
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
     )
+
+
+async def _serve_stdio(settings: Settings) -> None:
+    container = _build(settings)
+    async with container.running():
+        await build_mcp(container).run_stdio_async(show_banner=False)
+
+
+def _build(settings: Settings) -> Container:
+    """Build the container; an unusable data directory ends the process with a clear message."""
+    try:
+        return Container.build(settings)
+    except StartupError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
+
+
+def _check_startup(settings: Settings) -> None:
+    """Fail before uvicorn starts (and before any reload worker) instead of with a traceback."""
+    _build(settings)  # opens no connection, so there is nothing to release
 
 
 def asgi_app() -> object:
