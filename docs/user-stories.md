@@ -7,117 +7,193 @@ Written as **"As _actor_, I want _capability_, because _reason_."** with short a
     browse them** in the web UI and from your AI agent over MCP, pinned to the exact git ref
     (tag, branch or commit) you imported.
 
-    Everything in the product serves this loop: **add a repo → choose docs → import → browse and
-    search → keep in sync**. Other ways of getting documentation in (`llms.txt`, website crawls,
-    package registries, prebuilt snapshots) come later.
+    Everything in the product serves this loop: **add a library → choose docs → import → browse
+    and search → keep in sync**. Other ways of getting documentation in (`llms.txt`, website
+    crawls, package registries, prebuilt snapshots) come later.
 
 !!! tip "From story to issue"
     A story becomes a **Feature** issue: the story is the *Context*, the acceptance criteria become
     *Expected behavior* (a behave scenario) and *Criteria of success*. Put the story ID
-    (e.g. `SRC-01`) in the issue.
+    (e.g. `LIB-01`) in the issue.
 
-**Milestones:** **MVP** completes the main loop for one user; **Next** makes it work for a team;
-**Later** adds other sources and extras.
+## Terms
+
+| Term | Meaning |
+|---|---|
+| **Library** | One imported documentation set: a git repository + the selected paths. Has a unique name. |
+| **Version** | A library imported at one git ref (tag, branch or commit), resolved to a commit SHA. |
+| **Article** | One Markdown file of a library version, addressed by its path in the repo. |
+| **Chunk** | A section of an article, by default one heading and its content. |
+
+**Milestones:** **MVP** completes the main loop for one user with zero external services;
+**Next** adds optional AI-powered retrieval, team access and integrations; **Later** adds other
+sources and extras.
 
 ## Actors
 
 | Actor | Who |
 |---|---|
-| **User** | A developer who adds repositories and reads their docs in the web UI or CLI |
-| **AI agent** | An MCP client (Claude Code, Cursor, VS Code...) reading the same docs on the user's behalf |
-| **Admin** | Whoever runs a shared instance for a team |
-| **ExactDocs** | The system itself: importer, sync scheduler, search |
+| **User** | A developer who adds libraries and reads them in the web UI or CLI |
+| **AI agent** | An MCP client (Claude Code, Cursor, ChatGPT, VS Code...) reading the same docs on a user's behalf |
+| **Admin** | Whoever runs the instance (deployment, configuration, observability) |
+| **ExactDocs** | The system itself: importer, sync scheduler, retrieval |
+
+## Lightweight by default
+
+ExactDocs ships **no models**: no embedding model, no reranker and no LLM in the package or
+image. With nothing configured it is a small BM25 search server. Every AI capability is opt-in by
+pointing it at an endpoint you choose, and the retrieval pipeline upgrades itself to what is available:
+
+| Configured | Default retrieval |
+|---|---|
+| nothing | **BM25** |
+| reranker | BM25 → rerank |
+| embedding model | **hybrid**: BM25 + vector search, fused |
+| embedding model + reranker | hybrid → rerank |
+| embedding model + LLM (+ reranker) | **hybrid with HyDE**: the LLM writes a hypothetical answer, which is embedded for the vector half → rerank if configured. This is the default when everything is configured. |
+| LLM, and agentic mode switched on | **agentic tree retrieval**: a pydantic-ai agent browses the library's tree until it finds the articles that answer the question, and explains why (RET-06) |
 
 ---
 
 ## MVP: the main loop
 
-### 1. Add a repository
+### 1. Add a library
 
-- **[SRC-01]** As a user, I want to add a source by pasting a git URL (GitHub, Bitbucket, GitLab, Gitea or any HTTPS/SSH git server), because my documentation lives in repositories, not on one hosting platform.
-    - Acceptance: `https://github.com/org/repo`, `https://bitbucket.org/org/repo`, `git@host:org/repo.git` and a self-hosted HTTPS URL are all accepted; the URL is checked (reachable, is a git repo) before anything is saved.
-- **[SRC-02]** As a user, I want to choose which docs to import with a folder or glob patterns (`docs/`, `**/*.md`, `README.md`, exclusions like `docs/archive/**`), because a repo holds far more than documentation.
-    - Acceptance: only matching `.md` / `.mdx` files are imported; exclusions win over inclusions; the default for an empty selection is `**/*.md`.
-- **[SRC-03]** As a user, I want to preview the matching file tree (count and size) before importing, because I want to fix a wrong pattern before waiting for an import.
+- **[LIB-01]** As a user, I want to add a library by pasting a git URL (GitHub, Bitbucket, GitLab, Gitea or any HTTPS/SSH git server) and giving it a name, because my documentation lives in repositories, not on one hosting platform.
+    - Acceptance: `https://github.com/org/repo`, `https://bitbucket.org/org/repo`, `git@host:org/repo.git` and a self-hosted HTTPS URL are accepted; the URL is checked (reachable, a git repo) before anything is saved; library names are unique.
+- **[LIB-02]** As a user, I want to choose which docs to import with a folder or glob patterns (`docs/`, `**/*.md`, `README.md`, exclusions like `docs/archive/**`), because a repo holds far more than documentation.
+    - Acceptance: only matching `.md` / `.mdx` files are imported; exclusions win over inclusions; an empty selection means `**/*.md`.
+- **[LIB-03]** As a user, I want to preview the matching file tree (count and size) before importing, because I want to fix a wrong pattern before waiting for an import.
     - Acceptance: after entering URL, ref and patterns, the UI and `exactdocs add --dry-run` list the files that would be imported, without storing anything.
-- **[SRC-04]** As a user, I want to pick the git ref to import (a tag, a branch, or a commit), because docs must match the version of the code I work with.
-    - Acceptance: the ref is resolved to a commit SHA at import time and stored with every document; the UI lists tags and branches to choose from.
-- **[SRC-05]** As a user, I want to import from private repositories with a personal access token or SSH deploy key, because most internal docs are not public.
-    - Acceptance: credentials are stored encrypted, never shown again after saving, never logged, and used only for that source's host.
-- **[SRC-06]** As a user, I want the same from the CLI (`exactdocs add <git-url> --ref v1.4.0 --path docs/`), because I script my setup and use ExactDocs without the UI.
-    - Acceptance: the CLI and the UI create identical sources; `exactdocs sources` lists them.
+- **[LIB-04]** As a user, I want to pick the git ref to import (tag, branch or commit), because docs must match the version of the code I work with.
+    - Acceptance: the ref is resolved to a commit SHA at import time and stored with every article; the UI offers the repo's tags and branches.
+- **[LIB-05]** As a user, I want to import from private repositories with a personal access token or SSH deploy key, because most internal docs are not public.
+    - Acceptance: credentials are stored encrypted, never shown again after saving, never logged, and sent only to that library's host.
+- **[LIB-06]** As a user, I want the same from the CLI (`exactdocs add <git-url> --name my-lib --ref v1.4.0 --path docs/`), because I script my setup and use ExactDocs without the UI.
+    - Acceptance: the CLI and the UI create identical libraries; `exactdocs libraries` lists them.
 
-### 2. Import
+### 2. Import and chunking
 
 - **[IMP-01]** As ExactDocs, I want to fetch only what is needed (shallow clone of the chosen ref, sparse checkout of the selected paths), because large monorepos must not take minutes or gigabytes to import.
     - Acceptance: importing `docs/` from a large repo transfers only that ref's objects; no full history is cloned.
-- **[IMP-02]** As ExactDocs, I want to split each Markdown file by its structure (headings, code blocks, tables) and keep each section's heading path, because search and agents need meaningful sections, not arbitrary text windows.
-    - Acceptance: no code block is ever split; every section knows its file path and heading path (`Guide > Install > Docker`).
-- **[IMP-03]** As a user, I want to see import progress and per-file problems (unreadable files, broken front matter), because I need to know whether everything I selected actually made it in.
+- **[IMP-02]** As ExactDocs, I want to chunk each article by its Markdown headings (document-structure chunking), keeping each chunk's heading path, because header-based chunks are almost always the best retrieval unit for documentation.
+    - Acceptance: by default one chunk = one heading and its content, built with [Chonkie](https://github.com/chonkie-inc/chonkie)'s Markdown recipe; code blocks and tables are never split; every chunk stores article path, heading path (`Guide > Install > Docker`) and its position in the article.
+- **[IMP-03]** As a user, I want to customize chunking per library (split level such as `h2` or `h3`, maximum/minimum chunk size with merging of tiny sections, or another Chonkie chunker), because some docs have huge sections and others one-line headings.
+    - Acceptance: chunking settings are part of the library's configuration; changing them re-chunks the library without re-cloning; defaults apply when nothing is set.
+- **[IMP-04]** As a user, I want to see import progress and per-file problems (unreadable files, broken front matter), because I need to know whether everything I selected made it in.
     - Acceptance: the UI shows files done / total and lists failed files with the reason; one bad file does not fail the whole import.
-- **[IMP-04]** As ExactDocs, I want an import to be all-or-nothing per version and resumable after a restart, because readers must never see half of a version, and a crash must not start a large import from zero.
-    - Acceptance: while importing, the previous version keeps being served; after a killed worker restarts, the import continues and finishes with no duplicates.
+- **[IMP-05]** As ExactDocs, I want an import to be all-or-nothing per version and resumable after a restart, because readers must never see half a version, and a crash must not restart a large import from zero.
+    - Acceptance: while importing, the previous version keeps being served; after a killed worker restarts, the import finishes with no duplicates.
 
-### 3. Browse
+### 3. Tags
 
-- **[BRW-01]** As a user, I want to browse an imported source as a file tree and read each Markdown file rendered (code highlighting, tables, admonitions), because reading the docs is the point.
-    - Acceptance: the tree mirrors the repo paths; a page renders headings, code blocks with language, tables and images.
-- **[BRW-02]** As a user, I want relative links and images between docs to work inside ExactDocs, because docs written for GitHub link to each other with relative paths.
-    - Acceptance: `[setup](../setup.md#docker)` opens the imported page at that heading; images from the repo display; links to files outside the selection open the file on the git host.
-- **[BRW-03]** As a user, I want a "view on GitHub/Bitbucket" link on every page with the exact commit, because I sometimes need the surrounding code or history.
+- **[TAG-01]** As a user, I want articles to be tagged, from their front matter (`tags: [api, auth]`) automatically and by hand in the UI, because I want to slice documentation by topic across folders.
+    - Acceptance: front-matter tags are imported; manual tags survive re-sync; tags are shown on the article and in the tree.
+- **[TAG-02]** As a user, I want to assign tags by path rules in the library configuration (`docs/api/** → api`), because most repos have no front matter but a meaningful folder layout.
+    - Acceptance: rules apply on every import; an article can have tags from front matter, rules and manual edits at the same time.
+- **[TAG-03]** As a user or AI agent, I want to filter browsing and search by tags (any of / all of), because "only the API reference" or "only ADRs" is a common need.
+    - Acceptance: the UI tree, search and the MCP tools `list_articles` and `search_docs` accept tag filters; the filter is applied before ranking, not after.
+
+### 4. Browse
+
+- **[BRW-01]** As a user, I want to browse a library as a file tree and read each article rendered (code highlighting, tables, admonitions, images), because reading the docs is the point.
+    - Acceptance: the tree mirrors the repo paths; an article renders headings, code blocks with language, tables and images.
+- **[BRW-02]** As a user, I want relative links and images between articles to work inside ExactDocs, because docs written for GitHub link to each other with relative paths.
+    - Acceptance: `[setup](../setup.md#docker)` opens the imported article at that heading; links to files outside the selection open on the git host.
+- **[BRW-03]** As a user, I want a "view on GitHub/Bitbucket/..." link on every article with the exact commit, because I sometimes need the surrounding code or history.
     - Acceptance: the link points at the file at the imported commit SHA, not at the branch head.
-- **[BRW-04]** As a user, I want to switch between imported versions of the same source (e.g. `v1.3` and `v1.4`), because I work on projects pinned to different versions.
-    - Acceptance: a version picker lists imported refs; switching keeps me on the same file path if it exists in the other version.
-- **[BRW-05]** As a user, I want a home page listing my sources with their version, file count and last sync time, because I need to see at a glance what is available and how fresh it is.
-    - Acceptance: each source shows URL, imported refs, commit SHAs, file count and last sync status.
+- **[BRW-04]** As a user, I want to switch between imported versions of a library (e.g. `v1.3` and `v1.4`), because I work on projects pinned to different versions.
+    - Acceptance: a version picker lists imported refs; switching keeps the same article path when it exists in the other version.
+- **[BRW-05]** As a user, I want a home page listing my libraries with versions, article count, tags and last sync time, because I need to see what is available and how fresh it is.
+    - Acceptance: each library shows URL, refs, commit SHAs, article count and last sync status.
 
-### 4. Search
+### 5. Search (BM25)
 
-- **[SRCH-01]** As a user, I want full-text search across a source and version, with results showing the file, heading and a highlighted snippet, because I often know a term but not where it is documented.
-    - Acceptance: exact identifiers (`useActionState`, `--no-verify`) rank the defining section first; results link to the section anchor.
-- **[SRCH-02]** As a user, I want search to stay within the version I selected, because an answer from another version is worse than none.
+- **[RET-01]** As a user, I want full-text BM25 search across a library version, with results showing article, heading and a highlighted snippet, because I often know a term but not where it is documented.
+    - Acceptance: works with nothing configured; exact identifiers (`useActionState`, `--no-verify`) rank the defining section first; results link to the section anchor.
+- **[RET-02]** As a user, I want search to stay within the library version I selected, because an answer from another version is worse than none.
     - Acceptance: searching `v1.3` never returns text that exists only in `v1.4`; "no results in v1.3" is shown even when other versions match.
 
-### 5. Use it from my AI agent (MCP)
+### 6. Use it from an AI agent (MCP)
 
-- **[MCP-01]** As an AI agent, I want to list available sources and their imported versions, because I must know what documentation exists before reading it.
-    - Acceptance: `list_sources` returns name, git URL, refs and commit SHA per version.
-- **[MCP-02]** As an AI agent, I want to list a source's file tree and read a whole file or one section by heading, because I navigate docs like a human: overview first, then the relevant page.
-    - Acceptance: `list_files(source, version)` and `read_doc(source, version, path, heading?)` return the original Markdown verbatim with its path and commit SHA.
-- **[MCP-03]** As an AI agent, I want to search one source and version and get verbatim sections with their location, because I quote documentation, I don't paraphrase it.
-    - Acceptance: `search_docs(source, version, query)` returns sections with path, heading path, commit SHA and a link; a version with no match returns an explicit empty result, never another version.
-- **[MCP-04]** As a user, I want a ready-to-paste MCP config for my agent, because hand-written JSON is where setups break.
-    - Acceptance: `exactdocs config --client claude|cursor|vscode` prints a working snippet with URL and token; stdio mode (`uvx exactdocs serve --stdio`) needs no token.
-- **[MCP-05]** As a user, I want agent-facing text to be treated as untrusted (invisible Unicode stripped, results marked as external content), because a doc file can contain instructions aimed at my agent.
+- **[MCP-01]** As an AI agent, I want to list libraries and their imported versions (with tags in use), because I must know what documentation exists before reading it.
+    - Acceptance: `list_libraries` returns name, git URL, refs, commit SHA per version and the library's tags.
+- **[MCP-02]** As an AI agent, I want to list a library version's articles as a tree (optionally filtered by path prefix or tags), because I navigate docs like a human: overview first, then the relevant article.
+    - Acceptance: `list_articles(library, version, path_prefix?, tags?)` returns paths, titles, tags and sizes.
+- **[MCP-03]** As an AI agent, I want to read a full article by its exact library, version and path, because once I know where the answer is, I want the whole article, verbatim.
+    - Acceptance: `read_article(library, version, path)` returns the original Markdown with commit SHA and source link; an unknown path returns an explicit error listing close matches.
+- **[MCP-04]** As an AI agent, I want every search result to carry its location and its neighbors (previous and next chunk IDs, article path, chunk position and count), and to be able to fetch a neighbor chunk or the whole parent article, because a matching section often needs the one before or after it to make sense.
+    - Acceptance: `search_docs` results include `chunk_id`, `article_path`, `heading_path`, `position`/`total`, `prev_chunk_id`, `next_chunk_id`, commit SHA and link; `read_chunk(chunk_id)` returns a neighbor verbatim; `read_article` works with the result's path.
+- **[MCP-05]** As an AI agent, I want `search_docs(library, version, query, tags?)` to use the best retrieval mode available and say which one answered, because I should get the best results the instance can give, and know how they were found.
+    - Acceptance: results include `retrieval_mode` (`bm25`, `hybrid`, `hybrid_hyde`, `agentic`); a version with no match returns an explicit empty result, never another version.
+- **[MCP-06]** As a user, I want a ready-to-paste MCP config for my agent, because hand-written JSON is where setups break.
+    - Acceptance: `exactdocs config --client claude|cursor|vscode` prints a working snippet; stdio mode (`uvx exactdocs serve --stdio`) needs no token.
+- **[MCP-07]** As a user, I want agent-facing text treated as untrusted (invisible Unicode stripped, results marked as external content), because a doc file can contain instructions aimed at my agent.
     - Acceptance: every MCP result is wrapped in an external-content marker; zero-width and bidi control characters are removed on import.
 
-### 6. Keep it in sync
+### 7. Keep it in sync
 
-- **[SYNC-01]** As a user, I want to re-sync a source with one click (or `exactdocs sync <source>`), because docs change and I want the latest version of a branch.
-    - Acceptance: a branch source re-imports only when the branch head moved; unchanged files are not re-processed.
-- **[SYNC-02]** As a user, I want new tags matching a pattern (e.g. `v*`) to be imported automatically as new versions, because I don't want to add every release by hand.
-    - Acceptance: a scheduled check finds new matching tags and imports them; older versions stay available until removed.
-- **[SYNC-03]** As a user, I want to remove a version or a whole source, because I don't want stale docs to be found by me or my agent.
+- **[SYNC-01]** As a user, I want to re-sync a library with one click (or `exactdocs sync <library>`), because docs change and I want the latest state of a branch.
+    - Acceptance: a branch re-imports only when its head moved; unchanged articles are not re-chunked or re-embedded.
+- **[SYNC-02]** As a user, I want new tags matching a pattern (e.g. `v*`) imported automatically as new versions, because I don't want to add every release by hand.
+    - Acceptance: a scheduled check imports new matching tags; older versions stay until removed.
+- **[SYNC-03]** As a user, I want to remove a version or a whole library, because I don't want stale docs found by me or my agent.
     - Acceptance: after removal nothing from it appears in browse, search or MCP results.
 
-### 7. Run it
+### 8. Run it
 
-- **[RUN-01]** As a user, I want to start ExactDocs with one command (`uvx exactdocs serve` or one `docker run`) and add my first repo in under five minutes, because I won't adopt a tool that takes an afternoon to set up.
-    - Acceptance: from a clean machine, the first repo is browsable and searchable within five minutes; SQLite needs no setup.
-- **[RUN-02]** As a user, I want everything to stay on my machine or server, because my docs and queries are private.
-    - Acceptance: no outbound connections except to the git hosts I added (and telemetry only if I enable it).
+- **[RUN-01]** As a user, I want to start ExactDocs with one command (`uvx exactdocs serve` or one `docker run`) and browse my first library within five minutes, because I won't adopt a tool that takes an afternoon to set up.
+    - Acceptance: from a clean machine with no models and no API keys, the first library is browsable and BM25-searchable within five minutes on SQLite.
+- **[RUN-02]** As a user, I want the package and image to stay small, with no bundled ML models or LLMs, because many machines will only ever use BM25 and should not pay for gigabytes of weights.
+    - Acceptance: no model weights in the wheel or image; importing ExactDocs does not import ML frameworks unless an embedding/reranker/LLM provider is configured.
+- **[RUN-03]** As a user, I want everything to stay on my machine or server, because my docs and queries are private.
+    - Acceptance: no outbound connections except to the git hosts and the model endpoints I configured.
 
 ---
 
-## Next: teams
+## Next: AI-powered retrieval (all optional)
 
-- **[TEAM-01]** As an admin, I want one shared instance on PostgreSQL with user accounts and API tokens, because the whole team should browse the same imported docs.
-- **[TEAM-02]** As an admin, I want sources grouped into namespaces and tokens scoped to them, because internal docs of one team should not be visible to everyone.
-    - Acceptance: a token never sees sources outside its namespaces, not even their names.
-- **[TEAM-03]** As an admin, I want to declare sources in a `exactdocs.sources.yaml` kept in our own repo (URL, ref or tag pattern, paths) and apply it with a dry-run diff, because the list of imported docs should go through code review.
-- **[TEAM-04]** As a user, I want a push to the docs repository (webhook from GitHub/Bitbucket/GitLab) to trigger a sync, because teammates should read the merged docs, not last night's.
-- **[TEAM-05]** As an admin, I want sign-in through our identity provider (OIDC) or a trusted proxy, because we don't want another set of passwords.
-- **[TEAM-06]** As an admin, I want health/readiness endpoints, backups and upgrades that don't require re-importing, because the instance becomes something the team depends on.
+- **[RET-03]** As an admin, I want to configure an embedding model endpoint (OpenAI-compatible API, Ollama, TEI, a local server) with its key, base URL, dimensions and batch size, because I want semantic search with the model of my choice.
+    - Acceptance: with an embedding model configured, search becomes hybrid (BM25 + vectors, fused with RRF) and existing versions are embedded in the background; until they are, BM25 keeps answering; changing the model triggers a re-embed instead of mixing vectors.
+- **[RET-04]** As an admin, I want to configure a reranker (Cohere-compatible, Jina, TEI or a local cross-encoder endpoint), because reranking the top results noticeably improves precision.
+    - Acceptance: when configured, the top N candidates of BM25 or hybrid are reranked; a reranker error or timeout falls back to the unreranked order and is logged, never fails the search.
+- **[RET-05]** As an admin, I want to configure an LLM (endpoint, API key, model, optional HTTP proxy, timeouts, extra headers and parameters), because HyDE and agentic retrieval need one, and companies route LLM traffic through their own gateways.
+    - Acceptance: any OpenAI-compatible endpoint works; the key is stored as a secret; with an embedding model also configured, hybrid search uses HyDE (the LLM's hypothetical answer is embedded for the vector half) by default.
+- **[RET-06]** As a user or AI agent, I want an optional agentic retrieval mode where a pydantic-ai agent browses the library tree (list articles, read headings, open articles) until it finds the articles that answer the question, and returns them with a justification, because some questions need reasoning over the structure, not keyword or vector similarity.
+    - Acceptance: enabled per instance or per call (`mode="agentic"`); returns articles/sections with a one-paragraph justification each and the path the agent explored; step and token limits are enforced; it uses the same read tools as MCP, so it can only see what the caller may see.
+- **[RET-07]** As ExactDocs, I want to cache agentic retrieval results and reuse them for similar later questions (hybrid search over previous questions), because agentic retrieval is slow and expensive and the same questions repeat.
+    - Acceptance: a question similar enough to a cached one (threshold configurable) for the same library version returns the cached articles with `cache_hit: true`; cache entries are invalidated when that version is re-synced.
+- **[RET-08]** As an admin, I want to see and override the retrieval pipeline per library (e.g. force BM25 for a tiny library, agentic for a complex one), because one size does not fit every documentation set.
+    - Acceptance: the effective pipeline per library is shown in the UI; overrides are validated against what is configured.
+
+## Next: richer agent experience
+
+- **[MCP-08]** As a user of Claude or ChatGPT, I want the MCP server to return rendered UI (FastMCP Apps / [Generative UI](https://gofastmcp.com/apps/generative)), e.g. an article rendered with its headings and code, or a result list with links, because reading docs inside the chat is better than reading raw Markdown.
+    - Acceptance: hosts that support MCP Apps render articles and search results as UI; hosts that don't get the plain text result unchanged.
+
+## Next: teams, sharing and roles
+
+- **[ACL-01]** As an admin, I want user accounts with sign-in through OIDC/OAuth (or local accounts), and groups taken from the identity provider, because access should follow our existing identity setup.
+    - Acceptance: users sign in via OIDC; IdP group claims map to ExactDocs groups on every sign-in.
+- **[ACL-02]** As a library creator, I want to share a library with users and groups in one of four roles, because docs belong to teams, not to whoever imported them:
+    - **viewer**: sees the library in the UI and in MCP (search, browse, read);
+    - **contributor**: viewer + edits the library (tags, paths, chunking, re-sync, versions);
+    - **admin**: contributor + deletes the library and manages who has access (except the creator);
+    - **creator**: the owner; admin + can remove admins and transfer ownership.
+    - Acceptance: roles can be granted to a user or a group; the effective role is the highest one granted; every MCP tool and UI action checks it.
+- **[ACL-03]** As a user, I want my MCP token to see exactly the libraries I may view, because my agent should have my access, not more.
+    - Acceptance: tokens act as their user (optionally narrowed to chosen libraries); a library without view access is invisible, not even its name appears in `list_libraries` or errors.
+- **[ACL-04]** As an admin, I want an audit log of access changes and destructive actions, because we need to know who shared or deleted what.
+    - Acceptance: grants, revocations, deletions and ownership transfers are recorded with actor and time.
+- **[TEAM-01]** As an admin, I want a shared instance on PostgreSQL, because the whole team should work on the same libraries.
+- **[TEAM-02]** As an admin, I want to declare libraries in `exactdocs.sources.yaml` kept in our own repo (URL, ref or tag pattern, paths, tags, chunking) and apply it with a dry-run diff, because the set of imported docs should go through code review.
+- **[TEAM-03]** As a user, I want a push to the docs repository (webhook from GitHub/Bitbucket/GitLab) to trigger a sync, because teammates should read merged docs, not last night's.
+
+## Next: operations
+
+- **[OPS-01]** As an admin, I want an optional OpenTelemetry export (OTLP to a collector) and a Prometheus scrape endpoint for metrics, because I monitor ExactDocs with the same stack as everything else.
+    - Acceptance: off by default; when on, it exports request, search (per retrieval mode and stage), import and sync metrics and traces; query text is excluded unless explicitly enabled.
+- **[OPS-02]** As an admin, I want health/readiness endpoints, backups and upgrades that don't require re-importing, because the instance becomes something the team depends on.
 
 ## Later: beyond Markdown in git
 
@@ -126,10 +202,9 @@ These are good ideas that do not belong to the main loop yet.
 | Idea | Why later |
 |---|---|
 | Import from `llms.txt` / `llms-full.txt` | A second source type; the git importer comes first |
-| Crawl documentation websites (with a domain allowlist and SSRF protection) | Needs a crawler, rate limiting and HTML-to-Markdown conversion |
+| Crawl documentation websites (domain allowlist, SSRF protection) | Needs a crawler, rate limiting and HTML-to-Markdown conversion |
 | Resolve library docs from package registries (PyPI, npm) and lockfiles | Requires a curated registry that maps packages to repos and paths |
-| Semantic (vector) search and reranking next to full-text search | Full-text is enough to prove the loop; add vectors when evals show the gain |
 | Prebuilt, signed index snapshots and a public registry of popular libraries | Depends on the registry and a stable index format |
 | Context7-compatible tool aliases | Useful for migration once the MCP tools are stable |
-| Accuracy eval suite in CI (recall@k, wrong-version rate) | Starts once search quality, not import, is the bottleneck |
+| Accuracy eval suite in CI (recall@k, wrong-version rate) per retrieval mode | Starts once retrieval modes exist and need comparing |
 | Other formats: reStructuredText, AsciiDoc, Jupyter notebooks | Markdown covers most repositories |
