@@ -38,7 +38,7 @@ Open <http://localhost:3000> and create the first account (or run `exactdocs adm
 Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
 ```bash
-exactdocs token create --name cli          # once; or log in with `exactdocs login`
+exactdocs login http://localhost:3000       # stores the server URL and a new API token
 exactdocs add https://github.com/acme/payments --ref v1.4.0 --path docs/ --path README.md
 exactdocs add git@bitbucket.org:acme/platform.git --ref main --path "docs/**/*.md"
 ```
@@ -104,12 +104,12 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | Variable | Default | Description |
 |---|---|---|
 | `EXACTDOCS_DATABASE_URL` | `sqlite:///data/exactdocs.db` | SQLite path or PostgreSQL URL |
-| `EXACTDOCS_AUTH_MODE` | `local` | `local`, `oidc` or `proxy` (trusted headers) |
+| `EXACTDOCS_AUTH_MODE` | `local` | `local` (single admin account) or `oidc` (teams) |
 | `EXACTDOCS_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` | – | Required for `oidc` |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |
 | `EXACTDOCS_RERANKER_URL`, `_MODEL`, `_API_KEY` | – | Optional reranker endpoint (Cohere-compatible, Jina, TEI) |
 | `EXACTDOCS_LLM_URL`, `_MODEL`, `_API_KEY`, `_PROXY` | – | Optional OpenAI-compatible LLM; enables HyDE and agentic retrieval |
-| `EXACTDOCS_RETRIEVAL_MODE` | `auto` | `auto` (best available pipeline) or `agentic` |
+| `EXACTDOCS_RETRIEVAL_MODE` | `auto` | `auto` (best available pipeline), `bm25`, `hybrid`, `hybrid_hyde` or `agentic` |
 | `EXACTDOCS_TELEMETRY` | `off` | `off` or `otlp` (OpenTelemetry export) |
 | `EXACTDOCS_METRICS` | `off` | `on` exposes a Prometheus endpoint at `/metrics` |
 
@@ -148,7 +148,7 @@ services:
       EXACTDOCS_OIDC_CLIENT_SECRET: ${OIDC_SECRET}
     depends_on: [db]
   db:
-    image: pgvector/pgvector:pg18
+    image: paradedb/paradedb:latest   # PostgreSQL with pg_search (BM25) and pgvector
     environment:
       POSTGRES_USER: exactdocs
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -218,13 +218,20 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports & ada
 
 ## Roadmap
 
-**MVP: the main loop, single user, no external services**
+**MVP-1: the main loop, one admin user, no external services**
 
-- [ ] Add a library from any git URL (public or private), choose ref and paths, preview, import
-- [ ] Header-based chunking (Chonkie), tags, BM25 search pinned to a version
+- [ ] First-run admin account, API tokens, CLI as a REST client
+- [ ] Add a library from any git URL (public or private), choose ref and paths, import
+- [ ] Header-based chunking (Chonkie), front-matter and path-rule tags, BM25 search pinned to a version
 - [ ] Web UI: library list, article tree, rendered Markdown, version switcher, search
-- [ ] MCP tools, including context7-compatible `resolve-library-id` and `query-docs`; CLI and REST equivalents
-- [ ] Re-sync, auto-import of new tags, one-command Docker / `uvx` start
+- [ ] MCP tools, including context7-compatible `resolve-library-id` and `query-docs`
+- [ ] Re-sync, removal, graceful sync failures, one-command Docker / `uvx` start
+
+**MVP-2: polish**
+
+- [ ] Import preview, `context7.json`, custom chunking, manual tags, images, relative links
+- [ ] Search across all libraries, auto-import of new tags, resumable imports, upgrades without re-import
+- [ ] `ctx7`-style CLI commands, REST API equivalents, `exactdocs config --client ...`
 
 **Next**
 

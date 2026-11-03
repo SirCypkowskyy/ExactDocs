@@ -23,18 +23,34 @@ Written as **"As _actor_, I want _capability_, because _reason_."** with short a
 | **Library** | One imported documentation set: a git repository + the selected paths. Has an ID, a title and a description. |
 | **Library ID** | Always exactly two segments, context7-style: `/owner/repo`. Defaults to the repository's owner (top-level group for nested GitLab groups) and name; must be unique, so a collision (e.g. the same `acme/payments` on GitHub and Bitbucket) asks the user to choose another ID. |
 | **Version** | A library imported at one git ref (tag, branch or commit), resolved to a commit SHA. Addressed as the library ID followed by the ref: `/acme/payments/v1.4.0`, `/acme/payments/release/1.4` (everything after the two ID segments is the ref). |
-| **Default version** | What `/owner/repo` without a ref means. Set per library; initially the highest imported semver tag, or the default branch when there are no tags. Every response states the version it used. |
+| **Default version** | What `/owner/repo` without a ref means: automatically the highest imported **stable** semver tag (pre-releases such as `-rc`, `-beta` excluded), or the default branch when there are no tags; it moves when a higher stable tag is imported, unless the owner pinned a version (LIB-10). Every response states the version it used. |
 | **Article** | One Markdown file of a library version, addressed by its path in the repo. |
-| **Chunk** | A section of an article, by default one heading and its content. |
+| **Chunk** | A section of an article, by default one heading and its content. A chunk ID is scoped to one version (`read_chunk` and neighbors are never ambiguous); identical content is stored once underneath. |
 | **Verbatim** | The original Markdown, except that invisible control characters (zero-width, bidi) are removed on import. |
 
 Naming: the context7-compatible MCP tools keep context7's names and arguments
 (`resolve-library-id`, `query-docs`, `libraryId`); ExactDocs' own tools use snake_case, and their
 `library` argument is the library ID.
 
-**Milestones:** **MVP** completes the main loop for one user with zero external services;
-**Next** adds optional AI-powered retrieval, team access and integrations; **Later** adds other
-sources and extras.
+**Milestones:**
+
+- **MVP-1**: the main loop working end to end for one admin user, with zero external services.
+- **MVP-2**: convenience and polish on top of the loop. Stories (or parts of acceptance
+  criteria) marked *MVP-2* below.
+- **Next**: optional AI-powered retrieval, teams and roles, integrations.
+- **Later**: other sources and extras.
+
+## Decisions
+
+| Topic | Decision |
+|---|---|
+| BM25 engine | SQLite **FTS5** locally, **ParadeDB** (`pg_search`) on PostgreSQL, behind one search port, with a shared ranking test suite and a custom tokenizer for identifiers (SRCH-01) |
+| Version storage | Articles and chunks are **deduplicated by git blob SHA**; a version is a manifest pointing at them, so many tags and re-syncs are cheap |
+| Web UI auth | Server **session cookie** (HttpOnly); API tokens are for MCP, REST and the CLI |
+| Users and tenancy | MVP: a **single admin** account; more users arrive with roles (Next). **One tenant** per instance; library IDs are globally unique, like context7's |
+| Background jobs | MVP-1: an **in-process worker** with a job table in the database; DBOS comes with resumable imports (MVP-2) |
+| stdio MCP | A **standalone, in-process** server on the local database, for local use when no HTTP server is running on the same data; works before any account exists |
+| Refs containing `/` | Part of the path in MCP and context7 IDs (`/acme/payments/release/1.4`); a single URL-encoded segment in REST and UI routes |
 
 ## Actors
 
@@ -69,33 +85,40 @@ instance's setting, else the best available pipeline from the table.
 
 ## MVP: the main loop
 
+Stories without a marker are **MVP-1**; *(MVP-2)* marks whole stories, and *MVP-2:* marks the
+part of an acceptance criterion that can wait.
+
 ### First run and access
 
 - **[AUTH-01]** As a user starting ExactDocs for the first time, I want to create the first (admin) account in the web UI or with `exactdocs admin create`, because even a single-user instance on a network port must not be open to anyone.
     - Acceptance: until an account exists, the UI shows only the setup page and the API refuses everything else; local accounts use hashed passwords.
 - **[AUTH-02]** As a user, I want to create, list and revoke API tokens in the UI and with `exactdocs token create|list|revoke`, because my agent (MCP over HTTP), the CLI and REST clients need credentials.
     - Acceptance: a token is shown once, stored hashed, can have an expiry, and is accepted by MCP, REST and the CLI; stdio MCP (`exactdocs serve --stdio`) needs no token.
-- **[CLI-01]** As a user, I want the CLI to work as a client of the server's REST API (server URL and token from flags, env or a config file), because the CLI should behave exactly like the UI and work against a remote instance too.
-    - Acceptance: every CLI command except `serve` and `admin create` goes through the REST API; a CLI action and the same UI action produce identical results.
+- **[CLI-01]** As a user, I want the CLI to work as a client of the server's REST API (server URL and token from flags, env, or a config file written by `exactdocs login`), because the CLI should behave exactly like the UI and work against a remote instance too.
+    - Acceptance: every command goes through the REST API except the local ones: `serve`, `admin create`, `reindex`, `backup` and `restore`; a CLI action and the same UI action produce identical results.
 
 ### Add a library
 
 - **[LIB-01]** As a user, I want to add a library by pasting a git URL (GitHub, Bitbucket, GitLab, Gitea or any HTTPS/SSH git server), because my documentation lives in repositories, not on one hosting platform.
     - Acceptance: `https://github.com/org/repo`, `https://bitbucket.org/org/repo`, `git@host:org/repo.git` and a self-hosted HTTPS URL are accepted; the URL is checked (reachable, a git repo) before anything is saved; the default library ID follows the Terms rules.
 - **[LIB-02]** As a user, I want to choose which docs to import with a folder or glob patterns (`docs/`, `**/*.md`, `README.md`, exclusions like `docs/archive/**`), because a repo holds far more than documentation.
-    - Acceptance: matching `.md` / `.mdx` files are imported; exclusions win over inclusions; an empty selection means `**/*.md`; images referenced by imported articles are imported too (size-capped) so they render without access to the git host.
-- **[LIB-03]** As a user, I want to preview the matching file tree (count and size) before importing, because I want to fix a wrong pattern before waiting for an import.
+    - Acceptance: matching `.md` / `.mdx` files are imported; exclusions win over inclusions; an empty selection means `**/*.md`. *MVP-2:* images referenced by imported articles are imported too (size-capped) so they render without access to the git host.
+- **[LIB-03]** *(MVP-2)* As a user, I want to preview the matching file tree (count and size) before importing, because I want to fix a wrong pattern before waiting for an import.
     - Acceptance: after entering URL, ref and patterns, the UI and `exactdocs add --dry-run` list the files that would be imported, without storing anything.
 - **[LIB-04]** As a user, I want to pick the git ref to import (tag, branch or commit), because docs must match the version of the code I work with.
     - Acceptance: without a ref, the repository's default branch is used; the ref is resolved to a commit SHA stored with every article; the UI offers tags and branches; a commit version can also be addressed by its short SHA. A branch version keeps its ID while its commit moves forward on sync (see IMP-05).
 - **[LIB-05]** As a user, I want to import from private repositories with a personal access token or SSH deploy key, because most internal docs are not public.
     - Acceptance: credentials are encrypted with a key from `EXACTDOCS_SECRET_KEY` (generated and stored in the data volume on first run if unset), never shown after saving, never logged, and sent only to that library's host; losing the key means re-entering credentials, not losing docs.
-- **[LIB-06]** As a user, I want ExactDocs to honor a `context7.json` in the repository (`projectTitle`, `description`, `folders`, `excludeFolders`, `excludeFiles`, `rules`, `previousVersions`), because many projects already describe their docs for context7 and I shouldn't repeat that.
+- **[LIB-06]** *(MVP-2)* As a user, I want ExactDocs to honor a `context7.json` in the repository (`projectTitle`, `description`, `folders`, `excludeFolders`, `excludeFiles`, `rules`, `previousVersions`), because many projects already describe their docs for context7 and I shouldn't repeat that.
     - Acceptance: when the file exists it pre-fills title, description and path selection (all still editable); `previousVersions` are offered for import; `rules` are stored and returned by `query-docs`.
 - **[LIB-07]** As a user, I want each library to have a title and description, because agents choose libraries by them in `resolve-library-id`.
     - Acceptance: defaults come from `context7.json`, else the README's first heading and paragraph, else the repo name; both are editable.
 - **[LIB-08]** As a user, I want the same from the CLI (`exactdocs add <git-url> --id /acme/payments --ref v1.4.0 --path docs/`), because I script my setup.
     - Acceptance: `exactdocs libraries` lists what the UI shows (CLI-01).
+- **[LIB-09]** As a user, I want to edit a library's paths, ref, tag rules or chunking settings, because my first selection is rarely perfect.
+    - Acceptance: saving changes re-imports (or only re-chunks, when only chunking changed) in the background; the previous state is served until the atomic swap (IMP-05).
+- **[LIB-10]** As a library owner, I want to pin the default version, because the newest tag is not always the one my team uses.
+    - Acceptance: a pinned default stays until unpinned; unpinned, it follows the *Default version* rule; the UI and `list_libraries` show whether it is pinned.
 
 ### Import and chunking
 
@@ -103,19 +126,19 @@ instance's setting, else the best available pipeline from the table.
     - Acceptance: importing `docs/` from a large repo transfers only that ref's objects; no full history is cloned.
 - **[IMP-02]** As ExactDocs, I want to chunk each article by its Markdown headings (document-structure chunking), keeping each chunk's heading path, because header-based chunks are almost always the best retrieval unit for documentation.
     - Acceptance: by default one chunk = one heading and its content, built with [Chonkie](https://github.com/chonkie-inc/chonkie)'s Markdown recipe; code blocks and tables are never split; every chunk stores article path, heading path (`Guide > Install > Docker`) and position; chunk IDs stay the same while their content is unchanged.
-- **[IMP-03]** As a user, I want to customize chunking per library (split level such as `h2` or `h3`, minimum/maximum chunk size with merging of tiny sections, or another Chonkie chunker), because some docs have huge sections and others one-line headings.
+- **[IMP-03]** *(MVP-2)* As a user, I want to customize chunking per library (split level such as `h2` or `h3`, minimum/maximum chunk size with merging of tiny sections, or another Chonkie chunker), because some docs have huge sections and others one-line headings.
     - Acceptance: chunking settings are part of the library's configuration; changing them re-chunks without re-cloning; defaults apply when nothing is set.
 - **[IMP-04]** As ExactDocs, I want to read front matter and MDX safely, because many doc sites use both.
     - Acceptance: an article's title is front-matter `title`, else its first H1, else the file name; front matter is parsed (title, tags, description), hidden in the rendered view and returned as metadata by `read_article`; MDX is treated as Markdown, and JSX components are shown as inert code, never executed.
 - **[IMP-05]** As ExactDocs, I want an import to be all-or-nothing per version and resumable after a restart, because readers must never see half a version, and a crash must not restart a large import from zero.
-    - Acceptance: while (re)importing, the previous state keeps being served and is swapped atomically when done; a killed worker resumes and finishes with no duplicates.
+    - Acceptance: while (re)importing, the previous state keeps being served and is swapped atomically when done; an interrupted import restarts cleanly. *MVP-2:* a killed worker resumes where it stopped (durable jobs with DBOS) and finishes with no duplicates.
 - **[IMP-06]** As a user, I want to see import progress and per-file problems, because I need to know whether everything I selected made it in.
     - Acceptance: the UI shows files done / total and lists skipped files with the reason (too large, binary, undecodable: non-UTF-8 files are decoded by detected encoding or skipped); one bad file does not fail the import.
 
 ### Tags
 
 - **[TAG-01]** As a user, I want articles to be tagged, from their front matter (`tags: [api, auth]`) automatically and by hand in the UI, because I want to slice documentation by topic across folders.
-    - Acceptance: front-matter tags are imported; manual tags belong to the library (all versions) and are keyed by article path, following renames detected by git; tags are shown on the article and in the tree.
+    - Acceptance: front-matter tags are imported and shown on the article and in the tree. *MVP-2:* manual tags in the UI; they belong to the library (all versions) and are keyed by article path, following renames detected by git.
 - **[TAG-02]** As a user, I want to assign tags by path rules in the library configuration (`docs/api/** → api`), because most repos have no front matter but a meaningful folder layout.
     - Acceptance: rules apply on every import; tags from front matter, rules and manual edits combine.
 - **[TAG-03]** As a user or AI agent, I want to filter browsing and search by tags (any of / all of), because "only the API reference" or "only ADRs" is a common need.
@@ -124,23 +147,23 @@ instance's setting, else the best available pipeline from the table.
 ### Browse
 
 - **[BRW-01]** As a user, I want to browse a library as a file tree and read each article rendered (code highlighting, tables, admonitions, images), because reading the docs is the point.
-    - Acceptance: the tree mirrors the repo paths and shows article titles; images come from the imported copies.
-- **[BRW-02]** As a user, I want relative links and images between articles to work inside ExactDocs, because docs written for GitHub link to each other with relative paths.
+    - Acceptance: the tree mirrors the repo paths and shows article titles; both admonition syntaxes render (MkDocs `!!! note` and GitHub `> [!NOTE]`); images come from the imported copies (MVP-2).
+- **[BRW-02]** *(MVP-2)* As a user, I want relative links and images between articles to work inside ExactDocs, because docs written for GitHub link to each other with relative paths.
     - Acceptance: `[setup](../setup.md#docker)` opens the imported article at that heading; links to files outside the selection open on the git host.
 - **[BRW-03]** As a user, I want a "view on GitHub/Bitbucket/..." link on every article with the exact commit, because I sometimes need the surrounding code or history.
     - Acceptance: the link points at the file at the imported commit SHA, not at the branch head.
 - **[BRW-04]** As a user, I want to switch between imported versions of a library (e.g. `v1.3` and `v1.4`), because I work on projects pinned to different versions.
-    - Acceptance: a version picker lists imported refs and marks the default version; switching keeps the same article, following a git-detected rename, else falls back to the version's root.
+    - Acceptance: a version picker lists imported refs and marks the default version; switching keeps the same article path when it exists, else falls back to the version's root. *MVP-2:* follows renames detected by git.
 - **[BRW-05]** As a user, I want a home page listing my libraries with title, versions, article count, tags, last sync time and sync errors, because I need to see what is available and how fresh it is.
     - Acceptance: each library shows URL, refs, commit SHAs, article count and last sync status with the error if it failed.
 
 ### Search
 
 - **[SRCH-01]** As a user, I want full-text BM25 search within a library version, with results showing article, heading and a highlighted snippet, because I often know a term but not where it is documented.
-    - Acceptance: works with nothing configured; on the acceptance fixture repo, exact identifiers (e.g. a function name, a CLI flag) return their defining section first; results link to the section anchor.
+    - Acceptance: works with nothing configured; identifiers such as `snake_case`, `camelCase`, `--flag` and `pkg.mod.fn` are indexed both whole and split into parts, on SQLite and PostgreSQL alike; on the acceptance fixture repo, exact identifiers return their defining section first; results link to the section anchor.
 - **[SRCH-02]** As a user, I want search to stay within the version I selected, because an answer from another version is worse than none.
     - Acceptance: searching `v1.3` never returns text that exists only in `v1.4`; "no results in v1.3" is shown even when other versions match.
-- **[SRCH-03]** As a user, I want one search box across all my libraries (each at its default version) with a library facet, because I don't always know which library documents something.
+- **[SRCH-03]** *(MVP-2)* As a user, I want one search box across all my libraries (each at its default version) with a library facet, because I don't always know which library documents something.
     - Acceptance: results are grouped or filterable by library; selecting a library narrows the search to it.
 
 ### Use it from an AI agent (MCP)
@@ -152,13 +175,13 @@ instance's setting, else the best available pipeline from the table.
 - **[MCP-03]** As an AI agent, I want to read a full article by its exact library, version and path, because once I know where the answer is, I want the whole article.
     - Acceptance: `read_article(library, version?, path)` returns the verbatim Markdown, front-matter metadata, commit SHA and source link; an unknown path returns an error listing close matches.
 - **[MCP-04]** As an AI agent, I want every search result to carry its location and its neighbors, and to fetch a neighbor chunk or the whole parent article, because a matching section often needs the one before or after it.
-    - Acceptance: results include `chunk_id`, `article_path`, `heading_path`, `position`/`total`, `prev_chunk_id`, `next_chunk_id`, commit SHA and link; `read_chunk(chunk_id)` returns a chunk verbatim; a `chunk_id` from before a re-sync returns an explicit `stale_chunk` error with the new location when one exists.
+    - Acceptance: results include `chunk_id`, `article_path`, `heading_path`, `position`/`total`, `prev_chunk_id`, `next_chunk_id`, commit SHA and link; `read_chunk(chunk_id)` returns a chunk verbatim; a `chunk_id` from before a re-sync returns an explicit `stale_chunk` error. *MVP-2:* the error includes the new location when one exists.
 - **[MCP-05]** As an AI agent, I want `search_docs(library, version?, query, tags?, mode?)` to use the best available pipeline (or the mode I ask for) and say how results were found, because I should get the best results the instance can give, and know how.
     - Acceptance: one result shape for every mode: chunks as in MCP-04, plus `retrieval_mode` (`bm25`, `hybrid`, `hybrid_hyde`, `agentic`) and `reranked: true|false`; agentic results also carry `justification` and `explored_path`; a version with no match returns an explicit empty result, never another version.
-- **[MCP-06]** As a user, I want a ready-to-paste MCP config for my agent, because hand-written JSON is where setups break.
+- **[MCP-06]** *(MVP-2)* As a user, I want a ready-to-paste MCP config for my agent, because hand-written JSON is where setups break.
     - Acceptance: `exactdocs config --client claude|cursor|vscode` prints a working snippet with the URL and a newly created token (AUTH-02).
 - **[MCP-07]** As a user, I want agent-facing text treated as untrusted, because a doc file can contain instructions aimed at my agent.
-    - Acceptance: every MCP result is wrapped in an external-content marker; invisible control characters are removed on import (see *Verbatim*).
+    - Acceptance: every MCP result is wrapped in an external-content marker, outside the payload the context7-compatible tools return (so C7 replay tests are unaffected); invisible control characters are removed on import (see *Verbatim*).
 
 ### context7 parity
 
@@ -166,19 +189,19 @@ ExactDocs offers **at least the same MCP tools, arguments and IDs as context7**,
 replace it by changing only the server URL. The ExactDocs tools above come on top.
 
 - **[C7-01]** As an AI agent, I want `resolve-library-id(libraryName, query)` to turn a library name into a library ID, ranked by relevance to my task, because that is the first call every context7-style prompt makes.
-    - Acceptance: same tool name and arguments as context7; returns matching libraries with ID, title, description, versions, article and chunk counts; `query` influences ranking; a CI contract test checks the name and argument schema against context7's.
+    - Acceptance: same tool name and arguments as context7; returns matching libraries with ID, title, description, versions, article and chunk counts; `query` influences ranking; a CI contract test checks the name and argument schema against a vendored copy of context7's schema, pinned to a context7 version and updated deliberately.
 - **[C7-02]** As an AI agent, I want `query-docs(libraryId, query, language?)` to return the relevant documentation for a library ID, because that is the second call every context7-style prompt makes.
-    - Acceptance: same tool name and arguments as context7; `/owner/repo` uses the default version and `/owner/repo/<ref>` exactly that version (never another one); `language` ranks code examples in that language first; uses the library's or instance's retrieval mode; includes the library's `rules`; the response stays within a configurable size budget (default ~10k tokens); a recorded context7 session (both tools, real arguments) replays without errors.
-- **[C7-03]** As a user, I want CLI commands mirroring `ctx7` (`exactdocs library <name> <query>`, `exactdocs docs <libraryId> <query>`), because I want to check from the terminal what my agent would get.
+    - Acceptance: same tool name and arguments as context7; `/owner/repo` uses the default version and `/owner/repo/<ref>` exactly that version (never another one); `language` ranks code examples in that language first; uses the library's or instance's retrieval mode; includes the library's `rules`; the response stays within a configurable size budget (default ~10k tokens, estimated as characters / 4, no tokenizer dependency); a recorded context7 session (both tools, real arguments) replays without errors.
+- **[C7-03]** *(MVP-2)* As a user, I want CLI commands mirroring `ctx7` (`exactdocs library <name> <query>`, `exactdocs docs <libraryId> <query>`), because I want to check from the terminal what my agent would get.
     - Acceptance: output matches the corresponding MCP tool results.
-- **[C7-04]** As a user integrating ExactDocs into other tools, I want a REST API equivalent to context7's (search libraries, get docs for a library ID and query), because not every integration speaks MCP.
+- **[C7-04]** *(MVP-2)* As a user integrating ExactDocs into other tools, I want a REST API equivalent to context7's (search libraries, get docs for a library ID and query), because not every integration speaks MCP.
     - Acceptance: documented endpoints under `/api/v1` return the same data as the two MCP tools and accept the same tokens as MCP (AUTH-02).
 
 ### Keep it in sync
 
 - **[SYNC-01]** As a user, I want to re-sync a library with one click (or `exactdocs sync <library>`), because docs change and I want the latest state of a branch.
     - Acceptance: a branch version re-imports only when its head moved; unchanged articles are not re-chunked or re-embedded.
-- **[SYNC-02]** As a user, I want new tags matching a pattern (e.g. `v*`) imported automatically as new versions, optionally keeping only the last N, because I don't want to add every release by hand.
+- **[SYNC-02]** *(MVP-2)* As a user, I want new tags matching a pattern (e.g. `v*`) imported automatically as new versions, optionally keeping only the last N, because I don't want to add every release by hand.
     - Acceptance: a scheduled check imports new matching tags; with a retention of N, older auto-imported versions are removed (manually imported ones are kept).
 - **[SYNC-03]** As a user, I want to remove a version or a whole library, because I don't want stale docs found by me or my agent.
     - Acceptance: after removal nothing from it appears in browse, search or MCP results.
@@ -193,7 +216,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
     - Acceptance: no model weights in the wheel or image; ML client libraries load only when a provider is configured.
 - **[RUN-03]** As a user, I want everything to stay on my machine or server, because my docs and queries are private.
     - Acceptance: no outbound connections except to the git hosts, the model endpoints and (if enabled) the telemetry collector I configured.
-- **[RUN-04]** As an operator, I want upgrades to migrate the database and index automatically, because updating must not mean re-importing everything.
+- **[RUN-04]** *(MVP-2)* As an operator, I want upgrades to migrate the database and index automatically, because updating must not mean re-importing everything.
     - Acceptance: a new release migrates on start; when a change truly requires re-indexing, the release notes say so and `exactdocs reindex` does it in one command while the old index keeps serving.
 
 ---
@@ -210,7 +233,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
     - Acceptance: selected by `mode="agentic"` or the library/instance setting; returns the MCP-05 result shape; step and token limits are enforced; it uses the same read tools as MCP, so it only sees what the caller may see.
 - **[RET-05]** As ExactDocs, I want to cache agentic retrieval results and reuse them for similar later questions, because agentic retrieval is slow and expensive and questions repeat.
     - Acceptance: a question similar enough to a cached one (threshold configurable) for the same version returns the cached result with `cache_hit: true`; similarity uses hybrid search over past questions, or BM25 when no embedding model is configured; entries are invalidated when the version is re-synced.
-- **[RET-06]** As an operator, I want to set the retrieval mode per library (e.g. BM25 for a tiny library, agentic for a complex one), because one size does not fit every documentation set.
+- **[RET-06]** As a library contributor (per library) or operator (instance default), I want to set the retrieval mode (e.g. BM25 for a tiny library, agentic for a complex one), because one size does not fit every documentation set.
     - Acceptance: the effective pipeline per library is shown in the UI; settings are validated against what is configured; precedence is call > library > instance.
 - **[RET-07]** As an operator, I want limits on LLM usage (requests per minute, daily token budget, per-call step limit), because HyDE and agentic retrieval cost money.
     - Acceptance: when a limit is reached, calls fall back to the non-LLM pipeline and say so in `retrieval_mode`; usage is visible in the UI and metrics.
@@ -237,7 +260,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
 - **[ACL-05]** As a library owner or operator, I want a log of access changes and deletions, because we need to know who shared or deleted what.
     - Acceptance: grants, revocations, deletions and ownership transfers are recorded with actor and time and visible to library admins and operators.
 - **[TEAM-01]** As an operator, I want a shared instance on PostgreSQL, because the whole team should work on the same libraries.
-    - Acceptance: `EXACTDOCS_DATABASE_URL=postgresql://…` works with all MVP features; several server processes can run against one database.
+    - Acceptance: `EXACTDOCS_DATABASE_URL=postgresql://…` (PostgreSQL with ParadeDB `pg_search`, e.g. the `paradedb/paradedb` image) works with all MVP features; several server processes can run against one database.
 - **[TEAM-02]** As an operator, I want to declare libraries in an `exactdocs.sources.yaml` kept in our own repo (URL, ID, ref or tag pattern, paths, tags, chunking) and apply it with a dry-run diff, because the set of imported docs should go through code review.
     - Acceptance: `exactdocs sources plan` prints the diff and changes nothing; `apply` makes the instance match; a second `apply` reports no changes.
 - **[TEAM-03]** As a user, I want a push to the docs repository (webhook from GitHub/Bitbucket/GitLab) to trigger a sync, because teammates should read merged docs, not last night's.
