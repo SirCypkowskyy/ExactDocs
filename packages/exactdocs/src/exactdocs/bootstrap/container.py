@@ -13,6 +13,9 @@ from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
+from exactdocs.ingestion import IngestionModule
+from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
 from exactdocs_kernel import SystemClock
@@ -27,6 +30,8 @@ class Container:
     catalog: CatalogModule
     identity: IdentityModule
     retrieval: RetrievalModule
+    ingestion: IngestionModule
+    job_worker: JobWorker
 
     @classmethod
     def build(cls, settings: Settings) -> Self:
@@ -46,19 +51,27 @@ class Container:
             versions=CatalogIndexedVersions(catalog.resolve_version),
             index=InMemoryExcerptIndex(),
         )
+        # No job kinds yet: the import registers its handler and recovery hook (E3-05a).
+        ingestion = IngestionModule.build(jobs=SqliteJobRepository(engine), clock=SystemClock())
+        job_worker = JobWorker(
+            recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job
+        )
         return cls(
             settings=settings,
             engine=engine,
             catalog=catalog,
             identity=identity,
             retrieval=retrieval,
+            ingestion=ingestion,
+            job_worker=job_worker,
         )
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
-        """Migrate the database to the latest schema, serve, then release the connections."""
+        """Migrate the database, run the job worker, serve, then release the connections."""
         try:
             await migrate(self.engine)
-            yield
+            async with self.job_worker.running():
+                yield
         finally:
             await self.engine.dispose()

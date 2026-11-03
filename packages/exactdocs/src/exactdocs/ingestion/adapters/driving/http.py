@@ -1,0 +1,27 @@
+"""REST adapter for ingestion jobs (consumed by the web UI)."""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Query
+
+from exactdocs.ingestion.dtos import GetJobQuery, JobList, JobSummary, ListLibraryJobsQuery
+from exactdocs.ingestion.ports.driving import GetJob, ListLibraryJobs
+
+
+def build_router(*, get_job: GetJob, list_library_jobs: ListLibraryJobs) -> APIRouter:
+    """Expose the job read side: one job, and the jobs of a library."""
+    router = APIRouter(tags=["ingestion"])
+
+    @router.get("/jobs/{job_id}")
+    async def get_one(job_id: str) -> JobSummary:
+        return await get_job(GetJobQuery(job_id=job_id))
+
+    @router.get("/libraries/{owner}/{repo}/jobs")
+    async def list_for_library(
+        owner: str, repo: str, limit: Annotated[int, Query(ge=1, le=200)] = 50
+    ) -> JobList:
+        return await list_library_jobs(
+            ListLibraryJobsQuery(library=f"/{owner}/{repo}", limit=limit)
+        )
+
+    return router

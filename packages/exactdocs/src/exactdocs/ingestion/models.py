@@ -1,4 +1,5 @@
-"""Pure article parsing: front matter, title rule and removal of invisible characters.
+"""Ingestion entities and pure logic: jobs, and article parsing (front matter, title rule and
+removal of invisible characters).
 
 Nothing here touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX,
 ``import`` and ``export`` lines stay in the body as text and are never executed.
@@ -6,13 +7,17 @@ Nothing here touches the filesystem or evaluates content. ``.mdx`` is plain Mark
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
+from enum import StrEnum
 from itertools import pairwise
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, NewType, Self
 
 import yaml
 from markdown_it import MarkdownIt
+
+from exactdocs.ingestion.errors import InvalidProgressError
 
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
@@ -206,3 +211,96 @@ def _title(declared: object, body: str, path: str) -> str:
             if heading:
                 return heading
     return PurePosixPath(path).stem
+
+
+# ---------------------------------------------------------------- jobs
+
+JobId = NewType("JobId", str)
+JobKind = NewType("JobKind", str)
+
+
+class JobState(StrEnum):
+    """Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class FileProblem:
+    """A file a job skipped, and why."""
+
+    path: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Job:
+    """A long task for one library (optionally one version) and how far it got.
+
+    ``total`` is 0 until the job knows its size. Every transition returns a new job.
+    """
+
+    id: JobId
+    kind: JobKind
+    library: str
+    version: str | None
+    state: JobState
+    done: int = 0
+    total: int = 0
+    problems: tuple[FileProblem, ...] = ()
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    @classmethod
+    def queued(
+        cls, *, job_id: JobId, kind: JobKind, library: str, version: str | None, now: datetime
+    ) -> Self:
+        """Create a job that waits for the worker."""
+        return cls(
+            id=job_id,
+            kind=kind,
+            library=library,
+            version=version,
+            state=JobState.QUEUED,
+            created_at=now,
+        )
+
+    def started(self, now: datetime) -> Self:
+        """Mark the job as picked up by the worker."""
+        return replace(self, state=JobState.RUNNING, started_at=now)
+
+    def progressed(self, *, done: int, total: int) -> Self:
+        """``done`` of ``total`` files processed so far."""
+        if not 0 <= done <= total:
+            raise InvalidProgressError(done, total)
+        return replace(self, done=done, total=total)
+
+    def with_problem(self, path: str, reason: str) -> Self:
+        """Record a skipped file; the job goes on."""
+        return replace(self, problems=(*self.problems, FileProblem(path, reason)))
+
+    def succeeded(self, now: datetime) -> Self:
+        """Mark the job as finished."""
+        return replace(self, state=JobState.SUCCEEDED, finished_at=now)
+
+    def failed(self, error: str, now: datetime) -> Self:
+        """Mark the job as stopped with ``error``."""
+        return replace(self, state=JobState.FAILED, error=error, finished_at=now)
+
+    def requeued(self) -> Self:
+        """Run again from the beginning, as if never started."""
+        return replace(
+            self,
+            state=JobState.QUEUED,
+            done=0,
+            total=0,
+            problems=(),
+            error=None,
+            started_at=None,
+            finished_at=None,
+        )

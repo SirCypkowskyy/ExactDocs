@@ -26,6 +26,7 @@ from exactdocs.bootstrap.rest import (
 )
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
+from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 
 # Built web UI, copied into the package by CI / the Docker build (see web/README.md).
@@ -99,6 +100,12 @@ def create_app(container: Container) -> FastAPI:
     )
     v1.include_router(
         identity_http.build_router(create_first_admin=container.identity.create_first_admin)
+    )
+    v1.include_router(
+        ingestion_http.build_router(
+            get_job=container.ingestion.get_job,
+            list_library_jobs=container.ingestion.list_library_jobs,
+        )
     )
     v1.include_router(retrieval_http.build_router(search_docs=container.retrieval.search_docs))
     api.include_router(v1)
