@@ -4,6 +4,7 @@ Nothing here touches the filesystem or evaluates content. ``.mdx`` is plain Mark
 ``import`` and ``export`` lines stay in the body as text and are never executed.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -15,18 +16,34 @@ from markdown_it import MarkdownIt
 
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
-# Characters that render as nothing but reach an LLM as text: zero-width space and friends,
-# the byte order mark, bidi controls (Trojan Source) and Unicode "tag" characters (ASCII
-# smuggling). Everything else, including every visible character, is left alone.
+# Characters that render as nothing (or as a control) but reach an LLM as text: zero-width
+# space and friends, the byte order mark, bidi controls (Trojan Source), Unicode "tag"
+# characters and supplementary variation selectors (byte smuggling), invisible math operators,
+# fillers, the blank Braille cell, and C0/C1 controls except tab, newline and carriage return
+# (ANSI escapes, NUL). Everything else, including every visible character and the regular
+# variation selectors next to emoji, is left alone. Known cost: LRM/RLM/ALM and the Mongolian
+# vowel separator also have typographic uses, so punctuation placement in RTL text can change.
 _ALWAYS_INVISIBLE = re.compile(
-    r"[\N{ZERO WIDTH SPACE}\N{WORD JOINER}\N{ZERO WIDTH NO-BREAK SPACE}"
+    # a subdivision flag (England, Scotland, Wales...) is visible text, keep it whole
+    r"(?P<flag>\N{WAVING BLACK FLAG}"
+    r"[\N{TAG DIGIT ZERO}-\N{TAG DIGIT NINE}"
+    r"\N{TAG LATIN SMALL LETTER A}-\N{TAG LATIN SMALL LETTER Z}]"
+    r"{2,7}\N{CANCEL TAG})"
+    r"|[\N{ZERO WIDTH SPACE}\N{WORD JOINER}\N{ZERO WIDTH NO-BREAK SPACE}"
     r"\N{MONGOLIAN VOWEL SEPARATOR}"
     r"\N{ARABIC LETTER MARK}\N{LEFT-TO-RIGHT MARK}\N{RIGHT-TO-LEFT MARK}"
     r"\N{LEFT-TO-RIGHT EMBEDDING}-\N{RIGHT-TO-LEFT OVERRIDE}"  # embeddings, pop, overrides
     r"\N{LEFT-TO-RIGHT ISOLATE}-\N{POP DIRECTIONAL ISOLATE}"
-    r"\N{LANGUAGE TAG}-\N{CANCEL TAG}]"  # Unicode tag characters
+    r"\N{FUNCTION APPLICATION}-\N{INVISIBLE PLUS}"  # invisible math operators
+    r"\N{COMBINING GRAPHEME JOINER}"
+    r"\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
+    r"\N{HALFWIDTH HANGUL FILLER}\N{KHMER VOWEL INHERENT AQ}\N{KHMER VOWEL INHERENT AA}"
+    r"\N{BRAILLE PATTERN BLANK}"
+    r"\N{VARIATION SELECTOR-17}-\N{VARIATION SELECTOR-256}"
+    r"\N{LANGUAGE TAG}-\N{CANCEL TAG}"  # Unicode tag characters
+    r"\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]"  # C0 and C1 controls, not \t \n \r
 )
 # ZWJ and ZWNJ also carry meaning (emoji sequences, Persian and Indic scripts), so a single one
 # between two non-ASCII characters is kept. Next to ASCII or another joiner it can only be a
@@ -41,8 +58,30 @@ _FRONT_MATTER = re.compile(
 )
 
 
+class NotJsonSafeError(ValueError):
+    """Front matter holds values that cannot be stored as standard JSON."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "values must be text, numbers, booleans, null, lists or maps with text keys"
+        )
+
+
+_NO_ALIASES = "anchors and aliases are not allowed"
+
+
 class _FrontMatterLoader(yaml.SafeLoader):
-    """Safe YAML loader that keeps dates as text, so metadata stays JSON-serialisable."""
+    """Safe YAML loader without anchors and aliases and with dates kept as text.
+
+    Aliases would let a few hundred bytes expand into gigabytes once the metadata is serialised
+    (and make it recursive), so they are rejected while the document is composed.
+    """
+
+    def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node | None:
+        event = self.peek_event()
+        if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
+            raise yaml.MarkedYAMLError(problem=_NO_ALIASES, problem_mark=event.start_mark)
+        return super().compose_node(parent, index)
 
 
 _FrontMatterLoader.yaml_implicit_resolvers = {
@@ -53,8 +92,8 @@ _MARKDOWN = MarkdownIt("commonmark")
 
 
 def strip_invisible(text: str) -> str:
-    """Remove zero-width, bidi-control and tag characters; change nothing else."""
-    return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub("", text))
+    """Remove invisible and control characters (see ``_ALWAYS_INVISIBLE``); change nothing else."""
+    return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub(lambda m: m["flag"] or "", text))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -75,43 +114,82 @@ def parse_article(path: str, source: str) -> ParsedArticle:
 
     The title is the front-matter ``title``, else the first H1, else the file name without its
     extension. Malformed front matter does not fail the article: it stays in the body, the
-    metadata is empty and the reason is listed in ``problems``.
+    metadata is empty and the reason is listed in ``problems``. A leading ``---`` block that is
+    not a mapping (a thematic break around prose) is just body text, with no problem.
     """
     text = strip_invisible(source)
     front_matter: dict[str, Any] = {}
     problems: list[str] = []
     body = text
     if match := _FRONT_MATTER.match(text):
-        loader = _FrontMatterLoader(match["yaml"] or "")
         try:
-            loaded = loader.get_single_data()
-        except (yaml.YAMLError, RecursionError) as error:
-            problems.append(f"malformed front matter: {type(error).__name__}")
+            loaded = _load_front_matter(match["yaml"] or "")
+        except (yaml.YAMLError, RecursionError, ValueError) as error:
+            problems.append(f"malformed front matter: {_reason(error)}")
         else:
             if loaded is None or isinstance(loaded, dict):
                 front_matter = loaded or {}
                 body = text[match.end() :]
-            else:
-                problems.append("malformed front matter: not a mapping")
-        finally:
-            loader.dispose()
 
+    declared = front_matter.get("title")
+    if declared is not None and not isinstance(declared, str):
+        problems.append("front matter title must be text")
     tags = front_matter.get("tags")
     if isinstance(tags, str):
         tags = tags.split(",")
     if tags is not None and not isinstance(tags, list):
         problems.append("front matter tags must be a list or a string")
         tags = []
+    tags = tags or []
+    if not all(isinstance(tag, str) for tag in tags):
+        problems.append("front matter tags must be text; other items were ignored")
     description = front_matter.get("description")
     return ParsedArticle(
         path=path,
-        title=_title(front_matter.get("title"), body, path),
+        title=_title(declared, body, path),
         body=body,
-        tags=tuple(dict.fromkeys(t for item in tags or [] if (t := str(item).strip()))),
+        tags=tuple(
+            dict.fromkeys(t for tag in tags if isinstance(tag, str) and (t := tag.strip().lower()))
+        ),
         description=description if isinstance(description, str) else None,
         front_matter=front_matter,
         problems=tuple(problems),
     )
+
+
+def _load_front_matter(text: str) -> object:
+    loader = _FrontMatterLoader(text)
+    try:
+        loaded = loader.get_single_data()
+    finally:
+        loader.dispose()
+    if not _is_json_safe(loaded):
+        raise NotJsonSafeError
+    return loaded
+
+
+def _is_json_safe(value: object) -> bool:
+    """Tell whether standard JSON can hold it (no bytes, sets, dates, NaN or Infinity)."""
+    match value:
+        case None | bool() | str() | int():
+            return True
+        case float():
+            return math.isfinite(value)
+        case list():
+            return all(_is_json_safe(item) for item in value)
+        case dict():
+            return all(isinstance(k, str) and _is_json_safe(v) for k, v in value.items())
+        case _:
+            return False
+
+
+def _reason(error: Exception) -> str:
+    """Say what is wrong and where, without echoing the file's content."""
+    if isinstance(error, yaml.MarkedYAMLError) and error.problem_mark:
+        # +2: the front matter starts on line 2 (after the opening ---), marks are 0-based
+        where = f"at line {error.problem_mark.line + 2}"
+        return f"{_NO_ALIASES} {where}" if error.problem == _NO_ALIASES else f"invalid YAML {where}"
+    return str(error) if isinstance(error, ValueError) else "invalid YAML"
 
 
 def _title(declared: object, body: str, path: str) -> str:
