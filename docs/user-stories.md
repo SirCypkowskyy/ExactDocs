@@ -52,6 +52,7 @@ Naming: the context7-compatible MCP tools keep context7's names and arguments
 | Git | The **system `git` binary** (in the Docker image; documented requirement for `uvx`), for `--filter=blob:none`, shallow fetch and sparse checkout |
 | REST API | `/api/v1`, described by OpenAPI; the **only** API the web UI and the CLI use |
 | Data location | Docker: `/data`; `uvx`: the platform user-data directory; stdio MCP uses the same default path |
+| Agent stack | `pydantic-ai-slim` + [`pydantic-ai-harness[codemode]`](https://pydantic.dev/docs/ai/harness/) pinned to matching versions (the harness is 0.x), in an optional `exactdocs[ai]` extra; never imported when no LLM or embedding model is configured |
 | Web UI auth | Server **session cookie** (HttpOnly); API tokens are for MCP, REST and the CLI |
 | Users and tenancy | MVP: a **single admin** account; more users arrive with roles (Next). **One tenant** per instance; library IDs are globally unique, like context7's |
 | Background jobs | MVP-1: an **in-process worker** with a job table in the database; DBOS comes with resumable imports (MVP-2) |
@@ -233,18 +234,24 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
 
 - **[RET-01]** As an operator, I want to configure an embedding model endpoint (OpenAI-compatible API, Ollama, TEI, a local server) with key, base URL, dimensions and batch size, because I want semantic search with the model of my choice.
     - Acceptance: search becomes hybrid (BM25 + vectors, fused with RRF); existing versions are embedded in the background while BM25 keeps answering; changing the model re-embeds instead of mixing vectors.
+    - Implementation: [`pydantic_ai.Embedder`](https://pydantic.dev/docs/ai/guides/embeddings/) (OpenAI-compatible, Ollama, vLLM, Cohere, Voyage); in-process model providers (sentence-transformers) are not supported, to keep the install light.
 - **[RET-02]** As an operator, I want to configure a reranker (Cohere-compatible, Jina, TEI or a local cross-encoder endpoint), because reranking the top results improves precision.
     - Acceptance: the top N candidates are reranked; a reranker error or timeout falls back to the unreranked order (`reranked: false`) and is logged, never failing the search.
 - **[RET-03]** As an operator, I want to configure an LLM (endpoint, API key, model, optional HTTP proxy, timeouts, extra headers and parameters), because HyDE and agentic retrieval need one, and companies route LLM traffic through their own gateways.
     - Acceptance: any OpenAI-compatible endpoint works; the key is stored as a secret; with embeddings also configured, hybrid search uses HyDE by default; HyDE outputs are cached per query and version.
 - **[RET-04]** As a user or AI agent, I want an optional agentic retrieval mode where a pydantic-ai agent browses the library tree (list articles, read headings, open articles) until it finds the articles that answer the question, and returns them with a justification, because some questions need reasoning over structure, not keyword or vector similarity.
-    - Acceptance: selected by `mode="agentic"` or the library/instance setting; returns the MCP-05 result shape; step and token limits are enforced; the agent reads article outlines (headings only) through an `article_outline` tool that is also exposed over MCP; it uses the same read tools as MCP, so it only sees what the caller may see.
+    - Acceptance: selected by `mode="agentic"` or the library/instance setting; returns the MCP-05 result shape; step and token limits are enforced; the agent reads article outlines (headings only) through an `article_outline` tool that is also exposed over MCP; it uses the same read tools as MCP, so it only sees what the caller may see; tools are offered only inside Code Mode's sandboxed `run_code` (never IPython Code Mode), each with a typed return model; a run is bounded by `max_tool_calls`, Monty resource limits and `UsageLimits`; [loop detection](https://pydantic.dev/docs/ai/harness/detect-loops/), a usage or spend limit ends the run and falls back to BM25, with the reason in the response; an [output guardrail](https://pydantic.dev/docs/ai/harness/guardrails/) rejects article IDs that are not in the pinned version or not visible to the caller.
+    - Implementation: the agent uses pydantic-ai harness [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/): our read tools (`list_articles`, `article_outline`, `read_article`, `read_chunk`, `search_docs`) are exposed as functions inside one sandboxed `run_code` (Monty), so the model can walk the tree, open many outlines in parallel and filter results in code within one or two model turns. [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) can feed the library's own `AGENTS.md` / `CLAUDE.md` files to the agent as guidance about how the docs are organized.
 - **[RET-05]** As ExactDocs, I want to cache agentic retrieval results and reuse them for similar later questions, because agentic retrieval is slow and expensive and questions repeat.
     - Acceptance: a question similar enough to a cached one (threshold configurable) for the same version returns the cached result with `cache_hit: true`; similarity uses hybrid search over past questions, or BM25 when no embedding model is configured; entries are invalidated when the version is re-synced.
 - **[RET-06]** As a library contributor (per library) or operator (instance default), I want to set the retrieval mode (e.g. BM25 for a tiny library, agentic for a complex one), because one size does not fit every documentation set.
     - Acceptance: the effective pipeline per library is shown in the UI; settings are validated against what is configured; precedence is call > library > instance.
 - **[RET-07]** As an operator, I want limits on LLM usage (requests per minute, daily token budget, per-call step limit), because HyDE and agentic retrieval cost money.
-    - Acceptance: when a limit is reached, calls fall back to the non-LLM pipeline and say so in `retrieval_mode`; usage is visible in the UI and metrics.
+    - Acceptance: token or USD budgets per instance, library and user, enforced with harness [`SpendLimits`](https://pydantic.dev/docs/ai/harness/spend/) and counters in the ExactDocs database; HyDE calls count against the same budgets; requests per minute are limited by ExactDocs itself; when a limit is reached, calls fall back to the non-LLM pipeline and say so in `retrieval_mode`; usage is visible in the UI and metrics.
+- **[RET-08]** As a library owner, I want the repository's `AGENTS.md` / `CLAUDE.md` files to guide agentic retrieval, because they often describe how the docs are organized.
+    - Acceptance: the importer keeps each version's instruction files even outside the selected paths; they reach the agent through harness [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) over a read-only, database-backed [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/); off by default; delivered as user-channel notes when the agent opens a directory (nested traversal), and as system instructions only when the owner marks the library as trusted, because repo content is untrusted.
+- **[RET-09]** As a maintainer, I want a retrieval eval suite built with [Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/) that reports recall@k, wrong-version rate, cost and latency per retrieval mode, because modes must be compared before one becomes a default.
+    - Acceptance: runs on the fixture libraries in CI for BM25 and, when model endpoints are provided, for the other modes; trace checks prove agentic runs stayed within the requested version.
 
 ## Next: richer agent experience
 
@@ -277,7 +284,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
 ## Next: operations
 
 - **[OPS-01]** As an operator, I want an optional OpenTelemetry export (OTLP to a collector) and a Prometheus scrape endpoint for metrics, because I monitor ExactDocs with the same stack as everything else.
-    - Acceptance: off by default; when on, it exports request, search (per retrieval mode and stage), import, sync and LLM-usage metrics and traces; query text is excluded unless explicitly enabled.
+    - Acceptance: off by default; when on, it exports request, search (per retrieval mode and stage), import, sync and LLM-usage metrics and traces; query text is excluded unless explicitly enabled; agent runs are traced with Pydantic AI [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) (one span per tool call nested in `run_code`), with content capture off by default.
 - **[OPS-02]** As an operator, I want health and readiness endpoints and a backup/restore command, because the instance becomes something the team depends on.
     - Acceptance: `/healthz` reports the process is up and `/readyz` that the database is reachable; `exactdocs backup` / `restore` round-trips libraries, versions, settings, accounts and tokens.
 
@@ -291,5 +298,7 @@ These are good ideas that do not belong to the main loop yet.
 | Crawl documentation websites | Needs a crawler, rate limiting and HTML-to-Markdown conversion |
 | Resolve library docs from package registries (PyPI, npm) and lockfiles | Requires a curated registry that maps packages to repos and paths |
 | Prebuilt, signed index snapshots and a public registry of popular libraries | Depends on the registry and a stable index format |
-| Accuracy eval suite in CI (recall@k, wrong-version rate) per retrieval mode | Starts once retrieval modes exist and need comparing |
+| Agentic mode on the MCP client's own model via MCP sampling (no server-side LLM needed) | Tool calling through sampling is not yet well supported by clients |
+| Backup LLM ([model fallback](https://pydantic.dev/docs/ai/capabilities/model-fallback/)) and a remote Monty sandbox worker for multi-process setups | Only matters once agentic mode runs in production at scale |
+| Pattern-based prompt-injection flags on imported docs ([defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/), no ML model) | Report-only nice-to-have |
 | Other formats: reStructuredText, AsciiDoc, Jupyter notebooks | Markdown covers most repositories |
