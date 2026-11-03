@@ -1,0 +1,209 @@
+# Publishes PyPI packages (uvx exactdocs) and the ghcr.io image when a version tag is pushed.
+# A GitHub Release created in the UI also pushes its tag, so it triggers this workflow too.
+#
+#   tag on main     vX.Y.Z        -> PyPI X.Y.Z          ghcr X.Y.Z, X.Y, latest
+#   tag on develop  vX.Y.Z.devN   -> PyPI X.Y.Z.devN     ghcr X.Y.Z.devN, X.Y.Z.devN-<sha7>, dev
+#                                    (pre-release: pip/uvx skip it unless asked with --prerelease)
+# See docs/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    name: Validate tag
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.meta.outputs.channel }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: meta
+        name: Derive version and channel from the tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          n='(0|[1-9][0-9]*)'
+          if [[ "$version" =~ ^$n\.$n\.$n$ ]]; then
+            channel=stable; branch=main
+          elif [[ "$version" =~ ^$n\.$n\.$n\.dev$n$ ]]; then
+            channel=dev; branch=develop
+          else
+            echo "::error::Tag '$GITHUB_REF_NAME' is neither vX.Y.Z (main) nor vX.Y.Z.devN (develop)."
+            exit 1
+          fi
+          git fetch --no-tags origin "$branch"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
+            echo "::error::A $channel tag must point at a commit on '$branch'."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+            echo "short_sha=${GITHUB_SHA::7}"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
+          } >> "$GITHUB_OUTPUT"
+          echo "### $channel release $version from $branch" >> "$GITHUB_STEP_SUMMARY"
+
+  web:
+    name: Build web UI
+    needs: meta
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist/
+          retention-days: 7
+
+  python:
+    name: Build Python distributions
+    needs: [meta, web]
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    env:
+      UV_DYNAMIC_VERSIONING_BYPASS: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: packages/exactdocs/src/exactdocs/_web
+      - run: uv build --all-packages --out-dir dist
+      - name: Check versions and bundled UI
+        run: |
+          set -euo pipefail
+          v='${{ needs.meta.outputs.version }}'
+          ls dist
+          test -f "dist/exactdocs-$v-py3-none-any.whl"
+          test -f "dist/exactdocs_kernel-$v-py3-none-any.whl"
+          unzip -l "dist/exactdocs-$v-py3-none-any.whl" | grep -q 'exactdocs/_web/index.html'
+          uvx twine check --strict dist/*
+      - name: Smoke test the wheel like uvx would
+        run: |
+          uv run --isolated --no-project --find-links dist --with "exactdocs==${{ needs.meta.outputs.version }}" exactdocs --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-dist
+          path: dist/
+          retention-days: 30
+
+  pypi:
+    name: Publish to PyPI
+    needs: [meta, python]
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    environment:
+      name: pypi
+      url: https://pypi.org/project/exactdocs/${{ needs.meta.outputs.version }}/
+    permissions:
+      id-token: write # PyPI trusted publishing, no API token stored anywhere
+    steps:
+      - uses: astral-sh/setup-uv@v10
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
+      # Kernel first: the app pins exactdocs-kernel==<same version>.
+      - run: uv publish --trusted-publishing always dist/exactdocs_kernel-*
+      - run: uv publish --trusted-publishing always dist/exactdocs-*
+
+  image:
+    name: Publish image to ghcr.io
+    needs: meta
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4 # amd64 is emulated on the ARM64 runner
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tags
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ needs.meta.outputs.image }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ needs.meta.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.meta.outputs.version }},enable=${{ needs.meta.outputs.channel == 'stable' }}
+            type=raw,value=latest,enable=${{ needs.meta.outputs.channel == 'stable' }}
+            type=raw,value=${{ needs.meta.outputs.version }}-${{ needs.meta.outputs.short_sha }},enable=${{ needs.meta.outputs.channel == 'dev' }}
+            type=raw,value=dev,enable=${{ needs.meta.outputs.channel == 'dev' }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ needs.meta.outputs.version }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.tags.outputs.labels }}
+          annotations: ${{ steps.tags.outputs.annotations }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=exactdocs
+          cache-to: type=gha,scope=exactdocs,mode=max
+      - uses: sigstore/cosign-installer@v4
+      - name: Sign image (keyless)
+        run: cosign sign --yes "${{ needs.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
+
+  github-release:
+    name: GitHub Release
+    needs: [meta, python, pypi, image]
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: dist
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            flags=(--verify-tag --generate-notes)
+            [[ '${{ needs.meta.outputs.channel }}' == dev ]] && flags+=(--prerelease) || flags+=(--latest)
+            gh release create "$TAG" dist/* "${flags[@]}"
+          fi

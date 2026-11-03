@@ -1,0 +1,55 @@
+[project]
+name = "exactdocs"
+dynamic = ["version", "dependencies"]
+description = "Self-hosted, version-accurate documentation for AI coding agents (MCP server)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.14"
+authors = [{ name = "Cyprian Gburek" }]
+keywords = ["mcp", "documentation", "rag", "ai-agents", "fastmcp"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+[project.scripts]
+exactdocs = "exactdocs.bootstrap.cli:main"
+
+[project.urls]
+Repository = "https://github.com/SirCypkowskyy/ExactDocs"
+Issues = "https://github.com/SirCypkowskyy/ExactDocs/issues"
+
+[build-system]
+requires = ["hatchling>=1.27", "uv-dynamic-versioning>=0.11"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+# The kernel is released in lockstep with the app.
+dependencies = [
+    "exactdocs-kernel=={{ version }}",
+    "cyclopts>=4",
+    "fastapi>=0.120",
+    "fastmcp>=4",
+    "mcp>=2",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.11",
+    "uvicorn[standard]>=0.38",
+]
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/exactdocs"]
+# The web UI is built by `pnpm build` and copied here in CI/Docker; it is gitignored.
+artifacts = ["src/exactdocs/_web/**"]
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/exactdocs/_web/**"]

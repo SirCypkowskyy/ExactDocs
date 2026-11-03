@@ -1,0 +1,66 @@
+name: Feature
+description: A new capability or use case.
+title: "feat: "
+labels: ["type: feature", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe **what** and **why**, not how. Write the title as an outcome, e.g.
+        `feat: search falls back to "no result" instead of another version`.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >-
+        The business context. Who needs this, in what situation, and what it costs them today.
+        Link related issues, ADRs or user feedback.
+      placeholder: |
+        Teams that pin React 18 get answers for React 19 because ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: >-
+        How the system should behave once this is done, from the user's or agent's point of
+        view. Gherkin (Given / When / Then) is welcome; it becomes the behave scenario.
+      placeholder: |
+        Given the catalog has react@19.1 only
+        When an agent searches react@18.3
+        Then it gets "no result for this version"
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Criteria of success
+      description: >-
+        A checklist that decides when the issue can be closed. Each item must be verifiable
+        (a test, a metric, a visible behavior).
+      placeholder: |
+        - [ ] behave scenario `search.feature: ...` passes
+        - [ ] recall@5 on the eval suite does not drop
+        - [ ] documented in README
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - backend / catalog
+        - backend / retrieval
+        - backend / ingestion
+        - backend / identity
+        - web UI
+        - MCP tools
+        - CI / release / infra
+        - docs
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes (optional)
+      description: Constraints, open questions, out-of-scope items, ideas for the solution.

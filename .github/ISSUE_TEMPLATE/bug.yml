@@ -1,0 +1,55 @@
+name: Bug
+description: Something that worked, or should work, is broken.
+title: "bug: "
+labels: ["type: bug", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issue? Do **not** file it here; see SECURITY.md.
+        Write the title as the observed symptom, e.g. `bug: search_docs returns 19.1 excerpts for 18.3`.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >-
+        The business context. Who hit it, while doing what, which version / deployment
+        (Docker tag or `exactdocs --version`, SQLite or PostgreSQL), and how to reproduce it.
+      placeholder: |
+        Version: ghcr.io/sircypkowskyy/exactdocs:0.1.3, SQLite
+        1. ...
+        2. ...
+        Observed: ...
+        Expected: ...
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Why is it bad
+      description: >-
+        The impact: wrong answers to agents, data loss, security exposure, blocked workflow,
+        cosmetic? How many users, how often, is there a workaround?
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "critical: wrong-version or wrong data served, security, data loss"
+        - "major: a feature is unusable, no workaround"
+        - "minor: has a workaround"
+        - "trivial: cosmetic"
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Recommended / proposed fix (optional)
+      description: Root-cause hypothesis, the code involved, or a sketch of the fix.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      render: text

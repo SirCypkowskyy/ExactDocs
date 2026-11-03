@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+web/src/routeTree.gen.ts linguist-generated=true
+uv.lock linguist-generated=true
+web/pnpm-lock.yaml linguist-generated=true

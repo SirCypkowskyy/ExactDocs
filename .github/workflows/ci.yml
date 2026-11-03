@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  python:
+    name: Python (ruff, ty, pytest, behave)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: ruff format
+        run: uv run ruff format --check --diff .
+      - name: ruff check
+        run: uv run ruff check --output-format=github .
+      - name: ty
+        run: uv run ty check --output-format=github
+      - name: pytest (unit, integration, architecture)
+        run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
+      - name: behave (acceptance)
+        run: uv run behave --format=progress --junit --junit-directory=reports/behave
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: python-reports
+          path: reports/
+          retention-days: 14
+
+  web:
+    name: Web (biome, fallow, react-doctor, vitest, build)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  image:
+    name: Docker image (native build + smoke test)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          load: true
+          tags: exactdocs:ci
+          build-args: VERSION=0.0.0.dev0
+          cache-from: type=gha,scope=exactdocs
+          cache-to: type=gha,scope=exactdocs,mode=max
+      - name: Smoke test
+        run: |
+          docker run -d --rm --name exactdocs-ci -p 127.0.0.1::3000 exactdocs:ci
+          trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
+          port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
+          for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:${port}/api/health" && break; sleep 1; done
+          curl -fsS "http://127.0.0.1:${port}/api/v1/libraries"
+          curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'

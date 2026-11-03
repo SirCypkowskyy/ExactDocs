@@ -1,0 +1,130 @@
+[project]
+name = "exactdocs-workspace"
+version = "0"
+description = "uv workspace root for ExactDocs (not published)"
+requires-python = ">=3.14"
+dependencies = ["exactdocs", "exactdocs-kernel"]
+
+[dependency-groups]
+dev = [
+    "archunitpython>=1.8.1",
+    "behave>=1.3",
+    "httpx>=0.28",
+    "pytest>=9",
+    "pytest-asyncio>=1.2",
+    "pytest-cov>=7",
+    "ruff>=0.14",
+    "ty>=0.0.1",
+]
+
+[tool.uv]
+package = false
+default-groups = ["dev"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+exactdocs = { workspace = true }
+exactdocs-kernel = { workspace = true }
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["packages/*/src", "packages/*/tests", "packages/*/features"]
+extend-exclude = ["web", "packages/exactdocs/src/exactdocs/_web"]
+
+[tool.ruff.lint]
+# Everything, including preview rules; opt out only of what conflicts or adds no value here.
+preview = true
+explicit-preview-rules = false
+select = ["ALL"]
+ignore = [
+    # no per-file copyright headers: the license lives in LICENSE
+    "CPY",
+    # docstrings for modules, packages, magic methods and __init__ add noise, not information
+    "undocumented-public-module",
+    "undocumented-public-package",
+    "undocumented-magic-method",
+    "undocumented-public-init",
+    # mutually exclusive with D211 / D212, which we keep
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-second-line",
+    # conflict with the ruff formatter
+    "missing-trailing-comma",
+    "single-line-implicit-string-concatenation",
+    # Python 3.14 evaluates annotations lazily (PEP 649); TYPE_CHECKING blocks are not needed
+    "typing-only-first-party-import",
+    "typing-only-third-party-import",
+    "typing-only-standard-library-import",
+    # pydoclint: no mandatory Returns / Raises sections
+    "docstring-missing-returns",
+    "docstring-missing-exception",
+    # keyword-only wiring of modules legitimately takes many arguments
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    # TODOs need neither an author nor an issue link
+    "line-contains-todo",
+    "missing-todo-author",
+    "missing-todo-link",
+    # structural Protocol implementations: methods/coroutines that ignore self or never await
+    "no-self-use",
+    "unused-async",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = [
+    "assert",
+    "D",
+    "ANN",
+    "magic-value-comparison",
+    "FBT",
+    "import-private-name",
+    "implicit-namespace-package",
+]
+"**/features/**" = ["assert", "D", "ANN", "FBT", "implicit-namespace-package"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"abc.ABC".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture.md)."
+"abc.ABCMeta".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture.md)."
+
+[tool.ruff.lint.isort]
+known-first-party = ["exactdocs", "exactdocs_kernel"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------- ty
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+include = ["packages"]
+exclude = ["packages/exactdocs/src/exactdocs/_web"]
+
+[tool.ty.rules]
+possibly-unresolved-reference = "error"
+
+[[tool.ty.overrides]]
+# behave's bundled type hints declare its step decorators as non-callable objects.
+include = ["packages/*/features/**"]
+rules = { call-non-callable = "ignore" }
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest]
+minversion = "9.0"
+testpaths = ["packages/exactdocs-kernel/tests", "packages/exactdocs/tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+xfail_strict = true
+filterwarnings = ["error"]
+
+# ---------------------------------------------------------------- behave (BDD acceptance)
+[tool.behave]
+paths = ["packages/exactdocs/features"]
+show_skipped = false

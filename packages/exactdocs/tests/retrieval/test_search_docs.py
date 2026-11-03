@@ -1,0 +1,54 @@
+from dataclasses import dataclass
+
+import pytest
+
+from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
+from exactdocs.retrieval.dtos import SearchDocsQuery
+from exactdocs.retrieval.errors import VersionNotIndexedError
+from exactdocs.retrieval.models import DocTarget, Excerpt
+from exactdocs.retrieval.module import RetrievalModule
+
+REACT_19 = DocTarget(library="react", version="19.1")
+REACT_18 = DocTarget(library="react", version="18.3")
+
+
+@dataclass(frozen=True, slots=True)
+class FakeIndexedVersions:
+    """A test double needs no base class: it only has to match the Protocol's shape."""
+
+    indexed: frozenset[DocTarget]
+
+    async def is_indexed(self, target: DocTarget) -> bool:
+        return target in self.indexed
+
+
+@pytest.fixture
+def retrieval() -> RetrievalModule:
+    index = InMemoryExcerptIndex.of(
+        [
+            Excerpt(
+                text="useActionState(action, initial)", source_url="https://r/19", target=REACT_19
+            ),
+            Excerpt(
+                text="useFormState(action, initial)", source_url="https://r/18", target=REACT_18
+            ),
+        ]
+    )
+    return RetrievalModule.build(versions=FakeIndexedVersions(frozenset({REACT_19})), index=index)
+
+
+async def test_returns_verbatim_excerpts_only_from_the_requested_version(
+    retrieval: RetrievalModule,
+) -> None:
+    result = await retrieval.search_docs(
+        SearchDocsQuery(library="react", version="19.1", query="action")
+    )
+
+    assert [(e.text, e.version) for e in result.excerpts] == [
+        ("useActionState(action, initial)", "19.1")
+    ]
+
+
+async def test_never_falls_back_to_another_version(retrieval: RetrievalModule) -> None:
+    with pytest.raises(VersionNotIndexedError):
+        await retrieval.search_docs(SearchDocsQuery(library="react", version="18.3", query="x"))

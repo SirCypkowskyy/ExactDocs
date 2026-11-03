@@ -1,0 +1,67 @@
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  "entry": ["doctor.config.ts"],
+  "ignorePatterns": ["src/routeTree.gen.ts"],
+  "ignoreExports": [
+    {
+      "file": "src/shared/ui/**",
+      "exports": ["*"]
+    }
+  ],
+  "ignoreDependencies": ["lucide-react", "@tanstack/react-query-devtools"],
+  "rules": {
+    "boundary-violation": "error",
+    "circular-dependencies": "error"
+  },
+  "boundaries": {
+    "zones": [
+      {
+        "name": "app",
+        "patterns": ["src/app/**"]
+      },
+      {
+        "name": "routes",
+        "patterns": ["src/routes/**"]
+      },
+      {
+        "name": "features",
+        "autoDiscover": ["src/features"]
+      },
+      {
+        "name": "shared",
+        "patterns": ["src/shared/**"]
+      },
+      {
+        "name": "test",
+        "patterns": ["src/test/**"]
+      }
+    ],
+    "rules": [
+      {
+        "from": "app",
+        "allow": ["routes", "features", "shared"]
+      },
+      {
+        "from": "routes",
+        "allow": ["features", "shared"],
+        "allowTypeOnly": ["app"]
+      },
+      {
+        "from": "features",
+        "allow": ["shared"]
+      },
+      {
+        "from": "shared",
+        "allow": []
+      },
+      {
+        "from": "test",
+        "allow": ["shared"]
+      }
+    ],
+    "coverage": {
+      "requireAllFiles": true,
+      "allowUnmatched": ["src/routeTree.gen.ts", "index.html", "vite.config.ts", "doctor.config.ts"]
+    }
+  }
+}
