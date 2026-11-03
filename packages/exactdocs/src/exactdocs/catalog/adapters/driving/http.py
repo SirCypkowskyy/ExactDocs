@@ -4,11 +4,20 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary, ListLibrariesQuery
-from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries
+from exactdocs.catalog.dtos import (
+    GetLibraryQuery,
+    LibraryDetail,
+    LibraryList,
+    ListLibrariesQuery,
+    ResolvedVersion,
+    ResolveVersionQuery,
+)
+from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries, ResolveVersion
 
 
-def build_router(*, list_libraries: ListLibraries, get_library: GetLibrary) -> APIRouter:
+def build_router(
+    *, list_libraries: ListLibraries, get_library: GetLibrary, resolve_version: ResolveVersion
+) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``."""
     router = APIRouter(prefix="/libraries", tags=["catalog"])
 
@@ -16,10 +25,14 @@ def build_router(*, list_libraries: ListLibraries, get_library: GetLibrary) -> A
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
         return await list_libraries(query)
 
-    # Library IDs are `/owner/repo`; refs (later: `/versions/{ref:path}`) always come last,
-    # because the server decodes `%2F` before routing.
+    # Library IDs are `/owner/repo`; the ref comes last because it may contain slashes
+    # (`release/1.4`) and the server decodes `%2F` before routing.
     @router.get("/{owner}/{repo}")
-    async def get_one(owner: str, repo: str) -> LibrarySummary:
-        return await get_library(GetLibraryQuery(name=f"/{owner}/{repo}"))
+    async def get_one(owner: str, repo: str) -> LibraryDetail:
+        return await get_library(GetLibraryQuery(id=f"/{owner}/{repo}"))
+
+    @router.get("/{owner}/{repo}/versions/{ref:path}")
+    async def get_version(owner: str, repo: str, ref: str) -> ResolvedVersion:
+        return await resolve_version(ResolveVersionQuery(id=f"/{owner}/{repo}/{ref}"))
 
     return router

@@ -1,4 +1,6 @@
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -11,6 +13,8 @@ from exactdocs.bootstrap.database import alembic_config
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
+from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -53,10 +57,88 @@ async def test_lists_demo_libraries(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/libraries")
 
     assert response.status_code == 200
-    assert {lib["name"] for lib in response.json()["libraries"]} == {
-        "/fastapi/fastapi",
-        "/reactjs/react.dev",
+    assert {lib["id"] for lib in response.json()["libraries"]} == {
+        "/acme/ledger",
+        "/acme/payments",
     }
+
+
+async def test_a_library_is_shown_with_its_default_version(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v1/libraries/Acme/Payments")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert (body["id"], body["host"], body["default_version"]) == (
+        "/acme/payments",
+        "github",
+        "v1.4.0",
+    )
+    assert {v["ref"]: v["is_default"] for v in body["versions"]} == {
+        "main": False,
+        "next": False,
+        "v1.3.0": False,
+        "v1.4.0": True,
+    }
+    assert body["settings"]["chunking"] == {"split_level": 6, "min_chars": 0, "max_chars": None}
+
+
+@pytest.mark.parametrize("ref", ["v1.3.0", "v1.4.0", "main"])
+async def test_a_version_is_addressed_by_its_ref(client: httpx.AsyncClient, ref: str) -> None:
+    response = await client.get(f"/api/v1/libraries/acme/payments/versions/{ref}")
+
+    assert response.status_code == 200
+    assert (response.json()["library"], response.json()["ref"]) == ("/acme/payments", ref)
+
+
+async def test_the_ref_is_everything_after_versions_even_with_slashes(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    repository = SqliteLibraryRepository(container.engine)
+    payments = await repository.get(LibraryId("/acme/payments"))
+    assert payments is not None
+    release = Version(
+        ref=VersionRef("release/1.4"),
+        kind=RefKind.BRANCH,
+        commit_sha="d" * 40,
+        imported_at=datetime(2026, 11, 4, tzinfo=UTC),
+    )
+    await repository.save(replace(payments, versions=payments.versions | {release}))
+
+    response = await client.get("/api/v1/libraries/acme/payments/versions/release/1.4")
+
+    assert response.status_code == 200
+    assert response.json()["ref"] == "release/1.4"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/libraries/vuejs/docs",
+        "/api/v1/libraries/vuejs/docs/versions/v1",
+        "/api/v1/libraries/acme/payments/versions/v9.9.9",
+        "/api/v1/libraries/acme/payments/versions/V1.4.0",
+    ],
+)
+async def test_unknown_libraries_and_versions_are_not_found(
+    client: httpx.AsyncClient, path: str
+) -> None:
+    response = await client.get(path)
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/v1/libraries/acme/pay$ments", "/api/v1/libraries/acme/payments/versions/a%20b"],
+)
+async def test_a_malformed_id_or_ref_is_a_validation_error(
+    client: httpx.AsyncClient, path: str
+) -> None:
+    response = await client.get(path)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
 
 
 async def test_domain_errors_map_to_http_status(client: httpx.AsyncClient) -> None:
@@ -71,7 +153,7 @@ async def test_search_for_unindexed_version_is_404_not_another_version(
 ) -> None:
     response = await client.get(
         "/api/v1/search",
-        params={"library": "/reactjs/react.dev", "version": "18.3", "query": "hook"},
+        params={"library": "/acme/payments", "version": "v1.2.0", "query": "hook"},
     )
 
     assert response.status_code == 404
@@ -165,7 +247,7 @@ async def test_mcp_domain_errors_become_tool_errors(container: Container) -> Non
     async with container.running(), Client(build_mcp(container)) as mcp:
         result = await mcp.call_tool(
             "search_docs",
-            {"library": "/reactjs/react.dev", "version": "18.3", "query": "hook"},
+            {"library": "/acme/payments", "version": "v1.2.0", "query": "hook"},
             raise_on_error=False,
         )
 

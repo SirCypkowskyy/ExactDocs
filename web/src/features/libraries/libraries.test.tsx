@@ -11,7 +11,17 @@ describe("libraries slice", () => {
 
   it("renders indexed libraries with their versions", async () => {
     const fetchMock = vi.fn(async () =>
-      Response.json({ libraries: [{ name: "react", versions: ["19.1"] }] }),
+      Response.json({
+        libraries: [
+          {
+            id: "/acme/payments",
+            title: "Payments",
+            description: "",
+            versions: ["main", "v1.4.0"],
+            default_version: "v1.4.0",
+          },
+        ],
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -24,8 +34,8 @@ describe("libraries slice", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("react")).toBeInTheDocument();
-    expect(screen.getByText("19.1")).toBeInTheDocument();
+    expect(await screen.findByText("/acme/payments")).toBeInTheDocument();
+    expect(screen.getByText("v1.4.0")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/libraries", expect.anything());
   });
 });

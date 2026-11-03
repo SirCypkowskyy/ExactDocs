@@ -86,6 +86,7 @@ def create_app(container: Container) -> FastAPI:
         catalog_http.build_router(
             list_libraries=container.catalog.list_libraries,
             get_library=container.catalog.get_library,
+            resolve_version=container.catalog.resolve_version,
         )
     )
     v1.include_router(retrieval_http.build_router(search_docs=container.retrieval.search_docs))

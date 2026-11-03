@@ -2,9 +2,16 @@
 
 from dataclasses import dataclass
 
-from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary, ListLibrariesQuery
-from exactdocs.catalog.errors import LibraryNotFoundError
-from exactdocs.catalog.models import LibraryName
+from exactdocs.catalog.dtos import (
+    GetLibraryQuery,
+    LibraryDetail,
+    LibraryList,
+    ListLibrariesQuery,
+    ResolvedVersion,
+    ResolveVersionQuery,
+)
+from exactdocs.catalog.errors import LibraryNotFoundError, VersionNotFoundError
+from exactdocs.catalog.models import LibraryId, ParsedId
 from exactdocs.catalog.ports.driven import LibraryRepository
 from exactdocs_kernel import paginate
 
@@ -16,9 +23,11 @@ class ListLibrariesUseCase:
     repository: LibraryRepository
 
     async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
-        """List a page of libraries, sorted by name."""
-        libraries = sorted(await self.repository.list_all(), key=lambda lib: lib.name)
-        page = paginate(libraries, key=lambda lib: lib.name, limit=query.limit, cursor=query.cursor)
+        """List a page of libraries, sorted by ID."""
+        libraries = sorted(await self.repository.list_all(), key=lambda lib: lib.id.value)
+        page = paginate(
+            libraries, key=lambda lib: lib.id.value, limit=query.limit, cursor=query.cursor
+        )
         return LibraryList.from_page(page)
 
 
@@ -28,9 +37,28 @@ class GetLibraryUseCase:
 
     repository: LibraryRepository
 
-    async def __call__(self, query: GetLibraryQuery) -> LibrarySummary:
-        """Fetch one library by its exact name."""
-        library = await self.repository.get(LibraryName(query.name))
+    async def __call__(self, query: GetLibraryQuery) -> LibraryDetail:
+        """Fetch one library by ID."""
+        library = await self.repository.get(LibraryId(query.id))
         if library is None:
-            raise LibraryNotFoundError(query.name)
-        return LibrarySummary.from_model(library)
+            raise LibraryNotFoundError(query.id)
+        return LibraryDetail.from_model(library)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolveVersionUseCase:
+    """Implements ``ports.driving.ResolveVersion``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, query: ResolveVersionQuery) -> ResolvedVersion:
+        """Resolve `/owner/repo[/ref]` to exactly one version."""
+        target = ParsedId.parse(query.id)
+        library = await self.repository.get(target.library)
+        if library is None:
+            raise LibraryNotFoundError(str(target.library))
+        version = library.find_version(target.ref) if target.ref else library.default_version()
+        if version is None:
+            ref = None if target.ref is None else str(target.ref)
+            raise VersionNotFoundError(str(library.id), ref)
+        return ResolvedVersion.from_library(library, version)
