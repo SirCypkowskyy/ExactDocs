@@ -16,10 +16,19 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY web/ ./
 RUN pnpm build
 
-# --- Python app: a self-contained, non-editable virtualenv
-FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
-FROM python:${PYTHON_VERSION}-slim-trixie AS build
+# --- Python app: a self-contained, non-editable virtualenv.
+# Built natively on the build platform and cross-installed for the target one (wheels for
+# TARGETARCH): Python 3.14 crashes under QEMU user-mode emulation, and native is much faster.
+# The venv's interpreter symlink points at /usr/local/bin/python3, present in the runtime image.
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+FROM --platform=$BUILDPLATFORM python:${PYTHON_VERSION}-slim-trixie AS build
 COPY --from=uv /uv /uvx /usr/local/bin/
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) echo x86_64-unknown-linux-gnu ;; \
+      arm64) echo aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac > /tmp/python-platform
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=0 \
@@ -34,14 +43,18 @@ COPY pyproject.toml uv.lock ./
 COPY packages/exactdocs/pyproject.toml packages/exactdocs/README.md packages/exactdocs/
 COPY packages/exactdocs-kernel/pyproject.toml packages/exactdocs-kernel/README.md packages/exactdocs-kernel/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-install-workspace --package exactdocs
+    uv sync --locked --no-install-workspace --package exactdocs \
+      --python-platform "$(cat /tmp/python-platform)"
 
 COPY packages/ packages/
 COPY --from=web /web/dist packages/exactdocs/src/exactdocs/_web
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-editable --package exactdocs
+    uv sync --locked --no-editable --package exactdocs \
+      --python-platform "$(cat /tmp/python-platform)"
+RUN mkdir /data
 
-# --- runtime
+# --- runtime: no RUN instructions, so a foreign-arch image never executes anything at build time
+# (the runner is ARM64; amd64 needs no emulation). The user is numeric: no /etc/passwd edits.
 FROM python:${PYTHON_VERSION}-slim-trixie AS runtime
 ARG VERSION=0.0.0
 LABEL org.opencontainers.image.title="ExactDocs" \
@@ -49,15 +62,14 @@ LABEL org.opencontainers.image.title="ExactDocs" \
       org.opencontainers.image.source="https://github.com/SirCypkowskyy/ExactDocs" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
-RUN groupadd --system --gid 10001 exactdocs \
- && useradd --system --uid 10001 --gid exactdocs --home-dir /data --no-create-home exactdocs \
- && install -d -o exactdocs -g exactdocs /data
-COPY --from=build --chown=exactdocs:exactdocs /app/.venv /app/.venv
+COPY --from=build --chown=10001:10001 /data /data
+COPY --from=build /app/.venv /app/.venv
 ENV PATH=/app/.venv/bin:$PATH \
+    HOME=/data \
     PYTHONUNBUFFERED=1 \
     EXACTDOCS_HOST=0.0.0.0 \
     EXACTDOCS_PORT=3000
-USER exactdocs
+USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 3000
