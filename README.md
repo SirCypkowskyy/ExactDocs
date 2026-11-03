@@ -43,9 +43,9 @@ exactdocs add https://github.com/acme/payments --ref v1.4.0 --path docs/ --path 
 exactdocs add git@bitbucket.org:acme/platform.git --ref main --path "docs/**/*.md"
 ```
 
-ExactDocs shows the matching files before importing, splits every article by its headings,
-and keeps the library in sync (re-sync a branch, or auto-import new tags matching a pattern).
-Repositories that ship a `context7.json` get their folders and exclusions pre-selected.
+ExactDocs splits every article by its headings and keeps the library in sync (re-sync a branch
+on demand). Planned next: a preview of matching files before importing, auto-import of new tags,
+and pre-selection from a repository's `context7.json`. See the [Roadmap](#roadmap).
 
 ### Connect your agent
 
@@ -61,7 +61,7 @@ Repositories that ship a `context7.json` get their folders and exclusions pre-se
 ```
 
 Create tokens in the UI (**Settings → Tokens**) or with `exactdocs token create`;
-`exactdocs config --client claude|cursor|vscode` prints a ready-to-paste snippet with a new token.
+`exactdocs config --client claude|cursor|vscode` (planned) will print a ready-to-paste snippet with a new token.
 For a local setup without a network port: `uvx exactdocs serve --stdio` (no token needed).
 
 ## MCP tools
@@ -76,10 +76,9 @@ For a local setup without a network port: `uvx exactdocs serve --stdio` (no toke
 | `search_docs(library, version?, query, tags?, mode?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
 | `read_chunk(chunk_id)` | Fetch a neighboring section of a search result |
 
-Library IDs are `/owner/repo`; without a version, a library's **default version** is used (set per
-library; initially the highest imported semver tag, else the default branch), and every response
-says which version answered. Hosts that support MCP Apps (Claude, ChatGPT) can render articles
-and results as UI.
+Library IDs are `/owner/repo`; without a version, a library's **default version** is used (the highest imported stable semver tag, else the default branch, unless pinned), and every response
+says which version answered. Planned: hosts that support MCP Apps (Claude, ChatGPT) will
+render articles and results as UI.
 All tools are read-only, and everything returned is marked as external content.
 
 ## Retrieval
