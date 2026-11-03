@@ -2220,6 +2220,17 @@ Scenario: Re-indexing while serving
 - [ ] index format version stored; `exactdocs reindex` (local) rebuilds and swaps
 - [ ] release notes template has a "requires reindex" section (`docs/releasing.md`)
 
+### E10-09 · docs: project docs describe MVP-1 as built, with all diagrams in Mermaid
+
+**Milestone** MVP-2 · **Labels** `type: docs` `status: triage` · **Area** docs · **Stories** - (documentation) · **Depends on** MVP-1 complete · **Size** L · **Issue** [#123](https://github.com/SirCypkowskyy/ExactDocs/issues/123)
+
+**Context.** The ASCII diagrams in README, `docs/architecture.md` and `web/README.md` are hard to maintain and cannot show flows; the docs must describe the system as built.
+
+- [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (mermaid-cli parse/render)
+- [ ] every ASCII diagram replaced by Mermaid (README *How it works*, architecture domains and bridges, web slices)
+- [ ] new diagrams: data model (ER), import flow, query flow, retrieval modes, auth, branching and releases (`gitGraph`), CI/CD and runners
+- [ ] README, architecture, releasing, index and CONTRIBUTING reflect MVP-1 as built; planned features labelled as planned; strict docs build passes
+
 #### E10 · Next: Operations
 
 ### E10-05 · feat: orchestrators see whether ExactDocs is alive and ready to serve
