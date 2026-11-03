@@ -15,7 +15,9 @@ from exactdocs.bootstrap.settings import Settings
 def step_running(context: Context) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)  # runs the app's shutdown after the scenario
-    context.client = stack.enter_context(TestClient(create_app(Container.build(Settings()))))
+    context.client = stack.enter_context(
+        TestClient(create_app(Container.build(Settings())), base_url="http://localhost")
+    )
 
 
 @when("I list the libraries over the REST API")
@@ -25,7 +27,7 @@ def step_list(context: Context) -> None:
 
 @when('I request the library "{name}"')
 def step_get(context: Context, name: str) -> None:
-    context.response = context.client.get(f"/api/v1/libraries/{name}")
+    context.response = context.client.get(f"/api/v1/libraries{name}")
 
 
 @when('I search "{library}" version "{version}" for "{query}"')

@@ -104,6 +104,9 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 |---|---|---|
 | `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file or PostgreSQL URL; the data directory is `/data` in Docker and the platform user-data directory for `uvx` |
 | `EXACTDOCS_SECRET_KEY` | generated in the data directory | Encrypts stored git credentials |
+| `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
+| `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
+| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
 | `EXACTDOCS_AUTH_MODE` | `local` | `local` (single admin account) or `oidc` (teams) |
 | `EXACTDOCS_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` | – | Required for `oidc` |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |

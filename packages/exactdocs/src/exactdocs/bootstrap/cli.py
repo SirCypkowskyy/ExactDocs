@@ -35,6 +35,8 @@ def serve(
         host=host or settings.host,
         port=port or settings.port,
         reload=reload,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
     )
 
 

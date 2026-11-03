@@ -63,7 +63,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
+      - name: Biome (CI mode, GitHub annotations)
+        run: pnpm exec biome ci .
+      - run: pnpm lint:arch
+      - run: pnpm lint:dead
+      - run: pnpm lint:react
       - run: pnpm test
       - run: pnpm build
 
@@ -91,3 +95,8 @@ jobs:
           for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:${port}/api/health" && break; sleep 1; done
           curl -fsS "http://127.0.0.1:${port}/api/v1/libraries"
           curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'
+          init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+          mcp=(-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$init")
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp/")" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 400

@@ -1,11 +1,14 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -40,7 +43,9 @@ def create_app(container: Container) -> FastAPI:
     settings = container.settings
     mcp_app = build_mcp(container).http_app(
         path=MCP_PATH,
-        # DNS-rebinding guard: only localhost plus the hosts/origins the operator configured.
+        # No server-initiated requests are needed, and stateless sessions let several
+        # processes serve one instance (TEAM-01).
+        stateless_http=True,
         host_origin_protection=True,
         allowed_hosts=settings.allowed_hosts or None,
         allowed_origins=settings.allowed_origins or None,
@@ -51,8 +56,20 @@ def create_app(container: Container) -> FastAPI:
         async with mcp_app.lifespan(mcp_app):
             yield
 
-    app = FastAPI(title="ExactDocs", version=__version__, lifespan=lifespan)
+    app = FastAPI(
+        title="ExactDocs",
+        version=__version__,
+        lifespan=lifespan,
+        generate_unique_id_function=_operation_id,
+    )
     app.add_exception_handler(DomainError, _domain_error_handler)
+    # DNS-rebinding guard for the whole app (REST, UI and MCP), one allowlist for all.
+    app.add_middleware(
+        OriginCheck,
+        trusted_hosts=settings.trusted_hosts,
+        allowed_origins=settings.allowed_origins,
+    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
 
     api = APIRouter(prefix="/api")
 
@@ -71,14 +88,26 @@ def create_app(container: Container) -> FastAPI:
     api.include_router(v1)
     app.include_router(api)
 
-    # Exact routes, no redirects; the MCP app keeps its own middleware. `/mcp/` is what some
-    # hosts (e.g. ChatGPT) are configured with.
-    app.router.routes.append(Route(MCP_PATH, endpoint=mcp_app))
+    # Every route of the MCP app (the endpoint, and OAuth/.well-known routes once auth is on)
+    # is served as-is, keeping the MCP app's own middleware; `/mcp/` is an alias some hosts
+    # (e.g. ChatGPT) are configured with.
+    for path in _route_paths(mcp_app.routes):
+        app.router.routes.append(Route(path, endpoint=mcp_app))
     app.router.routes.append(Route(f"{MCP_PATH}/", endpoint=_RewritePath(mcp_app, MCP_PATH)))
     if WEB_DIST.is_dir():
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
     return app
+
+
+def _operation_id(route: APIRoute) -> str:
+    """Short, stable OpenAPI operation IDs for generated clients: `catalog-list_all`."""
+    tag = route.tags[0] if route.tags else "default"
+    return f"{tag}-{route.name}"
+
+
+def _route_paths(routes: Iterable[object]) -> list[str]:
+    return [path for route in routes if isinstance(path := getattr(route, "path", None), str)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +120,35 @@ class _RewritePath:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         aliased = {**scope, "path": self.path, "raw_path": self.path.encode()}
         await self.app(aliased, receive, send)
+
+
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@dataclass(frozen=True, slots=True)
+class OriginCheck:
+    """Reject state-changing browser requests from foreign origins (CSRF / DNS rebinding).
+
+    Requests without an ``Origin`` header (CLI, MCP clients, curl) pass; browsers always send
+    one on cross-site unsafe requests.
+    """
+
+    app: ASGIApp
+    trusted_hosts: list[str]
+    allowed_origins: list[str]
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass the request on, or answer 403 for an unsafe request from a foreign origin."""
+        if scope["type"] == "http" and scope["method"] in _UNSAFE_METHODS:
+            origin = dict(scope["headers"]).get(b"origin", b"").decode()
+            if origin and not self._allowed(origin):
+                response = PlainTextResponse("Origin not allowed", status_code=403)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+    def _allowed(self, origin: str) -> bool:
+        return origin in self.allowed_origins or urlsplit(origin).hostname in self.trusted_hosts
 
 
 async def _domain_error_handler(_: Request, exc: Exception) -> Response:

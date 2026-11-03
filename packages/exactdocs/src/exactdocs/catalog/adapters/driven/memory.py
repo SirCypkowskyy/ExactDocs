@@ -21,8 +21,12 @@ class InMemoryLibraryRepository:
         """Create a small fixed catalog, so a fresh install has something to show."""
         return cls.of(
             [
-                Library(name=LibraryName("fastapi"), versions=frozenset({Version("0.115")})),
-                Library(name=LibraryName("react"), versions=frozenset({Version("19.1")})),
+                Library(
+                    name=LibraryName("/fastapi/fastapi"), versions=frozenset({Version("0.115")})
+                ),
+                Library(
+                    name=LibraryName("/reactjs/react.dev"), versions=frozenset({Version("19.1")})
+                ),
             ]
         )
 

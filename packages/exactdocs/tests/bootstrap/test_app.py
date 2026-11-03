@@ -20,7 +20,7 @@ def container() -> Container:
 async def client(container: Container) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(container)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
         yield client
 
 
@@ -35,11 +35,14 @@ async def test_lists_demo_libraries(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/libraries")
 
     assert response.status_code == 200
-    assert {lib["name"] for lib in response.json()["libraries"]} == {"fastapi", "react"}
+    assert {lib["name"] for lib in response.json()["libraries"]} == {
+        "/fastapi/fastapi",
+        "/reactjs/react.dev",
+    }
 
 
 async def test_domain_errors_map_to_http_status(client: httpx.AsyncClient) -> None:
-    response = await client.get("/api/v1/libraries/vue")
+    response = await client.get("/api/v1/libraries/vuejs/docs")
 
     assert response.status_code == 404
     assert response.json()["error"] == "not_found"
@@ -49,7 +52,8 @@ async def test_search_for_unindexed_version_is_404_not_another_version(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.get(
-        "/api/v1/search", params={"library": "react", "version": "18.3", "query": "hook"}
+        "/api/v1/search",
+        params={"library": "/reactjs/react.dev", "version": "18.3", "query": "hook"},
     )
 
     assert response.status_code == 404
@@ -111,3 +115,39 @@ def test_settings_defaults_are_local_and_private(tmp_path_factory: pytest.TempPa
     assert settings.telemetry == "off"
     assert settings.metrics is False
     assert settings.effective_database_url == f"sqlite:///{(data_dir / 'exactdocs.db').as_posix()}"
+
+
+def test_unknown_host_is_rejected_app_wide(localhost_client: TestClient) -> None:
+    response = localhost_client.get("/api/health", headers={"host": "evil.example"})
+
+    assert response.status_code == 400
+
+
+def test_unsafe_request_from_foreign_origin_is_rejected(localhost_client: TestClient) -> None:
+    response = localhost_client.post(
+        "/api/v1/libraries", headers={"origin": "https://evil.example"}
+    )
+
+    assert response.status_code == 403
+
+
+def test_configured_host_is_accepted(container: Container) -> None:
+    settings = Settings(allowed_hosts="docs.example.com, *.corp.example")
+    app = create_app(Container.build(settings))
+
+    with TestClient(app, base_url="http://docs.example.com") as client:
+        assert client.get("/api/health").status_code == 200
+    assert settings.allowed_hosts == ["docs.example.com", "*.corp.example"]
+    assert container.settings.allowed_hosts == []
+
+
+async def test_mcp_domain_errors_become_tool_errors(container: Container) -> None:
+    async with Client(build_mcp(container)) as mcp:
+        result = await mcp.call_tool(
+            "search_docs",
+            {"library": "/reactjs/react.dev", "version": "18.3", "query": "hook"},
+            raise_on_error=False,
+        )
+
+    assert result.is_error
+    assert "not_found" in str(result.content)
