@@ -9,7 +9,7 @@ ARG UV_VERSION=0.13.5
 # --- web UI: platform-independent static files, so build once on the native platform
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-trixie-slim AS web
 WORKDIR /web
-COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml web/.pnpmfile.cjs ./
 RUN npm install --global "$(node -p "require('./package.json').packageManager")"
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
