@@ -16,6 +16,7 @@ nav = [
   { "Home" = "index.md" },
   { "Product" = [
     { "User stories" = "user-stories.md" },
+    { "Delivery plan" = "plan.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = "architecture.md" },

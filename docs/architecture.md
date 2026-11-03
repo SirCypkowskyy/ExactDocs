@@ -52,6 +52,17 @@ a **bridge** that calls the provider's *driving port* (`bootstrap/bridges.py:Cat
 uses `catalog.ports.driving.GetLibrary`). Neither domain knows the other exists, so a domain can
 later move to its own package or service without touching the other.
 
+### Bridges are one-way
+
+Bridges point in one direction only: **retrieval → catalog** and **ingestion → catalog /
+retrieval**. Catalog calls no other domain, and nothing calls ingestion, so the domain graph has
+no cycles. An architecture test (planned in E1-03 of the [delivery plan](plan.md)) checks the
+direction of every bridge in `bootstrap/bridges.py`.
+
+The kernel `NOTICE` constant (the untrusted-content notice every MCP result carries, see the
+*MCP-07* story) is a reviewed kernel addition: it is shared text, not business logic, so it lives
+in the kernel instead of being duplicated per domain.
+
 **Why not a `shared` domain?** Everything shared ends up there. The kernel is a separate
 *package* on purpose: adding to it is a visible, reviewed decision, it may only use the
 standard library, and it cannot import the app. If two domains need the same *business*

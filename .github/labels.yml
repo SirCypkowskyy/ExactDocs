@@ -4,6 +4,7 @@
 - { name: "type: bug", color: "d73a4a", description: "Something that should work is broken" }
 - { name: "type: chore", color: "c5def5", description: "Tooling, CI, dependencies, refactoring" }
 - { name: "type: docs", color: "0075ca", description: "Documentation only" }
+- { name: "type: epic", color: "3e4b9e", description: "Tracking issue for a group of features" }
 - { name: "status: triage", color: "fbca04", description: "New; needs review before work starts" }
 - { name: "status: ready", color: "0e8a16", description: "Clear and accepted; anyone may claim it" }
 - { name: "status: in progress", color: "5319e7", description: "Claimed; someone (human or agent) is working on it" }

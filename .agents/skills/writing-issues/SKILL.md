@@ -70,3 +70,37 @@ gh issue create \
 
 Use `type: bug` for bugs. New issues start in `status: triage`; a maintainer moves them to
 `status: ready`. Agents may only start on `status: ready` issues (see the `claiming-issues` skill).
+
+## Epics, sub-issues and dependencies
+
+An **epic** is a tracking issue titled `epic: E<n> <name>` and labelled `type: epic` (no
+milestone; it spans milestones); its body also holds a `- [ ] #<n>` task list of its features
+as a fallback view. Every feature is linked as a GitHub **sub-issue** of its epic, and every
+whole-issue "Depends on" also becomes a GitHub **blocked by** relationship (skip partial ones
+such as "metrics only", "pgvector part only" or a milestone like "MVP-1"). Both APIs take the issue's
+database `id`, not its number. Check the dependencies API once
+(`gh api repos/{owner}/{repo}/issues/<n>/dependencies/blocked_by`); if it returns 404, skip
+"blocked by" and rely on `Depends on #<n>` lines and the epic task list:
+
+```bash
+id() { gh api "repos/{owner}/{repo}/issues/$1" --jq .id; }
+gh api repos/{owner}/{repo}/issues/<epic>/sub_issues -F sub_issue_id="$(id <feature>)"
+gh api repos/{owner}/{repo}/issues/<feature>/dependencies/blocked_by -F issue_id="$(id <dependency>)"
+```
+
+File features in dependency (topological) order so each dependency already has a number. When
+filing many issues, record each number (`url=$(gh issue create …); echo "<plan-id> ${url##*/}" >> filed.tsv`)
+and pause about 1 s between write calls (GitHub's secondary rate limits); record epics the same
+way under their epic ID (`echo "E3 ${url##*/}" >> filed.tsv`) so sub-issue links can find them.
+The body file uses the form's headings (`### Context`, `### Expected behavior`, ...), as above.
+Labels, including `type: epic`, are defined in `.github/labels.yml` and applied with
+`.agents/skills/working-on-issues/scripts/sync-labels.sh`.
+
+## Promoting a milestone
+
+When a planned milestone is accepted, promote all its triaged issues at once:
+
+```bash
+gh issue list --milestone "<milestone>" --label "status: triage" --limit 200 --json number --jq '.[].number' |
+  xargs -I{} gh issue edit {} --remove-label "status: triage" --add-label "status: ready"
+```

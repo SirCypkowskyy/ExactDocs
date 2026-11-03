@@ -57,14 +57,16 @@ Naming: the context7-compatible MCP tools keep context7's names and arguments
 | Web UI auth | Server **session cookie** (HttpOnly); API tokens are for MCP, REST and the CLI |
 | MCP auth | API tokens verified by a FastMCP `TokenVerifier` (the token acts as its user); with ACL-01, FastMCP OAuth/OIDC (`OIDCProxy`) is combined with API tokens via `MultiAuth`, so web hosts (Claude, ChatGPT) can connect; OAuth discovery routes (`/.well-known/...`) are served at the root |
 | MCP endpoint | **Stateless** Streamable HTTP (`stateless_http=True`) at `/mcp` (and `/mcp/` as an alias); every route of the MCP app (incl. OAuth `/.well-known/...` later) is served as-is; errors are masked (`mask_error_details=True`) except `DomainError`s, which reach the agent as tool errors with their message; FastMCP's update check (`FASTMCP_CHECK_FOR_UPDATES=off`) and stdio banner are disabled |
-| Host and origin checks | **One allowlist for the whole app** (REST, UI and MCP): localhost plus `EXACTDOCS_ALLOWED_HOSTS` (comma-separated, wildcards allowed), enforced by `TrustedHostMiddleware` and FastMCP's host/origin guard; state-changing browser requests with a foreign `Origin` get 403 (CSRF / DNS rebinding); `EXACTDOCS_FORWARDED_ALLOW_IPS` tells uvicorn which proxies to trust |
+| Host and origin checks | **One allowlist for the whole app** (REST, UI and MCP): localhost plus `EXACTDOCS_ALLOWED_HOSTS` (comma-separated, wildcards allowed), enforced by `TrustedHostMiddleware` and FastMCP's host/origin guard; state-changing browser requests with a foreign `Origin` get 403 (CSRF / DNS rebinding), unless the origin is listed in `EXACTDOCS_ALLOWED_ORIGINS` (comma-separated browser origins allowed to make state-changing requests); `EXACTDOCS_FORWARDED_ALLOW_IPS` tells uvicorn which proxies to trust |
 | Telemetry | **Logfire SDK** used only as an OpenTelemetry SDK: `send_to_logfire=False` is always set in code; OTLP over HTTP/protobuf to the operator's collector; FastAPI's built-in OpenTelemetry for requests (not `instrument_fastapi`, which records request arguments); pydantic-ai instrumentation with `include_content=False`; Prometheus via an additional OpenTelemetry metric reader; `logfire.configure` is only called when `EXACTDOCS_TELEMETRY=otlp`, always with `console=False` (stdout belongs to stdio MCP) |
 | HTTP client | `httpx2` (the client FastMCP 4 and pydantic-ai use), in every adapter |
 | Web UI serving | FastAPI's `app.frontend(...)` for the built SPA (falls back to `index.html` only for HTML GET requests) |
 | Users and tenancy | MVP: a **single admin** account; more users arrive with roles (Next). **One tenant** per instance; library IDs are globally unique, like context7's |
 | Background jobs | MVP-1: an **in-process worker** with a job table in the database; DBOS comes with resumable imports (MVP-2) |
 | stdio MCP | A **standalone, in-process** server on the local database; opens it read-only (SQLite WAL), so it is safe next to a running HTTP server; works before any account exists |
-| Refs containing `/` | Part of the path in MCP and context7 IDs (`/acme/payments/release/1.4`). REST routes are `/api/v1/libraries/{owner}/{repo}` and `.../versions/{ref:path}`, with the ref always last (servers decode `%2F` before routing, so encoded segments cannot work) |
+| Refs containing `/` | Part of the path in MCP and context7 IDs (`/acme/payments/release/1.4`). REST routes are `/api/v1/libraries/{owner}/{repo}` and `.../versions/{ref:path}`, with the ref always last (servers decode `%2F` before routing, so encoded segments cannot work); routes that need a ref and an article path take both as query parameters (`?ref=` and `?path=`) |
+| Persistence | **SQLAlchemy Core** (async, no ORM) with aiosqlite; **one Alembic history** owned by bootstrap, with `render_as_batch=True` (SQLite) and FTS5 tables created via `op.execute`; tables prefixed per domain (`catalog_`, `retrieval_`, ...); **no cross-domain foreign keys** (other domains' IDs are held by value) |
+| Vector storage | SQLite: **float32 BLOBs** with brute-force cosine similarity scoped to the active manifest, behind a `VectorIndex` port; numpy only in the `exactdocs[ai]` extra. PostgreSQL: **pgvector** |
 
 ## Actors
 
@@ -102,13 +104,18 @@ instance's setting, else the best available pipeline from the table.
 Stories without a marker are **MVP-1**; *(MVP-2)* marks whole stories, and *MVP-2:* marks the
 part of an acceptance criterion that can wait.
 
+In MVP-1 users manage tokens and libraries in the web UI (and over REST); stdio and HTTP MCP work.
+The CLI has only its local commands (`serve`, `admin create`, `admin reset-password`); every
+`exactdocs` command that talks to the server (`login`, `token`, `add`, `libraries`,
+`version add`, `sync`, `remove`) is *MVP-2* (CLI-01).
+
 ### First run and access
 
 - **[AUTH-01]** As a user starting ExactDocs for the first time, I want to create the first (admin) account in the web UI or with `exactdocs admin create`, because even a single-user instance on a network port must not be open to anyone.
     - Acceptance: until an account exists, the UI shows only the setup page and the API refuses everything else; local accounts use hashed passwords; the UI has login and logout, sessions expire, and `exactdocs admin reset-password` (local command) recovers a lost password; the session cookie is HttpOnly and SameSite=Lax, state-changing requests are Origin-checked, and the cookie is never accepted on `/mcp`.
 - **[AUTH-02]** As a user, I want to create, list and revoke API tokens in the UI and with `exactdocs token create|list|revoke`, because my agent (MCP over HTTP), the CLI and REST clients need credentials.
-    - Acceptance: a token is shown once, stored hashed, can have an expiry, and is accepted by MCP, REST and the CLI; stdio MCP (`exactdocs serve --stdio`) needs no token; `exactdocs login <url>` asks for username and password, calls a REST endpoint that issues a named API token, and stores it in the CLI config (`--token` accepts an existing token instead).
-- **[CLI-01]** As a user, I want the CLI to work as a client of the server's REST API (`/api/v1`, see Decisions) (server URL and token from flags, env, or a config file written by `exactdocs login`), because the CLI should behave exactly like the UI and work against a remote instance too.
+    - Acceptance: a token is shown once, stored hashed, can have an expiry, and is accepted by MCP and REST; stdio MCP (`exactdocs serve --stdio`) needs no token. *MVP-2:* the CLI: `exactdocs token create|list|revoke`, tokens accepted by the CLI, and `exactdocs login <url>` asks for username and password, calls a REST endpoint that issues a named API token, and stores it in the CLI config (`--token` accepts an existing token instead).
+- **[CLI-01]** *(MVP-2)* As a user, I want the CLI to work as a client of the server's REST API (`/api/v1`, see Decisions) (server URL and token from flags, env, or a config file written by `exactdocs login`), because the CLI should behave exactly like the UI and work against a remote instance too.
     - Acceptance: every command goes through the REST API except the local ones: `serve`, `admin create` and `admin reset-password` (plus `reindex`, `backup` and `restore` once RUN-04 and OPS-02 exist); a CLI action and the same UI action produce identical results.
 
 ### Add a library
@@ -127,10 +134,10 @@ part of an acceptance criterion that can wait.
     - Acceptance: when the file exists it pre-fills title, description and path selection (all still editable); `previousVersions` are offered for import; `rules` are stored and returned by `query-docs`.
 - **[LIB-07]** As a user, I want each library to have a title and description, because agents choose libraries by them in `resolve-library-id`.
     - Acceptance: defaults come from the root README's first heading and paragraph (the root README is always fetched for this, even outside the selected paths), else the repo name; both are editable. *MVP-2:* `context7.json` values take precedence.
-- **[LIB-08]** As a user, I want the same from the CLI (`exactdocs add <git-url> --id /acme/payments --ref v1.4.0 --path docs/`), because I script my setup.
+- **[LIB-08]** *(MVP-2)* As a user, I want the same from the CLI (`exactdocs add <git-url> --id /acme/payments --ref v1.4.0 --path docs/`), because I script my setup.
     - Acceptance: `exactdocs libraries` lists what the UI shows (CLI-01).
-- **[LIB-09]** As a user, I want to edit a library's paths and path tag rules (TAG-02), because my first selection is rarely perfect.
-    - Acceptance: settings apply to the whole library: saving re-processes every version in the background; the previous state is served until the atomic swap (IMP-05). Versions are added with LIB-11 and removed with SYNC-03. *MVP-2:* editing chunking settings (IMP-03) only re-chunks, without re-fetching.
+- **[LIB-09]** *(MVP-2)* As a user, I want to edit a library's paths and path tag rules (TAG-02), because my first selection is rarely perfect.
+    - Acceptance: settings apply to the whole library: saving re-processes every version in the background; the previous state is served until the atomic swap (IMP-05). Versions are added with LIB-11 and removed with SYNC-03. Editing chunking settings (IMP-03) only re-chunks, without re-fetching. (In MVP-1, paths and tag rules are set when the library is added.)
 - **[LIB-10]** *(MVP-2)* As a library owner, I want to pin the default version, because the newest tag is not always the one my team uses.
     - Acceptance: a pinned default stays until unpinned; unpinned, it follows the *Default version* rule; the UI and `list_libraries` show whether it is pinned.
 - **[LIB-11]** As a user, I want to add another version (ref) to an existing library, because I need `v1.3.0` next to `v1.4.0`.
@@ -156,7 +163,7 @@ part of an acceptance criterion that can wait.
 - **[TAG-01]** As a user, I want articles to be tagged, from their front matter (`tags: [api, auth]`) automatically and by hand in the UI, because I want to slice documentation by topic across folders.
     - Acceptance: front-matter tags are imported and shown on the article and in the tree. *MVP-2:* manual tags in the UI; they belong to the library (all versions) and are keyed by article path, following renames detected by git.
 - **[TAG-02]** As a user, I want to assign tags by path rules in the library configuration (`docs/api/** → api`), because most repos have no front matter but a meaningful folder layout.
-    - Acceptance: rules apply on every import; tags from front matter, rules and manual edits combine.
+    - Acceptance: rules apply on every import; tags from front matter and rules combine. *MVP-2:* manual tags (TAG-01) combine with them.
 - **[TAG-03]** As a user or AI agent, I want to filter browsing and search by tags (any of / all of), because "only the API reference" or "only ADRs" is a common need.
     - Acceptance: the UI tree, UI search and the MCP tools `list_articles` and `search_docs` accept tag filters, applied before ranking.
 
@@ -222,7 +229,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
 - **[SYNC-03]** As a user, I want to remove a version or a whole library, because I don't want stale docs found by me or my agent.
     - Acceptance: after removal nothing from it appears in browse, search or MCP results; content no longer referenced by any version is garbage-collected.
 - **[SYNC-04]** As a user, I want sync failures handled gracefully (repository deleted or private, credential expired, branch deleted, tag moved), because an upstream problem must not take my docs away.
-    - Acceptance: the last good version keeps being served; the error is shown on the library (BRW-05); `exactdocs sync` exits non-zero with the reason; a moved tag is reported as an error. *MVP-2:* a moved tag can be re-imported after confirmation.
+    - Acceptance: the last good version keeps being served; the error is shown on the library (BRW-05). *MVP-2:* each failure has its own error code (repository unreachable, credential expired, branch deleted, tag moved); `exactdocs sync` exits non-zero with the reason; a moved tag is detected and reported as an error, and can be re-imported after confirmation.
 
 ### Run it
 
@@ -230,7 +237,7 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
     - Acceptance: `tests/fixtures/docs-repo` is built into a git repository during tests, with two tags (`v1.3.0`, `v1.4.0`) and one branch; it contains code blocks, tables, front matter, MDX, both admonition syntaxes and identifiers (`snake_case`, `camelCase`, `--flag`, `pkg.mod.fn`), with a table of queries and their expected top sections; SRCH-01, SRCH-02, IMP-02, the chunker decision and RET-09 test against it.
 
 - **[RUN-01]** As a user, I want to start ExactDocs with one command (`uvx exactdocs serve` or one `docker run`) and browse my first library within five minutes, because I won't adopt a tool that takes an afternoon to set up.
-    - Acceptance: from a clean machine with no models and no API keys, this repository's `docs/` (the smoke demo) is browsable and searchable within five minutes on SQLite; data lives in `/data` (Docker) or the platform user-data directory (`uvx`), see Decisions.
+    - Acceptance: from a clean machine with no models and no API keys, a documentation repository added by its git URL is browsable and searchable within five minutes on SQLite (the CI smoke demo mounts the fixture repository and adds it via `file://`, E10-03a); data lives in `/data` (Docker) or the platform user-data directory (`uvx`), see Decisions.
 - **[RUN-02]** As a user, I want the package and image to stay small, with no bundled ML models or LLMs, because many machines will only ever use BM25.
     - Acceptance: no model weights in the wheel or image; ML client libraries load only when a provider is configured.
 - **[RUN-03]** As a user, I want everything to stay on my machine or server, because my docs and queries are private.
@@ -285,6 +292,8 @@ replace it by changing only the server URL. The ExactDocs tools above come on to
     - Acceptance: tokens act as their user (optionally narrowed to chosen libraries); a library without view access is invisible, not even its name appears in listings or errors (MCP masks unexpected errors; only domain errors pass, and "not found" and "no access" look the same).
 - **[ACL-05]** As a library owner or operator, I want a log of access changes and deletions, because we need to know who shared or deleted what.
     - Acceptance: grants, revocations, deletions and ownership transfers are recorded with actor and time and visible to library admins and operators.
+- **[ACL-06]** As an operator, I want to create, disable and reset local user accounts in the UI and with `exactdocs user create|disable|reset-password`, because not every team member signs in through OIDC; no self-signup.
+    - Acceptance: only an operator creates local accounts (there is no sign-up page); a disabled user's sessions and tokens are refused; a password reset ends the user's sessions.
 - **[TEAM-01]** As an operator, I want a shared instance on PostgreSQL, because the whole team should work on the same libraries.
     - Acceptance: `EXACTDOCS_DATABASE_URL=postgresql://…` (PostgreSQL with ParadeDB `pg_search`, e.g. the `paradedb/paradedb` image) works with all MVP features, and the search ranking suite passes on it as on SQLite; several server processes can run against one database.
 - **[TEAM-02]** As an operator, I want to declare libraries in an `exactdocs.sources.yaml` kept in our own repo (URL, ID, ref or tag pattern, paths, tags, chunking) and apply it with a dry-run diff, because the set of imported docs should go through code review.
