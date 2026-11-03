@@ -12,6 +12,8 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
 
+pytestmark = pytest.mark.usefixtures("demo_catalog")
+
 
 def alembic_head() -> str:
     return ScriptDirectory.from_config(alembic_config()).get_current_head() or ""
@@ -23,7 +25,7 @@ def container() -> Container:
 
 
 @pytest.fixture
-async def client(container: Container, demo_catalog: None) -> AsyncIterator[httpx.AsyncClient]:
+async def client(container: Container) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(container)
     transport = httpx.ASGITransport(app=app)
     # ASGITransport does not run the app's lifespan, which is what migrates the database.
@@ -75,7 +77,7 @@ async def test_search_for_unindexed_version_is_404_not_another_version(
     assert response.status_code == 404
 
 
-async def test_mcp_exposes_read_only_tools(container: Container, demo_catalog: None) -> None:
+async def test_mcp_exposes_read_only_tools(container: Container) -> None:
     async with container.running(), Client(build_mcp(container)) as mcp:
         tools = {tool.name: tool for tool in await mcp.list_tools()}
         result = await mcp.call_tool("list_libraries", {})
@@ -99,7 +101,7 @@ MCP_HEADERS = {"accept": "application/json, text/event-stream"}
 
 
 @pytest.fixture
-def localhost_client(container: Container) -> Iterator[TestClient]:  # starts empty: no catalog
+def localhost_client(container: Container) -> Iterator[TestClient]:
     # TestClient runs the app (and the MCP session manager's lifespan) in one event loop.
     with TestClient(create_app(container), base_url="http://localhost") as client:
         yield client
@@ -159,9 +161,7 @@ def test_configured_host_is_accepted(container: Container) -> None:
     assert container.settings.allowed_hosts == []
 
 
-async def test_mcp_domain_errors_become_tool_errors(
-    container: Container, demo_catalog: None
-) -> None:
+async def test_mcp_domain_errors_become_tool_errors(container: Container) -> None:
     async with container.running(), Client(build_mcp(container)) as mcp:
         result = await mcp.call_tool(
             "search_docs",

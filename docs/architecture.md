@@ -112,7 +112,11 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   (`Container.running()`) and reported by `/api/health` as `schema_revision`. A domain's
   revision is plain `op.create_table(...)`, not an import of the adapter's `Table` objects, so
   old revisions never change. Use `op.batch_alter_table` to change an existing table,
-  `op.execute("CREATE VIRTUAL TABLE ... USING fts5(...)")` for FTS5.
+  `op.execute("CREATE VIRTUAL TABLE ... USING fts5(...)")` for FTS5. `migrate()` runs the
+  revisions in one `BEGIN IMMEDIATE` transaction with `foreign_keys` off (a batch alteration
+  recreates the table, and with the pragma on SQLite would cascade-delete the rows of tables
+  that reference it) and fails, rolling back, if `PRAGMA foreign_key_check` finds a violation
+  before the commit.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.

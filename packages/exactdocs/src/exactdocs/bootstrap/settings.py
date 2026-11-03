@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from platformdirs import user_data_path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 # Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS.
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
@@ -44,8 +45,13 @@ class Settings(BaseSettings):
     @property
     def effective_database_url(self) -> str:
         """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory (aiosqlite driver)."""
-        url = self.database_url or f"sqlite:///{(self.data_dir / 'exactdocs.db').as_posix()}"
-        return url.replace("sqlite:", "sqlite+aiosqlite:", 1) if url.startswith("sqlite:") else url
+        if self.database_url:
+            url = make_url(self.database_url)
+        else:
+            url = URL.create("sqlite", database=(self.data_dir / "exactdocs.db").as_posix())
+        if url.get_backend_name() == "sqlite":
+            url = url.set(drivername="sqlite+aiosqlite")
+        return url.render_as_string(hide_password=False)
 
     @property
     def trusted_hosts(self) -> list[str]:

@@ -41,8 +41,8 @@ class Container:
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
         """Migrate the database to the latest schema, serve, then release the connections."""
-        await migrate(self.engine)
         try:
+            await migrate(self.engine)
             yield
         finally:
             await self.engine.dispose()
