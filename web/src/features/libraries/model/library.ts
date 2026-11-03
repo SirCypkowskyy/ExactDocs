@@ -1,8 +1,4 @@
-export interface Library {
-  readonly name: string;
-  readonly versions: readonly string[];
-}
+import type { components } from "@/shared/lib/api-schema";
 
-export interface LibrariesResponse {
-  readonly libraries: readonly Library[];
-}
+export type Library = components["schemas"]["LibrarySummary"];
+export type LibrariesResponse = components["schemas"]["LibraryList"];

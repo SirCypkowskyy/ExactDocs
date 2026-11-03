@@ -78,3 +78,25 @@ def step_libraries(context: Context) -> None:
 @then("I get {count:d} excerpts")
 def step_excerpts(context: Context, count: int) -> None:
     assert len(context.response.json()["excerpts"]) == count
+
+
+@when("I fetch the OpenAPI description")
+def step_openapi(context: Context) -> None:
+    context.response = context.client.get("/api/v1/openapi.json")
+
+
+@then("every operation has a stable operation ID and documented error responses")
+def step_operations(context: Context) -> None:
+    paths = context.response.json()["paths"]
+    operations = [op for item in paths.values() for op in item.values()]
+    assert operations
+    for op in operations:
+        tag, _, name = op["operationId"].partition("-")
+        assert tag in op["tags"], op["operationId"]
+        assert name, op["operationId"]
+        assert {"404", "422"} <= set(op["responses"]), op["operationId"]
+
+
+@then("the error has a message")
+def step_error_message(context: Context) -> None:
+    assert context.response.json()["detail"]
