@@ -10,7 +10,7 @@ It holds **103 feature issues** plus **12 epic tracking issues**:
 
 | Milestone | Feature issues |
 |---|---|
-| MVP-1 | 45 |
+| MVP-1 | 46 |
 | MVP-2 | 27 |
 | Next: AI retrieval | 14 |
 | Next: Teams & integrations | 13 |
@@ -2196,6 +2196,17 @@ Scenario: The whole loop in a real browser
 - [ ] CI `uvx` smoke job: install the built wheel (with the built web UI) with `uvx`, run `exactdocs serve`, check `/api/health`; on a runner without `git` on `PATH`, start fails with that message
 - [ ] Playwright end-to-end test (one test, in CI against a server started from the built wheel): setup → add the fixture repository (fixture HTTP git server) → browse an article → search a known term
 - [ ] docs: README *Quick start* has the `uvx` variant
+
+### E10-10 · chore: the Docker image caches dependencies across source changes and is hardened and scanned
+
+**Milestone** MVP-1 · **Labels** `type: chore` `status: ready` `area: infra` · **Area** CI / release / infra · **Stories** RUN-01, RUN-02, RUN-03, LIB-05, IMP-01 · **Depends on** - (coordinate with E10-02, E10-03a) · **Size** L · **Issue** [#124](https://github.com/SirCypkowskyy/ExactDocs/issues/124)
+
+**Context.** The layer cache is invalidated by every release and by README/test edits, and the image is not hardened; MVP-1 also needs `git` and `openssh-client` in the runtime.
+
+- [ ] caching: `VERSION` below the dependency layers; dependency layer built only from `uv.lock` (`uv export --frozen`); only `packages/*/src` + metadata copied (no tests); pnpm pinned and installed before any `COPY`, `pnpm fetch` then `install --offline`; source-only changes show dependency layers `CACHED`
+- [ ] hardening: base images pinned by digest (Dependabot), runtime with only `git`, `openssh-client`, `ca-certificates`, `tini` (PID 1), no pip/setuptools, no setuid bits, read-only app files, only `/data` and `/tmp` writable; amd64 apt layer built under QEMU for that stage only
+- [ ] CI: hadolint, Trivy/Grype gate on fixable CRITICAL/HIGH, smoke test with `--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges` incl. a `file://` import; size budget kept
+- [ ] docs: hardened compose example in README; scan gate in `docs/releasing.md`
 
 #### E10 · MVP-2
 
