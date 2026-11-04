@@ -44,9 +44,11 @@ _INSERT = text(
     "INSERT INTO retrieval_search (rowid, heading, path, text, identifiers) "
     "VALUES (:rowid, :heading, :path, :text, :identifiers)"
 )
-# Rank first and cut to LIMIT, then build snippets for the survivors only.
+# Rank first and cut to LIMIT, then build snippets for the survivors only. MATERIALIZED and CROSS
+# JOIN pin that order: left to itself the planner can scan the FTS table on the outside and re-run
+# the ranking for every match (seconds instead of milliseconds).
 _SEARCH = """
-    WITH ranked AS (
+    WITH ranked AS MATERIALIZED (
         SELECT c.id AS id, mc.manifest_id AS manifest_id, mc.chunk_id AS chunk_id,
                -bm25(retrieval_search, :heading_weight, :path_weight, :text_weight,
                      :identifiers_weight) AS score
@@ -62,7 +64,7 @@ _SEARCH = """
     SELECT r.manifest_id, r.chunk_id, r.score,
            snippet(retrieval_search, 2, '', '', '', 24) AS snippet
     FROM ranked r
-    JOIN retrieval_search ON retrieval_search.rowid = r.id
+    CROSS JOIN retrieval_search ON retrieval_search.rowid = r.id
     WHERE retrieval_search MATCH :match
     ORDER BY r.score DESC, r.chunk_id
 """
