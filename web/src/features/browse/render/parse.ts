@@ -179,3 +179,17 @@ export function inertMdx(source: string): string {
   flush();
   return out.join("\n");
 }
+
+// Task lists: `- [ ] todo` / `- [x] done`. The marker leaves the text and the item remembers it.
+md.core.ruler.after("inline", "task_items", (state) => {
+  const tokens = state.tokens;
+  for (let i = 0; i + 2 < tokens.length; i++) {
+    const [item, paragraph, inline] = [tokens[i], tokens[i + 1], tokens[i + 2]];
+    if (item?.type !== "list_item_open" || paragraph?.type !== "paragraph_open") continue;
+    const first = inline?.children?.[0];
+    const m = first?.type === "text" ? /^\[( |x|X)\]\s/.exec(first.content) : null;
+    if (!(m && first)) continue;
+    item.meta = { task: m[1] === " " ? "todo" : "done" };
+    first.content = first.content.slice(m[0].length);
+  }
+});

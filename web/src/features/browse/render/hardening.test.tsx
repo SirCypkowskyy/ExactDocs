@@ -199,3 +199,13 @@ describe("large articles stay bounded", () => {
     await act(async () => {});
   });
 });
+
+describe("task lists", () => {
+  it("are checkboxes, not text", () => {
+    const { container } = view("- [x] Done\n- [ ] Todo\n- [x]not a task\n");
+    expect(screen.getByRole("img", { name: "Done" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Not done" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".doc-task")).toHaveLength(2);
+    expect(container.textContent).toContain("[x]not a task");
+  });
+});

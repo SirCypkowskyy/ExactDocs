@@ -55,9 +55,12 @@ print(f&quot;created {payment.id}&quot;)</code></pre>
 </li>
 <li>Fulfil the order.</li>
 </ol>
-<ul><li>[x] Create a test key</li>
-<li>[ ] Go live</li>
-<li>[ ] Tell the team</li>
+<ul><li class="doc-task doc-task-done"><svg/><div>Create a test key</div>
+</li>
+<li class="doc-task"><svg/><div>Go live</div>
+</li>
+<li class="doc-task"><svg/><div>Tell the team</div>
+</li>
 </ul>
 <h5 id="doc-pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
 <p><img src="https://raw.githubusercontent.com/acme/payments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/docs/guide/img/dashboard.png" alt="Dashboard overview" loading="lazy" decoding="async" referrerPolicy="no-referrer"/></p>
@@ -224,9 +227,12 @@ print(f&quot;created {payment.id}&quot;)</code></pre>
 </li>
 <li>Fulfil the order.</li>
 </ol>
-<ul><li>[x] Create a test key</li>
-<li>[ ] Go live</li>
-<li>[ ] Tell the team</li>
+<ul><li class="doc-task doc-task-done"><svg/><div>Create a test key</div>
+</li>
+<li class="doc-task"><svg/><div>Go live</div>
+</li>
+<li class="doc-task"><svg/><div>Tell the team</div>
+</li>
 </ul>
 <h5 id="doc-pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
 <p><span class="doc-noimage"><svg/><span>Image not shown: Dashboard overview</span></span></p>
