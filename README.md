@@ -141,9 +141,10 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, later the secret key and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
+| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, the generated secret key, `known_hosts` and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
 | `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision |
-| `EXACTDOCS_SECRET_KEY` | generated in the data directory | Encrypts stored git credentials |
+| `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
+| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
@@ -155,9 +156,38 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_TELEMETRY` | `off` | `off` or `otlp` (OpenTelemetry export to your collector; never to any cloud) |
 | `EXACTDOCS_METRICS` | `off` | `on` exposes a Prometheus endpoint at `/metrics` |
 
-Git credentials for private repositories (token or SSH deploy key) are set per library in the UI
-or CLI and stored encrypted with `EXACTDOCS_SECRET_KEY` (generated in the data volume on first
-run if unset).
+### Private repositories
+
+Send a credential next to the URL in `POST /api/v1/repositories/check`, `POST /api/v1/libraries`
+or `POST /api/v1/libraries/{owner}/{repo}/versions`:
+
+```json
+{"url": "https://github.com/acme/docs", "credential": {"kind": "token", "token": "ghp_..."}}
+{"url": "git@github.com:acme/docs.git", "credential": {"kind": "ssh_key", "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n..."}}
+```
+
+- A **token** goes with an `https://` URL (`http://` only for localhost); `username` defaults to
+  `x-access-token` (GitHub, GitLab; Bitbucket repository tokens use `x-token-auth`). A **deploy
+  key** (private key without a passphrase) goes with an SSH URL.
+- Credentials are stored encrypted with `EXACTDOCS_SECRET_KEY`, never returned by the API and
+  never written to logs or error messages. They reach git through `GIT_ASKPASS` (token) or a
+  temporary key file named in `GIT_SSH_COMMAND` (deleted after each git call), never in the URL or
+  the command line, and only for the repository's own host: a redirect to another host fails.
+- **SSH host keys** live in `<data dir>/known_hosts`. GitHub, GitLab and Bitbucket are pinned with
+  their published keys; any other host is trusted on first use and remembered. A host whose key
+  changed is refused with `host_key_changed` until you remove its line from that file.
+  `POST /api/v1/repositories/check` returns the `host_key_fingerprint` to compare with the host's
+  published one.
+- A credential is stored for the library **and the host it was given for**: it is never offered to
+  another host, a library added again never inherits an earlier one, and removing a library
+  deletes it. Sending a `credential` needs a signed-in session; an API token (for example an MCP
+  client's) is refused with 401 for those requests.
+- The generated key file and the database live in the same data volume, so a backup of the volume
+  holds both and defeats the encryption: back up the database without `secret.key`, or keep
+  `EXACTDOCS_SECRET_KEY` outside the volume. A key file that was readable by others is made
+  private again but logged as exposed: rotate it. A symlink or a file of another user is refused.
+- If the secret key is lost or changed, the library's docs stay available and adding a version
+  answers `credentials_required`; send the credential again with the new version request.
 
 ExactDocs reads repositories with the system `git` binary (in the Docker image; on `uvx` it must be
 on `PATH`; without it the server still starts, logs a warning and repository checks answer

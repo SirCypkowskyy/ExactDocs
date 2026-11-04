@@ -9,7 +9,13 @@ from exactdocs.ingestion.errors import (
     LibraryIdTakenError,
     RepositoryUnreachableError,
 )
-from exactdocs.ingestion.models import RemoteRef, RemoteRefs, RepositoryHost, RepositoryUrl
+from exactdocs.ingestion.models import (
+    Credential,
+    RemoteRef,
+    RemoteRefs,
+    RepositoryHost,
+    RepositoryUrl,
+)
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs.ingestion.ports import GitRemote
 from exactdocs_kernel import SystemClock
@@ -19,8 +25,16 @@ from exactdocs_kernel import SystemClock
 class FakeRemote:
     refs: RemoteRefs | Exception = field(default_factory=lambda: RemoteRefs(default_branch="main"))
     asked: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+    credentials: list[Credential | None] = field(default_factory=list)
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        del repository
+        return None
+
+    async def list_refs(
+        self, repository: RepositoryUrl, *patterns: str, credential: Credential | None = None
+    ) -> RemoteRefs:
+        self.credentials.append(credential)
         self.asked.append((repository.url, patterns))
         if isinstance(self.refs, Exception):
             raise self.refs

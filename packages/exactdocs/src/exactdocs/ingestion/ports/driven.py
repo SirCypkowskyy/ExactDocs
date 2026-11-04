@@ -9,6 +9,7 @@ from typing import Protocol
 from exactdocs.ingestion.models import (
     ArticleChunk,
     Collected,
+    Credential,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -104,11 +105,25 @@ class RecoveryHook(Protocol):
 class GitRemote(Protocol):
     """Talk to a remote git repository (the system ``git``; no hosting APIs)."""
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def list_refs(
+        self,
+        repository: RepositoryUrl,
+        *patterns: str,
+        credential: Credential | None = None,
+    ) -> RemoteRefs:
         """List the remote's refs (``git ls-remote``), narrowed by ref patterns such as ``HEAD``.
 
-        Never prompts for credentials. Raises ``NotAGitRepositoryError``,
-        ``RepositoryUnreachableError`` (including a timeout) or ``RepositoryAuthRequiredError``.
+        Never prompts. ``credential`` is offered to the repository's own host only (never in the
+        URL or the command line). Raises ``NotAGitRepositoryError``,
+        ``RepositoryUnreachableError`` (including a timeout), ``RepositoryAuthRequiredError`` or
+        ``HostKeyChangedError``.
+        """
+        ...
+
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        """Return the ``SHA256:...`` fingerprint of the SSH host key remembered for the host.
+
+        ``None`` for a URL that is not SSH, or when no key is known (yet).
         """
         ...
 
@@ -123,6 +138,7 @@ class GitGateway(Protocol):
         selection: PathSelection,
         *,
         refs: Sequence[str] = (),
+        credential: Credential | None = None,
     ) -> AbstractAsyncContextManager[Path]:
         """Check out ``commit_sha``: only the files ``selection`` may pick, plus the root README.
 
@@ -133,9 +149,11 @@ class GitGateway(Protocol):
 
         The files must be checked out verbatim (no eol, filter or encoding conversion): the import
         derives each file's git blob SHA from the bytes it reads.
-        Never prompts, runs hooks or follows submodules. Raises ``RepositoryUnreachableError``
-        (including a timeout), ``RepositoryAuthRequiredError``, ``NotAGitRepositoryError``,
-        ``CommitUnavailableError`` or ``RepositoryTooLargeError``.
+        ``credential`` is offered to the repository's own host only, never in the URL or the
+        command line. Never prompts, runs hooks or follows submodules. Raises
+        ``RepositoryUnreachableError`` (including a timeout), ``RepositoryAuthRequiredError``,
+        ``NotAGitRepositoryError``, ``CommitUnavailableError``, ``HostKeyChangedError`` or
+        ``RepositoryTooLargeError``.
         """
         ...
 
@@ -264,4 +282,35 @@ class Collector(Protocol):
 
     async def collect(self, *, grace_seconds: int) -> Collected:
         """Delete what is unused and older than the grace period; say how many things."""
+
+
+class CredentialVault(Protocol):
+    """Where the credentials of private libraries are kept (encrypted at rest)."""
+
+    async def save(self, library: str, scope: str, credential: Credential) -> None:
+        """Store the library's credential for ``scope`` (``RepositoryUrl.credential_scope``)."""
+        ...
+
+    async def load(self, library: str, scope: str) -> Credential | None:
+        """Return the library's credential, or ``None`` when it has none.
+
+        Raises ``CredentialsRequiredError`` when one is stored but cannot be read (the secret
+        key is not the one it was sealed with) or was stored for another ``scope``.
+        """
+        ...
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's credential (nothing happens when it has none)."""
+        ...
+
+
+class SecretBox(Protocol):
+    """Authenticated encryption of one short text with the instance's secret key."""
+
+    def seal(self, plaintext: str) -> str:
+        """Return the text encrypted, as printable characters."""
+        ...
+
+    def open(self, sealed: str) -> str:
+        """Return the original text; raises ``CredentialsRequiredError`` when it cannot be read."""
         ...

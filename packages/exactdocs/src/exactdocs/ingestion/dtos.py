@@ -1,12 +1,15 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from exactdocs.ingestion.models import (
     MAX_TAG_RULES,
+    AccessToken,
+    Credential,
+    DeployKey,
     FileProblem,
     Job,
     JobState,
@@ -168,6 +171,42 @@ class ListLibraryJobsQuery(_Dto):
     cursor: str | None = None
 
 
+class AccessTokenIn(_Dto):
+    """An HTTPS access token for a private repository. Write-only: no response repeats it."""
+
+    kind: Literal["token"]
+    token: SecretStr = Field(max_length=8192)
+    username: str | None = Field(
+        default=None,
+        max_length=100,
+        description="What the host expects next to the token; default `x-access-token` "
+        "(GitHub, GitLab). Bitbucket repository tokens use `x-token-auth`.",
+    )
+
+    def to_model(self) -> Credential:
+        """Validate and convert to the domain value."""
+        extra = {} if self.username is None else {"username": self.username}
+        return AccessToken(token=self.token.get_secret_value(), **extra)
+
+
+class DeployKeyIn(_Dto):
+    """An SSH deploy key (private part, no passphrase). Write-only: no response repeats it."""
+
+    kind: Literal["ssh_key"]
+    private_key: SecretStr = Field(max_length=32768)
+
+    def to_model(self) -> Credential:
+        """Validate and convert to the domain value."""
+        return DeployKey(private_key=self.private_key.get_secret_value())
+
+
+CredentialIn = Annotated[AccessTokenIn | DeployKeyIn, Field(discriminator="kind")]
+_CREDENTIAL_DESCRIPTION = (
+    "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored "
+    "encrypted, offered only to the repository's own host and never returned."
+)
+
+
 class CheckRepositoryCommand(_Dto):
     """Ask whether a git URL works, before anything is saved."""
 
@@ -177,6 +216,7 @@ class CheckRepositoryCommand(_Dto):
         description="https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, "
         "without credentials.",
     )
+    credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
 
 
 class CheckedRepository(_Dto):
@@ -186,6 +226,11 @@ class CheckedRepository(_Dto):
     library_id: str = Field(description="The proposed `/owner/repo` library ID.")
     default_branch: str | None = Field(
         description="The branch `HEAD` points at; null for an empty repository."
+    )
+    host_key_fingerprint: str | None = Field(
+        default=None,
+        description="For an SSH URL, the `SHA256:...` fingerprint of the server's host key "
+        "(first seen now, or pinned): compare it with the host's published one.",
     )
 
 
@@ -228,6 +273,7 @@ class AddLibraryCommand(_Dto):
         max_length=MAX_TAG_RULES,
         description="Tags for articles by path; they are added to the front-matter tags.",
     )
+    credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
 
 
 class AddedLibrary(_Dto):
@@ -258,6 +304,11 @@ class AddVersionBody(_Dto):
         min_length=1,
         max_length=255,
         description="A tag, a branch or a full or short commit SHA.",
+    )
+    credential: CredentialIn | None = Field(
+        default=None,
+        description=_CREDENTIAL_DESCRIPTION + " Replaces the library's stored credential; "
+        "needed again when it answers `credentials_required`.",
     )
 
 

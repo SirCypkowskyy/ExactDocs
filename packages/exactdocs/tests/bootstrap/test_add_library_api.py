@@ -8,7 +8,7 @@ import pytest
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.models import RemoteRef, RemoteRefs, RepositoryUrl
+from exactdocs.ingestion.models import Credential, RemoteRef, RemoteRefs, RepositoryUrl
 from fixture_repo import DocsRepo, git
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
@@ -157,8 +157,14 @@ async def test_a_short_sha_in_capitals_is_pinned_to_the_full_commit(
 
 
 class _TwoCommitsShareAPrefix:
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
-        del repository, patterns
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        del repository
+        return None
+
+    async def list_refs(
+        self, repository: RepositoryUrl, *patterns: str, credential: Credential | None = None
+    ) -> RemoteRefs:
+        del repository, patterns, credential
         return RemoteRefs(
             default_branch="main",
             refs=(

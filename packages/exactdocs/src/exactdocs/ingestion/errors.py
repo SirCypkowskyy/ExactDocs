@@ -72,6 +72,51 @@ class RepositoryAuthRequiredError(ValidationError):
         super().__init__("the repository requires authentication")
 
 
+class CredentialProblem(StrEnum):
+    """Why a credential is refused. Fixed texts: none of them can repeat the secret."""
+
+    EMPTY = "the token or key is empty"
+    ONE_LINE = "a token is one line of at most 4096 printable characters"
+    USERNAME = "a token's user name is letters, digits, '.', '_' and '-' (at most 100)"
+    KEY = "a deploy key is an unencrypted private key in OpenSSH or PEM format"
+    TOO_LONG = "the deploy key is too long"
+    HTTPS_ONLY = "an access token goes with an https:// URL (http:// only for localhost)"
+    SSH_ONLY = "a deploy key goes with an ssh:// or user@host:path URL"
+
+
+class InvalidCredentialError(ValidationError):
+    """The credential cannot be used with this repository."""
+
+    code = "invalid_credential"
+
+    def __init__(self, problem: CredentialProblem) -> None:
+        super().__init__(f"not a usable credential: {problem.value}")
+
+
+class CredentialsRequiredError(ValidationError):
+    """The library's stored credentials cannot be read (the secret key changed): send them again."""
+
+    code = "credentials_required"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "the stored credentials of this library cannot be read with the current secret key: "
+            "send the token or deploy key again"
+        )
+
+
+class HostKeyChangedError(ValidationError):
+    """The SSH server's host key is not the one remembered for it: possibly a man in the middle."""
+
+    code = "host_key_changed"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "the SSH host key of the server changed since it was first seen: refusing to "
+            "connect (if it was rotated on purpose, remove the host from the known_hosts file)"
+        )
+
+
 class CommitUnavailableError(ValidationError):
     """The repository no longer serves the commit a version is pinned to (a force-pushed branch)."""
 

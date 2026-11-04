@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
     NoIndex,
@@ -13,6 +14,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
 )
 from exactdocs.ingestion.dtos import EnqueueJobCommand, SyncLibraryCommand
 from exactdocs.ingestion.errors import (
+    CredentialsRequiredError,
     RepositoryUnreachableError,
     SyncFailedError,
     VersionImportingError,
@@ -20,6 +22,8 @@ from exactdocs.ingestion.errors import (
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
     REFRESH_JOB,
+    AccessToken,
+    Credential,
     ImportedRef,
     ImportSource,
     Job,
@@ -51,9 +55,16 @@ class Remote:
     heads: dict[str, str] = field(default_factory=dict)
     error: Exception | None = None
     slow: bool = False
+    credentials: list[Credential | None] = field(default_factory=list)
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        del repository
+
+    async def list_refs(
+        self, repository: RepositoryUrl, *patterns: str, credential: Credential | None = None
+    ) -> RemoteRefs:
         del repository, patterns
+        self.credentials.append(credential)
         if self.slow:
             await asyncio.sleep(0)  # a network round trip: other requests run meanwhile
         if self.error:
@@ -82,7 +93,11 @@ def versions() -> list[ImportedRef]:
 
 
 def make_module(
-    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+    clock,
+    vault: InMemoryCredentialVault | None = None,
 ) -> IngestionModule:
     return IngestionModule.build(
         jobs=jobs,
@@ -93,6 +108,7 @@ def make_module(
         sources=InMemoryLibrarySources({LIBRARY: SOURCE}, {LIBRARY: versions}),
         removals=NoRemovals(),
         index=NoIndex(),
+        vault=vault,
         handlers={IMPORT_JOB: _noop, REFRESH_JOB: _noop},
     )
 
@@ -309,3 +325,58 @@ async def test_the_repository_refuses_a_second_unfinished_import_of_a_ref(
     with pytest.raises(VersionImportingError):
         await module.enqueue_job(import_of("next", NEW))
     await module.enqueue_job(import_of("main"))  # another ref is fine
+
+
+async def test_a_private_librarys_sync_reads_the_remote_with_its_stored_credential(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    token = AccessToken(token="ghp_s3cretvalue")
+    vault = InMemoryCredentialVault({LIBRARY: token})
+    module = make_module(remote, versions, jobs, clock, vault)
+    remote.heads["next"] = NEW
+
+    result = await module.sync_library(SYNC)
+
+    assert remote.credentials == [token]
+    assert {v.ref: v.status for v in result.versions}["next"] is SyncStatus.QUEUED
+
+
+async def test_a_public_librarys_sync_sends_no_credential(
+    module: IngestionModule, remote: Remote
+) -> None:
+    await module.sync_library(SYNC)
+
+    assert remote.credentials == [None]
+
+
+async def test_an_unreadable_credential_is_recorded_on_each_branch_and_nothing_is_fetched(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    class Unreadable(InMemoryCredentialVault):
+        async def load(self, library: str, scope: str) -> Credential | None:
+            del library, scope
+            raise CredentialsRequiredError
+
+    module = make_module(remote, versions, jobs, clock, Unreadable())
+
+    with pytest.raises(SyncFailedError) as raised:
+        await module.sync_library(SYNC)
+
+    assert raised.value.code == "credentials_required"
+    assert remote.credentials == []  # the remote was never asked
+    assert {j.state for j in jobs.jobs.values()} == {JobState.FAILED}
+    assert sorted(j.version or "" for j in jobs.jobs.values()) == ["main", "next"]
+
+
+async def test_a_credential_stored_for_another_host_is_not_used_by_a_sync(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    vault = InMemoryCredentialVault()
+    await vault.save(LIBRARY, "https://elsewhere.example.com", AccessToken(token="t0ken"))
+    module = make_module(remote, versions, jobs, clock, vault)
+
+    with pytest.raises(SyncFailedError) as raised:
+        await module.sync_library(SYNC)
+
+    assert raised.value.code == "credentials_required"
+    assert remote.credentials == []

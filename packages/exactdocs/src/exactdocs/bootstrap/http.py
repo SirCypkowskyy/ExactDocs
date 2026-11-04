@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
@@ -26,6 +26,7 @@ from exactdocs.bootstrap.rest import (
 )
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
+from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 
@@ -118,6 +119,11 @@ def create_app(container: Container) -> FastAPI:
         identify_token=container.identity.identify_token,
     )
     protected = APIRouter(dependencies=[Depends(current_caller)])
+
+    async def require_session(request: Request) -> None:
+        """Sign-in by cookie only (401 otherwise): for what an API token must not do."""
+        await session_caller(request.cookies.get(SESSION_COOKIE))
+
     protected.include_router(
         catalog_http.build_router(
             list_libraries=container.catalog.list_libraries,
@@ -143,6 +149,7 @@ def create_app(container: Container) -> FastAPI:
             list_repository_refs=container.ingestion.list_repository_refs,
             add_library=container.ingestion.add_library,
             add_version=container.ingestion.add_version,
+            require_session=require_session,
             remove_version=container.ingestion.remove_version,
             remove_library=container.ingestion.remove_library,
             sync_library=container.ingestion.sync_library,

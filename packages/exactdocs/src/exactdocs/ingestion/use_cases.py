@@ -21,6 +21,7 @@ from exactdocs.ingestion.dtos import (
     AddVersionCommand,
     CheckedRepository,
     CheckRepositoryCommand,
+    CredentialIn,
     EnqueueJobCommand,
     GetJobQuery,
     JobList,
@@ -62,6 +63,7 @@ from exactdocs.ingestion.models import (
     IMPORT_KINDS,
     REFRESH_JOB,
     ArticleChunk,
+    Credential,
     ImportedArticle,
     ImportedRef,
     ImportedVersion,
@@ -83,6 +85,7 @@ from exactdocs.ingestion.models import (
     SyncStatus,
     TagRule,
     article_tags,
+    check_credential_fits,
     git_blob_sha,
     parse_article,
     readme_summary,
@@ -93,6 +96,7 @@ from exactdocs.ingestion.ports.driven import (
     Chunker,
     ChunkIndex,
     Collector,
+    CredentialVault,
     GitGateway,
     GitRemote,
     JobHandler,
@@ -111,6 +115,17 @@ from exactdocs_kernel import Clock, DomainError, paginate
 log = logging.getLogger(__name__)
 
 MAX_LISTED_REFS = 1000
+
+
+def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
+    """Convert what a client sent and refuse one the repository's transport cannot carry."""
+    if sent is None:
+        return None
+    credential = sent.to_model()
+    check_credential_fits(repository, credential)
+    return credential
+
+
 """Branches and tags listed each; a repository with more is cut and flagged ``truncated``."""
 
 
@@ -314,11 +329,13 @@ class CheckRepositoryUseCase:
         repository = RepositoryUrl.parse(command.url)
         if await self.library_ids.is_taken(repository.library_id):
             raise LibraryIdTakenError(repository.library_id)
-        refs = await self.remote.list_refs(repository, "HEAD")
+        credential = _credential(command.credential, repository)
+        refs = await self.remote.list_refs(repository, "HEAD", credential=credential)
         return CheckedRepository(
             host=repository.host_kind,
             library_id=repository.library_id,
             default_branch=refs.default_branch,
+            host_key_fingerprint=await self.remote.host_key_fingerprint(repository),
         )
 
 
@@ -352,19 +369,23 @@ class AddLibraryUseCase:
     library_ids: LibraryIds
     libraries: NewLibraries
     enqueue_job: EnqueueJob
+    vault: CredentialVault
 
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
         """Check everything that can be checked first, then store the library and queue its import.
 
-        If queueing fails, the new library is removed again, so a retry is not met with a 409.
+        The credential, if any, is stored (encrypted) before the import is queued, because the
+        import reads it. If that or queueing fails, the new library and its credential are
+        removed again, so a retry is not met with a 409.
         """
         repository = RepositoryUrl.parse(command.url)
+        credential = _credential(command.credential, repository)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
         library_id = ProposedId(command.library_id or repository.library_id)
         if await self.library_ids.is_taken(library_id):
             raise LibraryIdTakenError(library_id)
-        refs = await self.remote.list_refs(repository)
+        refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
         created = await self.libraries.add(
             NewLibrary(
@@ -378,14 +399,20 @@ class AddLibraryUseCase:
             )
         )
         try:
+            # Whatever an earlier library of this ID left behind must not be inherited.
+            if credential is None:
+                await self.vault.delete(created)
+            else:
+                await self.vault.save(created, repository.credential_scope, credential)
             job = await _enqueue_import(self.enqueue_job, created, resolved)
         except BaseException:
-            try:
-                await self.libraries.discard(created)
-            except Exception:
-                log.exception(
-                    "could not remove library %s after its import failed to queue", created
-                )
+            for undo in (self.vault.delete, self.libraries.discard):
+                try:
+                    await undo(created)
+                except Exception:
+                    log.exception(
+                        "could not remove library %s after its import failed to queue", created
+                    )
             raise
         return AddedLibrary.of(created, resolved, job)
 
@@ -413,6 +440,7 @@ class AddVersionUseCase:
     sources: LibrarySources
     jobs: JobRepository
     enqueue_job: EnqueueJob
+    vault: CredentialVault
 
     async def __call__(self, command: AddVersionCommand) -> AddedVersion:
         """Pin the ref like ``AddLibrary`` does and queue the import with the library's settings.
@@ -428,7 +456,11 @@ class AddVersionUseCase:
         library = command.library
         source = await self.sources.get(library)
         existing = {v.ref: v for v in await self.sources.imported_versions(library)}
-        resolved = resolve_ref(await self.remote.list_refs(source.url), command.ref)
+        sent = _credential(command.credential, source.url)
+        scope = source.url.credential_scope
+        credential = sent or await self.vault.load(library, scope)
+        refs = await self.remote.list_refs(source.url, credential=credential)
+        resolved = resolve_ref(refs, command.ref)
         if resolved.name in existing:
             raise VersionExistsError(library, resolved.name)
         if resolved.kind is RefKind.COMMIT:
@@ -437,6 +469,9 @@ class AddVersionUseCase:
                     raise CommitImportedError(library, version.commit_sha, ref)
         if resolved.name in _busy_refs(await self.jobs.list_for_library(library)):
             raise VersionImportingError(library, resolved.name)
+        if sent is not None:
+            # Before queueing, because the job reads it; the ref was found with it just now.
+            await self.vault.save(library, scope, sent)
         job = await _enqueue_import(self.enqueue_job, library, resolved)
         return AddedVersion.of(library, resolved, job)
 
@@ -459,6 +494,7 @@ class SyncLibraryUseCase:
     jobs: JobRepository
     clock: Clock
     enqueue_job: EnqueueJob
+    vault: CredentialVault
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
         """Ask the remote where each branch is now, queue an import for the ones that moved.
@@ -487,7 +523,9 @@ class SyncLibraryUseCase:
         tips: dict[str, str] = {}
         if branches:
             try:
-                refs = await self.remote.list_refs(source.url)
+                # An unreadable or other-host credential is recorded like any failure to read.
+                credential = await self.vault.load(library, source.url.credential_scope)
+                refs = await self.remote.list_refs(source.url, credential=credential)
             except DomainError as error:
                 recorded = [
                     (await self._failed(library, v, _describe(error), newest.get(v.ref))).id
@@ -620,6 +658,7 @@ class ImportVersionUseCase:
     sources: LibrarySources
     versions: VersionPublisher
     index: ChunkIndex
+    vault: CredentialVault
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
     refresh: bool = False
@@ -629,13 +668,15 @@ class ImportVersionUseCase:
         if job.version is None or job.commit_sha is None:
             raise ImportNotPinnedError
         source = await self.sources.get(job.library)
+        # Unreadable or for another host: CredentialsRequiredError fails the job.
+        credential = await self.vault.load(job.library, source.url.credential_scope)
         # A job queued without a kind is imported as a bare commit: the SHA is what is fetched.
         kind = job.ref_kind or RefKind.COMMIT
         full_ref = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
         refs = [] if full_ref is None else [full_ref + job.version]
         config_hash = self.chunker.config_hash
         async with self.gateway.fetch(
-            source.url, job.commit_sha, source.selection, refs=refs
+            source.url, job.commit_sha, source.selection, refs=refs, credential=credential
         ) as folder:
             articles = await self._articles(folder, source, config_hash, progress)
             readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
@@ -994,6 +1035,7 @@ class RemoveLibraryUseCase:
     removals: Removals
     index: ChunkIndex
     enqueue_job: EnqueueJob
+    vault: CredentialVault
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Refuse during any import of the library, remove it from the catalog, then clean up."""
@@ -1001,7 +1043,7 @@ class RemoveLibraryUseCase:
         await _refuse_while_importing(self.jobs, library, None)
         removed = await self.removals.remove_library(library)
         await self.jobs.delete_for(library)
-        # #35 (credentials): delete the library's stored credentials here, once they exist.
+        await self.vault.delete(library)  # the removed library's token or key goes with it
         await _forget_chunks(self.index, removed)
         return RemovalResult(
             library=removed.library,

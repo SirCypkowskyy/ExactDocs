@@ -12,9 +12,14 @@ from pathlib import Path
 import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, InMemoryLibrarySources
+from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCredentialVault,
+    InMemoryJobRepository,
+    InMemoryLibrarySources,
+)
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
+    CredentialsRequiredError,
     ImportNotPinnedError,
     ImportTooLargeError,
     NoArticlesError,
@@ -24,12 +29,16 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
+    REFRESH_JOB,
+    AccessToken,
     ArticleChunk,
+    Credential,
     ImportedRef,
     ImportedVersion,
     ImportSource,
     Job,
     JobId,
+    JobKind,
     JobState,
     ParsedArticle,
     PathSelection,
@@ -68,14 +77,22 @@ class Checkout:
     links: Mapping[str, str] = field(default_factory=dict)
     error: Exception | None = None
     fetched: list[tuple[str, str, list[str]]] = field(default_factory=list)
+    credentials: list[Credential | None] = field(default_factory=list)
     tmp: Path | None = None
     after_write: Callable[[Path], None] = lambda _: None
 
     @asynccontextmanager
     async def fetch(
-        self, repository: RepositoryUrl, commit_sha: str, selection: PathSelection, *, refs=()
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        selection: PathSelection,
+        *,
+        refs=(),
+        credential: Credential | None = None,
     ) -> AsyncGenerator[Path]:
         del repository, selection
+        self.credentials.append(credential)
         self.fetched.append((commit_sha, "", list(refs)))
         if self.error:
             raise self.error
@@ -231,6 +248,8 @@ def build_world(
     max_import_bytes: int = 2**30,
     links: Mapping[str, str] | None = None,
     after_write: Callable[[Path], None] = lambda _: None,
+    vault: InMemoryCredentialVault | None = None,
+    kind: JobKind = IMPORT_JOB,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -243,10 +262,11 @@ def build_world(
         sources=Sources(selection or PathSelection.of(["docs/"]), rules),
         versions=catalog,
         index=chunks,
+        vault=vault,
         max_article_bytes=max_bytes,
         max_import_bytes=max_import_bytes,
     )
-    run = handlers[IMPORT_JOB]
+    run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
 
 
@@ -278,6 +298,48 @@ async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_fi
     assert [c.heading_path for c in auth.chunks] == [("Auth",), ("Auth", "Issue")]
     assert world.progress.reports == [(0, 2), (1, 2), (2, 2)]
     assert world.gateway.fetched == [(SHA, "", ["refs/tags/v1"])]
+
+
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_an_import_and_a_refresh_fetch_with_the_librarys_stored_credential(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    token = AccessToken(token="ghp_s3cretvalue")
+    vault = InMemoryCredentialVault({"/a/b": token, "/other/lib": AccessToken(token="nope")})
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault, kind=kind)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.gateway.credentials == [token]
+
+
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_a_public_library_is_fetched_without_a_credential(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, kind=kind)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.gateway.credentials == [None]
+
+
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_an_unreadable_credential_fails_the_job_before_any_fetch(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    class Unreadable(InMemoryCredentialVault):
+        async def load(self, library: str, scope: str) -> Credential | None:
+            del library, scope
+            raise CredentialsRequiredError
+
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=Unreadable(), kind=kind)
+
+    with pytest.raises(CredentialsRequiredError):
+        await world.run(make_job(), world.progress)
+
+    assert world.gateway.fetched == []
+    assert world.log == []
 
 
 README = b"# Acme\n\nA payments SDK.\n"

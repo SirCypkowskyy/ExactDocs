@@ -8,7 +8,12 @@ import pytest
 
 from exactdocs.ingestion import IngestionModule, collect_job
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
+from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCredentialVault,
+    InMemoryJobRepository,
+    NoIndex,
+    NoRemovals,
+)
 from exactdocs.ingestion.dtos import (
     EnqueueJobCommand,
     GetJobQuery,
@@ -20,6 +25,7 @@ from exactdocs.ingestion.models import (
     COLLECT_JOB,
     IMPORT_JOB,
     REFRESH_JOB,
+    AccessToken,
     Collected,
     JobKind,
     Removed,
@@ -82,6 +88,7 @@ class World:
     catalog: Catalog
     index: Index
     calls: list[str]
+    vault: InMemoryCredentialVault
 
     async def import_job(
         self, version: str, *, running: bool = False, kind: JobKind = IMPORT_JOB
@@ -96,6 +103,9 @@ class World:
 
 def build(*, with_collect: bool = True, broken_index: bool = False) -> World:
     jobs, catalog, index, calls = InMemoryJobRepository(), Catalog(), Index(broken=broken_index), []
+    vault = InMemoryCredentialVault(
+        {LIBRARY: AccessToken(token="ghp_s3cretvalue"), "/b/c": AccessToken(token="other")}
+    )
     handlers: dict[JobKind, object] = {IMPORT_JOB: nothing, REFRESH_JOB: nothing}
     if with_collect:
         handlers |= collect_job(
@@ -109,9 +119,10 @@ def build(*, with_collect: bool = True, broken_index: bool = False) -> World:
         libraries=None,  # ty: ignore[invalid-argument-type]
         removals=catalog,
         index=index,
+        vault=vault,
         handlers=handlers,  # ty: ignore[invalid-argument-type]
     )
-    return World(module, jobs, catalog, index, calls)
+    return World(module, jobs, catalog, index, calls, vault)
 
 
 async def test_removing_a_version_forgets_its_chunks_and_queues_the_collection() -> None:
@@ -140,6 +151,32 @@ async def test_removing_a_library_has_no_default_and_queues_the_collection() -> 
     assert (done.ref, done.default_version) == (None, None)
     assert world.catalog.removed == [(LIBRARY, None)]
     assert done.collection_job_id is not None
+
+
+async def test_removing_a_library_deletes_its_credentials_and_only_its_own() -> None:
+    world = build()
+
+    await world.module.remove_library(RemoveLibraryCommand(library=LIBRARY))
+
+    assert list(world.vault.credentials) == ["/b/c"]
+
+
+async def test_removing_a_version_keeps_the_librarys_credentials() -> None:
+    world = build()
+
+    await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v2"))
+
+    assert LIBRARY in world.vault.credentials
+
+
+async def test_a_refused_library_removal_keeps_its_credentials() -> None:
+    world = build()
+    await world.import_job("v1", running=True)
+
+    with pytest.raises(ImportInProgressError):
+        await world.module.remove_library(RemoveLibraryCommand(library=LIBRARY))
+
+    assert LIBRARY in world.vault.credentials
 
 
 @pytest.mark.parametrize("running", [False, True])

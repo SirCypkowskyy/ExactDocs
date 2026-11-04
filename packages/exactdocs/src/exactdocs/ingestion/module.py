@@ -16,6 +16,7 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     REFRESH_JOB,
+    Credential,
     ImportedRef,
     ImportSource,
     JobKind,
@@ -24,6 +25,7 @@ from exactdocs.ingestion.ports.driven import (
     Chunker,
     ChunkIndex,
     Collector,
+    CredentialVault,
     GitGateway,
     GitRemote,
     JobHandler,
@@ -83,6 +85,19 @@ class _NoLibrarySources:
         return []
 
 
+class _NoCredentials:
+    """The default ``vault`` of ``build``: nothing is kept, so only public repositories work."""
+
+    async def save(self, library: str, scope: str, credential: Credential) -> None:
+        del library, scope, credential
+
+    async def load(self, library: str, scope: str) -> Credential | None:
+        del library, scope
+
+    async def delete(self, library: str) -> None:
+        del library
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IngestionModule:
     """The ingestion's driving ports, ready to be exposed by driving adapters."""
@@ -113,6 +128,7 @@ class IngestionModule:
         sources: LibrarySources | None = None,
         removals: Removals,
         index: ChunkIndex,
+        vault: CredentialVault | None = None,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
     ) -> Self:
@@ -124,8 +140,12 @@ class IngestionModule:
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         none = _NoLibrarySources()
         return cls(
-            add_library=AddLibraryUseCase(remote, library_ids, libraries, enqueue_job),
-            add_version=AddVersionUseCase(remote, sources or none, jobs, enqueue_job),
+            add_library=AddLibraryUseCase(
+                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials()
+            ),
+            add_version=AddVersionUseCase(
+                remote, sources or _NoLibrarySources(), jobs, enqueue_job, vault or _NoCredentials()
+            ),
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),
@@ -133,10 +153,14 @@ class IngestionModule:
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),
-            remove_library=RemoveLibraryUseCase(jobs, removals, index, enqueue_job),
+            remove_library=RemoveLibraryUseCase(
+                jobs, removals, index, enqueue_job, vault or _NoCredentials()
+            ),
             remove_version=RemoveVersionUseCase(jobs, removals, index, enqueue_job),
             run_next_job=RunNextJobUseCase(jobs, clock, handlers),
-            sync_library=SyncLibraryUseCase(remote, sources or none, jobs, clock, enqueue_job),
+            sync_library=SyncLibraryUseCase(
+                remote, sources or none, jobs, clock, enqueue_job, vault or _NoCredentials()
+            ),
         )
 
 
@@ -147,12 +171,20 @@ def import_job(
     sources: LibrarySources,
     versions: VersionPublisher,
     index: ChunkIndex,
+    vault: CredentialVault | None = None,
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES,
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions."""
     importer = ImportVersionUseCase(
-        gateway, chunker, sources, versions, index, max_article_bytes, max_import_bytes
+        gateway,
+        chunker,
+        sources,
+        versions,
+        index,
+        vault or _NoCredentials(),
+        max_article_bytes,
+        max_import_bytes,
     )
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)
