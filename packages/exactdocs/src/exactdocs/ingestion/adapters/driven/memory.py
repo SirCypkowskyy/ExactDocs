@@ -162,3 +162,7 @@ class InMemoryCredentialVault:
         """Forget the library's credential."""
         self.credentials.pop(library, None)
         self.scopes.pop(library, None)
+
+    async def has(self, library: str) -> bool:
+        """Whether the library has a credential."""
+        return library in self.credentials

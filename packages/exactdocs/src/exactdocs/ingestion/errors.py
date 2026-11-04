@@ -206,6 +206,14 @@ class JobNotFoundError(NotFoundError):
         self.job_id = job_id
 
 
+class UnknownLibraryError(NotFoundError):
+    """No library with this ID exists."""
+
+    def __init__(self, library: str) -> None:
+        super().__init__(f"library {library!r} not found")
+        self.library = library
+
+
 class UnknownJobKindError(ValidationError):
     """Nothing is registered to run jobs of this kind."""
 

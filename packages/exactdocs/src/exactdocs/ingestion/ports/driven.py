@@ -303,6 +303,10 @@ class CredentialVault(Protocol):
         """Forget the library's credential (nothing happens when it has none)."""
         ...
 
+    async def has(self, library: str) -> bool:
+        """Whether the library has a stored credential (without opening it)."""
+        ...
+
 
 class SecretBox(Protocol):
     """Authenticated encryption of one short text with the instance's secret key."""

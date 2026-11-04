@@ -1,6 +1,7 @@
 """Guarantees every ``Chunker`` adapter must keep, checked on fixture articles and random ones."""
 
 import itertools
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -273,3 +274,25 @@ def test_config_hash_covers_the_markdown_engine_version(monkeypatch: pytest.Monk
 def test_split_depth_out_of_range_is_a_domain_error() -> None:
     with pytest.raises(InvalidChunkingConfigError):
         ChunkingConfig(split_depth=7)
+
+
+_ANCHOR_VECTORS = json.loads((TESTS / "fixtures" / "heading_anchors.json").read_text("utf-8"))[
+    "cases"
+]
+
+
+@pytest.mark.parametrize("case", _ANCHOR_VECTORS, ids=[c["name"] for c in _ANCHOR_VECTORS])
+def test_anchors_match_the_shared_vectors(case: dict, chunker: Chunker) -> None:
+    """The web renderer (anchors.test.ts) reads the same table, so search links land on headings."""
+    chunks = chunker.chunk(parse_article("a.md", case["markdown"]))
+    assert [c.anchor for c in chunks if c.heading_path] == case["anchors"]
+
+
+def test_the_web_copy_of_the_anchor_vectors_is_identical() -> None:
+    """The web build sees only ``web/``, so its test reads a copy (Biome formats it): same data."""
+    copy = TESTS.parents[2] / "web/src/features/browse/render/fixtures/heading_anchors.json"
+    original = json.loads((TESTS / "fixtures" / "heading_anchors.json").read_text("utf-8"))
+    assert json.loads(copy.read_text("utf-8")) == original, (
+        "cp packages/exactdocs/tests/fixtures/heading_anchors.json "
+        "web/src/features/browse/render/fixtures/ && (cd web && pnpm format)"
+    )

@@ -55,6 +55,15 @@ async def test_an_anonymous_caller_is_refused(client: httpx.AsyncClient) -> None
 
     assert (await client.post("/api/v1/libraries", json={"url": "x"})).status_code == 401
     assert (await client.get("/api/v1/repositories/refs", params={"url": "x"})).status_code == 401
+    assert (await client.get("/api/v1/libraries/acme/payments/access")).status_code == 401
+
+
+async def test_access_says_whether_a_known_library_is_private(client: httpx.AsyncClient) -> None:
+    known = await client.get("/api/v1/libraries/acme/payments/access")
+    unknown = await client.get("/api/v1/libraries/acme/nope/access")
+
+    assert (known.status_code, known.json()) == (200, {"private": False})
+    assert unknown.status_code == 404
 
 
 @pytest.mark.parametrize("transport", ["file_url", "http_url"])

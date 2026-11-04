@@ -14,9 +14,11 @@ from exactdocs.ingestion.dtos import (
     CheckedRepository,
     CheckRepositoryCommand,
     GetJobQuery,
+    GetLibraryAccessQuery,
     JobList,
     JobSummary,
     LatestJobs,
+    LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RemovalResult,
@@ -32,6 +34,7 @@ from exactdocs.ingestion.ports.driving import (
     AddVersion,
     CheckRepository,
     GetJob,
+    GetLibraryAccess,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
@@ -53,6 +56,7 @@ async def _session_for(
 def build_router(
     *,
     get_job: GetJob,
+    get_library_access: GetLibraryAccess,
     list_latest_jobs: ListLatestJobs,
     list_library_jobs: ListLibraryJobs,
     check_repository: CheckRepository,
@@ -171,6 +175,22 @@ def build_router(
             )
         return synced
 
+    router.include_router(
+        _read_router(get_job, list_latest_jobs, list_library_jobs, get_library_access)
+    )
+
+    return router
+
+
+def _read_router(
+    get_job: GetJob,
+    list_latest_jobs: ListLatestJobs,
+    list_library_jobs: ListLibraryJobs,
+    get_library_access: GetLibraryAccess,
+) -> APIRouter:
+    """Build the GET routes: jobs and whether a library is private."""
+    router = APIRouter(tags=["ingestion"])
+
     @router.get("/jobs/latest", name="list_latest_jobs")
     async def latest() -> LatestJobs:
         """List the newest job of every library version, in one call (no per-library requests)."""
@@ -179,6 +199,11 @@ def build_router(
     @router.get("/jobs/{job_id}", name="get_job")
     async def get_one(job_id: str) -> JobSummary:
         return await get_job(GetJobQuery(job_id=job_id))
+
+    @router.get("/libraries/{owner}/{repo}/access", name="get_library_access")
+    async def access(owner: str, repo: str) -> LibraryAccess:
+        """Say whether the library's repository is private (it has a stored credential)."""
+        return await get_library_access(GetLibraryAccessQuery(library=f"/{owner}/{repo}"))
 
     @router.get("/libraries/{owner}/{repo}/jobs", name="list_library_jobs")
     async def list_for_library(

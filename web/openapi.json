@@ -2597,6 +2597,7 @@
     "/api/v1/jobs/latest": {
       "get": {
         "tags": [
+          "ingestion",
           "ingestion"
         ],
         "summary": "List Latest Jobs",
@@ -2687,6 +2688,7 @@
     "/api/v1/jobs/{job_id}": {
       "get": {
         "tags": [
+          "ingestion",
           "ingestion"
         ],
         "summary": "Get Job",
@@ -2784,9 +2786,121 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/access": {
+      "get": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Get Library Access",
+        "description": "Say whether the library's repository is private (it has a stored credential).",
+        "operationId": "ingestion-get_library_access",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryAccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/jobs": {
       "get": {
         "tags": [
+          "ingestion",
           "ingestion"
         ],
         "summary": "List Library Jobs",
@@ -4148,6 +4262,21 @@
         ],
         "title": "LatestJobs",
         "description": "The newest job of every (library, version), ordered by library and version."
+      },
+      "LibraryAccess": {
+        "properties": {
+          "private": {
+            "type": "boolean",
+            "title": "Private"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "private"
+        ],
+        "title": "LibraryAccess",
+        "description": "Whether the library's repository is private: it has a stored credential (token or key)."
       },
       "LibraryDetail": {
         "properties": {

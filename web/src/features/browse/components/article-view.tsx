@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
-import { Fragment } from "react";
+import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
-import { articleQueryOptions } from "../api/browse-queries";
+import { accessQueryOptions, articleQueryOptions } from "../api/browse-queries";
 import {
   type Article,
   commitUrl,
@@ -13,6 +13,15 @@ import {
   shortSha,
   type Version,
 } from "../model/browse";
+import { CopyButton } from "../render/copy-button";
+import { blobUrl, rawUrl } from "../render/urls";
+
+// The renderer (Markdown parser and all) is its own chunk: the tree and the overview do not wait for it.
+const loadMarkdown = () =>
+  lazy(() => import("../render/markdown").then((m) => ({ default: m.Markdown })));
+
+/** Past this many characters an article opens as source: parsing it would stall the tab. */
+const LARGE = 400_000;
 
 interface ArticleViewProps {
   owner: string;
@@ -175,15 +184,204 @@ function NotInVersion({
   );
 }
 
-function Body({
+const toggle =
+  "inline-flex h-11 min-w-20 items-center justify-center rounded-[5px] px-3 text-sm font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 focus-visible:ring-ring lg:h-8";
+const quiet =
+  "inline-flex h-11 cursor-pointer items-center rounded-md bg-secondary px-4 text-sm font-medium outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9 [@media(hover:hover)]:hover:bg-accent";
+
+type View = "rendered" | "source";
+
+/** Rendered text or the file as stored: the source is always one click away. */
+function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => void }) {
+  return (
+    <fieldset className="m-0 inline-flex min-w-0 rounded-md border-0 bg-secondary p-0.5">
+      <legend className="sr-only">View</legend>
+      {(["rendered", "source"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={view === v}
+          onClick={() => onChange(v)}
+          className={`${toggle} cursor-pointer ${
+            view === v
+              ? "bg-card text-foreground ring-1 ring-border"
+              : "text-muted-foreground [@media(hover:hover)]:hover:text-foreground"
+          }`}
+        >
+          {v === "rendered" ? "Rendered" : "Source"}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
+/** Placeholder lines for the renderer's chunk; the article shell is already on screen. */
+function TextSkeleton() {
+  return (
+    <div aria-hidden="true" className="space-y-3 motion-safe:animate-pulse">
+      {["w-11/12", "w-full", "w-4/5", "w-2/3"].map((w) => (
+        <span key={w} className={`block h-4 rounded bg-muted-foreground/[0.14] ${w}`} />
+      ))}
+    </div>
+  );
+}
+
+/** Catches a renderer chunk that failed to load, so the library page around it stays. */
+class RenderBoundary extends Component<
+  { fallback: (retry: () => void) => ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  override state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  retry = () => this.setState({ failed: false });
+  override render() {
+    return this.state.failed ? this.props.fallback(this.retry) : this.props.children;
+  }
+}
+
+function RenderedText({
   article,
+  owner,
+  repo,
   library,
   version,
+  tags,
+  onSource,
 }: {
   article: Article;
+  owner: string;
+  repo: string;
   library: LibraryDetail;
   version: Version;
+  tags: string | undefined;
+  onSource: () => void;
 }) {
+  const access = useQuery(accessQueryOptions(owner, repo));
+  const hash = useRouterState({ select: (s) => s.location.hash });
+  // A new lazy component on retry: React keeps a failed one failed.
+  const [Markdown, setMarkdown] = useState(loadMarkdown);
+  const mdx = /\.mdx$/i.test(article.path);
+  // Until the library is known to be public, no image is requested from the host.
+  const isPublic = access.data?.private === false;
+  const doc = (path: string, to: string) => ({
+    to: "/libraries/$owner/$repo" as const,
+    params: { owner, repo },
+    search: { version: version.ref, path, tags },
+    ...(to.length > 1 ? { hash: to.slice(1) } : {}),
+  });
+  return (
+    <>
+      {mdx && (
+        <p className="doc-notice">MDX: imports and components are shown as source, not run.</p>
+      )}
+      <RenderBoundary
+        fallback={(retry) => (
+          <div role="alert" className="rounded-lg bg-secondary/60 p-4">
+            <p className="font-medium">Couldn't load the article renderer.</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Your connection may have dropped, or ExactDocs was updated. The file itself is fine.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={onSource} className={quiet}>
+                View source
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMarkdown(loadMarkdown());
+                  retry();
+                }}
+                className={quiet}
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        )}
+      >
+        <Suspense fallback={<TextSkeleton />}>
+          <Markdown
+            source={article.content}
+            mdx={mdx}
+            hash={hash}
+            where={{
+              path: article.path,
+              title: article.title,
+              imageUrl: (p) =>
+                isPublic
+                  ? rawUrl(library.host, library.source_url, version.commit_sha, p)
+                  : undefined,
+              fileUrl: (p) => blobUrl(library.host, library.source_url, version.commit_sha, p),
+              docLink: (path, to, children) => <Link {...doc(path, to)}>{children}</Link>,
+            }}
+          />
+        </Suspense>
+      </RenderBoundary>
+    </>
+  );
+}
+
+/** The file as stored, set as text, with a button to copy all of it. */
+function SourceView({
+  text,
+  large,
+  onRender,
+}: {
+  text: string;
+  large: boolean;
+  onRender: () => void;
+}) {
+  const pre = useRef<HTMLPreElement>(null);
+  return (
+    <section aria-label="Source text" className="mt-5">
+      {large && (
+        <p className="doc-notice">
+          This file is {Math.round(text.length / 1000)} kB, so it opens as source.{" "}
+          <button
+            type="button"
+            onClick={onRender}
+            className="cursor-pointer underline underline-offset-4"
+          >
+            Render it anyway
+          </button>
+        </p>
+      )}
+      <div className="rounded-lg bg-secondary/60">
+        <div className="flex justify-end px-1.5 pt-0.5 text-[13px] text-muted-foreground">
+          <CopyButton text={text} target={pre} what="file" />
+        </div>
+        <pre
+          ref={pre}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable text must be reachable by keyboard
+          tabIndex={0}
+          className="overflow-x-auto px-4 pb-4 font-mono text-[14px] leading-[1.7] break-words whitespace-pre-wrap outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-ring sm:px-6 sm:pb-6"
+        >
+          {text}
+        </pre>
+      </div>
+    </section>
+  );
+}
+
+function Body({
+  article,
+  owner,
+  repo,
+  library,
+  version,
+  tags,
+}: {
+  article: Article;
+  owner: string;
+  repo: string;
+  library: LibraryDetail;
+  version: Version;
+  tags: string | undefined;
+}) {
+  const large = article.content.length > LARGE;
+  const [view, setView] = useState<View>(large ? "source" : "rendered");
   return (
     <article className="min-w-0 max-w-3xl">
       <p className="font-mono text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
@@ -203,19 +401,25 @@ function Body({
           ))}
         </ul>
       )}
-      <div className="mt-2">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <CommitLinks library={library} version={version} fileUrl={article.source_url} />
+        <ViewToggle view={view} onChange={setView} />
       </div>
-      {/* Verbatim text, set as text: nothing from the repository is ever parsed as HTML (#51 renders it). */}
-      <section aria-label="Source text" className="mt-5">
-        <pre
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable text must be reachable by keyboard
-          tabIndex={0}
-          className="overflow-x-auto rounded-lg bg-secondary/60 p-4 font-mono text-[14px] leading-[1.7] break-words whitespace-pre-wrap outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-ring sm:p-6"
-        >
-          {article.content}
-        </pre>
-      </section>
+      {view === "rendered" ? (
+        <section aria-label="Article text" className="mt-5">
+          <RenderedText
+            article={article}
+            owner={owner}
+            repo={repo}
+            library={library}
+            version={version}
+            tags={tags}
+            onSource={() => setView("source")}
+          />
+        </section>
+      ) : (
+        <SourceView text={article.content} large={large} onRender={() => setView("rendered")} />
+      )}
     </article>
   );
 }
@@ -259,5 +463,14 @@ export function ArticleView(props: ArticleViewProps) {
       </div>
     );
   }
-  return <Body article={query.data} library={library} version={version} />;
+  return (
+    <Body
+      article={query.data}
+      owner={owner}
+      repo={repo}
+      library={library}
+      version={version}
+      tags={props.tags}
+    />
+  );
 }

@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getJson, type QueryOf } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
-import type { Article, ArticleList, LibraryDetail } from "../model/browse";
+import type { Article, ArticleList, LibraryAccess, LibraryDetail } from "../model/browse";
 
 /** How many articles one request lists. The API allows 200. */
 const PAGE_SIZE = 100;
@@ -78,4 +78,12 @@ export const articleQueryOptions = ({ owner, repo, ref, sha }: VersionArgs, path
       const query: QueryOf<"/api/v1/libraries/{owner}/{repo}/article"> = { ref, path };
       return getJson<Article>(`${lib(owner, repo)}/article`, { signal, query });
     },
+  });
+
+/** Whether the library is private (it has a stored credential): its images are never linked to the host. */
+export const accessQueryOptions = (owner: string, repo: string) =>
+  queryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, "access"] as const,
+    queryFn: ({ signal }) => getJson<LibraryAccess>(`${lib(owner, repo)}/access`, { signal }),
+    staleTime: 60_000,
   });
