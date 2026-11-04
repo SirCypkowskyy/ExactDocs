@@ -8,6 +8,7 @@ from exactdocs.ingestion.errors import (
     InvalidPathPatternError,
     InvalidRepositoryUrlError,
     LibraryIdTakenError,
+    UnknownJobKindError,
     UnknownRefError,
 )
 from exactdocs.ingestion.models import (
@@ -21,6 +22,7 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
 )
 from exactdocs.ingestion.module import IngestionModule
+from exactdocs.ingestion.use_cases import MAX_LISTED_REFS
 from exactdocs_kernel import SystemClock
 
 HEAD, TAG = "a" * 40, "b" * 40
@@ -49,6 +51,7 @@ class FakeRemote:
 class FakeCatalog:
     taken: set[str] = field(default_factory=set)
     added: list[NewLibrary] = field(default_factory=list)
+    discarded: list[str] = field(default_factory=list)
 
     async def is_taken(self, library_id: str) -> bool:
         return library_id in self.taken
@@ -56,6 +59,9 @@ class FakeCatalog:
     async def add(self, library: NewLibrary) -> str:
         self.added.append(library)
         return library.library_id
+
+    async def discard(self, library_id: str) -> None:
+        self.discarded.append(library_id)
 
 
 async def _run(job: object, progress: object, /) -> None: ...
@@ -174,3 +180,56 @@ async def test_refs_are_listed_for_the_picker(module: IngestionModule) -> None:
     assert refs.default_branch == "main"
     assert [(r.name, r.commit_sha) for r in refs.branches] == [("main", HEAD)]
     assert [(r.name, r.commit_sha) for r in refs.tags] == [("v1.0.0", TAG)]
+
+
+async def test_the_library_is_removed_when_the_import_cannot_be_queued(
+    remote: FakeRemote, catalog: FakeCatalog, jobs: InMemoryJobRepository
+) -> None:
+    module = IngestionModule.build(  # no handler for `import`: queueing is refused
+        jobs=jobs, clock=SystemClock(), remote=remote, library_ids=catalog, libraries=catalog
+    )
+
+    with pytest.raises(UnknownJobKindError):
+        await module.add_library(AddLibraryCommand(url=URL))
+
+    assert catalog.discarded == ["/acme/orders"]
+    assert not await jobs.list_for_library("/acme/orders")
+
+
+async def test_a_failing_undo_does_not_hide_the_original_error(
+    remote: FakeRemote, catalog: FakeCatalog, jobs: InMemoryJobRepository
+) -> None:
+    class BrokenUndo(FakeCatalog):
+        async def discard(self, library_id: str) -> None:
+            raise RuntimeError(library_id)
+
+    catalog = BrokenUndo()
+    module = IngestionModule.build(
+        jobs=jobs, clock=SystemClock(), remote=remote, library_ids=catalog, libraries=catalog
+    )
+
+    with pytest.raises(UnknownJobKindError):
+        await module.add_library(AddLibraryCommand(url=URL))
+
+
+async def test_the_refs_list_is_cut_and_flagged(
+    remote: FakeRemote, module: IngestionModule
+) -> None:
+    remote.refs = RemoteRefs(
+        default_branch="main",
+        refs=tuple(
+            RemoteRef(name=f"refs/tags/t{i:05d}", sha=HEAD) for i in range(MAX_LISTED_REFS + 5)
+        ),
+    )
+
+    refs = await module.list_repository_refs(ListRepositoryRefsQuery(url=URL))
+
+    assert len(refs.tags) == MAX_LISTED_REFS
+    assert refs.truncated
+    assert refs.tags[0].name == "t00000"
+
+
+async def test_a_short_list_is_not_flagged(module: IngestionModule) -> None:
+    refs = await module.list_repository_refs(ListRepositoryRefsQuery(url=URL))
+
+    assert not refs.truncated

@@ -122,3 +122,7 @@ class NewLibraries(Protocol):
         Raises a conflict when the ID is taken and a validation error when it is not a valid ID.
         """
         ...
+
+    async def discard(self, library_id: str) -> None:
+        """Remove a library that was just added and has no versions (the undo of ``add``)."""
+        ...

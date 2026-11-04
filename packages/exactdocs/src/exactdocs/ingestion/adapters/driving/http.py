@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
@@ -50,9 +50,14 @@ def build_router(
         return await list_repository_refs(ListRepositoryRefsQuery(url=url))
 
     @router.post("/libraries", status_code=status.HTTP_201_CREATED)
-    async def add(command: AddLibraryCommand) -> AddedLibrary:
-        """Create a library, pin its ref to a commit and queue the import (see the job ID)."""
-        return await add_library(command)
+    async def add(command: AddLibraryCommand, request: Request, response: Response) -> AddedLibrary:
+        """Create a library, pin its ref to a commit and queue the import (see the job ID).
+
+        `Location` is the new library.
+        """
+        added = await add_library(command)
+        response.headers["Location"] = f"{request.url.path.rstrip('/')}{added.library_id}"
+        return added
 
     @router.get("/jobs/{job_id}", name="get_job")
     async def get_one(job_id: str) -> JobSummary:

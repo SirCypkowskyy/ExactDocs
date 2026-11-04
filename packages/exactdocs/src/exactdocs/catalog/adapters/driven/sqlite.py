@@ -25,9 +25,11 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.catalog.errors import (
+    LibraryAlreadyExistsError,
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
@@ -146,42 +148,36 @@ class SqliteLibraryRepository:
         found = await self._load(libraries.c.id == library_id.value)
         return next(iter(found), None)
 
+    async def add(self, library: Library) -> None:
+        """Insert the library; the primary key decides whether the ID is taken."""
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(
+                    insert(libraries).values(id=library.id.value, **_library_values(library))
+                )
+                await _insert_versions(connection, library)
+        except IntegrityError:
+            raise LibraryAlreadyExistsError(library.id.value) from None
+
+    async def delete(self, library_id: LibraryId) -> None:
+        """Remove the library; its versions and manifests go with it (foreign keys cascade)."""
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(libraries).where(libraries.c.id == library_id.value))
+
     async def save(self, library: Library) -> None:
         """Store the library; versions it already has are kept as they are, new ones are added.
 
         Activating a manifest also writes version rows, so a library saved from an older read
         must not overwrite or drop them: existing rows are left alone (insert or ignore).
         """
-        values = {
-            "title": library.title,
-            "description": library.description,
-            "source_url": library.source_url,
-            "host": library.host.value,
-            "default_branch": None
-            if library.default_branch is None
-            else library.default_branch.value,
-            "settings": _SETTINGS.dump_json(library.settings).decode(),
-        }
         async with self.engine.begin() as connection:
+            values = _library_values(library)
             await connection.execute(
                 sqlite_insert(libraries)
                 .values(id=library.id.value, **values)
                 .on_conflict_do_update(index_elements=[libraries.c.id], set_=values)
             )
-            if library.versions:
-                await connection.execute(
-                    sqlite_insert(library_versions).on_conflict_do_nothing(),
-                    [
-                        {
-                            "library_id": library.id.value,
-                            "ref": v.ref.value,
-                            "kind": v.kind.value,
-                            "commit_sha": v.commit_sha,
-                            "imported_at": v.imported_at.isoformat(),
-                        }
-                        for v in library.versions
-                    ],
-                )
+            await _insert_versions(connection, library)
 
     async def _load(self, *where: ColumnElement[bool]) -> Sequence[Library]:
         chosen = select(libraries.c.id).where(*where)
@@ -484,3 +480,32 @@ async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version
         commit_sha=row.commit_sha,
         imported_at=datetime.fromisoformat(row.imported_at),
     )
+
+
+def _library_values(library: Library) -> dict[str, str | None]:
+    return {
+        "title": library.title,
+        "description": library.description,
+        "source_url": library.source_url,
+        "host": library.host.value,
+        "default_branch": None if library.default_branch is None else library.default_branch.value,
+        "settings": _SETTINGS.dump_json(library.settings).decode(),
+    }
+
+
+async def _insert_versions(connection: AsyncConnection, library: Library) -> None:
+    """Add the library's versions; rows that exist are left alone (insert or ignore)."""
+    if library.versions:
+        await connection.execute(
+            sqlite_insert(library_versions).on_conflict_do_nothing(),
+            [
+                {
+                    "library_id": library.id.value,
+                    "ref": v.ref.value,
+                    "kind": v.kind.value,
+                    "commit_sha": v.commit_sha,
+                    "imported_at": v.imported_at.isoformat(),
+                }
+                for v in library.versions
+            ],
+        )

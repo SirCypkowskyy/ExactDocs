@@ -731,7 +731,7 @@
           "ingestion"
         ],
         "summary": "Add",
-        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).",
+        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).\n\n`Location` is the new library.",
         "operationId": "ingestion-add",
         "security": [
           {
@@ -2894,6 +2894,11 @@
             },
             "type": "array",
             "title": "Tags"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "True when branches or tags were cut at 1000 each."
           }
         },
         "additionalProperties": false,
@@ -2901,10 +2906,11 @@
         "required": [
           "default_branch",
           "branches",
-          "tags"
+          "tags",
+          "truncated"
         ],
         "title": "RepositoryRefs",
-        "description": "What a repository offers as a ref, for the picker. Sorted by name."
+        "description": "What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most."
       },
       "ResolvedVersion": {
         "properties": {

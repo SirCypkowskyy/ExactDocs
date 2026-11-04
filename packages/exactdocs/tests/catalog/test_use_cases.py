@@ -8,6 +8,7 @@ from exactdocs.catalog.adapters.driven.memory import (
 )
 from exactdocs.catalog.dtos import (
     CreateLibraryCommand,
+    DiscardLibraryCommand,
     GetLibraryQuery,
     ListLibrariesQuery,
     ResolveVersionQuery,
@@ -16,6 +17,7 @@ from exactdocs.catalog.errors import (
     AmbiguousCommitError,
     InvalidLibraryIdError,
     LibraryAlreadyExistsError,
+    LibraryNotEmptyError,
     LibraryNotFoundError,
     VersionNotFoundError,
 )
@@ -206,3 +208,20 @@ async def test_a_library_is_created_without_versions_and_not_twice() -> None:
     assert created.settings.include_paths == ["docs/"]
     with pytest.raises(LibraryAlreadyExistsError):
         await create(command)
+
+
+async def test_a_new_library_can_be_discarded_but_an_imported_one_cannot(
+    catalog: CatalogModule,
+) -> None:
+    await catalog.create_library(
+        CreateLibraryCommand(id="/acme/new", title="new", source_url="x", host=HostKind.GIT)
+    )
+
+    await catalog.discard_library(DiscardLibraryCommand(id="/acme/new"))
+    await catalog.discard_library(DiscardLibraryCommand(id="/acme/new"))  # absent: no-op
+    with pytest.raises(LibraryNotEmptyError):
+        await catalog.discard_library(DiscardLibraryCommand(id="/acme/payments"))
+
+    with pytest.raises(LibraryNotFoundError):
+        await catalog.get_library(GetLibraryQuery(id="/acme/new"))
+    await catalog.get_library(GetLibraryQuery(id="/acme/payments"))

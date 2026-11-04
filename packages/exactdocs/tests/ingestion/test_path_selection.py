@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from exactdocs.ingestion.errors import InvalidPathPatternError
@@ -79,7 +81,7 @@ ALL_ARTICLES = [
             ],
         ),
         (["docs/"], ["**"], []),  # exclusions win, even over everything
-        (["/docs/", " ./README.md "], [], ["README.md", *ALL_ARTICLES[1:6]]),
+        (["./docs/", " ./README.md "], [], ["README.md", *ALL_ARTICLES[1:6]]),
         (["docs/guide/*.{png,mdx}"], [], ["docs/guide/setup.mdx"]),  # a png is no article
     ],
 )
@@ -88,13 +90,27 @@ def test_the_selection_table(include: list[str], exclude: list[str], expected: l
 
 
 def test_patterns_are_normalised_and_deduplicated() -> None:
-    selection = PathSelection.of(["/docs/", "docs/", " ./x.md"], [" a "])
+    selection = PathSelection.of(["./docs/", "docs/", " ./x.md"], [" a "])
 
     assert selection == PathSelection(include=("docs/", "x.md"), exclude=("a",))
 
 
 @pytest.mark.parametrize(
-    "pattern", ["", "  ", "../etc", "a/../b", "a\\b", "{a,b", "x" * 300, "a\x00b"]
+    "pattern",
+    [
+        "",
+        "  ",
+        "/etc/x",
+        "/",
+        "../etc",
+        "a/../b",
+        "a//b",
+        "a/./b",
+        "a\\b",
+        "{a,b",
+        "x" * 300,
+        "a\x00b",
+    ],
 )
 def test_unusable_patterns_are_refused(pattern: str) -> None:
     with pytest.raises(InvalidPathPatternError):
@@ -106,3 +122,51 @@ def test_unusable_patterns_are_refused(pattern: str) -> None:
 def test_too_many_patterns_are_refused() -> None:
     with pytest.raises(InvalidPathPatternError):
         PathSelection.of([f"d{i}/" for i in range(65)])
+
+
+def test_patterns_are_case_sensitive_but_the_suffix_is_not() -> None:
+    selection = PathSelection.of(["Docs/"])
+
+    assert not selection.selects("docs/a.md")
+    assert selection.selects("Docs/a.MD")
+
+
+@pytest.mark.parametrize(
+    ("pattern", "path", "expected"),
+    [
+        ("d/{a,b}.md", "d/a.md", True),
+        ("d/{a,b}.md", "d/c.md", False),
+        ("d/{}.md", "d/.md", True),  # {} is a choice of the empty text
+        ("d/{}.md", "d/x.md", False),
+        ("d/{a,{b,c}}.md", "d/a}.md", True),  # braces do not nest: it ends at the first }
+        ("d/{a,{b,c}}.md", "d/a.md", False),
+        ("d/{a,{b,c}}.md", "d/{b}.md", True),
+        ("d/a}.md", "d/a}.md", True),  # a lone } is a plain character
+        ("d/a**b.md", "d/axxb.md", True),  # ** inside a name is a *
+        ("d/a**b.md", "d/x/b.md", False),
+        ("**/c.md", "c.md", True),  # ** also matches no folder at all
+        ("a/**/c.md", "a/c.md", True),
+        ("a/**/c.md", "a/b/b/c.md", True),
+    ],
+)
+def test_braces_and_wildcards_in_detail(pattern: str, path: str, expected: bool) -> None:
+    assert PathSelection.of([pattern]).selects(path) is expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "path"),
+    [
+        ("/".join(["**"] * 60) + "/zzz.md", "a/" * 200 + "q.md"),  # 120 stacked globstars
+        ("/".join(["**/*"] * 30) + "/zzz.md", "a/" * 400 + "q.md"),
+        ("*a" * 60 + "*z.md", "a" * 250 + ".md"),  # stacked wildcards inside one name
+        ("**" * 100 + "z.md", "a" * 250 + "/" + "a" * 250 + ".md"),
+        ("{a,aa,aaa}" * 20 + "z.md", "a" * 250 + ".md"),
+        ("?*" * 60 + "z.md", "a" * 250 + ".md"),
+    ],
+)
+def test_hostile_patterns_finish_fast(pattern: str, path: str) -> None:
+    selection = PathSelection.of([pattern])
+    started = time.perf_counter()
+
+    assert not selection.selects(path)
+    assert time.perf_counter() - started < 0.05

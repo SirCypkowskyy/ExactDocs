@@ -101,7 +101,7 @@ class Container:
             clock=SystemClock(),
             remote=remote,
             library_ids=CatalogLibraryIds(catalog.get_library),
-            libraries=CatalogNewLibraries(catalog.create_library),
+            libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
             handlers={IMPORT_JOB: _import_not_available},
         )
         job_worker = JobWorker(

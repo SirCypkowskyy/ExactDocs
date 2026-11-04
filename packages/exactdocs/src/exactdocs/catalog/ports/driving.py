@@ -12,6 +12,7 @@ from exactdocs.catalog.dtos import (
     CollectionResult,
     CreateLibraryCommand,
     DiscardedManifests,
+    DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
@@ -145,5 +146,16 @@ class CreateLibrary(Protocol):
     """
 
     async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class DiscardLibrary(Protocol):
+    """Remove a library that has no versions yet (the undo of ``CreateLibrary``).
+
+    Does nothing for an unknown ID; raises ``LibraryNotEmptyError`` when it has versions.
+    """
+
+    async def __call__(self, command: DiscardLibraryCommand) -> None:
         """Run the use case."""
         ...

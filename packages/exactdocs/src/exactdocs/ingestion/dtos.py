@@ -193,8 +193,9 @@ class RefOut(_Dto):
 
 
 class RepositoryRefs(_Dto):
-    """What a repository offers as a ref, for the picker. Sorted by name."""
+    """What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most."""
 
     default_branch: str | None
     branches: list[RefOut]
     tags: list[RefOut]
+    truncated: bool = Field(description="True when branches or tags were cut at 1000 each.")

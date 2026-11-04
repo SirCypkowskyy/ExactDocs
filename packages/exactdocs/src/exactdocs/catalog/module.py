@@ -11,6 +11,7 @@ from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     CollectGarbage,
     CreateLibrary,
+    DiscardLibrary,
     DiscardPendingManifests,
     GetActiveManifest,
     GetArticle,
@@ -25,6 +26,7 @@ from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
     CollectGarbageUseCase,
     CreateLibraryUseCase,
+    DiscardLibraryUseCase,
     DiscardPendingManifestsUseCase,
     GetActiveManifestUseCase,
     GetArticleUseCase,
@@ -44,6 +46,7 @@ class CatalogModule:
 
     list_libraries: ListLibraries
     create_library: CreateLibrary
+    discard_library: DiscardLibrary
     get_library: GetLibrary
     resolve_version: ResolveVersion
     store_manifest: StoreManifest
@@ -68,6 +71,7 @@ class CatalogModule:
         return cls(
             list_libraries=ListLibrariesUseCase(repository),
             create_library=CreateLibraryUseCase(repository),
+            discard_library=DiscardLibraryUseCase(repository),
             get_library=GetLibraryUseCase(repository),
             resolve_version=ResolveVersionUseCase(repository),
             store_manifest=StoreManifestUseCase(repository, manifests, clock),

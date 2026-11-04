@@ -102,3 +102,40 @@ def test_tips_list_branches_then_tags_sorted_and_skip_foreign_refs() -> None:
         ResolvedRef(name="v1.3.0", kind=RefKind.TAG, commit_sha=V13),
         ResolvedRef(name="v1.4.0", kind=RefKind.TAG, commit_sha=V14_COMMIT),
     )
+
+
+def test_a_tag_wins_over_a_branch_of_the_same_name() -> None:
+    refs = RemoteRefs(
+        default_branch="main",
+        refs=(
+            RemoteRef(name="refs/heads/v2", sha=NEXT),
+            RemoteRef(name="refs/tags/v2", sha=V13),
+        ),
+    )
+
+    assert resolve_ref(refs, "v2") == ResolvedRef(name="v2", kind=RefKind.TAG, commit_sha=V13)
+
+
+def test_a_full_sha_in_capitals_is_the_same_commit() -> None:
+    assert pinned(NEXT.upper().replace("2", "2")) == (NEXT, RefKind.COMMIT, NEXT)
+    assert pinned(ABC1.upper()) == (ABC1, RefKind.COMMIT, ABC1)
+
+
+def test_a_tag_named_like_a_sha_prefix_is_the_tag_not_the_commit() -> None:
+    refs = RemoteRefs(
+        default_branch="main",
+        refs=(
+            RemoteRef(name="refs/heads/main", sha=ABC1),
+            RemoteRef(name="refs/tags/abc1000", sha=V13),
+        ),
+    )
+
+    assert resolve_ref(refs, "abc1000") == ResolvedRef(
+        name="abc1000", kind=RefKind.TAG, commit_sha=V13
+    )
+
+
+@pytest.mark.parametrize("requested", ["refs/heads/next", "refs/tags/v1.3.0", "HEAD"])
+def test_fully_qualified_names_are_not_refs(requested: str) -> None:
+    with pytest.raises(UnknownRefError):
+        resolve_ref(REFS, requested)

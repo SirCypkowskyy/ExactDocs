@@ -21,6 +21,9 @@ class _NoLibraries:
     async def add(self, library: object) -> str:
         raise NotImplementedError
 
+    async def discard(self, library_id: str) -> None:
+        raise NotImplementedError
+
 
 class FakeClock:
     """A kernel ``Clock`` that moves one second on every reading."""

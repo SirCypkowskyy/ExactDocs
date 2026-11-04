@@ -151,3 +151,12 @@ class LibraryAlreadyExistsError(ConflictError):
     def __init__(self, library_id: str) -> None:
         super().__init__(f"library {library_id!r} already exists: choose another library ID")
         self.library_id = library_id
+
+
+class LibraryNotEmptyError(ConflictError):
+    """A library with imported versions cannot be discarded as if it were new."""
+
+    code = "library_not_empty"
+
+    def __init__(self, library_id: str) -> None:
+        super().__init__(f"library {library_id!r} has imported versions")

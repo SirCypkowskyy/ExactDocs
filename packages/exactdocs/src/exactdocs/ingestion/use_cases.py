@@ -46,6 +46,9 @@ from exactdocs_kernel import Clock, DomainError, paginate
 
 log = logging.getLogger(__name__)
 
+MAX_LISTED_REFS = 1000
+"""Branches and tags listed each; a repository with more is cut and flagged ``truncated``."""
+
 
 @dataclass(frozen=True, slots=True)
 class EnqueueJobUseCase:
@@ -218,19 +221,18 @@ class ListRepositoryRefsUseCase:
     remote: GitRemote
 
     async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
-        """Parse the URL and list what the remote advertises (no pagination: one repo's refs)."""
+        """Parse the URL and list what the remote advertises, at most ``MAX_LISTED_REFS`` each."""
         refs = await self.remote.list_refs(RepositoryUrl.parse(query.url))
         tips = ref_tips(refs)
+        branches = [
+            RefOut(name=t.name, commit_sha=t.commit_sha) for t in tips if t.kind is RefKind.BRANCH
+        ]
+        tags = [RefOut(name=t.name, commit_sha=t.commit_sha) for t in tips if t.kind is RefKind.TAG]
         return RepositoryRefs(
             default_branch=refs.default_branch,
-            branches=[
-                RefOut(name=t.name, commit_sha=t.commit_sha)
-                for t in tips
-                if t.kind is RefKind.BRANCH
-            ],
-            tags=[
-                RefOut(name=t.name, commit_sha=t.commit_sha) for t in tips if t.kind is RefKind.TAG
-            ],
+            branches=branches[:MAX_LISTED_REFS],
+            tags=tags[:MAX_LISTED_REFS],
+            truncated=max(len(branches), len(tags)) > MAX_LISTED_REFS,
         )
 
 
@@ -246,8 +248,7 @@ class AddLibraryUseCase:
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
         """Check everything that can be checked first, then store the library and queue its import.
 
-        ponytail: if queueing fails after the library is stored, the library stays without an
-        import; E9-01's sync is the way to import it again.
+        If queueing fails, the new library is removed again, so a retry is not met with a 409.
         """
         repository = RepositoryUrl.parse(command.url)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
@@ -266,12 +267,21 @@ class AddLibraryUseCase:
                 selection=selection,
             )
         )
-        job = await self.enqueue_job(
-            EnqueueJobCommand(
-                kind=IMPORT_JOB,
-                library=created,
-                version=resolved.name,
-                commit_sha=resolved.commit_sha,
+        try:
+            job = await self.enqueue_job(
+                EnqueueJobCommand(
+                    kind=IMPORT_JOB,
+                    library=created,
+                    version=resolved.name,
+                    commit_sha=resolved.commit_sha,
+                )
             )
-        )
+        except BaseException:
+            try:
+                await self.libraries.discard(created)
+            except Exception:
+                log.exception(
+                    "could not remove library %s after its import failed to queue", created
+                )
+            raise
         return AddedLibrary.of(created, resolved, job)

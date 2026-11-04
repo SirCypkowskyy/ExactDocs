@@ -88,6 +88,8 @@ export interface paths {
         /**
          * Add
          * @description Create a library, pin its ref to a commit and queue the import (see the job ID).
+         *
+         *     `Location` is the new library.
          */
         readonly post: operations["ingestion-add"];
         readonly delete?: never;
@@ -657,7 +659,7 @@ export interface components {
         readonly RepositoryHost: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
         /**
          * RepositoryRefs
-         * @description What a repository offers as a ref, for the picker. Sorted by name.
+         * @description What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most.
          */
         readonly RepositoryRefs: {
             /** Default Branch */
@@ -666,6 +668,11 @@ export interface components {
             readonly branches: readonly components["schemas"]["RefOut"][];
             /** Tags */
             readonly tags: readonly components["schemas"]["RefOut"][];
+            /**
+             * Truncated
+             * @description True when branches or tags were cut at 1000 each.
+             */
+            readonly truncated: boolean;
         };
         /**
          * ResolvedVersion

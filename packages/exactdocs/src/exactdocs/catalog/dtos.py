@@ -408,3 +408,9 @@ class CreateLibraryCommand(_Dto):
     default_branch: str | None = None
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
+
+
+class DiscardLibraryCommand(_Dto):
+    """Undo ``CreateLibrary`` for a library that has no versions."""
+
+    id: str = Field(min_length=1)

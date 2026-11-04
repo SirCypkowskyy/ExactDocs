@@ -15,6 +15,7 @@ from exactdocs.catalog.dtos import (
     CollectionResult,
     CreateLibraryCommand,
     DiscardedManifests,
+    DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
@@ -33,7 +34,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
     ConflictingContentError,
-    LibraryAlreadyExistsError,
+    LibraryNotEmptyError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
@@ -90,16 +91,9 @@ class CreateLibraryUseCase:
     repository: LibraryRepository
 
     async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
-        """Store a new library without versions.
-
-        ponytail: check-then-save is not atomic; a second writer in the same instant would
-        replace the first. One admin and one process make that unreachable today.
-        """
-        library_id = LibraryId(command.id)
-        if await self.repository.get(library_id) is not None:
-            raise LibraryAlreadyExistsError(str(library_id))
+        """Store a new library without versions; the repository refuses a taken ID."""
         library = Library(
-            id=library_id,
+            id=LibraryId(command.id),
             title=command.title,
             source_url=command.source_url,
             host=HostKind(command.host),
@@ -109,8 +103,24 @@ class CreateLibraryUseCase:
                 exclude_paths=tuple(command.exclude_paths),
             ),
         )
-        await self.repository.save(library)
+        await self.repository.add(library)
         return LibraryDetail.from_model(library)
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardLibraryUseCase:
+    """Implements ``ports.driving.DiscardLibrary``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: DiscardLibraryCommand) -> None:
+        """Remove the library if it exists and has no versions."""
+        library = await self.repository.get(LibraryId(command.id))
+        if library is None:
+            return
+        if library.versions:
+            raise LibraryNotEmptyError(str(library.id))
+        await self.repository.delete(library.id)
 
 
 @dataclass(frozen=True, slots=True)

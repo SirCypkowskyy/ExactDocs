@@ -22,6 +22,7 @@ def queued(job_id: str, library: str = "/acme/payments", minute: int = 0) -> Job
         kind=JobKind("import"),
         library=library,
         version="1.4",
+        commit_sha="c" * 40,  # the commit the version was pinned to must survive too
         now=T0 + timedelta(minutes=minute),
     )
 

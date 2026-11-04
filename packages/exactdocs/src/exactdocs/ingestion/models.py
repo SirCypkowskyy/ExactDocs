@@ -638,56 +638,120 @@ def resolve_ref(refs: RemoteRefs, requested: str | None) -> ResolvedRef:
 
 
 ARTICLE_SUFFIXES = (".md", ".mdx")
-DEFAULT_INCLUDE = "**"  # with the suffix check, this is `**/*.{md,mdx}`
 _MAX_PATTERNS = 64
 _MAX_PATTERN = 256
+_MAX_PATH = 1024
+_MAX_SEGMENT = 255
 _GLOB_CHARS = frozenset("*?{")
+
+type _Token = str | tuple[str, ...]  # text, or the alternatives of a `{a,b}`
+_ANY, _ONE = "*", "?"  # as tokens they are the 1-tuples ("*",) and ("?",)
+type _Segment = tuple[_Token, ...] | None  # None: `**`, any number of folders
+
+
+@dataclass(frozen=True, slots=True)
+class _Glob:
+    segments: tuple[_Segment, ...]
+    folder: bool  # a plain name also selects everything below it
+
+
+def _segment(text: str) -> _Segment:
+    """Split one path segment into tokens; ``**`` alone is a globstar."""
+    if text == "**":
+        return None
+    tokens: list[_Token] = []
+    literal = ""
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char in "*?{":
+            if literal:
+                tokens.append(literal)
+                literal = ""
+            if char == "{":
+                end = text.find("}", i)
+                if end < 0:
+                    raise InvalidPathPatternError(PatternProblem.BRACE)
+                tokens.append(("{", *text[i + 1 : end].split(",")))
+                i = end
+            elif not (char == "*" and tokens and tokens[-1] == (_ANY,)):  # `**` in a name is `*`
+                tokens.append((char,))
+        else:
+            literal += char
+        i += 1
+    if literal:
+        tokens.append(literal)
+    return tuple(tokens)
 
 
 @lru_cache(maxsize=512)
-def _pattern_regex(pattern: str) -> re.Pattern[str]:
-    """Translate a path pattern (see ``PathSelection``) to a regex for a whole path."""
-    if pattern.endswith("/"):  # a folder: everything below it
-        pattern += "**"
-    out: list[str] = []
-    i = 0
-    while i < len(pattern):
-        match pattern[i]:
-            case "*" if pattern.startswith("**/", i):
-                out.append("(?:.*/)?")
-                i += 3
-                continue
-            case "*" if pattern.startswith("**", i):
-                out.append(".*")
-                i += 2
-                continue
-            case "*":
-                out.append("[^/]*")
-            case "?":
-                out.append("[^/]")
-            case "{":
-                end = pattern.find("}", i)
-                if end < 0:
-                    raise InvalidPathPatternError(PatternProblem.BRACE)
-                alternatives = pattern[i + 1 : end].split(",")
-                out.append("(?:" + "|".join(map(re.escape, alternatives)) + ")")
-                i = end
-            case char:
-                out.append(re.escape(char))
-        i += 1
-    body = "".join(out)
-    if not _GLOB_CHARS & set(pattern) and not pattern.endswith("**"):  # a file or a folder
-        body += "(?:/.*)?"
-    return re.compile(body, re.DOTALL)
+def _glob(pattern: str) -> _Glob:
+    """Parse a cleaned pattern. Matching never backtracks: see ``_matches``."""
+    folder = not _GLOB_CHARS & set(pattern)
+    parts = pattern.split("/")
+    if not parts[-1]:  # `docs/` is `docs/**`
+        parts[-1] = "**"
+    segments: list[_Segment] = []
+    for part in parts:
+        segment = _segment(part)
+        if segment is None and segments and segments[-1] is None:
+            continue  # `**/**` is `**`
+        segments.append(segment)
+    return _Glob(tuple(segments), folder)
+
+
+def _name_matches(tokens: tuple[_Token, ...], name: str) -> bool:
+    """Match one segment: the set of reachable positions, so the time is tokens x length."""
+    if len(name) > _MAX_SEGMENT:
+        return False
+    reach = {0}
+    for token in tokens:
+        if isinstance(token, str):
+            reach = {p + len(token) for p in reach if name.startswith(token, p)}
+        elif token == (_ANY,):
+            reach = set(range(min(reach), len(name) + 1)) if reach else set()
+        elif token == (_ONE,):
+            reach = {p + 1 for p in reach if p < len(name)}
+        else:
+            reach = {p + len(a) for p in reach for a in token[1:] if name.startswith(a, p)}
+        if not reach:
+            return False
+    return len(name) in reach
+
+
+def _matches(glob: _Glob, path: str) -> bool:
+    """Match ``path`` folder by folder, keeping the set of positions reached so far.
+
+    ``**`` reaches every position from the first one on. Linear in pattern segments times path
+    segments, whatever the pattern (a regex would backtrack on stacked wildcards).
+    """
+    if len(path) > _MAX_PATH:
+        return False
+    names = path.split("/")
+    reach = {0}
+    for segment in glob.segments:
+        if segment is None:
+            reach = set(range(min(reach), len(names) + 1))
+        else:
+            reach = {i + 1 for i in reach if i < len(names) and _name_matches(segment, names[i])}
+        if not reach:
+            return False
+    return len(names) in reach or (glob.folder and bool(reach))
 
 
 def _clean_pattern(raw: str) -> str:
-    pattern = raw.strip().removeprefix("./").lstrip("/")
+    pattern = raw.strip().removeprefix("./")
     if not pattern or len(pattern) > _MAX_PATTERN or not pattern.isprintable():
         raise InvalidPathPatternError(PatternProblem.EMPTY)
-    if "\\" in pattern or ".." in pattern.split("/"):
+    parts = pattern.split("/")
+    if (
+        pattern.startswith("/")
+        or "\\" in pattern
+        or any(p in {"", ".", ".."} for p in parts[:-1])
+        or parts[-1] in {".", ".."}
+    ):
         raise InvalidPathPatternError(PatternProblem.PATH)
-    _pattern_regex(pattern)  # fails on an unclosed brace
+    _glob(pattern)  # fails on an unclosed brace
     return pattern
 
 
@@ -695,9 +759,12 @@ def _clean_pattern(raw: str) -> str:
 class PathSelection:
     """Which repository files are articles: ``include`` minus ``exclude``, only ``.md``/``.mdx``.
 
-    Patterns are repo-relative with ``/``: ``docs/`` (a folder and all below it), ``docs``
-    (a file or a folder), ``*`` (within one folder level), ``**`` (across folders), ``?`` and
-    ``{a,b}``. No ``include`` means ``**/*.{md,mdx}``. An exclusion always wins.
+    Patterns are repo-relative with ``/`` (an absolute path, ``..`` or a backslash is refused) and
+    **case-sensitive**: ``Docs/`` does not match ``docs/``. Only the ``.md``/``.mdx`` suffix is
+    case-insensitive. ``docs/`` is a folder and all below it, ``docs`` a file or a folder, ``*``
+    and ``?`` stay within one name, ``**`` as a whole name crosses folders, ``{a,b}`` is a choice
+    (not nestable; ``{}`` matches nothing; a lone ``}`` is a plain character). No ``include``
+    means every ``.md``/``.mdx`` file. An exclusion always wins.
     """
 
     include: tuple[str, ...] = ()
@@ -717,9 +784,9 @@ class PathSelection:
         """Tell whether the file at this repo-relative path is an article."""
         if not path.lower().endswith(ARTICLE_SUFFIXES):
             return False
-        if any(_pattern_regex(p).fullmatch(path) for p in self.exclude):
+        if any(_matches(_glob(p), path) for p in self.exclude):
             return False
-        return any(_pattern_regex(p).fullmatch(path) for p in self.include or (DEFAULT_INCLUDE,))
+        return not self.include or any(_matches(_glob(p), path) for p in self.include)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

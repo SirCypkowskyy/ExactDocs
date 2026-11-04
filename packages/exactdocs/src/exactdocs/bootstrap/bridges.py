@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from exactdocs.catalog.dtos import (
     CreateLibraryCommand,
+    DiscardLibraryCommand,
     GetActiveManifestQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
@@ -18,6 +19,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
     CreateLibrary,
+    DiscardLibrary,
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
@@ -100,6 +102,7 @@ class CatalogNewLibraries:
     """Implements ``ingestion.ports.driven.NewLibraries`` using the catalog."""
 
     create_library: CreateLibrary
+    discard_library: DiscardLibrary
 
     async def add(self, library: NewLibrary) -> str:
         """Create the library in the catalog; return its canonical ID."""
@@ -115,3 +118,7 @@ class CatalogNewLibraries:
             )
         )
         return created.id
+
+    async def discard(self, library_id: str) -> None:
+        """Remove the library from the catalog again."""
+        await self.discard_library(DiscardLibraryCommand(id=library_id))

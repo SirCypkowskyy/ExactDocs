@@ -29,6 +29,17 @@ class LibraryRepository(Protocol):
         """Return the library with this ID, or ``None``."""
         ...
 
+    async def add(self, library: Library) -> None:
+        """Store a new library (and its versions). Raises ``LibraryAlreadyExistsError``.
+
+        The ID check and the write are one step, so two callers cannot both succeed.
+        """
+        ...
+
+    async def delete(self, library_id: LibraryId) -> None:
+        """Remove the library and everything stored under it; nothing happens if it is absent."""
+        ...
+
     async def save(self, library: Library) -> None:
         """Store the library, replacing any earlier entry with the same ID."""
         ...
