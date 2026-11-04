@@ -357,7 +357,8 @@ async def test_the_watchdog_stops_a_fetch_that_grows_too_big(
 ) -> None:
     gateway = GitCli(
         git=stalling_git(tmp_path, script), work_root=tmp_path / "work", watch_interval=0.05,
-        **{"max_fetch_bytes": 10**9, "max_fetch_files": 10**6, **limits},
+        max_fetch_bytes=limits.get("max_fetch_bytes", 10**9),
+        max_fetch_files=limits.get("max_fetch_files", 10**6),
     )  # fmt: skip
     started = time.monotonic()
 
