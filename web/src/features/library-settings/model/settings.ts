@@ -9,15 +9,17 @@ export type SyncedLibrary = components["schemas"]["SyncedLibrary"];
 export type SyncedVersion = components["schemas"]["SyncedVersion"];
 export type RemovalResult = components["schemas"]["RemovalResult"];
 
-export const MAX_TITLE = 200;
+const MAX_TITLE = 200;
 export const MAX_DESCRIPTION = 1000;
 
 /** What went wrong, and where it belongs: next to a field, or in the section's alert. */
 export interface Problem {
   field?: "title" | "description" | "ref";
   message: string;
-  /** The server's own words, when they carry facts (job IDs, the other ref). */
-  detail?: string;
+  /** A wait state, not a mistake: shown neutral instead of red. */
+  tone?: "info";
+  /** The way out is another part of this page (a refused version is a branch to re-sync). */
+  jump?: { href: `#${string}`; label: string };
   link?: { href: "/sign-in" | "/setup"; label: string };
 }
 
@@ -90,6 +92,9 @@ export function explainSave(error: unknown): Problem {
   return generic(error);
 }
 
+const sentence = (text: string) =>
+  `${text.replace(/\.$/, "")}, so a second version would hold the same text.`;
+
 export function explainAddVersion(error: unknown, ref: string): Problem {
   if (!(error instanceof HttpError)) return OFFLINE;
   const gone = session(error);
@@ -100,7 +105,8 @@ export function explainAddVersion(error: unknown, ref: string): Problem {
     case "version_exists":
       return {
         field: "ref",
-        message: `“${ref}” is already a version of this library. A branch can be updated with Re-sync.`,
+        message: `“${ref}” is already a version of this library.`,
+        jump: { href: "#sync-heading", label: "Branches can be updated with Re-sync" },
       };
     case "version_importing":
       return {
@@ -110,8 +116,11 @@ export function explainAddVersion(error: unknown, ref: string): Problem {
     case "commit_already_imported":
       return {
         field: "ref",
-        message: "That commit is already imported under another version of this library.",
-        detail: error.message,
+        message: sentence(
+          error.message.startsWith("Request to")
+            ? "This commit is already imported under another version"
+            : error.message,
+        ),
       };
     case "unknown_ref":
       return { field: "ref", message: `This repository has no branch, tag or commit “${ref}”.` };
@@ -139,6 +148,7 @@ export function explainSync(error: unknown): Problem {
   if (error.status === 404) return { message: GONE };
   if (error.status === 409) {
     return {
+      tone: "info",
       message:
         "A version is still importing, so there is nothing new to queue. Re-sync once it finishes.",
     };
@@ -147,7 +157,6 @@ export function explainSync(error: unknown): Problem {
     return {
       message:
         "The repository couldn't be read, so nothing changed. Every version keeps what it served.",
-      detail: error.message,
     };
   }
   return generic(error);
@@ -173,10 +182,16 @@ const STATUS_WORDS: Record<SyncedVersion["status"], string> = {
   queued: "Updating",
   up_to_date: "Up to date",
   importing: "Already importing",
-  pinned: "Pinned, never changes",
+  pinned: "Pinned",
   failed: "Failed",
 };
-export const statusWords = (s: SyncedVersion["status"]) => STATUS_WORDS[s] ?? s;
+export const statusWords = (s: SyncedVersion["status"]) => STATUS_WORDS[s];
+
+/** A version whose import finished after the re-sync queued it. */
+export type RowOutcome = "succeeded" | "failed";
+export const outcomeWords = (o: RowOutcome) => (o === "succeeded" ? "Updated" : "Update failed");
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** One sentence for the whole re-sync, so the outcome reads before the per-version rows. */
 export function syncHeadline(result: SyncedLibrary): string {
@@ -184,10 +199,15 @@ export function syncHeadline(result: SyncedLibrary): string {
     result.versions.filter((v) => v.status === s).length;
   const queued = count("queued");
   const failed = count("failed");
-  if (queued > 0) return `${queued === 1 ? "1 version is" : `${queued} versions are`} updating.`;
-  if (failed > 0)
-    return `${failed === 1 ? "1 version" : `${failed} versions`} could not be checked.`;
+  const parts = [
+    queued > 0 && `${plural(queued, "version is", "versions are")} updating`,
+    failed > 0 && `${plural(failed, "version", "versions")} could not be checked`,
+  ].filter(Boolean);
+  if (parts.length > 0) return `${parts.join(", ")}.`;
   if (count("importing") > 0) return "An import is already running.";
+  if (result.versions.length > 0 && count("pinned") === result.versions.length) {
+    return "Nothing to update: every version is pinned.";
+  }
   return "Everything is up to date.";
 }
 
@@ -198,5 +218,15 @@ export interface JobViews {
   /** The full import view: heading, progress, skipped files; `finish` replaces its buttons. */
   Import: ComponentType<{ added: AddedVersion; finish: ReactNode }>;
   /** One job as a compact line with its bar. */
-  Line: ComponentType<{ jobId: string; label: string }>;
+  Line: ComponentType<{
+    jobId: string;
+    label: string;
+    onFinish?: ((state: RowOutcome) => void) | undefined;
+  }>;
+}
+
+/** The last action a section started; the others clear their own notices when it is not theirs. */
+export interface Activity {
+  by: string;
+  n: number;
 }

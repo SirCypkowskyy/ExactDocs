@@ -2,26 +2,31 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { Button } from "@/shared/ui/button";
-import { refreshLibraries, removeLibrary } from "../api/settings";
+import { forgetLibrary, refreshLibraries, removeLibrary } from "../api/settings";
 import { explainRemove, isAlreadyGone, type SettingsLibrary } from "../model/settings";
 import { danger } from "./styles";
 import { TypedConfirm } from "./typed-confirm";
+
+const LISTED = 5;
 
 /** Removing the whole library: kept apart at the bottom, and behind its ID typed in full. */
 export function DangerSection({
   owner,
   repo,
   library,
+  onStart,
 }: {
   owner: string;
   repo: string;
   library: SettingsLibrary;
+  onStart: () => void;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
-  const count = library.versions.length;
+  const refs = library.versions.map((v) => v.ref);
+  const count = refs.length;
 
   const remove = useMutation({
     mutationFn: () =>
@@ -30,17 +35,23 @@ export function DangerSection({
         throw error;
       }),
     onSuccess: async () => {
-      refreshLibraries(queryClient);
-      // The page it was on is gone: nothing to return focus to, so leave for the list.
+      // Leave first: while this page is mounted, dropping the library's cache would refetch it.
       setOpen(false);
       await navigate({ to: "/" });
+      forgetLibrary(queryClient, owner, repo);
     },
     onError: () => refreshLibraries(queryClient),
   });
 
   return (
-    <section aria-labelledby="danger-heading" className="mt-12 border-t border-border pt-10">
-      <h2 id="danger-heading" className="font-serif text-2xl font-semibold tracking-tight">
+    <section
+      aria-labelledby="danger-heading"
+      className="mt-16 rounded-lg border border-destructive/30 p-5"
+    >
+      <h2
+        id="danger-heading"
+        className="font-serif text-xl font-semibold tracking-tight text-destructive [scroll-margin-top:1.5rem]"
+      >
         Remove library
       </h2>
       <p className="mt-1.5 max-w-prose text-muted-foreground">
@@ -58,6 +69,7 @@ export function DangerSection({
           type="button"
           onClick={() => {
             remove.reset();
+            onStart();
             setOpen(true);
           }}
           className={danger}
@@ -68,14 +80,17 @@ export function DangerSection({
       <TypedConfirm
         open={open}
         onOpenChange={setOpen}
-        title={`Remove ${library.id}?`}
-        consequence={
+        title={
           <>
-            {count > 0 ? "All its versions and their articles leave" : "It leaves"} browse, search
-            and agents right away. Text that other libraries share is kept. This can't be undone,
-            but you can add the library again.
+            Remove <span className="font-mono text-[0.9em]">{library.id}</span>?
           </>
         }
+        loss={
+          count > 0
+            ? `${count === 1 ? "Its version" : `All ${count} versions`} (${refs.slice(0, LISTED).join(", ")}${count > LISTED ? `, and ${count - LISTED} more` : ""}) and their articles disappear from browse, search and agents now.`
+            : "The library disappears from browse, search and agents now."
+        }
+        safe="Nothing in the repository changes. Content that other libraries share stays available. You can add the library again."
         phrase={library.id}
         confirmLabel="Remove library"
         pending={remove.isPending}

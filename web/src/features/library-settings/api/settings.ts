@@ -36,3 +36,12 @@ export function refreshLibraries(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: LIBRARIES_KEY });
   void queryClient.invalidateQueries({ queryKey: BROWSE_KEY });
 }
+
+/**
+ * After a library is removed: drop what was cached for it and reload the list. Call this after
+ * leaving the library's pages, or the page still mounted would refetch a library that is gone.
+ */
+export function forgetLibrary(queryClient: QueryClient, owner: string, repo: string) {
+  queryClient.removeQueries({ queryKey: [...BROWSE_KEY, owner, repo] });
+  void queryClient.invalidateQueries({ queryKey: LIBRARIES_KEY });
+}

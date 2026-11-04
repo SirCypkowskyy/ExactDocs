@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
-import { type FormEvent, useCallback, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
@@ -8,7 +8,9 @@ import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
 import { addVersion, refreshLibraries, removeVersion } from "../api/settings";
+import { useNow } from "../hooks/use-now";
 import {
+  type Activity,
   type AddedVersion,
   explainAddVersion,
   explainRemove,
@@ -19,7 +21,7 @@ import {
   type SettingsVersion,
   shortSha,
 } from "../model/settings";
-import { secondary } from "./styles";
+import { secondary, sectionHeading } from "./styles";
 import { TypedConfirm } from "./typed-confirm";
 
 interface Props {
@@ -27,6 +29,8 @@ interface Props {
   repo: string;
   library: SettingsLibrary;
   Import: JobViews["Import"];
+  activity: Activity;
+  onStart: () => void;
 }
 
 function VersionRow({
@@ -62,11 +66,25 @@ function VersionRow({
         variant="ghost"
         aria-label={`Remove version ${version.ref}`}
         onClick={(e) => onRemove(version, e.currentTarget)}
-        className="shrink-0 text-destructive hover:bg-destructive/10 md:h-9"
+        className="-mr-3 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive md:h-9"
       >
         Remove
       </Button>
     </li>
+  );
+}
+
+/** A refusal's words, with the way out when the answer is elsewhere on this page. */
+function fieldMessage(p: Problem): ReactNode {
+  if (!p.jump) return p.message;
+  return (
+    <>
+      {p.message}{" "}
+      <a href={p.jump.href} className="underline underline-offset-2">
+        {p.jump.label}
+      </a>
+      .
+    </>
   );
 }
 
@@ -76,15 +94,17 @@ function AddVersionForm({
   library,
   Import,
   onClose,
+  onStart,
 }: Props & { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [choice, setChoice] = useState<RefChoice>({ kind: "default" });
+  // No version is preselected: adding one is a decision, not a default.
+  const [choice, setChoice] = useState<RefChoice>({ kind: "none" });
   const [typed, setTyped] = useState("");
-  const [fieldError, setFieldError] = useState<string>();
+  const [fieldError, setFieldError] = useState<ReactNode>();
   const [problem, setProblem] = useState<Problem>();
   const [added, setAdded] = useState<AddedVersion>();
 
-  const ref = refToSend(choice, typed) ?? library.default_branch;
+  const ref = refToSend(choice, typed);
 
   const add = useMutation({
     mutationFn: (target: string) => addVersion(owner, repo, target),
@@ -95,7 +115,7 @@ function AddVersionForm({
     onError: (error, target) => {
       const p = explainAddVersion(error, target);
       if (p.field) {
-        setFieldError(p.detail ? `${p.message} ${p.detail}` : p.message);
+        setFieldError(fieldMessage(p));
         setProblem(undefined);
         requestAnimationFrame(() =>
           (document.getElementById("ref-typed") ?? document.getElementById("ref"))?.focus(),
@@ -115,11 +135,14 @@ function AddVersionForm({
     if (add.isPending) return;
     setProblem(undefined);
     if (!ref) {
-      setFieldError("Choose a branch, a tag or a commit to add.");
-      requestAnimationFrame(() => document.getElementById("ref")?.focus());
+      setFieldError("Choose a branch or tag from the list, or pick “Another ref or commit…”.");
+      requestAnimationFrame(() =>
+        (document.getElementById("ref-typed") ?? document.getElementById("ref"))?.focus(),
+      );
       return;
     }
     setFieldError(undefined);
+    onStart();
     add.mutate(ref);
   }
 
@@ -129,7 +152,7 @@ function AddVersionForm({
         added={added}
         finish={
           <Button type="button" onClick={onClose}>
-            Done
+            Close
           </Button>
         }
       />
@@ -148,6 +171,8 @@ function AddVersionForm({
           choice={choice}
           typed={typed}
           error={fieldError}
+          explicit
+          exclude={library.versions.map((v) => v.ref)}
           onChoice={(c) => {
             setChoice(c);
             setFieldError(undefined);
@@ -182,11 +207,18 @@ function AddVersionForm({
   );
 }
 
+const defaultNote = (v: SettingsVersion | undefined) =>
+  v?.is_default
+    ? " It is the default version, so the library's default moves to another version."
+    : "";
+
 /** The imported versions, an add form, and a typed-confirmation remove per version. */
 export function VersionsSection(props: Props) {
-  const { owner, repo, library } = props;
+  const { owner, repo, library, activity, onStart } = props;
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
+  // The card stays mounted while its row collapses, so it does not vanish before the space does.
+  const [mounted, setMounted] = useState(false);
   const [removing, setRemoving] = useState<SettingsVersion>();
   const [notice, setNotice] = useState("");
   const [problem, setProblem] = useState<Problem>();
@@ -194,7 +226,18 @@ export function VersionsSection(props: Props) {
   const addButton = useRef<HTMLButtonElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const removedOk = useRef(false);
-  const [now] = useState(() => Date.now());
+  const now = useNow();
+
+  useEffect(() => {
+    if (activity.by !== "versions") setNotice("");
+  }, [activity]);
+
+  // `transitionend` ends it; this covers reduced motion, where no transition runs.
+  useEffect(() => {
+    if (adding || !mounted) return;
+    const id = setTimeout(() => setMounted(false), 260);
+    return () => clearTimeout(id);
+  }, [adding, mounted]);
 
   const remove = useMutation({
     mutationFn: (version: SettingsVersion) =>
@@ -237,7 +280,7 @@ export function VersionsSection(props: Props) {
             id="versions-heading"
             ref={heading}
             tabIndex={-1}
-            className="font-serif text-2xl font-semibold tracking-tight outline-none"
+            className={cn(sectionHeading, "outline-none")}
           >
             Versions
           </h2>
@@ -252,7 +295,9 @@ export function VersionsSection(props: Props) {
           aria-controls="add-version"
           onClick={() => {
             setNotice("");
-            setAdding(!adding);
+            if (adding) return closeAdd();
+            setMounted(true);
+            setAdding(true);
           }}
           className={secondary}
         >
@@ -262,13 +307,16 @@ export function VersionsSection(props: Props) {
 
       <div
         id="add-version"
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && !adding) setMounted(false);
+        }}
         className={cn(
           "grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
           adding ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         )}
       >
         <div className="overflow-hidden" inert={!adding}>
-          {adding && (
+          {mounted && (
             <div className="mt-6 rounded-lg bg-secondary/60 p-4 sm:p-5">
               <AddVersionForm {...props} onClose={closeAdd} />
             </div>
@@ -291,9 +339,10 @@ export function VersionsSection(props: Props) {
             No versions yet. Add one, or wait for the first import to finish.
           </p>
         ) : (
+          // No bottom rule: the next section brings its own.
           <ul
             aria-label="Imported versions"
-            className="divide-y divide-border border-y border-border"
+            className="divide-y divide-border border-t border-border"
           >
             {versions.map((v) => (
               <VersionRow
@@ -305,6 +354,7 @@ export function VersionsSection(props: Props) {
                   removedOk.current = false;
                   remove.reset();
                   setProblem(undefined);
+                  onStart();
                   setRemoving(version);
                 }}
               />
@@ -318,14 +368,13 @@ export function VersionsSection(props: Props) {
         onOpenChange={(open) => {
           if (!open) setRemoving(undefined);
         }}
-        title={`Remove ${removing?.ref ?? "version"}?`}
-        consequence={
+        title={
           <>
-            Its articles leave browse, search and agents right away. Text that other versions share
-            is kept, and the repository itself is untouched. This can't be undone, but you can add
-            the version again.
+            Remove <span className="font-mono text-[0.9em]">{removing?.ref ?? "version"}</span>?
           </>
         }
+        loss="Its articles disappear from browse, search and agents now."
+        safe={`Nothing in the repository changes. Content that other versions share stays available. You can add this version again.${defaultNote(removing)}`}
         phrase={removing?.ref ?? ""}
         confirmLabel="Remove version"
         pending={remove.isPending}

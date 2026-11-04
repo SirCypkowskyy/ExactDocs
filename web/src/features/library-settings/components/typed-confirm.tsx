@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import {
   ConfirmCancel,
@@ -7,14 +8,18 @@ import {
   ConfirmRoot,
   ConfirmTitle,
 } from "@/shared/ui/dialog";
+import { FormAlert } from "@/shared/ui/form-alert";
 import type { Problem } from "../model/settings";
 
 interface TypedConfirmProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  title: string;
-  /** What is removed, and what stays. */
-  consequence: ReactNode;
+  /** “Remove ”, the thing, “?”: the thing is set in mono by the caller. */
+  title: ReactNode;
+  /** What is lost, in the full ink. */
+  loss: ReactNode;
+  /** What is safe, in the muted ink. */
+  safe: ReactNode;
   /** The exact text the person has to type (the version, or the library ID). */
   phrase: string;
   confirmLabel: string;
@@ -25,17 +30,15 @@ interface TypedConfirmProps {
   onCloseAutoFocus: (event: Event) => void;
 }
 
-function Body({
-  consequence,
-  phrase,
-  confirmLabel,
-  pending,
-  problem,
-  onConfirm,
-}: Omit<TypedConfirmProps, "open" | "onOpenChange" | "title" | "onCloseAutoFocus">) {
+type BodyProps = Pick<
+  TypedConfirmProps,
+  "loss" | "safe" | "phrase" | "confirmLabel" | "pending" | "problem" | "onConfirm"
+>;
+
+function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }: BodyProps) {
   const [typed, setTyped] = useState("");
-  const matches = typed === phrase;
-  const blocked = !matches || pending;
+  const armed = typed === phrase;
+  const blocked = !armed || pending;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -44,7 +47,12 @@ function Body({
 
   return (
     <form onSubmit={submit} noValidate>
-      <ConfirmDescription>{consequence}</ConfirmDescription>
+      <ConfirmDescription asChild>
+        <div>
+          <p className="text-foreground">{loss}</p>
+          <p className="mt-1.5">{safe}</p>
+        </div>
+      </ConfirmDescription>
       <div className="mt-5 flex flex-col gap-1.5">
         <label htmlFor="confirm-phrase" className="text-sm font-medium">
           Type <span className="font-mono">{phrase}</span> to confirm
@@ -56,24 +64,33 @@ function Body({
           autoComplete="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="h-11 w-full rounded-md border border-input bg-secondary px-3 font-mono text-[15px] outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+          readOnly={pending}
+          className="h-11 w-full rounded-md border border-input bg-secondary px-3 font-mono text-base outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
         />
       </div>
-      <p
-        role="alert"
-        className="mt-4 rounded-md bg-destructive/10 px-3 py-2.5 text-sm font-medium text-destructive empty:hidden"
-      >
-        {problem?.message}
-      </p>
-      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <div className="mt-4">
+        <FormAlert id="confirm-alert" message={problem?.message} tone={problem?.tone} />
+      </div>
+      <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <ConfirmCancel asChild>
-          <Button variant="ghost">Cancel</Button>
+          <Button variant="ghost" aria-disabled={pending}>
+            Cancel
+          </Button>
         </ConfirmCancel>
         <Button
           type="submit"
           aria-disabled={blocked}
           aria-busy={pending}
-          className="min-w-32 bg-destructive text-primary-foreground hover:bg-destructive/90 aria-disabled:bg-destructive/40 aria-disabled:hover:bg-destructive/40"
+          className={cn(
+            "min-w-32 bg-destructive text-primary-foreground hover:bg-destructive/90",
+            // Not armed yet: a neutral, readable button. The red arrives with the matching text.
+            "aria-disabled:bg-secondary aria-disabled:text-muted-foreground aria-disabled:ring-1 aria-disabled:ring-inset aria-disabled:ring-border aria-disabled:hover:bg-secondary",
+            pending ? "aria-disabled:cursor-progress" : "aria-disabled:cursor-not-allowed",
+            // Waiting on the server: keep the red, it was armed.
+            pending &&
+              armed &&
+              "aria-disabled:bg-destructive aria-disabled:text-primary-foreground aria-disabled:ring-0",
+          )}
         >
           {pending ? "Removing" : confirmLabel}
         </Button>
@@ -84,7 +101,8 @@ function Body({
 
 /**
  * Removal behind a typed phrase. The button stays on screen but inert until the text matches, so
- * the next step is visible; `aria-disabled` keeps focus where it is while the request runs.
+ * the next step is visible; `aria-disabled` keeps focus where it is while the request runs, and
+ * the dialog cannot be closed while it does (the answer would land on a page that moved on).
  */
 export function TypedConfirm({
   open,
@@ -95,7 +113,13 @@ export function TypedConfirm({
 }: TypedConfirmProps) {
   const content = useRef<HTMLDivElement>(null);
   return (
-    <ConfirmRoot open={open} onOpenChange={onOpenChange}>
+    <ConfirmRoot
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && body.pending) return;
+        onOpenChange(next);
+      }}
+    >
       <ConfirmContent
         ref={content}
         onCloseAutoFocus={onCloseAutoFocus}

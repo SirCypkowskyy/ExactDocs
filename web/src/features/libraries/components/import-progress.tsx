@@ -215,6 +215,39 @@ function Actions({
   );
 }
 
+/** A new library names the library; a version added to one names the version (we are on the library already). */
+function Heading({
+  ref,
+  version,
+  verb,
+  refName,
+  libraryId,
+}: {
+  ref: React.Ref<HTMLHeadingElement>;
+  version: boolean;
+  verb: string;
+  refName: string;
+  libraryId: string;
+}) {
+  const Tag = version ? "h3" : "h2";
+  return (
+    <Tag
+      id="progress-title"
+      ref={ref}
+      tabIndex={-1}
+      className={cn(
+        "font-semibold outline-none",
+        version ? "text-lg" : "font-serif text-2xl tracking-tight",
+      )}
+    >
+      {verb}{" "}
+      <span className="font-mono text-[0.9em] font-normal [overflow-wrap:anywhere]">
+        {version ? refName : <LibraryId id={libraryId} />}
+      </span>
+    </Tag>
+  );
+}
+
 interface OutcomeProps {
   id: string;
   job: Job | undefined;
@@ -273,20 +306,26 @@ export function ImportProgress({ added, onAddAnother, finish }: Props) {
 
   return (
     <section aria-labelledby="progress-title" className="fade-in">
-      <h2
-        id="progress-title"
+      <Heading
         ref={heading}
-        tabIndex={-1}
-        className="font-serif text-2xl font-semibold tracking-tight outline-none"
-      >
-        {state === "failed" ? "Import failed" : finished ? "Imported" : "Importing"}{" "}
-        <span className="font-mono text-[0.8em] font-normal">
-          <LibraryId id={added.library_id} />
-        </span>
-      </h2>
+        version={!onAddAnother}
+        verb={state === "failed" ? "Import failed" : finished ? "Imported" : "Importing"}
+        refName={added.ref}
+        libraryId={added.library_id}
+      />
       <p className="mt-2 text-muted-foreground">
-        <span className="font-mono text-[13px]">{added.ref}</span>
-        <span aria-hidden="true"> · </span>
+        {!onAddAnother && (
+          <>
+            <span className="font-mono text-[13px]">{added.library_id}</span>
+            <span aria-hidden="true"> · </span>
+          </>
+        )}
+        {onAddAnother && (
+          <>
+            <span className="font-mono text-[13px]">{added.ref}</span>
+            <span aria-hidden="true"> · </span>
+          </>
+        )}
         <span className="font-mono text-[13px]">{shortSha(added.commit_sha)}</span>
         <span className="sr-only"> commit</span>
       </p>
@@ -316,7 +355,16 @@ export function ImportProgress({ added, onAddAnother, finish }: Props) {
 }
 
 /** One import job as a single quiet line with its bar, for a list of jobs (a re-sync queues one per branch). */
-export function JobLine({ jobId, label }: { jobId: string; label: string }) {
+export function JobLine({
+  jobId,
+  label,
+  onFinish,
+}: {
+  jobId: string;
+  label: string;
+  /** Called once when the job ends, so a row that listed it can say it is over. */
+  onFinish?: ((state: "succeeded" | "failed") => void) | undefined;
+}) {
   const { data: job, error } = useQuery(importJobQueryOptions(jobId));
   const state = job?.state ?? "queued";
   const finished = state === "succeeded" || state === "failed";
@@ -324,9 +372,16 @@ export function JobLine({ jobId, label }: { jobId: string; label: string }) {
   const known = (job?.total ?? 0) > 0;
   const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
   useRefreshListsWhen(finished);
+  useEffect(() => {
+    if (state === "succeeded" || state === "failed") onFinish?.(state);
+  }, [state, onFinish]);
   if (gone) return <p className="text-sm text-muted-foreground">Progress for {label} is gone.</p>;
   return (
     <div className="text-sm">
+      {/* Heard once per phase, never per file. */}
+      <p role="status" className="sr-only">
+        {finished && `${label}: ${phaseText(state, job?.done ?? 0, skipped, job?.error ?? null)}`}
+      </p>
       <Status job={job} state={state} known={known} skipped={skipped} />
       {!finished && <Meter id={label} job={job} state={state} known={known} />}
       {state === "failed" && job?.error && (

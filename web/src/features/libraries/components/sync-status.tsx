@@ -58,9 +58,10 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
       <Link
         to="/libraries/$owner/$repo/settings"
         params={{ owner, repo }}
-        className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium underline decoration-mark/40 underline-offset-4 outline-none ring-1 ring-inset ring-border hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        hash="sync-heading"
+        className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium outline-none ring-1 ring-inset ring-border transition-colors duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
       >
-        Sync again from settings
+        Open settings to sync again
       </Link>
     </div>
   );

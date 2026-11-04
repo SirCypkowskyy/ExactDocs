@@ -95,7 +95,8 @@
 
 /* Reduced motion: no rotation, but the busy ring still breathes so it never looks broken. */
 @media (prefers-reduced-motion: reduce) {
-  .spin {
+  .spin,
+  .sweep {
     animation: breathe 1.2s ease-in-out infinite;
   }
 }

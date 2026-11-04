@@ -1,15 +1,17 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { Check, Info } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
+import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Field, TextareaField } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { refreshLibraries, saveDetails } from "../api/settings";
 import {
+  type Activity,
   changedFields,
   type DetailsDraft,
   explainSave,
   MAX_DESCRIPTION,
-  MAX_TITLE,
   type Problem,
   type SettingsLibrary,
   validateDetails,
@@ -19,10 +21,12 @@ interface Props {
   owner: string;
   repo: string;
   library: SettingsLibrary;
+  activity: Activity;
+  onStart: () => void;
 }
 
 /** Title and description. Only the fields that changed are sent. */
-export function DetailsForm({ owner, repo, library }: Props) {
+export function DetailsForm({ owner, repo, library, activity, onStart }: Props) {
   const queryClient = useQueryClient();
   // Only what the person typed is state; an untouched field shows what the library has.
   const [edits, setEdits] = useState<Partial<DetailsDraft>>({});
@@ -39,6 +43,11 @@ export function DetailsForm({ owner, repo, library }: Props) {
   const patch = changedFields(library, draft);
   const unchanged = Object.keys(patch).length === 0;
 
+  // Another section started something: "Saved." is no longer the latest news.
+  useEffect(() => {
+    if (activity.by !== "details") setSaved(false);
+  }, [activity]);
+
   const save = useMutation({
     mutationFn: () => saveDetails(owner, repo, patch),
     onSuccess: () => {
@@ -50,7 +59,7 @@ export function DetailsForm({ owner, repo, library }: Props) {
       const p = explainSave(error);
       if (p.field) {
         setErrors({ [p.field]: p.message });
-        document.getElementById(p.field === "title" ? "title" : "description")?.focus();
+        document.getElementById(p.field)?.focus();
       } else {
         setProblem(p);
       }
@@ -68,6 +77,7 @@ export function DetailsForm({ owner, repo, library }: Props) {
       return;
     }
     setSaved(false);
+    onStart();
     save.mutate();
   }
 
@@ -85,7 +95,6 @@ export function DetailsForm({ owner, repo, library }: Props) {
           id="title"
           label="Title"
           autoComplete="off"
-          maxLength={MAX_TITLE + 50}
           value={title}
           error={errors.title}
           hint="Shown in the library list and as the page heading."
@@ -99,10 +108,23 @@ export function DetailsForm({ owner, repo, library }: Props) {
           hint={`Shown on the library page. Up to ${MAX_DESCRIPTION} characters, and it can be empty.`}
           onChange={(e) => edit("description")(e.target.value)}
         />
-        <p className="text-sm text-muted-foreground">
-          A field you change here stays as you wrote it when the library is imported again. Until
-          then it follows the repository's README.
-        </p>
+        {/* Said when it matters: once something is edited. */}
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+            unchanged ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
+          )}
+        >
+          <div className="overflow-hidden" inert={unchanged}>
+            <p className="flex items-start gap-2 text-sm text-muted-foreground">
+              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+              <span>
+                Edited fields are kept when the library is re-imported. Fields you leave alone keep
+                following the repository's README.
+              </span>
+            </p>
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <Button
             type="submit"
@@ -112,8 +134,13 @@ export function DetailsForm({ owner, repo, library }: Props) {
           >
             {save.isPending ? "Saving" : "Save changes"}
           </Button>
-          <p role="status" className="min-h-5 text-sm text-muted-foreground">
-            {saved && unchanged && <span className="fade-in">Saved.</span>}
+          <p role="status" className="min-h-5 text-sm">
+            {saved && unchanged && (
+              <span className="fade-in inline-flex items-center gap-1.5">
+                <Check aria-hidden="true" className="size-4 text-mark" />
+                Saved.
+              </span>
+            )}
           </p>
         </div>
       </div>

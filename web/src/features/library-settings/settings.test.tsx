@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { TestRouter } from "@/shared/lib/test-router";
 import { LibrarySettingsPage } from "./index";
 import {
@@ -44,7 +45,10 @@ const library = {
 };
 const REFS = {
   default_branch: "main",
-  branches: [{ name: "main", commit_sha: SHA }],
+  branches: [
+    { name: "main", commit_sha: SHA },
+    { name: "next", commit_sha: SHA },
+  ],
   tags: [
     { name: "v1.3.0", commit_sha: SHA },
     { name: "v1.2.0", commit_sha: SHA },
@@ -63,6 +67,8 @@ interface Routes {
   sync?: () => Reply;
   removeVersion?: (ref: string) => Reply;
   removeLibrary?: () => Reply;
+  /** Held until released: lets a test act while a DELETE is in flight. */
+  gate?: Promise<unknown>;
 }
 
 function serve(routes: Routes = {}) {
@@ -97,6 +103,7 @@ function serve(routes: Routes = {}) {
           routes.sync?.() ?? { status: 200, body: { library_id: "/acme/payments", versions: [] } },
         );
       }
+      if (method === "DELETE") await routes.gate;
       if (method === "DELETE" && url.includes("/versions/")) {
         const ref = decodeURIComponent(url.split("/versions/")[1] ?? "");
         return reply(
@@ -137,10 +144,23 @@ const jobs = {
       {finish}
     </div>
   ),
-  Line: ({ jobId, label }: { jobId: string; label: string }) => (
-    <p>
-      job {jobId} for {label}
-    </p>
+  Line: ({
+    jobId,
+    label,
+    onFinish,
+  }: {
+    jobId: string;
+    label: string;
+    onFinish?: ((state: "succeeded" | "failed") => void) | undefined;
+  }) => (
+    <div>
+      <p>
+        job {jobId} for {label}
+      </p>
+      <button type="button" onClick={() => onFinish?.("succeeded")}>
+        finish {label}
+      </button>
+    </div>
   ),
 };
 
@@ -160,6 +180,7 @@ function renderPage(lib = library) {
       />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -189,7 +210,10 @@ describe("settings model", () => {
       new HttpError(status, "/v1/x", { error: code, detail: "d", fields: [] });
     expect(explainAddVersion(e(409, "version_exists"), "v1").field).toBe("ref");
     expect(explainAddVersion(e(409, "version_importing"), "v1").message).toMatch(/being imported/);
-    expect(explainAddVersion(e(409, "commit_already_imported"), "v1").detail).toBe("d");
+    expect(explainAddVersion(e(409, "commit_already_imported"), "v1").message).toBe(
+      "d, so a second version would hold the same text.",
+    );
+    expect(explainAddVersion(e(409, "version_exists"), "v1").jump?.href).toBe("#sync-heading");
     expect(explainAddVersion(e(422, "unknown_ref"), "v9").message).toMatch(
       /no branch, tag or commit/,
     );
@@ -198,7 +222,8 @@ describe("settings model", () => {
     expect(explainAddVersion(e(401, "x"), "v1").link?.href).toBe("/sign-in");
     expect(explainAddVersion(new TypeError("net"), "v1").message).toMatch(/Can't reach/);
     expect(explainSync(e(409, "version_importing")).message).toMatch(/still importing/);
-    expect(explainSync(e(422, "repository_unreachable")).detail).toBe("d");
+    expect(explainSync(e(409, "version_importing")).tone).toBe("info");
+    expect(explainSync(e(422, "repository_unreachable")).tone).toBeUndefined();
     expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
       /never cancels/,
     );
@@ -278,23 +303,41 @@ describe("adding a version", () => {
     expect(calls.find((c) => c.url.endsWith("/versions") && c.method === "POST")?.body).toEqual({
       ref: "v1.3.0",
     });
-    await userEvent.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.queryByText("Importing v1.3.0")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    // The card stays until its row has collapsed.
+    await waitFor(() => expect(screen.queryByText("Importing v1.3.0")).not.toBeInTheDocument());
   });
 
-  it("uses the default branch when the picker is left alone", async () => {
+  it("asks for a choice, offers only versions not yet imported, and sends nothing until then", async () => {
     const calls = serve();
     renderPage();
-    await open();
+    const picker = await open();
+    const options = within(picker)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(options).toContain("Choose a branch or tag…");
+    expect(options).not.toContain("main");
+    expect(options).not.toContain("v1.2.0");
+    expect(options.some((o) => o?.startsWith("Default branch"))).toBe(false);
+    expect(options).toEqual(expect.arrayContaining(["next", "v1.3.0"]));
     await userEvent.click(screen.getByRole("button", { name: "Add version" }));
-    await screen.findByText("Importing main");
-    expect(calls.find((c) => c.url.endsWith("/versions"))?.body).toEqual({ ref: "main" });
+    expect(await screen.findByText(/Choose a branch or tag from the list/)).toBeInTheDocument();
+    expect(calls.some((c) => c.url.endsWith("/versions"))).toBe(false);
+  });
+
+  it("links a refused existing version to the re-sync section", async () => {
+    serve({ addVersion: () => failure(409, "version_exists") });
+    renderPage();
+    await userEvent.selectOptions(await open(), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    const link = await screen.findByRole("link", { name: /Branches can be updated with Re-sync/ });
+    expect(link).toHaveAttribute("href", "#sync-heading");
   });
 
   it.each([
     ["version_exists", 409, /already a version/],
     ["version_importing", 409, /being imported right now/],
-    ["commit_already_imported", 409, /already imported under another version/],
+    ["commit_already_imported", 409, /so a second version would hold the same text/],
     ["unknown_ref", 422, /no branch, tag or commit/],
   ])("explains %s next to the picker", async (code, status, text) => {
     serve({ addVersion: () => failure(status, code) });
@@ -351,7 +394,8 @@ describe("re-sync", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText("1 version is updating.")).toBeInTheDocument();
     expect(screen.getByText("job j5 for main")).toBeInTheDocument();
-    expect(screen.getByText("Pinned, never changes")).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0 is pinned and never changes.")).toBeInTheDocument();
+    expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
   });
 
   it("says so when nothing moved", async () => {
@@ -372,12 +416,15 @@ describe("re-sync", () => {
     serve({ sync: () => failure(409, "version_importing") });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
-    expect(await screen.findByText(/still importing/)).toBeInTheDocument();
+    const wait = await screen.findByText(/still importing/);
+    // A wait state is neutral, not red.
+    expect(wait.closest("p")).toHaveClass("bg-accent");
 
     serve({ sync: () => failure(422, "repository_unreachable", "failed job j7: unreachable") });
     await userEvent.click(screen.getByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/couldn't be read/)).toBeInTheDocument();
-    expect(screen.getByText("failed job j7: unreachable")).toBeInTheDocument();
+    // Job IDs mean nothing to a person: they are not shown.
+    expect(screen.queryByText(/j7/)).not.toBeInTheDocument();
   });
 });
 
@@ -445,7 +492,9 @@ describe("removing the library", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Remove library…" }));
     const dialog = await screen.findByRole("alertdialog");
-    expect(within(dialog).getByText(/Text that other libraries share is kept/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Content that other libraries share stays available/),
+    ).toBeInTheDocument();
     await userEvent.type(within(dialog).getByLabelText(/to confirm/), "/acme/payments");
     await userEvent.click(within(dialog).getByRole("button", { name: "Remove library" }));
     expect(await screen.findByText("Libraries home")).toBeInTheDocument();
@@ -463,5 +512,138 @@ describe("removing the library", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Remove library" }));
     expect(await within(dialog).findByText(/never cancels a job/)).toBeInTheDocument();
     expect(screen.queryByText("Libraries home")).not.toBeInTheDocument();
+  });
+});
+
+describe("the page", () => {
+  it("names the library in its heading", async () => {
+    serve();
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "Payments" })).toBeInTheDocument();
+    expect(screen.getByText("Library settings")).toBeInTheDocument();
+  });
+
+  it("falls back to the ID when the library has no title", async () => {
+    serve();
+    renderPage({ ...library, title: "" });
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "/acme/payments" }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains that edits are kept only once something is edited", async () => {
+    serve();
+    renderPage();
+    const title = await screen.findByLabelText("Title");
+    const note = screen.getByText(/Edited fields are kept when the library is re-imported/);
+    expect(note.closest("[inert]")).not.toBeNull();
+    await userEvent.type(title, "!");
+    expect(note.closest("[inert]")).toBeNull();
+  });
+
+  it("clears an old re-sync result when another action starts", async () => {
+    serve({
+      sync: () => ({
+        status: 200,
+        body: {
+          library_id: "/acme/payments",
+          versions: [
+            {
+              ref: "main",
+              ref_kind: "branch",
+              status: "up_to_date",
+              previous_commit_sha: SHA,
+              commit_sha: SHA,
+              job_id: null,
+            },
+          ],
+        },
+      }),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/Everything is up to date/)).toBeInTheDocument();
+    expect(screen.getByText(/Checked/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove version main" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Everything is up to date/)).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("re-sync rows follow their job", () => {
+  it("says a queued version was updated once its job ends", async () => {
+    serve({
+      sync: () => ({
+        status: 202,
+        body: {
+          library_id: "/acme/payments",
+          versions: [
+            {
+              ref: "main",
+              ref_kind: "branch",
+              status: "queued",
+              previous_commit_sha: SHA,
+              commit_sha: SHA2,
+              job_id: "j5",
+            },
+          ],
+        },
+      }),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText("Updating")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "finish main" }));
+    expect(await screen.findByText("Updated")).toBeInTheDocument();
+    expect(screen.queryByText("Updating")).not.toBeInTheDocument();
+  });
+});
+
+describe("removal while a request is in flight", () => {
+  it("ignores Escape and Cancel until the server has answered", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    serve({ gate });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove version main" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.type(within(dialog).getByLabelText(/Type main/), "main");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove version" }));
+    await within(dialog).findByRole("button", { name: "Removing" });
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    release();
+    expect(await screen.findByText(/Removed main/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("forgets the removed library only after leaving its page, then reloads the list", async () => {
+    serve();
+    const queryClient = renderPage();
+    const libraryKey = [...BROWSE_KEY, "acme", "payments", "library"];
+    queryClient.setQueryData(libraryKey, library);
+    queryClient.setQueryData([...LIBRARIES_KEY, "list"], { libraries: [] });
+    await userEvent.click(await screen.findByRole("button", { name: "Remove library…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.type(within(dialog).getByLabelText(/to confirm/), "/acme/payments");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove library" }));
+    expect(await screen.findByText("Libraries home")).toBeInTheDocument();
+    await waitFor(() => expect(queryClient.getQueryData(libraryKey)).toBeUndefined());
+    expect(queryClient.getQueryState([...LIBRARIES_KEY, "list"])?.isInvalidated).toBe(true);
+  });
+
+  it("arms the confirm button only when the phrase matches", async () => {
+    serve();
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove version main" }));
+    const dialog = await screen.findByRole("alertdialog");
+    const confirm = within(dialog).getByRole("button", { name: "Remove version" });
+    expect(confirm).toHaveClass("aria-disabled:cursor-not-allowed");
+    expect(confirm).not.toHaveClass("aria-disabled:cursor-progress");
+    expect(within(dialog).getByLabelText(/Type main/)).toHaveClass("text-base");
   });
 });

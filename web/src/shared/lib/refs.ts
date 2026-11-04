@@ -7,15 +7,18 @@ export type RepositoryRefs = components["schemas"]["RepositoryRefs"];
 /** What the ref picker shows: the default first, then branches, tags, and a free-text escape. */
 export type RefChoice =
   | { kind: "default" }
+  /** Nothing picked yet: a form that must not guess a version starts here. */
+  | { kind: "none" }
   | { kind: "branch"; name: string }
   | { kind: "tag"; name: string }
   | { kind: "other" };
 
 export const encodeChoice = (c: RefChoice) =>
-  c.kind === "default" || c.kind === "other" ? c.kind : `${c.kind}:${c.name}`;
+  c.kind === "default" || c.kind === "other" || c.kind === "none" ? c.kind : `${c.kind}:${c.name}`;
 
 export function decodeChoice(value: string): RefChoice {
   if (value === "other") return { kind: "other" };
+  if (value === "none") return { kind: "none" };
   const i = value.indexOf(":");
   if (i > 0) {
     const kind = value.slice(0, i);
@@ -27,7 +30,7 @@ export function decodeChoice(value: string): RefChoice {
 /** The `ref` to send: null means the default branch. */
 export function refToSend(choice: RefChoice, typed: string): string | null {
   if (choice.kind === "other") return typed.trim() || null;
-  return choice.kind === "default" ? null : choice.name;
+  return choice.kind === "default" || choice.kind === "none" ? null : choice.name;
 }
 
 export function filterRefs<T extends { name: string }>(refs: readonly T[], query: string): T[] {
