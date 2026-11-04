@@ -1,4 +1,3 @@
-import re
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -18,6 +17,7 @@ from exactdocs.retrieval.models import (
     SearchHit,
     SearchText,
     StoredChunk,
+    highlights,
     identifier_tokens,
     search_terms,
 )
@@ -104,9 +104,6 @@ class InMemoryChunkRepository:
         return Removed(manifests=len(gone), chunk_sets=len(unused))
 
 
-_WORD = re.compile(r"[\w.-]+")
-
-
 @dataclass(slots=True)
 class InMemorySearchIndex:
     """Reference ``ports.driven.SearchIndex``: a term-count score, not BM25.
@@ -138,21 +135,15 @@ class InMemorySearchIndex:
             body = Counter(identifier_tokens(chunk.content).split())
             score = sum(10 * heading[t] + body[t] for t in terms)
             if score:
-                hits.append(_hit(row.chunk_id, float(score), chunk.content, set(terms)))
+                hits.append(_hit(row.chunk_id, float(score), chunk.content, terms))
         hits.sort(key=lambda h: (-h.score, h.chunk_id))
         return hits[:limit]
 
 
-def _hit(chunk_id: ChunkId, score: float, content: str, terms: set[str]) -> SearchHit:
-    marks = [
-        m.span()
-        for m in _WORD.finditer(content)
-        if terms & set(identifier_tokens(m.group()).split())
-    ]
+def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> SearchHit:
+    marks = highlights(content, terms)
     start = max(0, marks[0][0] - 40) if marks else 0
+    snippet = content[start : start + 160]
     return SearchHit(
-        chunk_id=chunk_id,
-        score=score,
-        snippet=content[start : start + 160],
-        highlights=tuple((a - start, b - start) for a, b in marks if b <= start + 160),
+        chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
     )

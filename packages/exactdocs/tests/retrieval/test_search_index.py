@@ -1,4 +1,10 @@
-"""Adapter contract: every ``SearchIndex`` finds the same things, whatever engine runs it."""
+"""Adapter contract: every ``SearchIndex`` finds the same things, whatever engine runs it.
+
+The shared guarantee is scoping to a manifest, escaping, tags, limits, highlights, the order of a
+clear winner (a heading match beats body matches) and cleanup with the chunks. How good BM25
+ranks otherwise (length normalisation, ties, scale) is the ranking suite's job (E5-04); the
+memory reference only counts terms, so those cases run on SQLite alone.
+"""
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -84,6 +90,8 @@ class World:
     search: SearchIndex
     clock: Clock
     index_entries: Callable[[], Awaitable[int]]
+    punch_gap: Callable[[], Awaitable[None]]  # lose one index entry, as a crash could
+    engine: str
 
     async def index(
         self, manifest_id: str, ref: str, articles: dict, *, tags: list[str] | None = None
@@ -131,7 +139,10 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                 for k in memory_index.indexed & set(memory.chunk_sets)
             )
 
-        yield World(build(memory, memory_index), memory_index, clock, entries)
+        async def forget() -> None:
+            memory_index.indexed.clear()
+
+        yield World(build(memory, memory_index), memory_index, clock, entries, forget, "memory")
         return
     container = Container.build(Settings())
     async with container.running():
@@ -143,7 +154,23 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                     await connection.execute(text("SELECT count(*) FROM retrieval_search"))
                 ).scalar_one()
 
-        yield World(build(SqliteChunkRepository(container.engine), index), index, clock, count)
+        async def lose_one() -> None:
+            async with container.engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "DELETE FROM retrieval_search "
+                        "WHERE rowid = (SELECT min(id) FROM retrieval_chunks)"
+                    )
+                )
+
+        yield World(
+            build(SqliteChunkRepository(container.engine), index),
+            index,
+            clock,
+            count,
+            lose_one,
+            "sqlite",
+        )
 
 
 async def test_an_older_version_does_not_find_what_only_the_newer_one_has(world: World) -> None:
@@ -174,11 +201,10 @@ async def test_a_chunk_set_shared_by_two_manifests_is_indexed_once_and_found_fro
     await world.index("m13b", "v1.3.1", V13)
 
     assert await world.index_entries() == before == 1
-    assert [h.chunk_id for h in await world.find("m13", "retried")] != []
-    assert {h.chunk_id for h in await world.find("m13", "retried")}.isdisjoint(
-        h.chunk_id for h in await world.find("m13b", "retried")
-    )
-    assert len(await world.find("m13b", "retried")) == 1
+    old_ids = {h.chunk_id for h in await world.find("m13", "retried")}
+    new_ids = {h.chunk_id for h in await world.find("m13b", "retried")}
+    assert len(old_ids) == len(new_ids) == 1
+    assert old_ids.isdisjoint(new_ids)  # one stored chunk, two version-scoped IDs
 
 
 @pytest.mark.parametrize(
@@ -241,10 +267,68 @@ async def test_collecting_a_manifest_takes_its_index_entries_with_it(world: Worl
     assert await world.find("m14", "retry_policy") == []
 
 
-async def test_indexing_again_fills_gaps_and_adds_nothing_twice(world: World) -> None:
+async def test_indexing_again_adds_nothing_twice(world: World) -> None:
     await world.index("m14", "v1.4.0", V14)
     before = await world.index_entries()
 
     await world.index("m14", "v1.4.0", V14)
 
     assert await world.index_entries() == before == 3
+
+
+async def test_indexing_again_fills_an_entry_lost_in_a_crash(world: World) -> None:
+    await world.index("m14", "v1.4.0", V14)
+    await world.punch_gap()
+    assert await world.index_entries() < 3
+
+    await world.index("m14", "v1.4.0", V14)  # the replay of a manifest that is already stored
+
+    assert await world.index_entries() == 3
+    assert len(await world.find("m14", "retry_policy")) == 2
+    assert len(await world.find("m14", "tokens")) == 1
+
+
+async def test_a_word_inside_an_identifier_is_highlighted_where_it_stands(world: World) -> None:
+    await world.index(
+        "m1", "main", {"a.md": ("b", [section("Policies", "Set retryPolicy to tune calls.")])}
+    )
+
+    (hit,) = await world.find("m1", "retry")
+
+    assert [hit.snippet[a:b] for a, b in hit.highlights] == ["retryPolicy"]
+
+
+async def test_a_heading_match_outranks_many_body_matches(world: World) -> None:
+    body = "retry_policy " * 5 + "is mentioned a lot."
+    await world.index(
+        "m1",
+        "main",
+        {
+            "a.md": ("a", [section("Mentions", body)]),
+            "b.md": ("b", [section("retry_policy", "Defined here.")]),
+            # BM25 weighs a term by how rare it is, so the corpus needs chunks without it.
+            **{f"f{i}.md": (f"f{i}", [section(f"Other {i}", f"unrelated {i}")]) for i in range(5)},
+        },
+    )
+
+    first, second = await world.find("m1", "retry_policy")
+
+    assert first.snippet == "Defined here."
+    assert first.score > second.score
+
+
+async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -> None:
+    if world.engine != "sqlite":
+        pytest.skip("length normalisation is BM25's; the memory reference only counts terms")
+    await world.index(
+        "m1",
+        "main",
+        {
+            "long.md": ("l", [section("Long", "timeout " + "filler " * 200)]),
+            "short.md": ("s", [section("Short", "timeout is the limit.")]),
+        },
+    )
+
+    first, _ = await world.find("m1", "timeout")
+
+    assert first.snippet.startswith("timeout is")

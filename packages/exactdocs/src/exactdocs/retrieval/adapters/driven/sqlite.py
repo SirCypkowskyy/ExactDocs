@@ -13,6 +13,7 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
+    UniqueConstraint,
     delete,
     exists,
     insert,
@@ -47,9 +48,11 @@ chunk_set_rows = Table(
 chunks = Table(
     "retrieval_chunks",
     metadata,
-    Column("blob_sha", Text, primary_key=True),
-    Column("config_hash", Text, primary_key=True),
-    Column("position", Integer, primary_key=True),
+    # `id` is the stable key of the full-text index (`retrieval_search.rowid`).
+    Column("id", Integer, primary_key=True),
+    Column("blob_sha", Text, nullable=False),
+    Column("config_hash", Text, nullable=False),
+    Column("position", Integer, nullable=False),
     Column("heading_path", Text, nullable=False),  # JSON list
     Column("occurrence_index", Integer, nullable=False),
     Column("content", Text, nullable=False),
@@ -61,6 +64,7 @@ chunks = Table(
         ["retrieval_chunk_sets.blob_sha", "retrieval_chunk_sets.config_hash"],
         ondelete="CASCADE",
     ),
+    UniqueConstraint("blob_sha", "config_hash", "position"),
 )
 indexed_manifests = Table(
     "retrieval_manifests",

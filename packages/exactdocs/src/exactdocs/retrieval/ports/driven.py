@@ -116,7 +116,8 @@ class SearchIndex(Protocol):
         """Return at most ``limit`` chunks of this manifest, best first.
 
         ``query`` is plain text: quotes, ``NEAR``, ``*`` and ``(`` are ordinary characters, never
-        syntax. Its words are alternatives (see ``identifier_tokens``). ``tag_filter`` keeps the
+        syntax. Its words are alternatives (see ``identifier_tokens``). Snippets are verbatim text
+        of the chunk with offsets from ``highlights``. ``tag_filter`` keeps the
         chunks whose article has any of these tags; empty keeps all. An unknown manifest or a
         query without words gives no hits.
         """

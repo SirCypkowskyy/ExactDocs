@@ -10,7 +10,6 @@ from behave.runner import Context
 from exactdocs.bootstrap.container import Container
 from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreManifestCommand
 from exactdocs.catalog.models import RefKind
-from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -19,7 +18,6 @@ from exactdocs.retrieval.dtos import (
     IndexedManifestOut,
     IndexManifestCommand,
 )
-from exactdocs.retrieval.models import SearchHit
 from exactdocs_kernel import DomainError
 
 CONFIG_HASH = "default-chunking"
@@ -179,26 +177,3 @@ def step_chunk(context: Context, text: str) -> None:
     assert chunk.content == text, chunk
     assert chunk.prev_chunk_id, chunk
     assert chunk.position == 1, chunk
-
-
-@when("I search the manifest \"{name}\" for '{query}'")
-@when('I search the manifest "{name}" for "{query}"')
-def step_search(context: Context, name: str, query: str) -> None:
-    manifest_id = context.manifest_ids[name]
-
-    async def action(container: Container) -> list[SearchHit]:
-        # The search port is not exposed over HTTP yet (E5-03), so the adapter is used directly.
-        return list(await SqliteSearchIndex(container.engine).search(manifest_id, query, (), 10))
-
-    context.hits = _run(context, action)
-
-
-@then("the search finds nothing")
-def step_no_hits(context: Context) -> None:
-    assert context.hits == [], context.hits
-
-
-@then('the first hit highlights "{text}"')
-def step_highlight(context: Context, text: str) -> None:
-    hit = context.hits[0]
-    assert [hit.snippet[a:b] for a, b in hit.highlights] == [text], hit

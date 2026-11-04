@@ -2,8 +2,9 @@
 
 import hashlib
 import json
+import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -106,6 +107,8 @@ def _split_case(segment: str) -> list[str]:
     parts.append(segment[start:])
     return parts
 
+
+_WORD = re.compile(r"[\w.-]+")
 
 ChunkId = NewType("ChunkId", str)
 type ChunkSetKey = tuple[str, str]  # (git blob SHA, chunking-config hash)
@@ -212,13 +215,29 @@ class SearchHit:
 
     chunk_id: ChunkId
     score: float
-    snippet: str  # verbatim text from the chunk, possibly cut at either end
+    snippet: str  # verbatim text of the chunk (no marker added), possibly cut at either end
     highlights: tuple[tuple[int, int], ...]  # [start, end) offsets into ``snippet``, in order
 
 
 def search_terms(query: str) -> list[str]:
     """Return the distinct alternatives a query is matched by: each word whole and by its parts."""
     return list(dict.fromkeys(identifier_tokens(query).split()))
+
+
+def highlights(text: str, terms: Collection[str]) -> tuple[tuple[int, int], ...]:
+    """Return ``[start, end)`` offsets of the words of ``text`` that match any of ``terms``.
+
+    A word matches when one of its `identifier_tokens` is a term, so `retryPolicy` is marked for
+    the query `retry`. Every search engine marks its snippets with this, so they agree.
+    """
+    wanted = set(terms)
+    spans = []
+    for match in _WORD.finditer(text):
+        if wanted & set(identifier_tokens(match.group()).split()):
+            word = match.group()
+            start = match.start() + len(word) - len(word.lstrip("."))
+            spans.append((start, match.end() - (len(word) - len(word.rstrip(".-")))))
+    return tuple(spans)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
