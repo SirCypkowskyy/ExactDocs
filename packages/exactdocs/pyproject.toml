@@ -37,10 +37,12 @@ dependencies = [
     "cyclopts>=4",
     "fastapi>=0.120",
     "fastmcp>=4",
+    "markdown-it-py>=4",
     "mcp>=2",
     "platformdirs>=4",
     "pydantic>=2.12",
     "pydantic-settings>=2.11",
+    "pyyaml>=6",
     "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.38",
 ]

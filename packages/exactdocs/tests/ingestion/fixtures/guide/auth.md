@@ -1,0 +1,3 @@
+# Authentication
+
+Use a token.
