@@ -283,6 +283,6 @@ _ANCHOR_VECTORS = json.loads((TESTS / "fixtures" / "heading_anchors.json").read_
 
 @pytest.mark.parametrize("case", _ANCHOR_VECTORS, ids=[c["name"] for c in _ANCHOR_VECTORS])
 def test_anchors_match_the_shared_vectors(case: dict, chunker: Chunker) -> None:
-    """The web renderer (anchors.test.ts) reads the same table: a search link must land on the heading."""
+    """The web renderer (anchors.test.ts) reads the same table, so search links land on headings."""
     chunks = chunker.chunk(parse_article("a.md", case["markdown"]))
     assert [c.anchor for c in chunks if c.heading_path] == case["anchors"]
