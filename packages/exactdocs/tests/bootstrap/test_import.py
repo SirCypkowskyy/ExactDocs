@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import ClassVar
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 
 from exactdocs.bootstrap.bridges import (
     CatalogLibrarySources,
@@ -16,19 +16,23 @@ from exactdocs.bootstrap.bridges import (
 )
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.catalog.adapters.driven.sqlite import article_contents
 from exactdocs.catalog.adapters.driven.sqlite import manifests as manifest_rows
 from exactdocs.catalog.dtos import (
     ArticleIn,
     CreateLibraryCommand,
     GetActiveManifestQuery,
+    GetLibraryQuery,
     HostKind,
     ListArticlesQuery,
     StoreManifestCommand,
 )
 from exactdocs.catalog.dtos import RefKind as CatalogRefKind
+from exactdocs.catalog.errors import VersionNotFoundError
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.dtos import RemoveLibraryCommand, RemoveVersionCommand
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
     PARSER_VERSION,
@@ -45,7 +49,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     chunk_set_rows,
     indexed_manifests,
 )
-from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
+from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchDocsQuery
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
 
@@ -100,7 +104,11 @@ class World:
     chunker: CountingChunker
 
     def importer(
-        self, *, activation_fails: bool = False, hang_after_index: bool = False
+        self,
+        *,
+        activation_fails: bool = False,
+        hang_after_index: bool = False,
+        refresh: bool = False,
     ) -> ImportVersionUseCase:
         c = self.container
         git_cli = GitCli.locate()
@@ -119,7 +127,9 @@ class World:
                 c.retrieval.index_manifest,
                 c.retrieval.get_chunk_sets,
                 c.retrieval.discard_pending_chunks,
+                c.retrieval.remove_chunks,
             ),
+            refresh=refresh,
         )
 
     async def import_ref(
@@ -129,6 +139,7 @@ class World:
         activation_fails: bool = False,
         hang_after_index: bool = False,
         library: str = LIBRARY,
+        refresh: bool = False,
     ) -> None:
         job = Job.queued(
             job_id=JobId("j"),
@@ -139,7 +150,9 @@ class World:
             ref_kind=RefKind.TAG,
             now=SystemClock().now(),
         )
-        run = self.importer(activation_fails=activation_fails, hang_after_index=hang_after_index)
+        run = self.importer(
+            activation_fails=activation_fails, hang_after_index=hang_after_index, refresh=refresh
+        )
         await run(job, Progress())
 
     async def count(self, table) -> int:
@@ -365,3 +378,122 @@ async def test_a_restart_discards_what_an_interrupted_import_left_and_runs_it_ag
 async def _count(container: Container, table) -> int:
     async with container.engine.connect() as connection:
         return (await connection.execute(select(func.count()).select_from(table))).scalar_one()
+
+
+# ---------------------------------------------------------------- removal on the real stack
+
+
+async def _fts_and_chunks(world: World) -> tuple[int, int]:
+    """Rows of the full-text index and of the chunk table: equal unless the index leaks."""
+    async with world.container.engine.connect() as connection:
+        fts = (await connection.execute(text("SELECT count(*) FROM retrieval_search"))).scalar_one()
+        stored = (
+            await connection.execute(text("SELECT count(*) FROM retrieval_chunks"))
+        ).scalar_one()
+    return fts, stored
+
+
+async def _add_library(world: World, name: str) -> None:
+    await world.container.catalog.create_library(
+        CreateLibraryCommand(
+            id=name,
+            title=name,
+            source_url=world.docs_repo.file_url,
+            host=HostKind.GIT,
+            default_branch="main",
+            include_paths=["docs/"],
+        )
+    )
+
+
+async def _collect(world: World) -> None:
+    assert await world.container.ingestion.run_next_job() is True
+
+
+async def test_content_shared_by_two_libraries_survives_removing_one_and_goes_with_the_last(
+    world: World,
+) -> None:
+    await _add_library(world, "/fixture/other")
+    await world.import_ref("v1.3.0")
+    await world.import_ref("v1.3.0", library="/fixture/other")
+    texts, sets = await world.count(article_contents), await world.count(chunk_set_rows)
+    fts, chunks = await _fts_and_chunks(world)
+    assert fts == chunks > 0
+
+    await world.container.ingestion.remove_library(RemoveLibraryCommand(library=LIBRARY))
+    await _collect(world)
+
+    assert (await world.count(article_contents), await world.count(chunk_set_rows)) == (texts, sets)
+    assert await world.count(indexed_manifests) == 1
+    assert (await _fts_and_chunks(world))[0] == fts  # the shared sets keep their index rows
+    found = await world.container.retrieval.search_docs(
+        SearchDocsQuery(library="/fixture/other", ref="v1.3.0", query="token")
+    )
+    assert found.results
+
+    await world.container.ingestion.remove_library(RemoveLibraryCommand(library="/fixture/other"))
+    await _collect(world)
+
+    assert await world.count(article_contents) == 0
+    assert await world.count(chunk_set_rows) == 0
+    assert await _fts_and_chunks(world) == (0, 0)
+
+
+async def test_removing_a_version_leaves_no_full_text_rows_of_what_it_freed(world: World) -> None:
+    await world.import_ref("v1.3.0")
+    await world.import_ref("v1.4.0")
+    before = await _fts_and_chunks(world)
+
+    await world.container.ingestion.remove_version(
+        RemoveVersionCommand(library=LIBRARY, ref="v1.4.0")
+    )
+    await _collect(world)
+
+    fts, chunks = await _fts_and_chunks(world)
+    assert fts == chunks
+    assert fts < before[0]
+    assert await world.count(indexed_manifests) == 1
+
+
+async def test_the_collect_job_frees_chunks_whose_removal_step_failed(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(self: RetrievalChunkIndex, manifest_ids: Sequence[str]) -> None:
+        del self
+        raise OSError(manifest_ids)
+
+    monkeypatch.setattr(RetrievalChunkIndex, "remove", broken)
+    await world.import_ref("v1.3.0")
+
+    await world.container.ingestion.remove_version(
+        RemoveVersionCommand(library=LIBRARY, ref="v1.3.0")
+    )
+
+    assert await world.count(indexed_manifests) == 1  # orphaned: the catalog already forgot it
+    async with world.container.engine.begin() as connection:  # indexed long ago
+        await connection.execute(
+            update(indexed_manifests).values(indexed_at="2000-01-01T00:00:00+00:00")
+        )
+    await _collect(world)
+    assert await world.count(indexed_manifests) == 0
+    assert await world.count(chunk_set_rows) == 0
+    assert await _fts_and_chunks(world) == (0, 0)
+    assert await world.count(article_contents) == 0
+
+
+async def test_a_refresh_of_a_removed_version_fails_and_does_not_bring_it_back(
+    world: World,
+) -> None:
+    await world.import_ref("v1.3.0")
+    await world.import_ref("v1.3.0", refresh=True)  # a version that exists is refreshed
+
+    await world.container.ingestion.remove_version(
+        RemoveVersionCommand(library=LIBRARY, ref="v1.3.0")
+    )
+    with pytest.raises(VersionNotFoundError):
+        await world.import_ref("v1.3.0", refresh=True)
+
+    library = await world.container.catalog.get_library(GetLibraryQuery(id=LIBRARY))
+    assert library.versions == []
+    assert await world.count(manifest_rows) == 0
+    assert await world.count(indexed_manifests) == 0

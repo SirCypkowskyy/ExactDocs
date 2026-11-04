@@ -127,7 +127,9 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   manifest becomes `superseded`, this one `active` (a partial unique index allows one active
   manifest per version) and the version moves to the manifest's commit. Readers only ever see the
   active manifest. Other domains hold manifest IDs by value. Superseded manifests stay for a grace
-  period, then `CollectGarbage` deletes them and the contents no manifest uses.
+  period, then `CollectGarbage` deletes them and the contents no manifest uses. `RemoveVersion` and
+  `RemoveLibrary` delete a version's manifests at once (no grace: nothing serves them), and
+  ingestion's `collect` job then runs each domain's collector, catalog first.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.

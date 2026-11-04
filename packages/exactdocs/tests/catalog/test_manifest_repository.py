@@ -21,9 +21,11 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     article_contents,
 )
 from exactdocs.catalog.errors import (
+    LibraryNotFoundError,
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
@@ -672,3 +674,93 @@ async def test_only_paths_are_listed_sorted_and_capped_for_suggestions(stores: S
     assert list(await stores.manifests.list_paths(ManifestId("m1"), limit=100)) == sorted(names)
     assert list(await stores.manifests.list_paths(ManifestId("m1"), limit=2)) == sorted(names)[:2]
     assert not await stores.manifests.list_paths(ManifestId("none"), limit=100)
+
+
+async def test_removing_a_version_deletes_its_manifests_in_every_state_and_keeps_others(
+    stores: Stores,
+) -> None:
+    shared, only_main = entry("shared.md", "b1"), entry("main.md", "b2")
+    await store(stores, manifest("m1", "main", "aaa111", shared, only_main))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "main", "bbb222", shared))  # pending
+    await store(stores, manifest("m3", "next", "ccc333", shared, kind=RefKind.TAG))
+    await stores.manifests.activate(ManifestId("m3"), at=T0)
+
+    removed = await stores.manifests.remove_version(PAYMENTS.id, VersionRef("main"))
+
+    assert sorted(removed) == ["m1", "m2"]
+    assert await stores.manifests.get(ManifestId("m1")) is None
+    assert await stores.manifests.get(ManifestId("m2")) is None
+    library = await stores.libraries.get(PAYMENTS.id)
+    assert library is not None
+    assert [str(v.ref) for v in library.versions] == ["next"]
+    assert await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "shared.md") is None
+    kept = await stores.manifests.get_article(PAYMENTS.id, VersionRef("next"), "shared.md")
+    assert kept is not None  # shared content survives the removal and the collection
+    collected = await stores.manifests.collect_garbage(superseded_before=T0)
+    assert (collected.manifests, collected.contents) == (0, 1)  # only main.md's text is freed
+    assert await stores.count_contents() == 1
+
+
+async def test_removing_an_unknown_version_changes_nothing(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    with pytest.raises(VersionNotFoundError):
+        await stores.manifests.remove_version(PAYMENTS.id, VersionRef("v9"))
+    with pytest.raises(LibraryNotFoundError):
+        await stores.manifests.remove_library(LibraryId("/acme/ledger"))
+
+    assert await stores.manifests.get(ManifestId("m1")) is not None
+
+
+async def test_removing_a_library_deletes_versions_and_manifests(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "next", "bbb222", entry(INSTALL, "b1")))
+
+    removed = await stores.manifests.remove_library(PAYMENTS.id)
+
+    assert sorted(removed) == ["m1", "m2"]
+    assert await stores.libraries.get(PAYMENTS.id) is None
+    assert await stores.manifests.get(ManifestId("m2")) is None
+    collected = await stores.manifests.collect_garbage(superseded_before=T0)
+    assert collected.contents == 1
+    assert await stores.count_contents() == 0
+
+
+async def test_content_shared_across_libraries_survives_removing_one(stores: Stores) -> None:
+    other = replace(PAYMENTS, id=LibraryId("/acme/ledger"), title="Ledger")
+    await stores.libraries.save(other)
+    shared, only_payments = entry("shared.md", "b1"), entry("pay.md", "b2")
+    await store(stores, manifest("m1", "main", "aaa111", shared, only_payments))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    ledger = replace(manifest("m2", "main", "bbb222", shared), library=other.id)
+    await store(stores, ledger)
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+
+    await stores.manifests.remove_library(PAYMENTS.id)
+    collected = await stores.manifests.collect_garbage(superseded_before=T0)
+
+    assert collected.contents == 1  # only pay.md's text
+    assert await stores.count_contents() == 1
+    kept = await stores.manifests.get_article(other.id, VersionRef("main"), "shared.md")
+    assert kept is not None
+
+
+async def test_a_manifest_that_needs_its_version_is_refused_once_the_version_is_gone(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    refresh = manifest("m2", "main", "bbb222", entry(INSTALL, "b1"))
+    await stores.manifests.add(refresh, contents(*refresh.entries), version_must_exist=True)
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("main"))
+
+    assert await stores.manifests.get(ManifestId("m2")) is None  # removed with the version
+    with pytest.raises(ManifestNotFoundError):
+        await stores.manifests.activate(ManifestId("m2"), at=T0)
+    again = manifest("m3", "main", "ccc333", entry(INSTALL, "b1"))
+    with pytest.raises(VersionNotFoundError):
+        await stores.manifests.add(again, contents(*again.entries), version_must_exist=True)
+    await stores.manifests.add(again, contents(*again.entries))  # a first import still may

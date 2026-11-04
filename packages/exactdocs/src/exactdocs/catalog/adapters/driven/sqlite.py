@@ -34,9 +34,11 @@ from sqlalchemy.sql.elements import TextClause
 
 from exactdocs.catalog.errors import (
     LibraryAlreadyExistsError,
+    LibraryNotFoundError,
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
@@ -302,9 +304,24 @@ class SqliteManifestRepository:
         # front instead of failing with "database is locked" when it upgrades later.
         return self.engine.execution_options(begin_immediate=True).begin()
 
-    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+    async def add(
+        self,
+        manifest: Manifest,
+        contents: Mapping[ContentKey, str],
+        *,
+        version_must_exist: bool = False,
+    ) -> None:
         """Store a pending manifest and the texts it needs; stored texts stay as they are."""
         async with self._write() as connection:
+            if version_must_exist:
+                found = await connection.execute(
+                    select(library_versions.c.ref).where(
+                        library_versions.c.library_id == manifest.library.value,
+                        library_versions.c.ref == manifest.ref.value,
+                    )
+                )
+                if found.first() is None:
+                    raise VersionNotFoundError(str(manifest.library), str(manifest.ref))
             if contents:
                 await connection.execute(
                     sqlite_insert(article_contents).on_conflict_do_nothing(),
@@ -523,6 +540,39 @@ class SqliteManifestRepository:
                 )
             )
         return GarbageCollected(manifests=old.rowcount, contents=unused.rowcount)
+
+    async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
+        """Delete the version row and the manifests of the ref (their entries cascade)."""
+        async with self._write() as connection:
+            version = (
+                library_versions.c.library_id == library_id.value,
+                library_versions.c.ref == ref.value,
+            )
+            gone = await connection.execute(delete(library_versions).where(*version))
+            if gone.rowcount == 0:
+                raise VersionNotFoundError(str(library_id), str(ref))
+            ids = await connection.execute(
+                delete(manifests)
+                .where(manifests.c.library_id == library_id.value, manifests.c.ref == ref.value)
+                .returning(manifests.c.id)
+            )
+            return [ManifestId(row.id) for row in ids]
+
+    async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
+        """Delete the library; its versions, manifests and entries cascade."""
+        async with self._write() as connection:
+            ids = [
+                ManifestId(row.id)
+                for row in await connection.execute(
+                    select(manifests.c.id).where(manifests.c.library_id == library_id.value)
+                )
+            ]
+            gone = await connection.execute(
+                delete(libraries).where(libraries.c.id == library_id.value)
+            )
+            if gone.rowcount == 0:
+                raise LibraryNotFoundError(str(library_id))
+            return ids
 
     async def _load(self, *where: ColumnElement[bool]) -> Manifest | None:
         async with self.engine.connect() as connection:

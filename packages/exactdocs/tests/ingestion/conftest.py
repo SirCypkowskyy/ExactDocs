@@ -6,7 +6,7 @@ import pytest
 
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.models import JobKind
 from exactdocs.ingestion.ports import JobHandler, JobRepository, RecoveryHook
 
@@ -62,6 +62,8 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
             remote=MissingGit(),
             library_ids=_NoLibraryIds(),
             libraries=_NoLibraries(),
+            removals=NoRemovals(),
+            index=NoIndex(),
             handlers=handlers or {},
             recovery_hooks=recovery_hooks or {},
         )

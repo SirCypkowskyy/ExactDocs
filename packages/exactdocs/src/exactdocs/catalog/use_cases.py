@@ -29,6 +29,9 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ManifestStates,
+    Removal,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     ResolvedVersion,
     ResolveVersionQuery,
     StoredManifest,
@@ -223,7 +226,7 @@ class StoreManifestUseCase:
         if await self.repository.get(library_id) is None:
             raise LibraryNotFoundError(command.library)
         manifest, contents = await asyncio.to_thread(self._build, command, library_id)
-        await self.manifests.add(manifest, contents)
+        await self.manifests.add(manifest, contents, version_must_exist=command.must_exist)
         return StoredManifest.from_model(manifest)
 
     def _build(
@@ -422,4 +425,50 @@ class GetActiveManifestUseCase:
             ref=str(version.ref),
             commit_sha=version.commit_sha if manifest is None else manifest.commit_sha,
             manifest_id=None if manifest is None else manifest.id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveVersionUseCase:
+    """Implements ``ports.driving.RemoveVersion``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, command: RemoveVersionCommand) -> Removal:
+        """Delete the version and its manifests; report which version is the default now."""
+        library_id, ref = LibraryId(command.library), VersionRef(command.ref)
+        library = await self.repository.get(library_id)
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        if all(v.ref != ref for v in library.versions):  # exact: a short SHA removes nothing
+            raise VersionNotFoundError(str(library.id), str(ref))
+        removed = await self.manifests.remove_version(library.id, ref)
+        remaining = replace(
+            library, versions=frozenset(v for v in library.versions if v.ref != ref)
+        )
+        default = remaining.default_version()
+        return Removal(
+            library=str(library.id),
+            ref=str(ref),
+            manifest_ids=list(removed),
+            default_ref=None if default is None else str(default.ref),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveLibraryUseCase:
+    """Implements ``ports.driving.RemoveLibrary``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, command: RemoveLibraryCommand) -> Removal:
+        """Delete the library with its versions and manifests."""
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        removed = await self.manifests.remove_library(library.id)
+        return Removal(
+            library=str(library.id), ref=None, manifest_ids=list(removed), default_ref=None
         )

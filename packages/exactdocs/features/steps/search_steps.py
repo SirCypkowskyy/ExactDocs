@@ -46,7 +46,7 @@ LOCATION_FIELDS = [
 ]
 
 
-def _git_blob_sha(content: str) -> str:
+def git_blob_sha(content: str) -> str:
     data = content.encode()
     return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
@@ -68,13 +68,13 @@ def read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]
     return commit, articles
 
 
-async def _import(context: Context, refs: list[str]) -> None:
+async def import_versions(context: Context, refs: list[str], library: str = LIBRARY) -> None:
     container = Container.build(context.settings)
     chunker = MarkdownChunker()
     async with container.running():
         await SqliteLibraryRepository(container.engine).save(
             Library(
-                id=LibraryId(LIBRARY),
+                id=LibraryId(library),
                 title="Docs repo",
                 source_url=REPOSITORY,
                 host=HostKind.GITHUB,
@@ -86,14 +86,14 @@ async def _import(context: Context, refs: list[str]) -> None:
             parsed = list(starmap(parse_article, files))
             stored = await container.catalog.store_manifest(
                 StoreManifestCommand(
-                    library=LIBRARY,
+                    library=library,
                     ref=ref,
                     kind=RefKind.TAG,
                     commit_sha=commit,
                     articles=[
                         ArticleIn(
                             path=a.path,
-                            blob_sha=_git_blob_sha(text),
+                            blob_sha=git_blob_sha(text),
                             content_version=1,
                             title=a.title,
                             tags=_tags(a.path, a.tags),
@@ -107,13 +107,13 @@ async def _import(context: Context, refs: list[str]) -> None:
             await container.retrieval.index_manifest(
                 IndexManifestCommand(
                     manifest_id=stored.manifest_id,
-                    library=LIBRARY,
+                    library=library,
                     ref=ref,
                     config_hash=chunker.config_hash,
                     articles=[
                         ArticleChunksIn(
                             path=a.path,
-                            blob_sha=_git_blob_sha(text),
+                            blob_sha=git_blob_sha(text),
                             tags=_tags(a.path, a.tags),
                             chunks=[
                                 ChunkIn(
@@ -145,7 +145,7 @@ def _tags(path: str, declared: tuple[str, ...]) -> list[str]:
 @given('ExactDocs is running with the fixture docs repository imported at "{first}" and "{second}"')
 def step_imported(context: Context, first: str, second: str) -> None:
     step_running(context)
-    asyncio.run(_import(context, [first, second]))
+    asyncio.run(import_versions(context, [first, second]))
 
 
 def _search(context: Context, target: str, params: dict[str, object]) -> None:

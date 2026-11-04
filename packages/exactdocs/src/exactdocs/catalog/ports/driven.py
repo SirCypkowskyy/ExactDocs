@@ -66,10 +66,20 @@ class LibraryRepository(Protocol):
 class ManifestRepository(Protocol):
     """Persistence for manifests and the article texts they share, keyed by content key."""
 
-    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+    async def add(
+        self,
+        manifest: Manifest,
+        contents: Mapping[ContentKey, str],
+        *,
+        version_must_exist: bool = False,
+    ) -> None:
         """Store a pending manifest with its entries and the texts it needs.
 
         One transaction. A text whose key is already stored is left as it is (idempotent).
+        With ``version_must_exist`` the version row is checked in the same transaction and
+        ``VersionNotFoundError`` raised when it is missing: a removal either comes first (this
+        fails) or later (it deletes this pending manifest, so activating it fails). Either way a
+        re-sync cannot bring back a removed version.
         """
         ...
 
@@ -143,4 +153,19 @@ class ManifestRepository(Protocol):
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
         """Delete manifests superseded before the cutoff, then texts no manifest uses."""
+        ...
+
+    async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
+        """Delete the version row and every manifest of the ref (any state), in one transaction.
+
+        Returns the deleted manifest IDs. Raises ``VersionNotFoundError`` when the library has no
+        such version; the manifests and the version go together, never one without the other.
+        """
+        ...
+
+    async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
+        """Delete the library, its versions and all its manifests, in one transaction.
+
+        Returns the deleted manifest IDs. Raises ``LibraryNotFoundError``.
+        """
         ...

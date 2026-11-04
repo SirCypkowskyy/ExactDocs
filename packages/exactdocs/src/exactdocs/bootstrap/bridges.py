@@ -12,6 +12,7 @@ from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ApplyReadmeCommand,
     ArticleIn,
+    CollectGarbageCommand,
     CreateLibraryCommand,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
@@ -19,44 +20,62 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     GetManifestStatesQuery,
     HostKind,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     StoreManifestCommand,
     TagRuleIn,
 )
 from exactdocs.catalog.dtos import (
     RefKind as CatalogRefKind,
 )
+from exactdocs.catalog.dtos import (
+    Removal as CatalogRemoval,
+)
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     ApplyReadme,
+    CollectGarbage,
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
+    RemoveLibrary,
+    RemoveVersion,
     StoreManifest,
 )
 from exactdocs.ingestion.models import (
     PARSER_VERSION,
     ArticleChunk,
+    Collected,
     ImportedVersion,
     ImportSource,
     NewLibrary,
     PathSelection,
     ProposedId,
+    Removed,
     RepositoryUrl,
     TagRule,
 )
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
+    CollectChunksCommand,
     DiscardPendingChunksCommand,
     GetChunkSetsQuery,
     IndexManifestCommand,
+    RemoveChunksCommand,
 )
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion, SourceHost
-from exactdocs.retrieval.ports.driving import DiscardPendingChunks, GetChunkSets, IndexManifest
+from exactdocs.retrieval.ports.driving import (
+    CollectChunks,
+    DiscardPendingChunks,
+    GetChunkSets,
+    IndexManifest,
+    RemoveChunks,
+)
 from exactdocs_kernel import NotFoundError, ValidationError
 
 
@@ -235,6 +254,7 @@ class RetrievalChunkIndex:
     index_manifest: IndexManifest
     get_chunk_sets: GetChunkSets
     discard_pending_chunks: DiscardPendingChunks
+    remove_chunks: RemoveChunks
 
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
@@ -272,6 +292,66 @@ class RetrievalChunkIndex:
             )
         )
 
+    async def remove(self, manifest_ids: Sequence[str]) -> None:
+        """Delete the chunks of manifests the catalog has just deleted."""
+        await self.remove_chunks(RemoveChunksCommand(manifest_ids=list(manifest_ids)))
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogRemovals:
+    """Implements ``ingestion.ports.driven.Removals`` using the catalog."""
+
+    version_remover: RemoveVersion
+    library_remover: RemoveLibrary
+
+    async def remove_version(self, library: str, ref: str) -> Removed:
+        """Remove the version from the catalog."""
+        return _removed(await self.version_remover(RemoveVersionCommand(library=library, ref=ref)))
+
+    async def remove_library(self, library: str) -> Removed:
+        """Remove the library from the catalog."""
+        return _removed(await self.library_remover(RemoveLibraryCommand(library=library)))
+
+
+def _removed(result: CatalogRemoval) -> Removed:
+    return Removed(
+        library=result.library,
+        ref=result.ref,
+        manifest_ids=tuple(result.manifest_ids),
+        default_ref=result.default_ref,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogCollector:
+    """Implements ``ingestion.ports.driven.Collector`` using the catalog."""
+
+    collect_garbage: CollectGarbage
+
+    async def collect(self, *, grace_seconds: int) -> Collected:
+        """Delete superseded manifests past the grace period and the texts nothing uses."""
+        done = await self.collect_garbage(CollectGarbageCommand(grace_seconds=grace_seconds))
+        return Collected(deleted=done.manifests + done.contents)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalCollector:
+    """Implements ``ingestion.ports.driven.Collector`` using retrieval."""
+
+    collect_chunks: CollectChunks
+
+    async def collect(self, *, grace_seconds: int) -> Collected:
+        """Delete chunk rows of manifests the catalog no longer knows, and unused chunk sets.
+
+        The job's grace period keeps superseded *catalog* manifests; the catalog is already
+        done with them, so retrieval asks for none beyond its own five minutes of doubt about
+        a manifest the catalog has not answered for yet. That also sweeps the rows of a removal
+        whose ``RemoveChunks`` failed.
+        """
+        del grace_seconds
+        done = await self.collect_chunks(CollectChunksCommand(grace_seconds=0))
+        return Collected(deleted=done.manifests + done.chunk_sets)
+
 
 def _store_command(version: ImportedVersion) -> StoreManifestCommand:
     """Build the catalog's command (validates every article: off the event loop)."""
@@ -280,6 +360,7 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
         ref=version.ref,
         kind=CatalogRefKind(version.kind.value),
         commit_sha=version.commit_sha,
+        must_exist=version.refresh,
         articles=[
             ArticleIn(
                 path=a.path,

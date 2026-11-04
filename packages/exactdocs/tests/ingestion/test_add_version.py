@@ -1,6 +1,11 @@
 import pytest
 
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, InMemoryLibrarySources
+from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryJobRepository,
+    InMemoryLibrarySources,
+    NoIndex,
+    NoRemovals,
+)
 from exactdocs.ingestion.dtos import AddVersionCommand
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
@@ -77,6 +82,8 @@ def module(jobs: InMemoryJobRepository) -> IngestionModule:
         remote=FakeRemote(),
         library_ids=_None(),
         libraries=_None(),
+        removals=NoRemovals(),
+        index=NoIndex(),
         sources=InMemoryLibrarySources({"/acme/orders": SOURCE}, {"/acme/orders": EXISTING}),
         handlers={IMPORT_JOB: _run},
     )

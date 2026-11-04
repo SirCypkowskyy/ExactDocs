@@ -7,7 +7,7 @@ import os
 import stat
 import time
 import uuid
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,11 +29,15 @@ from exactdocs.ingestion.dtos import (
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RefOut,
+    RemovalResult,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     RepositoryRefs,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     CommitImportedError,
+    ImportInProgressError,
     ImportNotPinnedError,
     ImportTooLargeError,
     JobNotFoundError,
@@ -44,9 +48,12 @@ from exactdocs.ingestion.errors import (
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
+    COLLECT_JOB,
+    DEFAULT_GRACE_SECONDS,
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
+    IMPORT_KINDS,
     ArticleChunk,
     ImportedArticle,
     ImportedVersion,
@@ -62,6 +69,7 @@ from exactdocs.ingestion.models import (
     ProposedId,
     ReadmeSummary,
     RefKind,
+    Removed,
     RepositoryUrl,
     ResolvedRef,
     TagRule,
@@ -75,6 +83,7 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.ports.driven import (
     Chunker,
     ChunkIndex,
+    Collector,
     GitGateway,
     GitRemote,
     JobHandler,
@@ -84,6 +93,7 @@ from exactdocs.ingestion.ports.driven import (
     LibrarySources,
     NewLibraries,
     RecoveryHook,
+    Removals,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob
@@ -161,7 +171,11 @@ class ListLatestJobsUseCase:
     async def __call__(self) -> LatestJobs:
         """List the newest job of every (library, version), without their skipped files."""
         # ponytail: not paged; one row per imported version, fine until thousands exist.
-        return LatestJobs(jobs=[LatestJob.from_model(job) for job in await self.jobs.list_latest()])
+        # Only imports are syncs; a collection job has no version and is no state of a library.
+        latest = await self.jobs.list_latest()
+        return LatestJobs(
+            jobs=[LatestJob.from_model(job) for job in latest if job.kind in IMPORT_KINDS]
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -441,6 +455,7 @@ class ImportVersionUseCase:
     index: ChunkIndex
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
+    refresh: bool = False
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import from the beginning; raising fails the job."""
@@ -466,6 +481,7 @@ class ImportVersionUseCase:
             commit_sha=job.commit_sha,
             config_hash=config_hash,
             articles=tuple(articles),
+            refresh=self.refresh,
         )
         manifest_id: str | None = None
         try:
@@ -730,3 +746,124 @@ def _open_plain(file: Path) -> Generator[BinaryIO]:
         raise
     with handle:
         yield handle
+
+
+async def _refuse_while_importing(jobs: JobRepository, library: str, version: str | None) -> None:
+    """Raise ``ImportInProgressError`` when an import of the library (or version) is unfinished.
+
+    Check, then remove. An import queued in between can only come from a sync (E9-01) and is
+    queued as a ``refresh`` job: it fails at store time if the version is gone, and a removal
+    that comes after the store deletes its pending manifest, so it cannot re-create the version.
+    An ``import`` job for a library that was removed fails at store time (no library).
+    """
+    # ponytail: loads all of the library's jobs; a "has unfinished jobs" query if that grows.
+    for job in await jobs.list_for_library(library):
+        if (
+            job.kind in IMPORT_KINDS
+            and job.state in {JobState.QUEUED, JobState.RUNNING}
+            and (version is None or job.version == version)
+        ):
+            raise ImportInProgressError(library, version)
+
+
+async def _queue_collection(
+    jobs: JobRepository, enqueue_job: EnqueueJob, removed: Removed
+) -> str | None:
+    """Queue the job that frees the content; the removal itself is done, so never raise.
+
+    A collection already waiting for the library will see this removal too: reuse it.
+    """
+    try:
+        for job in await jobs.list_for_library(removed.library):
+            if job.kind == COLLECT_JOB and job.state is JobState.QUEUED:
+                return job.id
+        job = await enqueue_job(EnqueueJobCommand(kind=COLLECT_JOB, library=removed.library))
+    except Exception:
+        log.exception("could not queue the collection after removing %s", removed.library)
+        return None
+    return job.id
+
+
+async def _forget_chunks(index: ChunkIndex, removed: Removed) -> None:
+    """Drop the removed manifests' chunks now; if it fails the collection job sweeps them."""
+    try:
+        await index.remove(removed.manifest_ids)
+    except Exception:
+        log.exception("could not remove the chunks of %s", removed.library)
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveVersionUseCase:
+    """Implements ``ports.driving.RemoveVersion``."""
+
+    jobs: JobRepository
+    removals: Removals
+    index: ChunkIndex
+    enqueue_job: EnqueueJob
+
+    async def __call__(self, command: RemoveVersionCommand) -> RemovalResult:
+        """Refuse during an import of the version, remove it from the catalog, then clean up."""
+        library = command.library.lower()  # library IDs are stored lower-case
+        await _refuse_while_importing(self.jobs, library, command.ref)
+        removed = await self.removals.remove_version(library, command.ref)
+        await self.jobs.delete_for(library, command.ref)  # its history is not a state any more
+        await _forget_chunks(self.index, removed)
+        return RemovalResult(
+            library=removed.library,
+            ref=removed.ref,
+            default_version=removed.default_ref,
+            collection_job_id=await _queue_collection(self.jobs, self.enqueue_job, removed),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveLibraryUseCase:
+    """Implements ``ports.driving.RemoveLibrary``."""
+
+    jobs: JobRepository
+    removals: Removals
+    index: ChunkIndex
+    enqueue_job: EnqueueJob
+
+    async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
+        """Refuse during any import of the library, remove it from the catalog, then clean up."""
+        library = command.library.lower()
+        await _refuse_while_importing(self.jobs, library, None)
+        removed = await self.removals.remove_library(library)
+        await self.jobs.delete_for(library)
+        # #35 (credentials): delete the library's stored credentials here, once they exist.
+        await _forget_chunks(self.index, removed)
+        return RemovalResult(
+            library=removed.library,
+            ref=None,
+            default_version=None,
+            collection_job_id=await _queue_collection(self.jobs, self.enqueue_job, removed),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CollectGarbageUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``COLLECT_JOB``.
+
+    Runs each domain's collector in order (the catalog first: retrieval keeps what the catalog
+    still knows), then fails the job if any collector failed, after the others had their turn.
+    Chunk IDs of collected manifests are not kept as tombstones yet: a stale ID older than the
+    grace period answers ``not_found`` instead of ``stale_chunk`` (see docs/plan.md, E7-03).
+    """
+
+    collectors: Sequence[Collector]
+    grace_seconds: int = DEFAULT_GRACE_SECONDS
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Collect; raising fails the job."""
+        errors: list[Exception] = []
+        await progress.report(done=0, total=len(self.collectors))
+        for done, collector in enumerate(self.collectors, 1):
+            try:
+                await collector.collect(grace_seconds=self.grace_seconds)
+            except Exception as error:
+                log.exception("collection for %s failed", job.library)
+                errors.append(error)
+            await progress.report(done=done, total=len(self.collectors))
+        if errors:
+            raise errors[0]

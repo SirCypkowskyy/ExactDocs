@@ -131,6 +131,18 @@ class CommitImportedError(ConflictError):
         self.library, self.commit_sha, self.ref = library, commit_sha, ref
 
 
+class ImportInProgressError(ConflictError):
+    """An import of what is being removed is queued or running; retry when it has finished."""
+
+    code = "import_in_progress"
+
+    def __init__(self, library: str, version: str | None) -> None:
+        what = f"library {library!r}" if version is None else f"version {version!r} of {library!r}"
+        super().__init__(f"an import of {what} is queued or running: wait for it to finish")
+        self.library = library
+        self.version = version
+
+
 class GitNotInstalledError(DomainError):
     """The system ``git`` binary is missing, and ExactDocs cannot read repositories without it."""
 

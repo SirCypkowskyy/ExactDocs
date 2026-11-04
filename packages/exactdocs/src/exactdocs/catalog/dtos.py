@@ -260,6 +260,10 @@ class StoreManifestCommand(_Dto):
     kind: RefKind
     commit_sha: str
     articles: list[ArticleIn]
+    must_exist: bool = Field(
+        default=False,
+        description="Refuse (VersionNotFoundError) unless the library already has this version.",
+    )
 
 
 class StoredManifest(_Dto):
@@ -614,3 +618,30 @@ class DiscardLibraryCommand(_Dto):
     """Undo ``CreateLibrary`` for a library that has no versions."""
 
     id: str = Field(min_length=1)
+
+
+class RemoveVersionCommand(_Dto):
+    """Remove one version of a library, with every manifest it ever had."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    ref: str = Field(min_length=1)
+
+
+class RemoveLibraryCommand(_Dto):
+    """Remove a library, all its versions and every manifest."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+
+
+class Removal(_Dto):
+    """What a removal took out of the catalog.
+
+    `manifest_ids` lets other domains drop what they hold under those IDs. `default_ref` is the
+    version `/owner/repo` means after the removal (`None`: the library has no version left; always
+    `None` after `RemoveLibrary`).
+    """
+
+    library: str
+    ref: str | None
+    manifest_ids: list[str]
+    default_ref: str | None

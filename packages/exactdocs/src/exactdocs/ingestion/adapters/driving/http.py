@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
@@ -18,6 +18,9 @@ from exactdocs.ingestion.dtos import (
     LatestJobs,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    RemovalResult,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     RepositoryRefs,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -28,6 +31,8 @@ from exactdocs.ingestion.ports.driving import (
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
+    RemoveLibrary,
+    RemoveVersion,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT
 
@@ -41,6 +46,8 @@ def build_router(
     list_repository_refs: ListRepositoryRefs,
     add_library: AddLibrary,
     add_version: AddVersion,
+    remove_version: RemoveVersion,
+    remove_library: RemoveLibrary,
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side."""
     router = APIRouter(tags=["ingestion"])
@@ -94,6 +101,8 @@ def build_router(
         response.headers["Location"] = request.url_for("get_job", job_id=added.job_id).path
         return added
 
+    router.include_router(_removal_router(remove_version, remove_library))
+
     @router.get("/jobs/latest", name="list_latest_jobs")
     async def latest() -> LatestJobs:
         """List the newest job of every library version, in one call (no per-library requests)."""
@@ -113,5 +122,33 @@ def build_router(
         return await list_library_jobs(
             ListLibraryJobsQuery(library=f"/{owner}/{repo}", limit=limit, cursor=cursor)
         )
+
+    return router
+
+
+def _removal_router(remove_version: RemoveVersion, remove_library: RemoveLibrary) -> APIRouter:
+    """Build the DELETE routes for a version and for a whole library."""
+    router = APIRouter(tags=["ingestion"])
+
+    @router.delete("/libraries/{owner}/{repo}", name="remove_library")
+    async def remove_whole_library(owner: str, repo: str) -> RemovalResult:
+        """Remove a library and all its versions at once; a job frees the content.
+
+        Refused with 409 `import_in_progress` while an import of the library is queued or running.
+        """
+        return await remove_library(RemoveLibraryCommand(library=f"/{owner}/{repo}"))
+
+    # The ref comes last because it may contain slashes (`release/1.4`), as in the catalog's GET.
+    @router.delete("/libraries/{owner}/{repo}/versions/{ref:path}", name="remove_version")
+    async def remove_one_version(owner: str, repo: str, ref: str) -> RemovalResult:
+        """Remove one version everywhere at once; a job frees the content nothing else uses.
+
+        Refused with 409 `import_in_progress` while an import of that version is queued or
+        running. Removing the default version moves the default; removing the last leaves the
+        library without versions.
+        """
+        if ref.endswith("/"):  # `/versions/v1.4.0/` is another URL, not a malformed ref
+            raise HTTPException(status_code=404)
+        return await remove_version(RemoveVersionCommand(library=f"/{owner}/{repo}", ref=ref))
 
     return router

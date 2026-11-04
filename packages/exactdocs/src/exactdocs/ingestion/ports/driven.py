@@ -8,6 +8,7 @@ from typing import Protocol
 
 from exactdocs.ingestion.models import (
     ArticleChunk,
+    Collected,
     ImportedVersion,
     ImportSource,
     Job,
@@ -18,6 +19,7 @@ from exactdocs.ingestion.models import (
     ProblemCode,
     ProposedId,
     RemoteRefs,
+    Removed,
     RepositoryUrl,
 )
 
@@ -43,6 +45,10 @@ class JobRepository(Protocol):
 
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version."""
+        ...
+
+    async def delete_for(self, library: str, version: str | None = None) -> None:
+        """Delete the library's jobs (only those of ``version`` when given). Not running ones."""
         ...
 
     async def list_running(self) -> Sequence[Job]:
@@ -225,4 +231,28 @@ class ChunkIndex(Protocol):
 
         Call it before the catalog's discard: it needs the catalog to still say "pending".
         """
+        ...
+
+    async def remove(self, manifest_ids: Sequence[str]) -> None:
+        """Delete the chunks of manifests the catalog has just deleted (and unused chunk sets)."""
+        ...
+
+
+class Removals(Protocol):
+    """Removes versions and libraries from the catalog (in ingestion's words)."""
+
+    async def remove_version(self, library: str, ref: str) -> Removed:
+        """Delete the version and its manifests at once; raises ``NotFoundError`` if unknown."""
+        ...
+
+    async def remove_library(self, library: str) -> Removed:
+        """Delete the library, its versions and manifests; raises ``NotFoundError`` if unknown."""
+        ...
+
+
+class Collector(Protocol):
+    """Frees what one domain no longer needs; the collection job runs them in order."""
+
+    async def collect(self, *, grace_seconds: int) -> Collected:
+        """Delete what is unused and older than the grace period; say how many things."""
         ...
