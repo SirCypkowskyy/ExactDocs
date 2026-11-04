@@ -1,14 +1,14 @@
 """Create the identity API tokens table.
 
 Revision ID: c4d8e2f6a1b7
-Revises: 9b3e5a7c1d42
+Revises: 7c2e91d4a6b8
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "c4d8e2f6a1b7"
-down_revision = "9b3e5a7c1d42"
+down_revision = "7c2e91d4a6b8"
 branch_labels = None
 depends_on = None
 
