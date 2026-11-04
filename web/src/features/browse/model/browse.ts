@@ -63,7 +63,6 @@ export function ancestorsOf(path: string): string[] {
   return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
 }
 
-export const parentOf = (path: string) => path.split("/").slice(0, -1).join("/");
 const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 /**
@@ -142,20 +141,6 @@ export function buildRows(
   walk(root, "", 0);
   if (loading.has("") && rows.length === 0) rows.push({ kind: "loading", key: "l:", depth: 0 });
   return rows;
-}
-
-/** The most used tags of the loaded articles, for the filter. Selected tags always stay. */
-export function tagFacets(
-  articles: Iterable<ArticleSummary>,
-  selected: readonly string[],
-  limit = 12,
-): string[] {
-  const counts = new Map<string, number>();
-  for (const a of articles) for (const t of a.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
-  const top = [...counts].sort((a, b) => b[1] - a[1] || byName(a[0], b[0])).map(([t]) => t);
-  const shown = top.slice(0, limit);
-  const extra = selected.filter((t) => !shown.some((s) => s.toLowerCase() === t.toLowerCase()));
-  return [...extra, ...shown];
 }
 
 export const parseTags = (tags: string | undefined): string[] =>

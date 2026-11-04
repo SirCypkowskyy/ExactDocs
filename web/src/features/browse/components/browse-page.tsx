@@ -1,21 +1,16 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight, ChevronRight, FolderTree } from "lucide-react";
-import { useCallback, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { ArrowUpRight } from "lucide-react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { cn } from "@/shared/lib/utils";
 import { libraryQueryOptions } from "../api/browse-queries";
 import {
-  type ArticleSummary,
   type BrowseSearch,
   type LibraryDetail,
-  parseTags,
   resolveVersion,
   type Version,
 } from "../model/browse";
 import { ArticleView, CommitLinks } from "./article-view";
-import { TagFilter } from "./tag-filter";
-import { TreePane } from "./tree-pane";
+import { FilesAside } from "./files-aside";
 import { VersionPicker } from "./version-picker";
 
 interface BrowsePageProps {
@@ -51,84 +46,15 @@ function VersionBrowser({
   version,
   search,
 }: BrowsePageProps & { library: LibraryDetail; version: Version }) {
-  const navigate = useNavigate();
-  const tags = parseTags(search.tags);
-  const [filesOpen, setFilesOpen] = useState(!search.path);
-  const [facetCounts, setFacetCounts] = useState<ReadonlyMap<string, number>>(new Map());
-
-  // Remember every tag seen while browsing, so narrowing by one tag keeps the others on offer.
-  const onFacets = useCallback((articles: Iterable<ArticleSummary>) => {
-    setFacetCounts((prev) => {
-      const next = new Map(prev);
-      const counts = new Map<string, number>();
-      for (const a of articles) for (const t of a.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
-      let changed = false;
-      for (const [t, n] of counts) {
-        if ((next.get(t) ?? 0) < n) {
-          next.set(t, n);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, []);
-  const facets = [...facetCounts]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([t]) => t);
-  for (const t of tags)
-    if (!facets.some((f) => f.toLowerCase() === t.toLowerCase())) facets.unshift(t);
-
-  const setTags = (next: string | undefined) =>
-    navigate({
-      to: "/libraries/$owner/$repo",
-      params: { owner, repo },
-      search: { version: version.ref, path: search.path, tags: next },
-      replace: true,
-    });
-
   return (
     <div className="mt-6 grid gap-x-10 gap-y-5 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] lg:items-start">
-      <aside aria-label="Files" className="min-w-0 lg:sticky lg:top-4">
-        <button
-          type="button"
-          aria-expanded={filesOpen}
-          aria-controls="file-tree"
-          onClick={() => setFilesOpen(!filesOpen)}
-          className="flex h-11 w-full cursor-pointer items-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium outline-none ring-1 ring-inset ring-border focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99] lg:hidden"
-        >
-          <FolderTree aria-hidden="true" className="size-4 text-muted-foreground" />
-          {search.path ? "Files" : "Browse files"}
-          {tags.length > 0 && (
-            <span className="font-normal text-muted-foreground">
-              filtered by {tags.length === 1 ? "1 tag" : `${tags.length} tags`}
-            </span>
-          )}
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              "ml-auto size-4 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-              filesOpen && "rotate-90",
-            )}
-          />
-        </button>
-        <div id="file-tree" className={cn("mt-3 space-y-3 lg:mt-0", !filesOpen && "max-lg:hidden")}>
-          <TagFilter facets={facets.slice(0, 14)} selected={tags} onChange={setTags} />
-          <div className="max-h-[min(70dvh,32rem)] overflow-y-auto overscroll-contain lg:max-h-[calc(100dvh-12rem)]">
-            <TreePane
-              key={search.tags ?? ""}
-              owner={owner}
-              repo={repo}
-              version={version.ref}
-              tags={tags}
-              tagsParam={search.tags}
-              selected={search.path}
-              onFacets={onFacets}
-              onClearTags={() => setTags(undefined)}
-              onOpen={() => setFilesOpen(false)}
-            />
-          </div>
-        </div>
-      </aside>
+      <FilesAside
+        owner={owner}
+        repo={repo}
+        version={version.ref}
+        path={search.path}
+        tags={search.tags}
+      />
       <section aria-label="Article" className="min-w-0">
         {search.path ? (
           <ArticleView

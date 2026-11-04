@@ -28,7 +28,7 @@ const external =
   "inline-flex min-h-11 items-center gap-1 rounded-md px-1 text-sm font-medium underline decoration-mark/40 underline-offset-4 outline-none hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8";
 
 /** A repository path, allowed to break after each slash instead of in the middle of a word. */
-export function PathText({ path }: { path: string }) {
+function PathText({ path }: { path: string }) {
   return path.split("/").map((part, i, all) => (
     // biome-ignore lint/suspicious/noArrayIndexKey: the same segment can repeat in a path
     <Fragment key={i}>

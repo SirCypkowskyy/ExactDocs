@@ -10,7 +10,6 @@ import {
   parseTags,
   resolveVersion,
   safeHref,
-  tagFacets,
   toggleTag,
   type Version,
 } from "./browse";
@@ -85,12 +84,6 @@ describe("tags", () => {
     expect(parseTags("api, guide,,")).toEqual(["api", "guide"]);
     expect(toggleTag(["api"], "guide")).toBe("api,guide");
     expect(toggleTag(["api"], "API")).toBeUndefined();
-  });
-
-  it("offers the most used tags and keeps a selected one the list lacks", () => {
-    const list = [a("1", ["api", "guide"]), a("2", ["api"]), a("3", ["ref"])];
-    expect(tagFacets(list, [], 2)).toEqual(["api", "guide"]);
-    expect(tagFacets(list, ["legacy"], 1)).toEqual(["legacy", "api"]);
   });
 });
 

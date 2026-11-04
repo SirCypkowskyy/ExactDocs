@@ -1,6 +1,4 @@
-import { useEffect } from "react";
 import { useTree } from "../hooks/use-tree";
-import type { ArticleSummary } from "../model/browse";
 import { FileTree } from "./file-tree";
 
 interface TreePaneProps {
@@ -10,7 +8,6 @@ interface TreePaneProps {
   tags: readonly string[];
   tagsParam: string | undefined;
   selected: string | undefined;
-  onFacets: (articles: Iterable<ArticleSummary>) => void;
   onClearTags: () => void;
   onOpen: () => void;
 }
@@ -52,13 +49,10 @@ export function TreePane({
   tags,
   tagsParam,
   selected,
-  onFacets,
   onClearTags,
   onOpen,
 }: TreePaneProps) {
   const tree = useTree({ owner, repo, ref: version, tags, selected });
-  const { articles } = tree;
-  useEffect(() => onFacets(articles.values()), [articles, onFacets]);
 
   if (tree.status === "loading") return <Skeleton />;
   if (tree.status === "error") {

@@ -3,11 +3,11 @@ import { getJson } from "@/shared/lib/http";
 import type { Article, ArticleList, LibraryDetail } from "../model/browse";
 
 /** How many articles one request lists. The API allows 200. */
-export const PAGE_SIZE = 100;
+const PAGE_SIZE = 100;
 
 const seg = encodeURIComponent;
 
-export const browseKeys = {
+const browseKeys = {
   all: ["browse"] as const,
   library: (owner: string, repo: string) => [...browseKeys.all, owner, repo, "library"] as const,
   articles: (

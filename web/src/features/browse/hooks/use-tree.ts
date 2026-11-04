@@ -31,7 +31,9 @@ export function useTree({ owner, repo, ref, tags, selected }: TreeArgs) {
     () => new Set(selected ? ancestorsOf(selected) : []),
   );
   const scopesRef = useRef(scopes);
-  scopesRef.current = scopes;
+  useEffect(() => {
+    scopesRef.current = scopes;
+  }, [scopes]);
 
   const load = useCallback(
     async (prefix: string) => {
