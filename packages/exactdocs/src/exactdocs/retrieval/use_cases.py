@@ -16,7 +16,8 @@ class SearchDocsUseCase:
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
         """Search one exact version; never fall back to another version."""
         target = DocTarget(library=query.library, version=query.version)
-        if not await self.versions.is_indexed(target):
+        indexed = await self.versions.find_indexed(target)
+        if indexed is None:
             raise VersionNotIndexedError(target.library, target.version)
-        excerpts = await self.index.search(target, SearchText(value=query.query), query.limit)
+        excerpts = await self.index.search(indexed, SearchText(value=query.query), query.limit)
         return SearchDocsResult.from_models(excerpts)

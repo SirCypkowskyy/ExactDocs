@@ -90,24 +90,49 @@ async def test_a_version_is_addressed_by_its_ref(client: httpx.AsyncClient, ref:
     assert (response.json()["library"], response.json()["ref"]) == ("/acme/payments", ref)
 
 
-async def test_the_ref_is_everything_after_versions_even_with_slashes(
+async def test_the_ref_is_everything_after_versions_even_with_slashes_or_a_short_sha(
     client: httpx.AsyncClient, container: Container
 ) -> None:
     repository = SqliteLibraryRepository(container.engine)
     payments = await repository.get(LibraryId("/acme/payments"))
     assert payments is not None
-    release = Version(
-        ref=VersionRef("release/1.4"),
-        kind=RefKind.BRANCH,
-        commit_sha="d" * 40,
-        imported_at=datetime(2026, 11, 4, tzinfo=UTC),
-    )
-    await repository.save(replace(payments, versions=payments.versions | {release}))
+    imported_at = datetime(2026, 11, 4, tzinfo=UTC)
+    extra = {
+        Version(
+            ref=VersionRef("release/1.4"),
+            kind=RefKind.BRANCH,
+            commit_sha="d" * 40,
+            imported_at=imported_at,
+        ),
+        Version(
+            ref=VersionRef("fedcba98"),
+            kind=RefKind.COMMIT,
+            commit_sha="fedcba9876" + "0" * 30,
+            imported_at=imported_at,
+        ),
+    }
+    await repository.save(replace(payments, versions=payments.versions | extra))
+    base = "/api/v1/libraries/acme/payments/versions"
 
-    response = await client.get("/api/v1/libraries/acme/payments/versions/release/1.4")
+    for path, ref in [
+        ("release/1.4", "release/1.4"),
+        ("release%2F1.4", "release/1.4"),
+        ("fedcba98", "fedcba98"),
+        ("fedcba9876", "fedcba98"),
+    ]:
+        response = await client.get(f"{base}/{path}")
 
-    assert response.status_code == 200
-    assert response.json()["ref"] == "release/1.4"
+        assert response.status_code == 200, path
+        assert response.json()["ref"] == ref
+
+
+async def test_a_trailing_slash_after_the_ref_is_another_url_not_found(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/v1/libraries/acme/payments/versions/v1.4.0/")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
 
 
 @pytest.mark.parametrize(

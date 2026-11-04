@@ -12,10 +12,13 @@ class InvalidLibraryIdError(ValidationError):
 
 
 class InvalidVersionRefError(ValidationError):
-    """A version ref is blank or has an empty `/`-separated segment."""
+    """A version ref breaks the basic rules of `git check-ref-format`."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"{text!r} is not a version ref: it must not be blank or have empty parts")
+        super().__init__(
+            f"{text!r} is not a version ref: no blank or empty parts, '..', control characters, "
+            "spaces, leading '-' or trailing '.lock'"
+        )
 
 
 class InvalidCommitShaError(ValidationError):
@@ -23,6 +26,20 @@ class InvalidCommitShaError(ValidationError):
 
     def __init__(self, text: str) -> None:
         super().__init__(f"{text!r} is not a full commit SHA (40 or 64 hexadecimal characters)")
+
+
+class InvalidImportTimeError(ValidationError):
+    """A version's import time has no time zone, so it cannot be ordered against others."""
+
+    def __init__(self) -> None:
+        super().__init__("imported_at must be timezone-aware")
+
+
+class DuplicateVersionRefError(ValidationError):
+    """A library lists the same ref twice."""
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(f"version ref {ref!r} appears more than once")
 
 
 class InvalidSettingsError(ValidationError):

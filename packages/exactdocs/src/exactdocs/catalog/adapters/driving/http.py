@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from exactdocs.catalog.dtos import (
     GetLibraryQuery,
@@ -33,6 +33,8 @@ def build_router(
 
     @router.get("/{owner}/{repo}/versions/{ref:path}")
     async def get_version(owner: str, repo: str, ref: str) -> ResolvedVersion:
+        if ref.endswith("/"):  # `/versions/v1.4.0/` is another URL, not a malformed ref
+            raise HTTPException(status_code=404)
         return await resolve_version(ResolveVersionQuery(id=f"/{owner}/{repo}/{ref}"))
 
     return router

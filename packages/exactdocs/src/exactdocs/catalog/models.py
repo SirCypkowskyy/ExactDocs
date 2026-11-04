@@ -8,7 +8,9 @@ from typing import Self
 
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
+    DuplicateVersionRefError,
     InvalidCommitShaError,
+    InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
     InvalidVersionRefError,
@@ -21,7 +23,9 @@ _SEGMENT = re.compile(r"(?!\.+$)[A-Za-z0-9._-]+")
 _COMMIT_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _SHORT_SHA = re.compile(r"[0-9a-f]{7,64}")
 # Stable semver (https://semver.org) with an optional `v`: a pre-release suffix means not stable.
-_STABLE_SEMVER = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z.-]+)?")
+_STABLE_SEMVER = re.compile(
+    r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,12 +46,22 @@ class LibraryId:
 
 @dataclass(frozen=True, slots=True)
 class VersionRef:
-    """A git ref as published (`v1.4.0`, `main`, `release/1.4`, a SHA). Case-sensitive."""
+    """A git ref as published (`v1.4.0`, `main`, `release/1.4`, a SHA). Case-sensitive.
+
+    Follows the basics of `git check-ref-format` so a ref is safe to hand to git or a path later.
+    """
 
     value: str
 
     def __post_init__(self) -> None:
-        if not self.value or "" in self.value.split("/") or any(c.isspace() for c in self.value):
+        parts = self.value.split("/")
+        if (
+            "" in parts
+            or ".." in self.value
+            or self.value.startswith("-")
+            or any(part.endswith(".lock") for part in parts)
+            or not all(c.isprintable() and not c.isspace() for c in self.value)
+        ):
             raise InvalidVersionRefError(self.value)
 
     def __str__(self) -> str:
@@ -89,6 +103,8 @@ class Version:
     def __post_init__(self) -> None:
         if not _COMMIT_SHA.fullmatch(self.commit_sha):
             raise InvalidCommitShaError(self.commit_sha)
+        if self.imported_at.tzinfo is None:
+            raise InvalidImportTimeError
 
 
 class HostKind(StrEnum):
@@ -149,6 +165,12 @@ class Library:
     settings: LibrarySettings = field(default_factory=LibrarySettings)
     versions: frozenset[Version] = field(default_factory=frozenset)
 
+    def __post_init__(self) -> None:
+        refs = [v.ref for v in self.versions]
+        if len(set(refs)) != len(refs):
+            duplicate = next(r for r in refs if refs.count(r) > 1)
+            raise DuplicateVersionRefError(duplicate.value)
+
     def default_version(self) -> Version | None:
         """Pick what `/owner/repo` without a ref means (docs/user-stories.md, *Default version*).
 
@@ -185,9 +207,9 @@ class Library:
         matches = [
             v for v in self.versions if v.kind is RefKind.COMMIT and v.commit_sha.startswith(prefix)
         ]
-        if len(matches) > 1:
+        if len({v.commit_sha for v in matches}) > 1:  # refs of one commit are not ambiguous
             raise AmbiguousCommitError(prefix)
-        return next(iter(matches), None)
+        return min(matches, key=lambda v: v.ref.value) if matches else None
 
 
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:

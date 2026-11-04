@@ -18,12 +18,14 @@ class CatalogIndexedVersions:
 
     resolve_version: ResolveVersion
 
-    async def is_indexed(self, target: DocTarget) -> bool:
-        """Ask the catalog whether this exact ref has an index (a short SHA does not count)."""
+    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
+        """Ask the catalog for this exact ref (a short SHA does not count); return the stored ID."""
         try:
             resolved = await self.resolve_version(
                 ResolveVersionQuery(id=f"{target.library}/{target.version}")
             )
         except NotFoundError:
-            return False
-        return resolved.ref == target.version
+            return None
+        if resolved.ref != target.version:
+            return None
+        return DocTarget(library=resolved.library, version=resolved.ref)

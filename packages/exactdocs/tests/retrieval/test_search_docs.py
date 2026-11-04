@@ -18,8 +18,9 @@ class FakeIndexedVersions:
 
     indexed: frozenset[DocTarget]
 
-    async def is_indexed(self, target: DocTarget) -> bool:
-        return target in self.indexed
+    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
+        canonical = DocTarget(library=target.library.lower(), version=target.version)
+        return canonical if canonical in self.indexed else None
 
 
 @pytest.fixture
@@ -52,3 +53,17 @@ async def test_returns_verbatim_excerpts_only_from_the_requested_version(
 async def test_never_falls_back_to_another_version(retrieval: RetrievalModule) -> None:
     with pytest.raises(VersionNotIndexedError):
         await retrieval.search_docs(SearchDocsQuery(library="react", version="18.3", query="x"))
+
+
+async def test_a_library_spelled_in_another_case_searches_the_same_data(
+    retrieval: RetrievalModule,
+) -> None:
+    exact = await retrieval.search_docs(
+        SearchDocsQuery(library="react", version="19.1", query="action")
+    )
+    mixed = await retrieval.search_docs(
+        SearchDocsQuery(library="React", version="19.1", query="action")
+    )
+
+    assert mixed == exact
+    assert mixed.excerpts

@@ -6,7 +6,9 @@ import pytest
 
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
+    DuplicateVersionRefError,
     InvalidCommitShaError,
+    InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
     InvalidVersionRefError,
@@ -99,7 +101,14 @@ def test_library_ids_compare_case_insensitively_and_refs_do_not() -> None:
     assert VersionRef("V1.4.0") != VersionRef("v1.4.0")
 
 
-@pytest.mark.parametrize("text", ["", " ", "a//b", "/a", "a/", "a b", "a\tb"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        *("", " ", "a//b", "/a", "a/", "a b", "a\tb"),
+        *("..", "a..b", "a/../b", "-rf", "-", "v1\x00", "v1\x7f", "a\nb", "v1.lock", "a.lock/b"),
+        *("a/b.lock", "v\u0085", "v1\u200b"),
+    ],
+)
 def test_a_blank_or_gappy_ref_is_invalid(text: str) -> None:
     with pytest.raises(InvalidVersionRefError):
         VersionRef(text)
@@ -211,3 +220,47 @@ def test_an_ambiguous_short_sha_is_a_validation_error() -> None:
 def test_chunking_settings_must_be_in_range(kwargs: dict[str, int]) -> None:
     with pytest.raises(InvalidSettingsError):
         ChunkingConfig(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "text", ["v1.4.0", "release/1.4", "feature/a.b-c_d", "1.4", "a.lockb", "x-y"]
+)
+def test_ordinary_refs_are_valid(text: str) -> None:
+    assert VersionRef(text).value == text
+
+
+def test_two_versions_with_the_same_ref_are_rejected() -> None:
+    with pytest.raises(DuplicateVersionRefError, match=r"v1\.4\.0"):
+        library(version("v1.4.0", sha="a"), version("v1.4.0", sha="b"))
+
+
+def test_a_version_needs_a_timezone_aware_import_time() -> None:
+    with pytest.raises(InvalidImportTimeError):
+        Version(
+            ref=VersionRef("v1"),
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            imported_at=datetime.fromisoformat("2026-11-04T12:00:00"),  # no time zone
+        )
+
+
+def test_only_ascii_digits_make_a_stable_semver_tag() -> None:
+    arabic_four = "v1.\u0664.0"
+
+    found = library(version(arabic_four), version("v1.3.0")).default_version()
+
+    assert found is not None
+    assert found.ref.value == "v1.3.0"
+
+
+def test_refs_of_the_same_commit_are_not_an_ambiguous_short_sha() -> None:
+    same = library(
+        version("abc1234", RefKind.COMMIT, sha="abc1234"),
+        version("aaaaaaaaaa", RefKind.COMMIT, sha="abc1234"),
+    )
+
+    found = same.find_version(VersionRef("abc12340"))
+
+    assert found is not None
+    assert found.commit_sha.startswith("abc1234")
+    assert found.ref.value == "aaaaaaaaaa"  # the smallest ref, so the answer is stable
