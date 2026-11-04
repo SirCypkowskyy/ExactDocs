@@ -184,6 +184,7 @@ writable for that), and files owned by another user can stop the server from sta
 | `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` | The article tree of a version |
 | `read_article(library, ref?, path)` | A full article, verbatim; an unknown path lists close matches |
 | `search_docs(library, query, ref?, tags?, tags_match?, limit?, mode?)` | Search one version; results carry location, neighbors (`prev_chunk_id` / `next_chunk_id`), `coverage` and the retrieval mode used (`bm25` is the only one; any other `mode` is an error listing the available ones) |
+| `search_all_docs(query, library?, tags?, tags_match?, limit?)` | Search the default version of every library at once; each result names its library and version, `libraries` counts matches per library; at most 500 libraries are searched and `libraries_omitted` says how many were left out (REST: `GET /api/v1/search`) |
 | `read_chunk(chunk_id)` | One chunk verbatim, e.g. a neighbor of a search result; a chunk ID from before a re-sync answers `stale_chunk` |
 
 Library IDs are `/owner/repo`; without a ref, a library's **default version** is used (the highest imported stable semver tag, else the default branch, else the most recently imported version, unless pinned), and every response
