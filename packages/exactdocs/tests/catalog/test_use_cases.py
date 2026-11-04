@@ -6,10 +6,16 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
-from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery, ResolveVersionQuery
+from exactdocs.catalog.dtos import (
+    CreateLibraryCommand,
+    GetLibraryQuery,
+    ListLibrariesQuery,
+    ResolveVersionQuery,
+)
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
     InvalidLibraryIdError,
+    LibraryAlreadyExistsError,
     LibraryNotFoundError,
     VersionNotFoundError,
 )
@@ -177,3 +183,26 @@ async def test_a_library_without_versions_has_no_default_version(catalog: Catalo
 async def test_an_ambiguous_short_sha_is_a_validation_error(catalog: CatalogModule) -> None:
     with pytest.raises(AmbiguousCommitError):
         await catalog.resolve_version(ResolveVersionQuery(id="/acme/payments/1234abc"))
+
+
+async def test_a_library_is_created_without_versions_and_not_twice() -> None:
+    repository = InMemoryLibraryRepository()
+    create = CatalogModule.build(
+        repository=repository, manifests=InMemoryManifestRepository(repository)
+    ).create_library
+    command = CreateLibraryCommand(
+        id="/Acme/Docs",
+        title="docs",
+        source_url="https://git.example.com/acme/docs",
+        host=HostKind.GIT,
+        default_branch="main",
+        include_paths=["docs/"],
+        exclude_paths=["docs/old/"],
+    )
+
+    created = await create(command)
+
+    assert (created.id, created.versions, created.default_version) == ("/acme/docs", [], None)
+    assert created.settings.include_paths == ["docs/"]
+    with pytest.raises(LibraryAlreadyExistsError):
+        await create(command)

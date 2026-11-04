@@ -144,7 +144,7 @@ async def test_refs_only_ever_come_last_and_article_paths_are_query_parameters(
     ("method", "path", "status", "error"),
     [
         ("GET", "/api/v1/nope", 404, "not_found"),
-        ("POST", "/api/v1/libraries", 405, "method_not_allowed"),
+        ("DELETE", "/api/v1/libraries", 405, "method_not_allowed"),
         ("GET", "/api/nope", 404, "not_found"),
     ],
 )

@@ -10,6 +10,7 @@ from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     CollectGarbage,
+    CreateLibrary,
     DiscardPendingManifests,
     GetActiveManifest,
     GetArticle,
@@ -23,6 +24,7 @@ from exactdocs.catalog.ports.driving import (
 from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
     CollectGarbageUseCase,
+    CreateLibraryUseCase,
     DiscardPendingManifestsUseCase,
     GetActiveManifestUseCase,
     GetArticleUseCase,
@@ -41,6 +43,7 @@ class CatalogModule:
     """The catalog's driving ports, ready to be exposed by driving adapters."""
 
     list_libraries: ListLibraries
+    create_library: CreateLibrary
     get_library: GetLibrary
     resolve_version: ResolveVersion
     store_manifest: StoreManifest
@@ -64,6 +67,7 @@ class CatalogModule:
         clock = clock or SystemClock()
         return cls(
             list_libraries=ListLibrariesUseCase(repository),
+            create_library=CreateLibraryUseCase(repository),
             get_library=GetLibraryUseCase(repository),
             resolve_version=ResolveVersionUseCase(repository),
             store_manifest=StoreManifestUseCase(repository, manifests, clock),

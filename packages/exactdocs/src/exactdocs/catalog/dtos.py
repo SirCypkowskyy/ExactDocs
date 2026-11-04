@@ -396,3 +396,15 @@ class ManifestStates(_Dto):
     """Manifest state by ID; IDs the catalog does not know are left out."""
 
     states: dict[str, ManifestState]
+
+
+class CreateLibraryCommand(_Dto):
+    """Add an empty library; its versions arrive with imports."""
+
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    host: HostKind
+    default_branch: str | None = None
+    include_paths: list[str] = Field(default_factory=list)
+    exclude_paths: list[str] = Field(default_factory=list)

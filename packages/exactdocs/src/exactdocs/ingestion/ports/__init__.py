@@ -5,18 +5,22 @@ from exactdocs.ingestion.ports.driven import (
     JobProgress,
     JobRepository,
     LibraryIds,
+    NewLibraries,
     RecoveryHook,
 )
 from exactdocs.ingestion.ports.driving import (
+    AddLibrary,
     CheckRepository,
     EnqueueJob,
     GetJob,
     ListLibraryJobs,
+    ListRepositoryRefs,
     RecoverJobs,
     RunNextJob,
 )
 
 __all__ = [
+    "AddLibrary",
     "CheckRepository",
     "Chunker",
     "EnqueueJob",
@@ -27,6 +31,8 @@ __all__ = [
     "JobRepository",
     "LibraryIds",
     "ListLibraryJobs",
+    "ListRepositoryRefs",
+    "NewLibraries",
     "RecoverJobs",
     "RecoveryHook",
     "RunNextJob",

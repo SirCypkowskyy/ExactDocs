@@ -725,6 +725,101 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Add",
+        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).",
+        "operationId": "ingestion-add",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddLibraryCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedLibrary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/libraries/{owner}/{repo}": {
@@ -1487,6 +1582,106 @@
         ]
       }
     },
+    "/api/v1/repositories/refs": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "List Refs",
+        "description": "List the tags and branches of a repository (the URL is never echoed back).",
+        "operationId": "ingestion-list_refs",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "title": "Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRefs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -1751,6 +1946,103 @@
         ],
         "title": "AccountSummary",
         "description": "An account as the outside world sees it (never the password hash)."
+      },
+      "AddLibraryCommand": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "description": "https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+          },
+          "library_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Id",
+            "description": "`/owner/repo`; omitted: the one proposed from the URL."
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref",
+            "description": "A tag, a branch or a full or short commit SHA; omitted: the default branch."
+          },
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths",
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths",
+            "description": "Folders, files or globs to leave out; they win."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "AddLibraryCommand",
+        "description": "Create a library from a git repository, with its doc selection, and queue its import."
+      },
+      "AddedLibrary": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "ref": {
+            "type": "string",
+            "title": "Ref",
+            "description": "The tag or branch name, or the full SHA of a commit."
+          },
+          "ref_kind": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "ref",
+          "ref_kind",
+          "commit_sha",
+          "job_id"
+        ],
+        "title": "AddedLibrary",
+        "description": "The new library, the commit its ref was pinned to, and the queued import."
       },
       "Article": {
         "properties": {
@@ -2263,6 +2555,18 @@
             ],
             "title": "Version"
           },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha",
+            "description": "The commit `version` was pinned to, if any."
+          },
           "state": {
             "$ref": "#/components/schemas/JobState"
           },
@@ -2329,6 +2633,7 @@
           "kind",
           "library",
           "version",
+          "commit_sha",
           "state",
           "done",
           "total",
@@ -2525,15 +2830,25 @@
         "title": "LibrarySummary",
         "description": "A library and its version refs, sorted."
       },
-      "RefKind": {
-        "type": "string",
-        "enum": [
-          "tag",
-          "branch",
-          "commit"
+      "RefOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "commit_sha"
         ],
-        "title": "RefKind",
-        "description": "What a version was imported from."
+        "title": "RefOut",
+        "description": "A tag or branch and the commit it points at."
       },
       "RepositoryHost": {
         "type": "string",
@@ -2547,6 +2862,44 @@
         "title": "RepositoryHost",
         "description": "Where a repository is hosted, by exact host name; ``git`` is any other server."
       },
+      "RepositoryRefs": {
+        "properties": {
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/RefOut"
+            },
+            "type": "array",
+            "title": "Branches"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/RefOut"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "default_branch",
+          "branches",
+          "tags"
+        ],
+        "title": "RepositoryRefs",
+        "description": "What a repository offers as a ref, for the picker. Sorted by name."
+      },
       "ResolvedVersion": {
         "properties": {
           "ref": {
@@ -2554,7 +2907,7 @@
             "title": "Ref"
           },
           "kind": {
-            "$ref": "#/components/schemas/RefKind"
+            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind"
           },
           "commit_sha": {
             "type": "string",
@@ -2800,7 +3153,7 @@
             "title": "Ref"
           },
           "kind": {
-            "$ref": "#/components/schemas/RefKind"
+            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind"
           },
           "commit_sha": {
             "type": "string",
@@ -2828,6 +3181,26 @@
         ],
         "title": "VersionOut",
         "description": "One imported version: the ref, what kind of ref it is, and the commit it stands for."
+      },
+      "exactdocs__catalog__models__RefKind": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "branch",
+          "commit"
+        ],
+        "title": "RefKind",
+        "description": "What a version was imported from."
+      },
+      "exactdocs__ingestion__models__RefKind": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "branch",
+          "commit"
+        ],
+        "title": "RefKind",
+        "description": "What a requested ref turned out to be."
       }
     },
     "securitySchemes": {

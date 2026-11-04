@@ -8,19 +8,22 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 
 from exactdocs.catalog.dtos import (
+    CreateLibraryCommand,
     GetActiveManifestQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
+    HostKind,
     ResolveVersionQuery,
 )
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
+    CreateLibrary,
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
     ResolveVersion,
 )
-from exactdocs.ingestion.models import ProposedId
+from exactdocs.ingestion.models import NewLibrary, ProposedId
 from exactdocs.retrieval.models import DocTarget, ManifestStatus
 from exactdocs_kernel import NotFoundError
 
@@ -90,3 +93,25 @@ class CatalogActiveManifests:
             GetManifestStatesQuery(manifest_ids=list(manifest_ids))
         )
         return {i: _STATUSES.get(state, ManifestStatus.OTHER) for i, state in found.states.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogNewLibraries:
+    """Implements ``ingestion.ports.driven.NewLibraries`` using the catalog."""
+
+    create_library: CreateLibrary
+
+    async def add(self, library: NewLibrary) -> str:
+        """Create the library in the catalog; return its canonical ID."""
+        created = await self.create_library(
+            CreateLibraryCommand(
+                id=library.library_id,
+                title=library.title,
+                source_url=library.source_url,
+                host=HostKind(library.host.value),
+                default_branch=library.default_branch,
+                include_paths=list(library.selection.include),
+                exclude_paths=list(library.selection.exclude),
+            )
+        )
+        return created.id

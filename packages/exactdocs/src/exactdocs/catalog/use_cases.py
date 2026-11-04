@@ -13,6 +13,7 @@ from exactdocs.catalog.dtos import (
     ArticleSummary,
     CollectGarbageCommand,
     CollectionResult,
+    CreateLibraryCommand,
     DiscardedManifests,
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
@@ -32,14 +33,17 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
     ConflictingContentError,
+    LibraryAlreadyExistsError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
+    HostKind,
     Library,
     LibraryId,
+    LibrarySettings,
     Manifest,
     ManifestEntry,
     ManifestId,
@@ -77,6 +81,36 @@ class ListLibrariesUseCase:
             libraries, key=lambda lib: lib.id.value, limit=query.limit, cursor=query.cursor
         )
         return LibraryList.from_page(page)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateLibraryUseCase:
+    """Implements ``ports.driving.CreateLibrary``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
+        """Store a new library without versions.
+
+        ponytail: check-then-save is not atomic; a second writer in the same instant would
+        replace the first. One admin and one process make that unreachable today.
+        """
+        library_id = LibraryId(command.id)
+        if await self.repository.get(library_id) is not None:
+            raise LibraryAlreadyExistsError(str(library_id))
+        library = Library(
+            id=library_id,
+            title=command.title,
+            source_url=command.source_url,
+            host=HostKind(command.host),
+            default_branch=VersionRef(command.default_branch) if command.default_branch else None,
+            settings=LibrarySettings(
+                include_paths=tuple(command.include_paths),
+                exclude_paths=tuple(command.exclude_paths),
+            ),
+        )
+        await self.repository.save(library)
+        return LibraryDetail.from_model(library)
 
 
 @dataclass(frozen=True, slots=True)

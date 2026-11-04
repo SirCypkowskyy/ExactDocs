@@ -17,6 +17,11 @@ class _NoLibraryIds:
         return False
 
 
+class _NoLibraries:
+    async def add(self, library: object) -> str:
+        raise NotImplementedError
+
+
 class FakeClock:
     """A kernel ``Clock`` that moves one second on every reading."""
 
@@ -53,6 +58,7 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
             clock=clock,
             remote=MissingGit(),
             library_ids=_NoLibraryIds(),
+            libraries=_NoLibraries(),
             handlers=handlers or {},
             recovery_hooks=recovery_hooks or {},
         )

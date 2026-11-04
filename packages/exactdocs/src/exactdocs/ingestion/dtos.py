@@ -5,7 +5,14 @@ from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from exactdocs.ingestion.models import FileProblem, Job, JobState, RepositoryHost
+from exactdocs.ingestion.models import (
+    FileProblem,
+    Job,
+    JobState,
+    RefKind,
+    RepositoryHost,
+    ResolvedRef,
+)
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
 
 
@@ -32,6 +39,7 @@ class JobSummary(_Dto):
     kind: str
     library: str
     version: str | None
+    commit_sha: str | None = Field(description="The commit `version` was pinned to, if any.")
     state: JobState
     done: int
     total: int
@@ -49,6 +57,7 @@ class JobSummary(_Dto):
             kind=job.kind,
             library=job.library,
             version=job.version,
+            commit_sha=job.commit_sha,
             state=job.state,
             done=job.done,
             total=job.total,
@@ -82,6 +91,7 @@ class EnqueueJobCommand(_Dto):
     kind: str = Field(min_length=1)
     library: str = Field(min_length=1)
     version: str | None = Field(default=None, min_length=1)
+    commit_sha: str | None = Field(default=None, min_length=1)
 
 
 class GetJobQuery(_Dto):
@@ -117,3 +127,74 @@ class CheckedRepository(_Dto):
     default_branch: str | None = Field(
         description="The branch `HEAD` points at; null for an empty repository."
     )
+
+
+class AddLibraryCommand(_Dto):
+    """Create a library from a git repository, with its doc selection, and queue its import."""
+
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description=CheckRepositoryCommand.model_fields["url"].description,
+    )
+    library_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="`/owner/repo`; omitted: the one proposed from the URL.",
+    )
+    ref: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="A tag, a branch or a full or short commit SHA; omitted: the default branch.",
+    )
+    include_paths: list[str] = Field(
+        default_factory=list,
+        description="Folders, files or globs to import; empty: every `.md`/`.mdx` file.",
+    )
+    exclude_paths: list[str] = Field(
+        default_factory=list, description="Folders, files or globs to leave out; they win."
+    )
+
+
+class AddedLibrary(_Dto):
+    """The new library, the commit its ref was pinned to, and the queued import."""
+
+    library_id: str
+    ref: str = Field(description="The tag or branch name, or the full SHA of a commit.")
+    ref_kind: RefKind
+    commit_sha: str
+    job_id: str
+
+    @classmethod
+    def of(cls, library_id: str, resolved: ResolvedRef, job: JobSummary) -> Self:
+        """Combine the pieces of a created library."""
+        return cls(
+            library_id=library_id,
+            ref=resolved.name,
+            ref_kind=resolved.kind,
+            commit_sha=resolved.commit_sha,
+            job_id=job.id,
+        )
+
+
+class ListRepositoryRefsQuery(_Dto):
+    """Ask a repository for its tags and branches."""
+
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class RefOut(_Dto):
+    """A tag or branch and the commit it points at."""
+
+    name: str
+    commit_sha: str
+
+
+class RepositoryRefs(_Dto):
+    """What a repository offers as a ref, for the picker. Sorted by name."""
+
+    default_branch: str | None
+    branches: list[RefOut]
+    tags: list[RefOut]

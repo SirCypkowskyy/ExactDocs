@@ -111,3 +111,51 @@ class InvalidProgressError(ValidationError):
 
     def __init__(self, done: int, total: int) -> None:
         super().__init__(f"progress {done} of {total} is not valid")
+
+
+class PatternProblem(StrEnum):
+    """Why a path pattern is refused."""
+
+    EMPTY = "a pattern is empty, too long or has control characters"
+    PATH = "a pattern must use '/' and no '..' parts"
+    BRACE = "a pattern has a '{' without its '}'"
+    TOO_MANY = "too many patterns"
+
+
+class InvalidPathPatternError(ValidationError):
+    """A path pattern of the doc selection cannot be used."""
+
+    code = "invalid_path_pattern"
+
+    def __init__(self, problem: PatternProblem) -> None:
+        super().__init__(f"invalid path pattern: {problem.value}")
+
+
+class UnknownRefError(ValidationError):
+    """The repository has no tag, branch or commit like the requested ref."""
+
+    code = "unknown_ref"
+
+    def __init__(self, ref: str | None) -> None:
+        if ref is None:
+            super().__init__("the repository has no default branch: choose a tag or branch")
+        else:
+            super().__init__(f"the repository has no tag, branch or commit {ref!r}")
+
+
+class AmbiguousRefError(ValidationError):
+    """A short commit SHA starts more than one commit."""
+
+    code = "ambiguous_ref"
+
+    def __init__(self, prefix: str) -> None:
+        super().__init__(f"commit {prefix!r} is ambiguous: use more characters of the SHA")
+
+
+class ImportNotAvailableError(DomainError):
+    """Placeholder until the importer exists (E3-05a): the job is queued but cannot run."""
+
+    code = "import_not_available"
+
+    def __init__(self) -> None:
+        super().__init__("importing articles is not available in this version yet")

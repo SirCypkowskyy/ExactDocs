@@ -141,3 +141,13 @@ class ManifestOutdatedError(ConflictError):
     def __init__(self, manifest_id: str) -> None:
         super().__init__(f"manifest {manifest_id!r} is older than the active manifest")
         self.manifest_id = manifest_id
+
+
+class LibraryAlreadyExistsError(ConflictError):
+    """A library with this ID is already in the catalog."""
+
+    code = "library_id_taken"
+
+    def __init__(self, library_id: str) -> None:
+        super().__init__(f"library {library_id!r} already exists: choose another library ID")
+        self.library_id = library_id

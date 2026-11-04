@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from exactdocs.ingestion.dtos import (
+    AddedLibrary,
+    AddLibraryCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     EnqueueJobCommand,
@@ -13,16 +15,33 @@ from exactdocs.ingestion.dtos import (
     JobList,
     JobSummary,
     ListLibraryJobsQuery,
+    ListRepositoryRefsQuery,
+    RefOut,
+    RepositoryRefs,
 )
 from exactdocs.ingestion.errors import JobNotFoundError, LibraryIdTakenError, UnknownJobKindError
-from exactdocs.ingestion.models import Job, JobId, JobKind, RepositoryUrl
+from exactdocs.ingestion.models import (
+    IMPORT_JOB,
+    Job,
+    JobId,
+    JobKind,
+    NewLibrary,
+    PathSelection,
+    ProposedId,
+    RefKind,
+    RepositoryUrl,
+    ref_tips,
+    resolve_ref,
+)
 from exactdocs.ingestion.ports.driven import (
     GitRemote,
     JobHandler,
     JobRepository,
     LibraryIds,
+    NewLibraries,
     RecoveryHook,
 )
+from exactdocs.ingestion.ports.driving import EnqueueJob
 from exactdocs_kernel import Clock, DomainError, paginate
 
 log = logging.getLogger(__name__)
@@ -46,6 +65,7 @@ class EnqueueJobUseCase:
             kind=kind,
             library=command.library,
             version=command.version,
+            commit_sha=command.commit_sha,
             now=self.clock.now(),
         )
         await self.jobs.add(job)
@@ -189,3 +209,69 @@ class CheckRepositoryUseCase:
             library_id=repository.library_id,
             default_branch=refs.default_branch,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ListRepositoryRefsUseCase:
+    """Implements ``ports.driving.ListRepositoryRefs``."""
+
+    remote: GitRemote
+
+    async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
+        """Parse the URL and list what the remote advertises (no pagination: one repo's refs)."""
+        refs = await self.remote.list_refs(RepositoryUrl.parse(query.url))
+        tips = ref_tips(refs)
+        return RepositoryRefs(
+            default_branch=refs.default_branch,
+            branches=[
+                RefOut(name=t.name, commit_sha=t.commit_sha)
+                for t in tips
+                if t.kind is RefKind.BRANCH
+            ],
+            tags=[
+                RefOut(name=t.name, commit_sha=t.commit_sha) for t in tips if t.kind is RefKind.TAG
+            ],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AddLibraryUseCase:
+    """Implements ``ports.driving.AddLibrary``."""
+
+    remote: GitRemote
+    library_ids: LibraryIds
+    libraries: NewLibraries
+    enqueue_job: EnqueueJob
+
+    async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
+        """Check everything that can be checked first, then store the library and queue its import.
+
+        ponytail: if queueing fails after the library is stored, the library stays without an
+        import; E9-01's sync is the way to import it again.
+        """
+        repository = RepositoryUrl.parse(command.url)
+        selection = PathSelection.of(command.include_paths, command.exclude_paths)
+        library_id = ProposedId(command.library_id or repository.library_id)
+        if await self.library_ids.is_taken(library_id):
+            raise LibraryIdTakenError(library_id)
+        refs = await self.remote.list_refs(repository)
+        resolved = resolve_ref(refs, command.ref)
+        created = await self.libraries.add(
+            NewLibrary(
+                library_id=library_id,
+                title=library_id.rsplit("/", 1)[-1],
+                source_url=repository.url,
+                host=repository.host_kind,
+                default_branch=refs.default_branch,
+                selection=selection,
+            )
+        )
+        job = await self.enqueue_job(
+            EnqueueJobCommand(
+                kind=IMPORT_JOB,
+                library=created,
+                version=resolved.name,
+                commit_sha=resolved.commit_sha,
+            )
+        )
+        return AddedLibrary.of(created, resolved, job)
