@@ -7,8 +7,8 @@ export type TagCount = components["schemas"]["TagList"];
 
 /** The API's input caps (docs/rest-api.md): the query is 1000 characters, a filter 20 tags. */
 export const MAX_QUERY = 1000;
-export const MAX_TAGS = 20;
-export const MAX_TAG_LENGTH = 100;
+const MAX_TAGS = 20;
+const MAX_TAG_LENGTH = 100;
 
 /** The query as sent: surrounding space dropped, capped; `undefined` when nothing is left. */
 export function normalizeQuery(raw: string | undefined): string | undefined {

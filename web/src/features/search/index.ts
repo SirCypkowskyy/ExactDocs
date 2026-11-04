@@ -2,4 +2,3 @@
 
 export { SearchBox } from "./components/search-box";
 export { SearchResults } from "./components/search-results";
-export type { SearchContext } from "./model/context";

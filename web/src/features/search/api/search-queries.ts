@@ -4,7 +4,7 @@ import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { type SearchResults, sendableTags, type TagCount, type TagMatch } from "../model/search";
 
 /** One screen of hits; the API allows 50. */
-export const SEARCH_LIMIT = 20;
+const SEARCH_LIMIT = 20;
 
 export interface SearchArgs {
   owner: string;

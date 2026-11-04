@@ -6,7 +6,13 @@ import { cn } from "@/shared/lib/utils";
 import { searchQueryOptions } from "../api/search-queries";
 import { useSearchNav } from "../hooks/use-search-nav";
 import type { SearchContext } from "../model/context";
-import { countLabel, highlightPieces, parseTags, type SearchHit } from "../model/search";
+import {
+  countLabel,
+  highlightPieces,
+  parseTags,
+  type SearchHit,
+  type SearchResults as SearchResultData,
+} from "../model/search";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
 
 const retry =
@@ -148,6 +154,70 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
   );
 }
 
+function onArrows(event: KeyboardEvent<HTMLElement>) {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const links = [...event.currentTarget.querySelectorAll<HTMLElement>("a[data-result]")];
+  const at = links.indexOf(document.activeElement as HTMLElement);
+  if (at < 0) return;
+  event.preventDefault();
+  if (event.key === "ArrowUp" && at === 0) document.getElementById(INPUT_ID)?.focus();
+  else
+    links[
+      Math.min(Math.max(at + (event.key === "ArrowDown" ? 1 : -1), 0), links.length - 1)
+    ]?.focus();
+}
+
+function HitList({
+  data,
+  ctx,
+  stale,
+}: {
+  data: SearchResultData;
+  ctx: SearchContext;
+  stale: boolean;
+}) {
+  const count = data.results.length;
+  const noun = `${data.coverage.complete ? "" : "Top "}${count} ${count === 1 ? "result" : "results"}`;
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
+    <div onKeyDown={onArrows}>
+      <p aria-hidden="true" className="mb-4 text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">{noun}</span> in{" "}
+        <span className="font-mono">{ctx.ref}</span>
+      </p>
+      <ul
+        className={cn(
+          "divide-y divide-border transition-opacity duration-150",
+          stale && "opacity-60",
+        )}
+      >
+        {data.results.map((hit) => (
+          <Hit key={hit.chunk_id} hit={hit} ctx={ctx} />
+        ))}
+      </ul>
+      {!data.coverage.complete && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Showing the best {count}. More sections match: add a tag or a more specific word.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="max-w-xl">
+      <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
+      <p className="mt-2 text-muted-foreground">
+        Couldn't search {refName}. Your query is kept; try again in a moment.
+      </p>
+      <button type="button" className={retry} onClick={onRetry}>
+        Try again
+      </button>
+    </div>
+  );
+}
+
 /** The hits for the URL's query in the selected version. */
 export function SearchResults({ ctx }: { ctx: SearchContext }) {
   const heading = useId();
@@ -159,66 +229,16 @@ export function SearchResults({ ctx }: { ctx: SearchContext }) {
   if (q === undefined) return null;
 
   const data = result.data;
-  // After a failed refetch the old hits may be for another query: never show them under this one.
+  // While a new query loads the old hits stay (dimmed) so the page does not jump.
   const stale = data !== undefined && (result.isPlaceholderData || result.isFetching);
   const settled = data !== undefined && !stale;
 
-  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    const links = [...event.currentTarget.querySelectorAll<HTMLElement>("a[data-result]")];
-    const at = links.indexOf(document.activeElement as HTMLElement);
-    if (at < 0) return;
-    event.preventDefault();
-    if (event.key === "ArrowUp" && at === 0) document.getElementById(INPUT_ID)?.focus();
-    else
-      links[
-        Math.min(Math.max(at + (event.key === "ArrowDown" ? 1 : -1), 0), links.length - 1)
-      ]?.focus();
-  }
+  let body: React.ReactNode = <Skeleton />;
+  if (result.isError && !stale)
+    body = <Failed refName={ctx.ref} onRetry={() => void result.refetch()} />;
+  else if (data && data.results.length > 0) body = <HitList data={data} ctx={ctx} stale={stale} />;
+  else if (data && settled) body = <NoResults ctx={ctx} q={q} />;
 
-  let body: React.ReactNode;
-  if (result.isError && !stale) {
-    body = (
-      <div role="alert" className="max-w-xl">
-        <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
-        <p className="mt-2 text-muted-foreground">
-          Couldn't search {ctx.ref}. Your query is kept; try again in a moment.
-        </p>
-        <button type="button" className={retry} onClick={() => void result.refetch()}>
-          Try again
-        </button>
-      </div>
-    );
-  } else if (data === undefined) {
-    body = <Skeleton />;
-  } else if (data.results.length === 0) {
-    body = settled ? <NoResults ctx={ctx} q={q} /> : <Skeleton />;
-  } else {
-    body = (
-      // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
-      <div onKeyDown={onKeyDown}>
-        <ul
-          className={cn(
-            "divide-y divide-border transition-opacity duration-150",
-            stale && "opacity-60",
-          )}
-        >
-          {data.results.map((hit) => (
-            <Hit key={hit.chunk_id} hit={hit} ctx={ctx} />
-          ))}
-        </ul>
-        {!data.coverage.complete && (
-          <p className="mt-4 text-sm text-muted-foreground">
-            Showing the best {data.results.length}. More sections match: add a tag or a more
-            specific word.
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  const count = data?.results.length ?? 0;
-  const countText = `${data && !data.coverage.complete ? "Top " : ""}${count} ${count === 1 ? "result" : "results"}`;
   return (
     <section
       id={RESULTS_ID}
@@ -229,16 +249,10 @@ export function SearchResults({ ctx }: { ctx: SearchContext }) {
       <h2 id={heading} className="sr-only">
         Search results
       </h2>
-      {/* Announced once per settled result set; the visible summary below is not live. */}
+      {/* Announced once per settled result set; the visible summary is not live. */}
       <p role="status" className="sr-only">
-        {settled && data ? countLabel(count, q, ctx.ref, data.coverage.complete) : ""}
+        {settled ? countLabel(data.results.length, q, ctx.ref, data.coverage.complete) : ""}
       </p>
-      {data && data.results.length > 0 && (
-        <p aria-hidden="true" className="mb-4 text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">{countText}</span> in{" "}
-          <span className="font-mono">{ctx.ref}</span>
-        </p>
-      )}
       {body}
     </section>
   );
