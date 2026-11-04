@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TestRouter } from "@/test/router";
+import { TestRouter } from "@/shared/lib/test-router";
 import { LibrariesPage } from "./index";
 import { orderedVersions, syncOf } from "./model/library";
 import { relativeTime } from "./model/time";

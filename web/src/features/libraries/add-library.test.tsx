@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
-import { TestRouter } from "@/test/router";
+import { TestRouter } from "@/shared/lib/test-router";
 import { AddLibraryPage, LibrariesPage } from "./index";
 import {
   explainAddError,
@@ -106,6 +106,7 @@ function renderAdd() {
       />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 async function checkRepo(url = URL_) {
@@ -224,7 +225,9 @@ describe("add library flow", () => {
     serve({ refs: () => ({ status: 200, body: { ...REFS, truncated: true } }) });
     renderAdd();
     await checkRepo();
-    expect(await screen.findByText(/only the first 1000 of each are listed/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Only the first 1000 branches and 1000 tags are listed/),
+    ).toBeInTheDocument();
   });
 
   it("filters a long ref list and lets the user type any ref", async () => {
@@ -352,9 +355,9 @@ describe("add library flow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add a tag rule" }));
     await userEvent.type(screen.getByLabelText("Path for tag rule 1"), "docs/**");
     await userEvent.type(screen.getByLabelText("Tag for rule 1"), "Bad Tag");
-    expect(screen.queryByText(/Lower-case letters/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/lower-case letters/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
-    expect(await screen.findByText(/Lower-case letters/)).toBeInTheDocument();
+    expect(await screen.findByText(/lower-case letters/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Tag for rule 1")).toHaveFocus());
   });
 
@@ -386,11 +389,11 @@ describe("add library flow", () => {
       ],
     });
     await screen.findByRole("heading", { name: /^Imported \// }, { timeout: 4000 });
-    expect(live).toHaveTextContent("Import finished. 4 files imported, 2 files skipped.");
-    expect(screen.getByRole("heading", { name: /Skipped files \(2\)/ })).toBeInTheDocument();
+    expect(live).toHaveTextContent("Import finished. 4 files imported, 2+ skipped.");
+    expect(screen.getByRole("heading", { name: /Skipped files \(2\+\)/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Binary files/ })).toBeInTheDocument();
     expect(screen.getByText("docs/huge.md")).toBeInTheDocument();
-    expect(screen.getByText(/More files were skipped than are listed/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing the first 2 skipped files/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Imported with a note/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to libraries" })).toHaveAttribute("href", "/");
   }, 10_000);
@@ -405,7 +408,12 @@ describe("add library flow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
     expect(await screen.findByRole("heading", { name: /Import failed/ })).toBeInTheDocument();
     expect(screen.getByText("git fetch failed: HTTP 403")).toBeInTheDocument();
-    expect(screen.getByText("Stopped after 2 files")).toBeInTheDocument();
+    expect(screen.getByText("Details from the server")).toBeInTheDocument();
+    expect(screen.getByText(/sync it again from the libraries page/)).toBeInTheDocument();
+    // "Add another" would walk straight into library_id_taken.
+    expect(screen.queryByRole("button", { name: "Add another" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to libraries" })).toBeInTheDocument();
+    expect(screen.getByText("Stopped after 2 of 4 files")).toBeInTheDocument();
     expect(screen.queryByText(/Skipped files/)).not.toBeInTheDocument();
   });
 
@@ -417,6 +425,279 @@ describe("add library flow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
     await userEvent.click(await screen.findByRole("button", { name: "Add another" }));
     expect(await screen.findByLabelText("Repository address")).toHaveValue("");
+  });
+});
+
+async function addDefault() {
+  await checkRepo();
+  await screen.findByLabelText("Version to import");
+  await userEvent.click(screen.getByRole("button", { name: "Add library" }));
+}
+
+describe("add library flow, review fixes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends a ref typed after the refs request failed", async () => {
+    const { create } = serve({ refs: () => err(500, "boom") });
+    renderAdd();
+    await checkRepo();
+    const typed = await screen.findByLabelText("Branch, tag or commit", {}, { timeout: 6000 });
+    await userEvent.type(typed, "v1.2.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add library" }));
+    await waitFor(() => expect(create.mock.calls[0]?.[0]).toMatchObject({ ref: "v1.2.0" }));
+  }, 10_000);
+
+  it("focuses the typed ref when the server refuses it", async () => {
+    serve({ refs: () => err(500, "boom"), create: () => err(422, "unknown_ref") });
+    renderAdd();
+    await checkRepo();
+    await userEvent.type(
+      await screen.findByLabelText("Branch, tag or commit", {}, { timeout: 6000 }),
+      "nope",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add library" }));
+    await waitFor(() => expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus());
+    expect(screen.getByLabelText("Branch, tag or commit")).toHaveAccessibleDescription(
+      /no branch, tag or commit/,
+    );
+  }, 10_000);
+
+  it("names the typed-ref input and moves focus to it", async () => {
+    serve();
+    renderAdd();
+    await checkRepo();
+    await userEvent.selectOptions(await screen.findByLabelText("Version to import"), "other");
+    await waitFor(() => expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus());
+  });
+
+  it("does not submit when Enter is pressed in the ref filter, and selects a single match", async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: `v1.${i}.0`, commit_sha: SHA }));
+    const { create } = serve({ refs: () => ({ status: 200, body: { ...REFS, tags: many } }) });
+    renderAdd();
+    await checkRepo();
+    const filter = await screen.findByLabelText("Filter branches and tags");
+    await userEvent.type(filter, "v1.2");
+    expect(screen.getByText(/\d+ of 32 match/)).toBeInTheDocument();
+    await userEvent.type(filter, "7.0{Enter}");
+    expect(create).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Version to import")).toHaveValue("tag:v1.27.0");
+  });
+
+  it("refreshes the library list and the job feed once the import is over", async () => {
+    serve();
+    const qc = renderAdd();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    await addDefault();
+    await screen.findByRole("heading", { name: /^Imported \// });
+    const keys = spy.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    expect(keys.filter((k) => k === '["libraries","list"]').length).toBeGreaterThanOrEqual(2);
+    expect(keys.filter((k) => k === '["libraries","latest-jobs"]').length).toBeGreaterThanOrEqual(
+      2,
+    );
+    expect(keys).not.toContain('["libraries"]');
+  });
+
+  it("sends one request for two submits in the same tick", async () => {
+    const { create } = serve();
+    renderAdd();
+    await checkRepo();
+    await screen.findByLabelText("Version to import");
+    const form = screen
+      .getByRole("button", { name: "Add library" })
+      .closest("form") as HTMLFormElement;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    await screen.findByRole("heading", { name: /^Imported \// });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the user re-check right after editing the address of a slow check", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let first = true;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/v1/repositories/check")) {
+        if (first) {
+          first = false;
+          await gate;
+        }
+        return Response.json({ host: "github", library_id: "/acme/other", default_branch: "main" });
+      }
+      return Response.json(REFS);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAdd();
+    await checkRepo();
+    expect(screen.getByRole("button", { name: "Checking" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await userEvent.type(screen.getByLabelText("Repository address"), "2");
+    const button = screen.getByRole("button", { name: "Check repository" });
+    expect(button).toHaveAttribute("aria-disabled", "false");
+    await userEvent.click(button);
+    expect(await screen.findByLabelText("Library ID")).toHaveValue("/acme/other");
+    release();
+    // The stale answer must not overwrite the newer one.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByLabelText("Library ID")).toHaveValue("/acme/other");
+  });
+
+  it("forgets an old refusal when the address changes", async () => {
+    serve({ create: () => err(409, "library_id_taken") });
+    renderAdd();
+    await addDefault();
+    await screen.findByText(/already used/);
+    await userEvent.type(screen.getByLabelText("Repository address"), "x");
+    await userEvent.click(screen.getByRole("button", { name: "Check repository" }));
+    await screen.findByLabelText("Library ID");
+    expect(screen.queryByText(/already used/)).not.toBeInTheDocument();
+  });
+
+  it("rejects an address over 2048 characters before asking", async () => {
+    const { fetchMock } = serve();
+    renderAdd();
+    await userEvent.click(await screen.findByLabelText("Repository address"));
+    await userEvent.paste(`https://github.com/${"a".repeat(2100)}`);
+    await userEvent.click(screen.getByRole("button", { name: "Check repository" }));
+    expect(await screen.findByText(/too long/)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not blame the server for a refused form", async () => {
+    serve({ create: () => err(422, "something_new") });
+    renderAdd();
+    await addDefault();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check the form and try again");
+  });
+
+  it("puts a no_articles refusal at the paths and opens them", async () => {
+    serve({ create: () => err(422, "no_articles") });
+    renderAdd();
+    await addDefault();
+    const box = await screen.findByLabelText("Only these paths");
+    await waitFor(() => expect(box).toHaveFocus());
+    expect(box).toHaveAccessibleDescription(/No Markdown files match/);
+  });
+
+  it("gives each path box its own message", async () => {
+    serve();
+    renderAdd();
+    await checkRepo();
+    await screen.findByLabelText("Version to import");
+    await userEvent.click(screen.getByText("Choose files and tags"));
+    await userEvent.type(screen.getByLabelText("Leave out"), "../secrets");
+    await userEvent.click(screen.getByRole("button", { name: "Add library" }));
+    const exclude = await screen.findByLabelText("Leave out");
+    expect(exclude).toHaveAttribute("aria-invalid", "true");
+    expect(exclude).toHaveAccessibleDescription(/uses “\.\.”/);
+    expect(screen.getByLabelText("Only these paths")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("focuses an invalid tag refused by the server", async () => {
+    serve({ create: () => err(422, "invalid_tag") });
+    renderAdd();
+    await addDefault();
+    expect(await screen.findByText(/A tag isn't valid/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add a tag rule" })).toHaveFocus(),
+    );
+  });
+
+  it("stops polling when the job is gone and says so", async () => {
+    const { fetchMock } = serve();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/v1/jobs/j1"))
+        return Response.json(err(404, "unknown_job").body, { status: 404 });
+      if (url.endsWith("/v1/repositories/check"))
+        return Response.json({
+          host: "github",
+          library_id: "/acme/payments",
+          default_branch: "main",
+        });
+      if (url.includes("/v1/repositories/refs")) return Response.json(REFS);
+      if (init?.method === "POST")
+        return Response.json(
+          {
+            library_id: "/acme/payments",
+            ref: "main",
+            ref_kind: "branch",
+            commit_sha: SHA,
+            job_id: "j1",
+          },
+          { status: 201 },
+        );
+      return new Response("{}", { status: 404 });
+    });
+    renderAdd();
+    await addDefault();
+    expect(await screen.findByText(/can't find this import any more/)).toBeInTheDocument();
+    const calls = () =>
+      fetchMock.mock.calls.filter(([u]) => String(u).includes("/v1/jobs/")).length;
+    const seen = calls();
+    await new Promise((r) => setTimeout(r, 1800));
+    expect(calls()).toBe(seen);
+  }, 10_000);
+
+  it("keeps polling through a network failure and says contact was lost", async () => {
+    const { fetchMock } = serve();
+    const original = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/v1/jobs/j1")) throw new TypeError("offline");
+      return original?.(url, init) as Promise<Response>;
+    });
+    renderAdd();
+    await addDefault();
+    expect(
+      await screen.findByText("Lost contact, retrying…", {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
+  }, 10_000);
+
+  it("stops polling once the import has finished", async () => {
+    const { fetchMock } = serve();
+    renderAdd();
+    await addDefault();
+    await screen.findByRole("heading", { name: /^Imported \// });
+    const calls = () =>
+      fetchMock.mock.calls.filter(([u]) => String(u).includes("/v1/jobs/")).length;
+    const seen = calls();
+    await new Promise((r) => setTimeout(r, 1800));
+    expect(calls()).toBe(seen);
+  }, 10_000);
+
+  it("shows an unknown skip code with the server's own sentence", async () => {
+    serve({
+      job: () =>
+        job({
+          problems: [
+            {
+              path: "docs/x.md",
+              code: "brand_new",
+              reason: "Something we have no word for",
+              is_skip: true,
+            },
+          ],
+        }),
+    });
+    renderAdd();
+    await addDefault();
+    expect(await screen.findByText("Something we have no word for")).toBeInTheDocument();
+  });
+
+  it("says 30+ skipped files fold away and count honestly", async () => {
+    const problems = Array.from({ length: 40 }, (_, i) => ({
+      path: `docs/b${i}.md`,
+      code: "binary",
+      reason: "x",
+      is_skip: true,
+    }));
+    serve({ job: () => job({ problems }) });
+    renderAdd();
+    await addDefault();
+    expect(await screen.findByText(/Skipped files/, { selector: "summary" })).toBeInTheDocument();
+    expect(screen.getAllByText("(40)").length).toBeGreaterThan(0);
   });
 });
 

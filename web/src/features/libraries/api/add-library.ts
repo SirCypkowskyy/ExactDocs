@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getJson, sendJson } from "@/shared/lib/http";
+import { getJson, HttpError, sendJson } from "@/shared/lib/http";
 import type {
   AddedLibrary,
   AddLibraryCommand,
@@ -30,5 +30,10 @@ export const importJobQueryOptions = (id: string) =>
   queryOptions({
     queryKey: [...librariesKeys.job(id), "progress"] as const,
     queryFn: ({ signal }) => getJson<Job>(`/v1/jobs/${encodeURIComponent(id)}`, { signal }),
-    refetchInterval: (query) => (query.state.data && !live(query.state.data.state) ? false : 1500),
+    refetchInterval: (query) => {
+      const { data, error } = query.state;
+      // A 4xx will not fix itself; only a live job or a network/server hiccup is worth polling.
+      if (error instanceof HttpError && error.status < 500) return false;
+      return data && !live(data.state) ? false : 1500;
+    },
   });

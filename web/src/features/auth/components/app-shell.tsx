@@ -1,4 +1,4 @@
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useSession } from "../hooks/use-session";
 import { SignOutButton } from "./sign-out-button";
@@ -10,6 +10,10 @@ const navLink =
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const session = useSession();
+  // Libraries owns `/` and everything under `/libraries`, so the tab stays lit on the add screen.
+  const inLibraries = useLocation({
+    select: (l) => l.pathname === "/" || l.pathname.startsWith("/libraries"),
+  });
 
   return (
     <div className="min-h-dvh">
@@ -18,7 +22,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           ExactDocs
         </Link>
         <nav aria-label="Main" className="flex gap-0.5">
-          <Link to="/" activeOptions={{ exact: true }} className={navLink}>
+          <Link
+            to="/"
+            activeOptions={{ exact: true }}
+            className={navLink}
+            {...(inLibraries && { "aria-current": "page" as const })}
+          >
             Libraries
           </Link>
           <Link to="/account" className={navLink}>

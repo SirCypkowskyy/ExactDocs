@@ -1,12 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Field } from "@/shared/ui/field";
+import { FormAlert } from "@/shared/ui/form-alert";
 import { signIn } from "../api/session-query";
 import { explainError, type FormProblem } from "../model/errors";
 import { safeNext, validateSignIn } from "../model/session";
 import { AuthLayout } from "./auth-layout";
 import { focusField } from "./focus-field";
-import { FORM_ALERT_ID, FormAlert, SubmitButton } from "./form-parts";
+import { FORM_ALERT_ID, SubmitButton } from "./form-parts";
 
 export function SignInPage({
   next,
@@ -49,7 +50,7 @@ export function SignInPage({
   return (
     <AuthLayout title="Sign in" intro="Sign in to this ExactDocs server.">
       <form onSubmit={submit} noValidate>
-        <FormAlert problem={problem} />
+        <FormAlert id={FORM_ALERT_ID} message={problem.message} link={problem.link} />
         <div className="flex flex-col gap-5">
           <Field
             id="username"

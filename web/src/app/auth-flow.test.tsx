@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppRouter } from "./router";
 
@@ -45,6 +45,26 @@ describe("the session guard", () => {
   it("keeps a signed-in visitor out of the auth pages", async () => {
     mount("/sign-in", (url) => json(url.endsWith("/libraries") ? libraries : signedIn));
     expect(await screen.findByRole("heading", { name: "Libraries" })).toBeInTheDocument();
+  });
+
+  it("keeps the Libraries tab lit on the add-library screen, and only there", async () => {
+    const api = (url: string) =>
+      json(
+        url.endsWith("/tokens")
+          ? { tokens: [] }
+          : url.endsWith("/libraries")
+            ? libraries
+            : signedIn,
+      );
+    mount("/libraries/new", api);
+    const nav = await screen.findByRole("navigation", { name: "Main" });
+    const tab = within(nav).getByRole("link", { name: "Libraries" });
+    expect(tab).toHaveAttribute("aria-current", "page");
+    cleanup();
+    mount("/account", api);
+    expect(await screen.findByRole("link", { name: "Libraries" })).not.toHaveAttribute(
+      "aria-current",
+    );
   });
 
   it("obeys the gate on unknown addresses before saying not found", async () => {

@@ -21,15 +21,19 @@ export interface AddProblem {
 }
 
 /** `https://github.com/acme/payments` or `git@host:org/repo.git`, no credentials. */
+const MAX_URL_LENGTH = 2048;
+
 export function validateUrl(raw: string): string | undefined {
   const url = raw.trim();
   if (!url) return "Paste the address of a git repository.";
+  if (url.length > MAX_URL_LENGTH)
+    return "That address is too long. Addresses can be up to 2048 characters.";
   if (/\s/.test(url)) return "An address has no spaces. Paste it again.";
   if (/^[a-z][a-z0-9+.-]*:\/\/[^/@]*@/i.test(url) && !/^ssh:\/\/git@/i.test(url)) {
     return "Remove the username and password from the address. Private repositories are not supported yet.";
   }
   if (!/^(https?:\/\/|ssh:\/\/|file:\/\/|[\w.-]+@[\w.-]+:)/i.test(url)) {
-    return "Start with https://, ssh:// or git@host:";
+    return "That isn't a repository address yet. Start with https://, like https://github.com/acme/payments.";
   }
   return undefined;
 }
@@ -76,7 +80,7 @@ export function validateRule(rule: TagRuleDraft): { pattern?: string; tag?: stri
   }
   if (!tag) problems.tag = "Add a tag, like api.";
   else if (tag.length > MAX_TAG_LENGTH || !TAG.test(tag)) {
-    problems.tag = "Lower-case letters, digits, . + - _ ; up to 40 characters.";
+    problems.tag = "Use lower-case letters, digits, and . + - _ (40 characters at most).";
   }
   return problems;
 }
@@ -206,7 +210,8 @@ export function explainAddError(error: unknown, ref: string | null): AddProblem 
     case "invalid_tag":
       return {
         field: "tags",
-        message: "A tag isn't valid. Lower-case letters, digits, . + - _ ; up to 40 characters.",
+        message:
+          "A tag isn't valid. Use lower-case letters, digits, and . + - _ (40 characters at most).",
       };
     case "invalid_repository_url":
     case "not_a_git_repository":
@@ -214,9 +219,15 @@ export function explainAddError(error: unknown, ref: string | null): AddProblem 
     case "repository_unreachable":
       return { ...explainCheckError(error), field: "url" };
     case "no_articles":
-      return { message: "That selection has no Markdown files. Widen the paths." };
+      return {
+        field: "paths",
+        message:
+          "No Markdown files match these paths. Widen them, or clear them to take every .md and .mdx file.",
+      };
     default:
-      return generic(error);
+      return error.status === 422
+        ? { message: "Check the form and try again. The server refused something in it." }
+        : generic(error);
   }
 }
 
@@ -293,3 +304,14 @@ export function validateForm(form: {
   });
   return { id, paths, badRule, ok: !id && !paths && !badRule };
 }
+
+/** Which path box holds a local mistake (the first one), if any. */
+export function badPathBox(include: string, exclude: string): "include" | "exclude" | undefined {
+  if (validatePatterns(include)) return "include";
+  if (validatePatterns(exclude)) return "exclude";
+  return undefined;
+}
+
+/** `1000` listed and a truncation marker: the real count is higher, so say "1000+". */
+export const skippedLabel = (summary: ProblemSummary) =>
+  summary.truncated ? `${summary.skipped}+` : String(summary.skipped);

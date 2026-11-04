@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@/shared/ui/button";
-import { FormAlert as SharedFormAlert } from "@/shared/ui/form-alert";
-import type { FormProblem } from "../model/errors";
 
 export const FORM_ALERT_ID = "form-alert";
-
-export const FormAlert = ({ problem }: { problem: FormProblem }) => (
-  <SharedFormAlert id={FORM_ALERT_ID} message={problem.message} link={problem.link} />
-);
 
 /** `aria-disabled` while busy keeps focus on the button; the form handler ignores repeat submits. */
 export function SubmitButton({

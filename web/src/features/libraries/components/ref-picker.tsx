@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, CircleAlert } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Input } from "@/shared/ui/input";
 import { repositoryRefsQueryOptions } from "../api/add-library";
 import {
@@ -13,7 +13,7 @@ import {
 
 const FILTER_FROM = 15;
 const selectClass =
-  "h-11 w-full cursor-pointer appearance-none rounded-md border border-input bg-secondary pr-10 pl-3 text-base outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 aria-invalid:border-destructive";
+  "h-11 w-full cursor-pointer appearance-none rounded-md border border-input bg-secondary pr-10 pl-3 text-base outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive aria-invalid:ring-destructive/25";
 
 interface Props {
   url: string;
@@ -21,6 +21,8 @@ interface Props {
   typed: string;
   error: string | undefined;
   onChoice: (choice: RefChoice) => void;
+  /** The list could not be loaded: only typing a version is left. */
+  onUnavailable: () => void;
   onTyped: (value: string) => void;
 }
 
@@ -43,7 +45,7 @@ function Select({
   return (
     <>
       {many && (
-        <div className="mb-2">
+        <div className="mb-1">
           <label htmlFor="ref-filter" className="sr-only">
             Filter branches and tags
           </label>
@@ -53,8 +55,29 @@ function Select({
             autoComplete="off"
             placeholder="Filter branches and tags"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter here means "apply the filter", never "add the library".
+              if (e.key === "Enter") e.preventDefault();
+            }}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              const hits = [
+                ...filterRefs(refs.branches, e.target.value).map((r) => ({
+                  kind: "branch" as const,
+                  name: r.name,
+                })),
+                ...filterRefs(refs.tags, e.target.value).map((r) => ({
+                  kind: "tag" as const,
+                  name: r.name,
+                })),
+              ];
+              if (e.target.value.trim() && hits.length === 1 && hits[0]) onChoice(hits[0]);
+            }}
           />
+          <p role="status" className="mt-1 min-h-5 text-sm text-muted-foreground tabular-nums">
+            {query.trim() &&
+              `${branches.length + tags.length} of ${refs.branches.length + refs.tags.length} match`}
+          </p>
         </div>
       )}
       <div className="relative">
@@ -109,10 +132,14 @@ function Select({
 }
 
 /** Branch and tag picker for the repository that was just checked. */
-export function RefPicker({ url, choice, typed, error, onChoice, onTyped }: Props) {
+export function RefPicker({ url, choice, typed, error, onChoice, onUnavailable, onTyped }: Props) {
   const { data, isPending, isError, refetch, isFetching } = useQuery(
     repositoryRefsQueryOptions(url),
   );
+  // Without a list the only way to name a version is to type it, so the typed value must count.
+  useEffect(() => {
+    if (isError) onUnavailable();
+  }, [isError, onUnavailable]);
   const message = error ? (
     <p id="ref-error" className="fade-in text-sm font-medium text-destructive">
       {error}
@@ -135,22 +162,18 @@ export function RefPicker({ url, choice, typed, error, onChoice, onTyped }: Prop
         </p>
       )}
       {isError && (
-        <>
-          <p className="text-sm text-muted-foreground">
-            Couldn't load the branches and tags.{" "}
-            <button
-              type="button"
-              onClick={() => void refetch()}
-              aria-disabled={isFetching}
-              className="min-h-11 rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-            >
-              Try again
-            </button>
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Or leave this empty to use the default branch.
-          </p>
-        </>
+        <p className="text-sm text-muted-foreground">
+          Couldn't load branches and tags. Type a version below, or leave it empty for the default
+          branch.{" "}
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            aria-disabled={isFetching}
+            className="min-h-11 rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+          >
+            Try again
+          </button>
+        </p>
       )}
       {data && <Select refs={data} choice={choice} error={error} onChoice={onChoice} />}
       {(choice.kind === "other" || isError) && (
@@ -160,16 +183,35 @@ export function RefPicker({ url, choice, typed, error, onChoice, onTyped }: Prop
           autoComplete="off"
           spellCheck={false}
           placeholder="v1.4.0, release/2, or a commit SHA"
+          aria-label="Branch, tag or commit"
           aria-invalid={error ? true : undefined}
           aria-describedby={["ref-hint", error && "ref-error"].filter(Boolean).join(" ")}
           onChange={(e) => onTyped(e.target.value)}
           className="mt-1 font-mono text-[15px]"
         />
       )}
-      <p id="ref-hint" className="text-sm text-muted-foreground">
-        {data?.truncated
-          ? "This repository has more than 1000 branches or tags, so only the first 1000 of each are listed. Pick “Another ref or commit…” for the rest."
-          : "The import is pinned to this commit, so the docs stay exact."}
+      <p
+        id="ref-hint"
+        className={
+          data?.truncated
+            ? "flex items-start gap-1.5 text-sm text-foreground"
+            : "text-sm text-muted-foreground"
+        }
+      >
+        {data?.truncated ? (
+          <>
+            <CircleAlert
+              aria-hidden="true"
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+            />
+            <span>
+              Only the first 1000 branches and 1000 tags are listed. Pick “Another ref or commit…”
+              for the rest.
+            </span>
+          </>
+        ) : (
+          "The version is pinned to the commit it points to today, so the docs stay exact."
+        )}
       </p>
       {message}
     </div>

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useCallback, useRef, useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
@@ -43,7 +43,6 @@ const FOCUS: Record<AddField, string> = {
   tags: "add-rule",
 };
 
-/** Focus goes to the first mistake, in the order the form reads. */
 function RepoFound({ checked }: { checked: Checked | undefined }) {
   return (
     <p role="status" className="min-h-5 text-sm text-muted-foreground">
@@ -84,6 +83,7 @@ function SubmitButton({ pending, checked }: { pending: boolean; checked: boolean
   );
 }
 
+/** Focus goes to the first mistake, in the order the form reads. */
 function focusFirstMistake(form: { id?: string | undefined; paths?: string | undefined }) {
   const target =
     (form.id && "library-id") ||
@@ -115,6 +115,10 @@ export function AddLibraryPage() {
   const [pending, setPending] = useState(false);
   const [added, setAdded] = useState<AddedLibrary>();
   const current = useRef(url);
+  // Every action takes a number; only the latest may touch state or release the lock, so a stale
+  // check (the address changed) never blocks the next one and two fast submits send one request.
+  const run = useRef(0);
+  const busy = useRef(false);
 
   function fail(p: AddProblem) {
     if (p.field) {
@@ -124,8 +128,8 @@ export function AddLibraryPage() {
       if (field === "paths" || field === "tags") setAdvanced(true);
       // After the field (or its details) is on screen.
       requestAnimationFrame(() => {
-        const id = field === "ref" && choice.kind === "other" ? "ref-typed" : FOCUS[field];
-        document.getElementById(id)?.focus();
+        const typed = field === "ref" && document.getElementById("ref-typed");
+        (typed || document.getElementById(FOCUS[field]))?.focus();
       });
     } else {
       setErrors({});
@@ -133,11 +137,16 @@ export function AddLibraryPage() {
     }
   }
 
+  const unavailable = useCallback(() => setChoice({ kind: "other" }), []);
   const clear = (field: AddField) => setErrors((e) => ({ ...e, [field]: undefined }));
 
   function edit(value: string) {
     setUrl(value);
     current.current = value;
+    // Whatever was in flight is about the old address now.
+    run.current++;
+    busy.current = false;
+    setPending(false);
     setErrors((e) => ({ ...e, url: undefined }));
     // A different address is a different repository: start the form over from the check.
     if (checked && value.trim() !== checked.url) {
@@ -145,6 +154,8 @@ export function AddLibraryPage() {
       setChoice({ kind: "default" });
       setTypedRef("");
       setProblem(undefined);
+      setErrors({});
+      setShowRuleErrors(false);
     }
   }
 
@@ -152,24 +163,29 @@ export function AddLibraryPage() {
     const invalid = validateUrl(url);
     if (invalid) return fail({ field: "url", message: invalid });
     const target = url.trim();
+    const mine = ++run.current;
+    busy.current = true;
     setErrors({});
     setProblem(undefined);
     setPending(true);
     try {
       const result = await checkRepository(target);
-      if (current.current.trim() !== target) return;
+      if (run.current !== mine) return;
       setChecked({ ...result, url: target });
       setLibraryId(result.library_id);
     } catch (error) {
-      if (current.current.trim() === target) fail(explainCheckError(error));
+      if (run.current === mine) fail(explainCheckError(error));
     } finally {
-      setPending(false);
+      if (run.current === mine) {
+        busy.current = false;
+        setPending(false);
+      }
     }
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (pending) return;
+    if (busy.current) return;
     if (!checked) return check();
 
     const form = validateForm({ libraryId, include, exclude, rules });
@@ -182,6 +198,8 @@ export function AddLibraryPage() {
       return;
     }
 
+    const mine = ++run.current;
+    busy.current = true;
     setErrors({});
     setProblem(undefined);
     setPending(true);
@@ -198,12 +216,17 @@ export function AddLibraryPage() {
           tag: r.tag.trim(),
         })),
       });
-      void queryClient.invalidateQueries({ queryKey: librariesKeys.all });
-      setAdded(result);
+      // Only the list and the newest-job feed; the progress screen owns the job's own query.
+      void queryClient.invalidateQueries({ queryKey: librariesKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: librariesKeys.latestJobs() });
+      if (run.current === mine) setAdded(result);
     } catch (error) {
-      fail(explainAddError(error, ref));
+      if (run.current === mine) fail(explainAddError(error, ref));
     } finally {
-      setPending(false);
+      if (run.current === mine) {
+        busy.current = false;
+        setPending(false);
+      }
     }
   }
 
@@ -237,7 +260,7 @@ export function AddLibraryPage() {
         tabIndex={-1}
         className="mt-2 font-serif text-3xl font-semibold tracking-tight outline-none"
       >
-        Add a library
+        {added ? "Import" : "Add a library"}
       </h1>
 
       <div className="mt-8 max-w-xl">
@@ -288,7 +311,12 @@ export function AddLibraryPage() {
                   onChoice={(c) => {
                     setChoice(c);
                     clear("ref");
+                    // A new field appears for a typed ref: the user's next move is to type.
+                    if (c.kind === "other") {
+                      requestAnimationFrame(() => document.getElementById("ref-typed")?.focus());
+                    }
                   }}
+                  onUnavailable={unavailable}
                   onTyped={(v) => {
                     setTypedRef(v);
                     clear("ref");
