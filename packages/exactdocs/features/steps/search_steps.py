@@ -68,14 +68,16 @@ def read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]
     return commit, articles
 
 
-async def import_versions(context: Context, refs: list[str], library: str = LIBRARY) -> None:
+async def import_versions(
+    context: Context, refs: list[str], library: str = LIBRARY, title: str = "Docs repo"
+) -> None:
     container = Container.build(context.settings)
     chunker = MarkdownChunker()
     async with container.running():
         await SqliteLibraryRepository(container.engine).save(
             Library(
                 id=LibraryId(library),
-                title="Docs repo",
+                title=title,
                 source_url=REPOSITORY,
                 host=HostKind.GITHUB,
                 default_branch=VersionRef("main"),
