@@ -13,11 +13,18 @@ from fixture_repo import DocsRepo, git
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
 
-@pytest.fixture
-async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClient]:
-    container = Container.build(Settings())  # the real system git
+@pytest.fixture(params=[False], ids=["no jobs"])
+async def client(
+    demo_catalog: dict[str, str], request: pytest.FixtureRequest
+) -> AsyncIterator[httpx.AsyncClient]:
+    """The app on the real system git; its worker runs only when a test asks (``jobs``).
+
+    Yields:
+        A client signed in as the admin.
+    """
+    container = Container.build(Settings())
     async with (
-        container.running(),
+        container.running(jobs=request.param),
         httpx.AsyncClient(
             transport=httpx.ASGITransport(app=create_app(container)),
             base_url="http://localhost",
@@ -172,16 +179,26 @@ async def test_refs_of_an_unreachable_server(client: httpx.AsyncClient) -> None:
     assert (response.status_code, response.json()["error"]) == (422, "repository_unreachable")
 
 
-async def test_the_placeholder_import_fails_its_job_visibly(
+@pytest.mark.parametrize("client", [True], indirect=True, ids=["jobs"])
+async def test_the_queued_import_publishes_the_version(
     client: httpx.AsyncClient, docs_repo: DocsRepo
 ) -> None:
-    added = (await client.post("/api/v1/libraries", json={"url": docs_repo.file_url})).json()
+    added = (
+        await client.post(
+            "/api/v1/libraries",
+            json={"url": docs_repo.file_url, "ref": "v1.3.0", "include_paths": ["docs/guide/"]},
+        )
+    ).json()
 
-    for _ in range(500):
+    for _ in range(1000):
         job = (await client.get(f"/api/v1/jobs/{added['job_id']}")).json()
         if job["state"] in {"failed", "succeeded"}:
             break
         await asyncio.sleep(0.01)
 
-    assert job["state"] == "failed"
-    assert job["error"] == "importing articles is not available in this version yet"
+    assert job["state"] == "succeeded", job
+    assert (job["done"], job["total"]) == (4, 4)
+    library = (await client.get("/api/v1/libraries/fixture/docs-repo")).json()
+    assert [(v["ref"], v["commit_sha"]) for v in library["versions"]] == [
+        ("v1.3.0", added["commit_sha"])
+    ]
