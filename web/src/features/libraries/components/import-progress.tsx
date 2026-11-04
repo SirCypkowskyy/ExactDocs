@@ -188,8 +188,14 @@ function Actions({
   onAddAnother: (() => void) | undefined;
   finish: ReactNode;
 }) {
-  return over && finish ? (
-    <div className="fade-in mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+  // Inside another page the exit is that page's own (Close), from the first second.
+  return finish ? (
+    <div
+      className={cn(
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        over ? "fade-in mt-8" : "mt-6",
+      )}
+    >
       {finish}
     </div>
   ) : over ? (

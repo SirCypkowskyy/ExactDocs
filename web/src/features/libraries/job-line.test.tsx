@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { JobLine } from "./index";
+import { ImportProgress, JobLine } from "./index";
 
 const job = (over: Record<string, unknown>) => ({
   id: "j1",
@@ -56,5 +56,33 @@ describe("a re-sync job line", () => {
     );
     expect(await screen.findByText(/Stopped after 2 of 5 files/)).toBeInTheDocument();
     expect(screen.getAllByText(/git fetch failed/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("an import inside another page", () => {
+  it("names the version, offers the page's own exit at once, and leaves the list link out", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(job({ state: "queued", done: 0, total: 0 }))),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ImportProgress
+          added={{
+            library_id: "/acme/payments",
+            ref: "v1.3.0",
+            commit_sha: "a1b2c3d4e5f6",
+            job_id: "j1",
+          }}
+          finish={<button type="button">Close</button>}
+        />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByRole("heading", { level: 3, name: /Importing v1.3.0/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(screen.queryByText("Back to libraries")).not.toBeInTheDocument();
   });
 });
