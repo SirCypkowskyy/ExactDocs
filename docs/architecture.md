@@ -161,8 +161,8 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   started in the app lifespan (`Container.running()`) that poll `RunNextJob`. Its use case claims
   the oldest queued job **whose library has no running job** in one atomic statement, so two jobs
   for one library never run together while other libraries run alongside.
-- **Restart.** Stopping the app cancels running jobs where they are, so they stay `running` in the
-  database. On the next start `RecoverJobs` runs each one's recovery hook (no-op by default; the
+- **Restart.** Stopping the app lets idle workers finish and cancels a job still running after a short
+  grace period, so it stays `running` in the database. On the next start `RecoverJobs` runs each one's recovery hook (no-op by default; the
   import registers the discard of its pending manifest), then re-queues it, and it runs from the
   beginning. A hook that raises fails its job instead of blocking the start.
 - DBOS replaces the worker behind the same driving ports in MVP-2 (resumable imports).
