@@ -12,7 +12,10 @@ or a sync failed.
 
 import asyncio
 import json
+import os
+import stat
 import sys
+import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,16 +27,26 @@ EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT =
 POLL_SECONDS = 1.0
 PAGE = 200  # the largest page the API serves
 MAX_REFS_SHOWN = 5
+WAIT_SECONDS = 600.0  # how long --wait follows a job before it leaves it to the server
+POLL_RETRIES = 3  # consecutive failed polls (timeouts, 5xx) before the wait gives up
+MAX_SECRET_BYTES = 64 * 1024  # a private key is about 3 KB
+EXIT_INTERRUPTED = 130
 
 
 class ImportFailedError(ClientError):
     """An import job (or a sync) ended badly; the library itself is fine."""
 
 
+class UsageError(ClientError):
+    """The command line asks for something that cannot work; nothing was sent."""
+
+
 def exit_code(error: ClientError) -> int:
     """Map a failure to the process exit status."""
     if isinstance(error, ImportFailedError):
         return EXIT_IMPORT
+    if isinstance(error, UsageError):
+        return EXIT_USAGE
     if isinstance(error, ApiError):
         by_status = {
             401: EXIT_AUTH,
@@ -72,13 +85,37 @@ def split_target(target: str) -> tuple[str, str | None]:
     repo, _, ref = rest.partition("/")
     if not owner or not repo:
         message = f"{printable(target)!r} is not a library; use /owner/repo or /owner/repo/ref"
-        raise ClientError(message)
+        raise UsageError(message)
     return f"{owner}/{repo}", ref or None
 
 
 def _library_path(library: str) -> str:
-    owner, repo = split_target(library)[0].split("/")
+    name, ref = split_target(library)
+    if ref:
+        message = f"expected a library (/owner/repo), not a version: {printable(library)!r}"
+        raise UsageError(message)
+    owner, repo = name.split("/")
     return f"/libraries/{quote(owner, safe='')}/{quote(repo, safe='')}"
+
+
+async def _poll(api: ApiClient, job_id: str, interval: float) -> dict[str, Any]:
+    """Fetch a job; retry a few times when the server or network hiccups."""
+    failures = 0
+    while True:
+        try:
+            return await api.request("GET", f"/jobs/{quote(job_id, safe='')}")
+        except ApiError as exc:
+            transient = exc.status >= 500  # ruff: ignore[magic-value-comparison]
+            failures += 1
+            if not transient or failures > POLL_RETRIES:
+                message = f"lost track of job {job_id} ({exc}); it may still be running"
+                raise ImportFailedError(message) from None
+        except ClientError as exc:
+            failures += 1
+            if failures > POLL_RETRIES:
+                message = f"lost track of job {job_id} ({exc}); it may still be running"
+                raise ImportFailedError(message) from None
+        await asyncio.sleep(interval)
 
 
 async def wait_for_job(
@@ -88,11 +125,32 @@ async def wait_for_job(
     label: str,
     progress: Callable[[str], None] | None = None,
     interval: float = POLL_SECONDS,
+    give_up_after: float = WAIT_SECONDS,
 ) -> dict[str, Any]:
-    """Poll a job until it ends; report each change of state or count. Failure raises."""
+    """Poll a job until it ends; report each change of state or count. Failure raises.
+
+    Gives up after ``give_up_after`` seconds (the job goes on in the server) and says so when
+    interrupted: the CLI only watches, it never owns the import.
+    """
+    try:
+        return await _watch(api, job_id, label, progress, interval, give_up_after)
+    except asyncio.CancelledError, KeyboardInterrupt:
+        sys.stderr.write(f"stopped waiting; job {job_id} keeps running on the server\n")
+        raise
+
+
+async def _watch(
+    api: ApiClient,
+    job_id: str,
+    label: str,
+    progress: Callable[[str], None] | None,
+    interval: float,
+    give_up_after: float,
+) -> dict[str, Any]:
     shown = None
+    deadline = time.monotonic() + give_up_after
     while True:
-        job = await api.request("GET", f"/jobs/{quote(job_id, safe='')}")
+        job = await _poll(api, job_id, interval)
         seen = (job["state"], job["done"], job["total"])
         if progress and seen != shown:
             counted = f" {job['done']}/{job['total']} files" if job["total"] else ""
@@ -104,7 +162,49 @@ async def wait_for_job(
             reason = job.get("error") or "no reason recorded"
             message = f"importing {label} failed: {printable(reason)} (job {job_id})"
             raise ImportFailedError(message)
+        if job["state"] not in {"queued", "running"}:
+            message = f"job {job_id} is in the unknown state {printable(str(job['state']))!r}"
+            raise ClientError(message)
+        if time.monotonic() >= deadline:
+            message = (
+                f"still not done after {give_up_after:g} seconds; job {job_id} keeps running on "
+                "the server (see it in the web UI)"
+            )
+            raise ImportFailedError(message)
         await asyncio.sleep(interval)
+
+
+def _read_capped(path: str) -> bytes:
+    """Return the file's bytes (one more than the cap if it is longer); refuse non-regular files."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)  # a FIFO must not block us
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            message = f"{printable(path)} is not a regular file"
+            raise UsageError(message)
+        if os.name == "posix" and info.st_mode & 0o077:
+            to_stderr(f"warning: {printable(path)} is readable by others; run chmod 600")
+        return handle.read(MAX_SECRET_BYTES + 1)
+
+
+def read_secret(path: str) -> str:
+    """Read a token or key file; refuse what cannot be one, warn when others can read it.
+
+    The content never appears in a message. A file over the cap is refused, not cut off.
+    """
+    try:
+        data = _read_capped(path)
+        text = data.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        message = f"cannot read {printable(path)} ({exc.__class__.__name__})"
+        raise UsageError(message) from None
+    if len(data) > MAX_SECRET_BYTES:
+        message = f"{printable(path)} is over {MAX_SECRET_BYTES // 1024} KB: not a token or key"
+        raise UsageError(message)
+    if not text.strip():
+        message = f"{printable(path)} is empty"
+        raise UsageError(message)
+    return text
 
 
 def to_stderr(line: str) -> None:
@@ -130,6 +230,7 @@ async def add_library(
     wait: bool = False,
     as_json: bool = False,
     interval: float = POLL_SECONDS,
+    give_up_after: float = WAIT_SECONDS,
 ) -> None:
     """``POST /libraries``, then optionally follow the import job."""
     rules = []
@@ -139,7 +240,7 @@ async def add_library(
             message = (
                 f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
             )
-            raise ClientError(message)
+            raise UsageError(message)
         rules.append({"pattern": pattern, "tag": tag})
     body: dict[str, Any] = {
         "url": url,
@@ -151,7 +252,9 @@ async def add_library(
         "credential": credential,
     }
     added = await api.request("POST", "/libraries", json={k: v for k, v in body.items() if v})
-    await _report_added(api, added, wait=wait, as_json=as_json, interval=interval)
+    await _report_added(
+        api, added, wait=wait, as_json=as_json, interval=interval, give_up_after=give_up_after
+    )
 
 
 async def add_version(
@@ -163,21 +266,35 @@ async def add_version(
     wait: bool = False,
     as_json: bool = False,
     interval: float = POLL_SECONDS,
+    give_up_after: float = WAIT_SECONDS,
 ) -> None:
     """``POST /libraries/{owner}/{repo}/versions``, then optionally follow the import job."""
     body = {"ref": ref} | ({"credential": credential} if credential else {})
     added = await api.request("POST", f"{_library_path(library)}/versions", json=body)
-    await _report_added(api, added, wait=wait, as_json=as_json, interval=interval)
+    await _report_added(
+        api, added, wait=wait, as_json=as_json, interval=interval, give_up_after=give_up_after
+    )
 
 
 async def _report_added(
-    api: ApiClient, added: dict[str, Any], *, wait: bool, as_json: bool, interval: float
+    api: ApiClient,
+    added: dict[str, Any],
+    *,
+    wait: bool,
+    as_json: bool,
+    interval: float,
+    give_up_after: float,
 ) -> None:
     what = f"{added['library_id']}@{added['ref']}"
     job = None
     if wait:
         job = await wait_for_job(
-            api, added["job_id"], label=what, progress=to_stderr, interval=interval
+            api,
+            added["job_id"],
+            label=what,
+            progress=to_stderr,
+            interval=interval,
+            give_up_after=give_up_after,
         )
     if as_json:
         dump({"added": added, "job": job})
@@ -222,7 +339,7 @@ async def list_libraries(api: ApiClient, *, as_json: bool = False) -> None:
 
 
 async def _follow(
-    api: ApiClient, synced: dict[str, Any], interval: float
+    api: ApiClient, synced: dict[str, Any], interval: float, give_up_after: float
 ) -> tuple[dict[str, Any], ClientError | None]:
     """Wait for every queued import of a sync; the jobs by ref, and the first failure."""
     jobs: dict[str, Any] = {}
@@ -233,7 +350,12 @@ async def _follow(
         label = f"{synced['library_id']}@{version['ref']}"
         try:
             jobs[version["ref"]] = await wait_for_job(
-                api, version["job_id"], label=label, progress=to_stderr, interval=interval
+                api,
+                version["job_id"],
+                label=label,
+                progress=to_stderr,
+                interval=interval,
+                give_up_after=give_up_after,
             )
         except ImportFailedError as exc:
             failure = failure or exc
@@ -247,6 +369,7 @@ async def sync_library(
     wait: bool = False,
     as_json: bool = False,
     interval: float = POLL_SECONDS,
+    give_up_after: float = WAIT_SECONDS,
 ) -> None:
     """``POST /libraries/{owner}/{repo}/sync``; ``--wait`` follows every queued import."""
     synced = await api.request("POST", f"{_library_path(library)}/sync")
@@ -254,7 +377,7 @@ async def sync_library(
     jobs: dict[str, Any] = {}
     failure = None
     if wait:
-        jobs, failure = await _follow(api, synced, interval)
+        jobs, failure = await _follow(api, synced, interval, give_up_after)
     if as_json:
         dump({"library": synced["library_id"], "versions": versions, "jobs": jobs})
     else:
@@ -304,7 +427,7 @@ async def token_create(api: ApiClient, name: str, days: int | None, *, as_json: 
         dump(grant)
         return
     say(f"Created token {grant['name']!r} ({grant['id']}); copy it now, it is not shown again:")
-    sys.stdout.write(f"{grant['token']}\n")
+    sys.stdout.write(printable(grant["token"]) + "\n")
 
 
 async def token_list(api: ApiClient, *, as_json: bool) -> None:

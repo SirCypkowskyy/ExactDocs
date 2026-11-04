@@ -96,13 +96,18 @@ uvx exactdocs token revoke 0198f2c1
 
 Exit codes: 0 done, 1 other failure, 2 usage or rejected input (also: `remove` without a terminal
 and without `--yes`), 3 not found, 4 conflict (an import is running, the ID is taken), 5 not signed
-in or refused, 6 an import or a sync failed.
+in or refused, 6 an import or a sync failed (or `--wait` lost track of it), 130 interrupted.
+
+`--wait` only watches: it follows an import for `--wait-timeout` seconds (default 600) and retries
+a poll that hiccups. When it times out, loses track or you press Ctrl-C (exit 130), it says so and
+the job keeps running on the server.
 
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
-from a file, never from the command line) and all `token` commands need **your password**, not an
+from a file of at most 64 KB, never from the command line; group- or world-readable files get a
+warning) and all `token` commands need **your password**, not an
 API token. REST only lets a signed-in session do that, so that a leaked token cannot mint itself a
 successor or replace a repository credential; the CLI signs in for the one command and signs out
-(`--username`, `--password-stdin`). The CLI's own `--token` is the API token, which is why the
+(`--username`, `--password-stdin`); `--token` is ignored for such a command. The CLI's own `--token` is the API token, which is why the
 repository token is `--git-token-file`.
 
 ### From `docker run` to a searchable library

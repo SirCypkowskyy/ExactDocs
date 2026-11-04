@@ -92,7 +92,23 @@ type UrlOption = Annotated[
     str | None, Parameter(help="Server URL (default: EXACTDOCS_URL, config).")
 ]
 type TokenOption = Annotated[
-    str | None, Parameter(help="API token (default: EXACTDOCS_TOKEN, config).")
+    str | None,
+    Parameter(help="ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token."),
+]
+type CredentialTokenOption = Annotated[
+    str | None,
+    Parameter(
+        help="ExactDocs API token (default: EXACTDOCS_TOKEN, config). Ignored when "
+        "--git-token-file or --ssh-key is given: those need your password instead."
+    ),
+]
+type WaitTimeout = Annotated[
+    int,
+    Parameter(
+        name="--wait-timeout",
+        help="With --wait: seconds to follow the import before leaving it to the server.",
+        validator=Number(gte=1),
+    ),
 ]
 
 
@@ -103,6 +119,8 @@ def _call[T](work: Coroutine[object, object, T]) -> T:
     except ClientError as exc:
         sys.stderr.write(f"exactdocs: {exc}\n")
         raise SystemExit(exit_code(exc)) from None
+    except KeyboardInterrupt:  # `--wait` has already said the job keeps running
+        raise SystemExit(lib.EXIT_INTERRUPTED) from None
 
 
 def _api(url: str | None = None, token: str | None = None) -> ApiClient:
@@ -111,8 +129,8 @@ def _api(url: str | None = None, token: str | None = None) -> ApiClient:
         config = ClientConfig.resolve(url=url, token=token)
         return ApiClient(config.url, config.token)
     except ClientError as exc:
-        message = f"exactdocs: {exc}"
-        raise SystemExit(message) from None
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
 
 
 @app.command
@@ -249,18 +267,17 @@ def _credential(
     git_token_file: str | None, ssh_key: str | None, git_user: str | None
 ) -> dict | None:
     """Read a repository credential from files (never from the command line)."""
-    if git_token_file and ssh_key:
-        message = "exactdocs: give --git-token-file or --ssh-key, not both"
-        raise SystemExit(message)
     path = git_token_file or ssh_key
-    if not path:
-        return None
     try:
-        with open(path, encoding="utf-8") as handle:  # ruff: ignore[builtin-open]
-            secret = handle.read(40_000)
-    except (OSError, UnicodeError) as exc:
-        message = f"exactdocs: cannot read {path} ({exc.__class__.__name__})"
-        raise SystemExit(message) from None
+        if git_token_file and ssh_key:
+            message = "give --git-token-file or --ssh-key, not both"
+            raise lib.UsageError(message)
+        secret = lib.read_secret(path) if path else None
+    except ClientError as exc:
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
+    if secret is None:
+        return None
     if git_token_file:
         return {"kind": "token", "token": secret.strip()} | (
             {"username": git_user} if git_user else {}
@@ -291,9 +308,10 @@ def add(
     username: UsernameOption = None,
     password_stdin: PasswordStdin = False,
     wait: WaitOption = False,
+    wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
     url: UrlOption = None,
-    token: TokenOption = None,
+    token: CredentialTokenOption = None,
 ) -> None:
     """Add a library from a git repository and queue its import.
 
@@ -304,9 +322,18 @@ def add(
 
     async def go(api: ApiClient) -> None:
         await lib.add_library(
-            api, git_url, library_id=id, ref=ref, include=path or (), exclude=exclude or (),
-            tag_rules=tag_rule or (), credential=credential, wait=wait, as_json=json_output,
-        )  # fmt: skip
+            api,
+            git_url,
+            library_id=id,
+            ref=ref,
+            include=path or (),
+            exclude=exclude or (),
+            tag_rules=tag_rule or (),
+            credential=credential,
+            wait=wait,
+            as_json=json_output,
+            give_up_after=wait_timeout,
+        )
 
     async def work() -> None:
         if credential is None:
@@ -349,16 +376,23 @@ def version_add(
     username: UsernameOption = None,
     password_stdin: PasswordStdin = False,
     wait: WaitOption = False,
+    wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
     url: UrlOption = None,
-    token: TokenOption = None,
+    token: CredentialTokenOption = None,
 ) -> None:
     """Import another version (tag, branch or commit) of a library, with its settings."""
     credential = _credential(git_token_file, ssh_key, git_user)
 
     async def go(api: ApiClient) -> None:
         await lib.add_version(
-            api, library, ref, credential=credential, wait=wait, as_json=json_output
+            api,
+            library,
+            ref,
+            credential=credential,
+            wait=wait,
+            as_json=json_output,
+            give_up_after=wait_timeout,
         )
 
     async def work() -> None:
@@ -377,6 +411,7 @@ def sync(
     library: str,
     *,
     wait: WaitOption = False,
+    wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
     url: UrlOption = None,
     token: TokenOption = None,
@@ -385,7 +420,9 @@ def sync(
 
     async def work() -> None:
         async with _api(url, token) as api:
-            await lib.sync_library(api, library, wait=wait, as_json=json_output)
+            await lib.sync_library(
+                api, library, wait=wait, as_json=json_output, give_up_after=wait_timeout
+            )
 
     _call(work())
 
@@ -401,13 +438,18 @@ def remove(
 ) -> None:
     """Remove a version (/owner/repo/ref) or a whole library (/owner/repo) and its content."""
     if not yes:
-        question = lib.removal_prompt(target)
         if not sys.stdin.isatty():
             sys.stderr.write("exactdocs: no terminal to confirm the removal; pass --yes\n")
             raise SystemExit(lib.EXIT_USAGE)
         try:
-            answer = input(question)
-        except EOFError, KeyboardInterrupt:
+            lib.split_target(target)  # a bad target is a usage error before any question
+            sys.stderr.write(lib.removal_prompt(target))  # stderr: stdout may be --json
+            sys.stderr.flush()
+            answer = sys.stdin.readline()
+        except ClientError as exc:
+            sys.stderr.write(f"exactdocs: {exc}\n")
+            raise SystemExit(exit_code(exc)) from None
+        except KeyboardInterrupt:
             answer = ""
         if answer.strip().lower() not in {"y", "yes"}:
             sys.stderr.write("exactdocs: not removed\n")

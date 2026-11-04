@@ -17,7 +17,6 @@ import socket
 import sys
 import tempfile
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -312,6 +311,10 @@ class ApiClient:
         await self.request("POST", "/session", json={"username": username, "password": password})
 
     async def sign_out(self) -> None:
-        """End the session (``DELETE /session``); never raises for a server that is gone."""
-        with suppress(ClientError):
+        """End the session (``DELETE /session``); a failure is a warning, not an error."""
+        try:
             await self.request("DELETE", "/session")
+        except ClientError:
+            sys.stderr.write(
+                "exactdocs: warning: could not end the session; it expires on its own\n"
+            )
