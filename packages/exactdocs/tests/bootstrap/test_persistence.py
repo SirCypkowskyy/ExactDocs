@@ -229,11 +229,16 @@ async def test_a_migration_that_breaks_a_foreign_key_is_rolled_back(tmp_path: Pa
             assert rows.scalar_one() == 0
 
 
-async def test_processes_starting_together_all_migrate_an_empty_database() -> None:
-    containers = [Container.build(Settings()) for _ in range(3)]
+async def test_processes_starting_together_all_migrate_an_empty_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The race is in the first moments of a fresh database file, so every round gets its own.
+    for round_ in range(10):
+        monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(tmp_path / f"round-{round_}"))
+        containers = [Container.build(Settings()) for _ in range(8)]
 
-    async def start(container: Container) -> str | None:
-        async with container.running():
-            return await current_revision(container.engine)
+        async def start(container: Container) -> str | None:
+            async with container.running():
+                return await current_revision(container.engine)
 
-    assert await asyncio.gather(*(start(c) for c in containers)) == [head()] * 3
+        assert await asyncio.gather(*(start(c) for c in containers)) == [head()] * 8

@@ -5,7 +5,9 @@ its adapters receive the :class:`AsyncEngine`. Schema changes are Alembic revisi
 ``migrations/versions``, owned by this package so no domain depends on another's schema.
 """
 
+import sqlite3
 import tempfile
+import time
 from pathlib import Path
 
 from alembic import command
@@ -13,7 +15,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Connection, event
 from sqlalchemy.engine import make_url
-from sqlalchemy.engine.interfaces import DBAPIConnection
+from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
@@ -75,11 +77,31 @@ def _configure_connection(dbapi_connection: DBAPIConnection, _: ConnectionPoolEn
     try:
         # First, so the statements below wait for a lock instead of failing at once.
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        cursor.execute("PRAGMA journal_mode=WAL")  # readers don't block the writer
+        _enable_wal(cursor)  # readers don't block the writer
         cursor.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, much faster
         cursor.execute("PRAGMA foreign_keys=ON")  # per connection; used within a domain only
     finally:
         cursor.close()
+
+
+def _enable_wal(cursor: DBAPICursor) -> None:
+    """Switch the file to WAL (persistent, so only the first connection ever changes anything).
+
+    Leaving rollback mode needs an exclusive lock, and SQLite returns SQLITE_BUSY for it at once
+    without calling the busy handler when two connections race for it (each holds a shared lock
+    the other waits on), so ``busy_timeout`` does not cover this statement. Retry it ourselves
+    for as long as that timeout; the losers then find the file already in WAL.
+    """
+    deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+        else:
+            return
 
 
 def _begin(connection: Connection) -> None:
