@@ -34,6 +34,10 @@ docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
 uvx exactdocs serve
 ```
 
+`uvx exactdocs serve` needs `git` on your `PATH` and refuses to start without it (the import runs
+`git`). Python 3.14 is fetched by `uv` when it is missing. Then open <http://localhost:3000>. For an
+agent that only reads an existing database, `uvx exactdocs serve --stdio` needs no `git` and no port.
+
 A fresh instance offers nothing but its setup: until the first admin account exists, every
 `/api/v1` request is refused with `403 setup_required`. The setup page in the web UI is coming
 (E8-01); until then create the admin from the command line or over the API:
