@@ -4,42 +4,68 @@
     {
       "name": "plain words",
       "markdown": "# Getting Started\n\n## Install it\n",
-      "anchors": ["getting-started", "install-it"]
+      "anchors": [
+        "getting-started",
+        "install-it"
+      ]
     },
     {
       "name": "punctuation drops, dashes and underscores stay",
       "markdown": "# What's new? (v2.0)\n\n## snake_case - and -dashes\n",
-      "anchors": ["whats-new-v20", "snake_case---and--dashes"]
+      "anchors": [
+        "whats-new-v20",
+        "snake_case---and--dashes"
+      ]
     },
     {
       "name": "markup is plain text, code keeps its text",
       "markdown": "# The `fetch()` *option* and [a link](http://x.test)\n",
-      "anchors": ["the-fetch-option-and-a-link"]
+      "anchors": [
+        "the-fetch-option-and-a-link"
+      ]
     },
     {
       "name": "repeats count across the whole article, at every level",
       "markdown": "# Usage\n\n## Usage\n\n### Usage\n\n## Usage 1\n\n## Usage\n",
-      "anchors": ["usage", "usage-1", "usage-2", "usage-1-1", "usage-3"]
+      "anchors": [
+        "usage",
+        "usage-1",
+        "usage-2",
+        "usage-1-1",
+        "usage-3"
+      ]
     },
     {
       "name": "a taken suffix is skipped, and an issued slug is remembered",
       "markdown": "# A\n\n# A 1\n\n# A\n\n# A\n",
-      "anchors": ["a", "a-1", "a-2", "a-3"]
+      "anchors": [
+        "a",
+        "a-1",
+        "a-2",
+        "a-3"
+      ]
     },
     {
       "name": "headings in block quotes take a slug but are not chunks",
       "markdown": "> # Same\n\n# Same\n",
-      "anchors": ["same-1"]
+      "anchors": [
+        "same-1"
+      ]
     },
     {
       "name": "inline HTML tags add no text, their content does",
       "markdown": "# Hello <b>bold</b> world\n\n# <span>only</span>\n",
-      "anchors": ["hello-bold-world", "only"]
+      "anchors": [
+        "hello-bold-world",
+        "only"
+      ]
     },
     {
       "name": "images contribute their alt text",
       "markdown": "# ![the logo](a.png) Logo\n",
-      "anchors": ["the-logo-logo"]
+      "anchors": [
+        "the-logo-logo"
+      ]
     },
     {
       "name": "unicode letters and digits stay, symbols and emoji go",
@@ -55,17 +81,35 @@
     {
       "name": "setext headings, trailing hashes and extra spaces",
       "markdown": "Title\n=====\n\nSub  title\n---------\n\n## Closed ##\n",
-      "anchors": ["title", "sub--title", "closed"]
+      "anchors": [
+        "title",
+        "sub--title",
+        "closed"
+      ]
     },
     {
       "name": "a heading made of symbols only has an empty slug",
       "markdown": "# ???\n\n# !!!\n",
-      "anchors": ["", "-1"]
+      "anchors": [
+        "",
+        "-1"
+      ]
     },
     {
       "name": "fenced code is not a heading",
       "markdown": "# Real\n\n```md\n# Real\n```\n\n# Real\n",
-      "anchors": ["real", "real-1"]
+      "anchors": [
+        "real",
+        "real-1"
+      ]
+    },
+    {
+      "name": "escapes and entities are not text",
+      "markdown": "# snake\\_case &amp; a\\*b\n\n# Tom &amp; Jerry\n",
+      "anchors": [
+        "snake_case--ab",
+        "tom--jerry"
+      ]
     }
   ]
 }
