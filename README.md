@@ -274,6 +274,15 @@ endpoints and, if enabled, your OpenTelemetry collector. No analytics, no update
 Telemetry and the Prometheus endpoint are **off by default**; query text is never exported
 unless you opt in.
 
+This is tested, not just promised:
+[`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py) runs an import
+over git/HTTP, REST search and both MCP search tools under a socket guard that refuses anything
+but loopback, and asserts that FastMCP's update check is off and no telemetry is configured.
+The web UI bundles its fonts and loads nothing from another origin
+([`no-external-assets.test.ts`](web/src/app/no-external-assets.test.ts)). The guard sees Python
+sockets only; for the `git` child process the test pins the URLs and protocols it was given (see
+the test's docstring).
+
 ## Development
 
 Requirements: [uv](https://docs.astral.sh/uv/) (installs Python 3.14), Node 26 LTS, pnpm 12,
