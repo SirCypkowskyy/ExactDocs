@@ -185,3 +185,19 @@ async def test_an_unknown_user_costs_a_hash_so_timing_does_not_reveal_it(
         await identity.authenticate(credentials("not a valid\nname", HORSE))
 
     assert hasher.hashed == [HORSE, HORSE]
+
+
+async def test_an_already_set_up_instance_answers_409_before_judging_the_username(
+    identity: IdentityModule,
+) -> None:
+    await identity.create_first_admin(command())
+
+    with pytest.raises(AlreadySetUpError):
+        await identity.create_first_admin(command("not valid", HORSE))
+
+
+def test_usernames_are_normalised_to_a_fixed_point() -> None:
+    # U+0130 casefolds to "i" + U+0307, which NFKC would compose differently; the result is stable.
+    once = Username("\u0130stanbul").value
+
+    assert Username(once).value == once

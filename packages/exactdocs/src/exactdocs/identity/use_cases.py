@@ -40,9 +40,9 @@ class CreateFirstAdminUseCase:
 
     async def __call__(self, command: CreateFirstAdminCommand) -> AccountSummary:
         """Create the admin, or raise ``AlreadySetUpError`` when an account exists."""
-        username = Username(command.username)
         if await self.repository.any_exists():
             raise AlreadySetUpError  # cheap early exit; `add_first` below is the atomic check
+        username = Username(command.username)
         account = Account(
             id=AccountId(uuid7().hex),
             username=username,

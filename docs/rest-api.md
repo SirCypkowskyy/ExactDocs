@@ -21,7 +21,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `error: "validation_error"` and one `fields` entry (`loc`, `msg`, `type`) per invalid field.
 - **First run**: until the first admin account exists, every `/api/v1` request except
   `POST /api/v1/setup`, `GET /api/v1/session` and the OpenAPI document is refused with 403
-  `setup_required`. `POST /api/v1/setup` creates the admin once (409 `already_set_up` afterwards).
+  `setup_required`, whatever the method (HEAD and OPTIONS included). `POST /api/v1/setup` creates the
+  admin once (409 `already_set_up` afterwards). Only `/api/v1` is guarded: `/mcp` and
+  `/.well-known/...` are not guarded by the setup yet; MCP access control comes with E2-03 (API
+  tokens), and sessions with E2-02.
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.

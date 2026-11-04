@@ -121,9 +121,9 @@ def v1_openapi_json(app: FastAPI) -> str:
     return json.dumps(v1_openapi(app), indent=2) + "\n"
 
 
-# (method, path) pairs that stay reachable before the first admin exists (`POST /setup` is the
-# way out of that state; the session state is how the UI learns it). E2-02 adds nothing here:
-# only `GET /session`.
+# (method, path) pairs that stay reachable before the first admin exists: `POST /setup` is the
+# way out of that state. `GET /session` is reserved for E2-02 (the UI learns the session state
+# there); the route does not exist yet.
 SETUP_EXEMPT = frozenset(
     {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
 )
@@ -136,6 +136,9 @@ class SetupGuard:
     Deny by default: a new route is guarded without anyone remembering to guard it. The
     ``setup_required`` check hits the database only while it is true; an account is never
     removed in the MVP, so the first ``False`` is remembered for the life of the process.
+
+    Only ``/api/v1`` is guarded (every method, HEAD and OPTIONS included). ``/mcp`` and
+    ``/.well-known`` are left to the MCP token verifier (E2-03).
     """
 
     app: ASGIApp

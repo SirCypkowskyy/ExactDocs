@@ -34,10 +34,22 @@ docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
 uvx exactdocs serve
 ```
 
-Open <http://localhost:3000> and create the first account (or run `exactdocs admin create`, which
-opens the database directly and prompts for the password). Until that account exists, the only
-thing the instance offers is `POST /api/v1/setup`; every other `/api/v1` request is refused with
-`403 setup_required`. Passwords are stored as argon2id hashes (at least 12 characters).
+A fresh instance offers nothing but its setup: until the first admin account exists, every
+`/api/v1` request is refused with `403 setup_required`. The setup page in the web UI is coming
+(E8-01); until then create the admin from the command line or over the API:
+
+```bash
+docker exec -it exactdocs exactdocs admin create   # prompts for username and password
+# or, without Docker
+uvx exactdocs admin create
+# or, over the API (the password must be 12 to 1024 characters)
+curl -X POST http://localhost:3000/api/v1/setup -H 'content-type: application/json' \
+  -d '{"username": "ada", "password": "a long passphrase"}'
+```
+
+`admin create` opens the database directly (so it works before the server is up, and against the
+same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
+Passwords are stored as argon2id hashes.
 Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
 ```bash

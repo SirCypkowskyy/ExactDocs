@@ -15,7 +15,11 @@ from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.dtos import CreateFirstAdminCommand
+from exactdocs.identity.dtos import (
+    MAX_PASSWORD_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    CreateFirstAdminCommand,
+)
 from exactdocs_kernel import DomainError
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
@@ -59,14 +63,24 @@ def create(
     ] = False,
 ) -> None:
     """Create the first admin account (only while no account exists)."""
-    name = username if username is not None else input("Username: ")
-    password = _read_password(from_stdin=password_stdin)
+    try:
+        name = username if username is not None else input("Username: ")
+        password = _read_password(from_stdin=password_stdin)
+    except EOFError, KeyboardInterrupt:
+        message = (
+            "exactdocs: no username or password to read; run it in a terminal, "
+            "or pass --username and --password-stdin"
+        )
+        raise SystemExit(message) from None
     try:
         created = asyncio.run(_create_first_admin(Settings(), name, password))
     except ValidationError as exc:
         # Pydantic's message would echo the rejected password; say only what is wrong.
         fields = ", ".join(str(error["loc"][0]) for error in exc.errors())
-        message = f"exactdocs: invalid {fields} (the password needs at least 12 characters)"
+        message = (
+            f"exactdocs: invalid {fields} "
+            f"(the password needs {MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters)"
+        )
         raise SystemExit(message) from None
     except DomainError as exc:
         message = f"exactdocs: {exc}"
@@ -76,7 +90,12 @@ def create(
 
 def _read_password(*, from_stdin: bool) -> str:
     if from_stdin:
-        return sys.stdin.readline().rstrip("\r\n")
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError
+        return line.rstrip("\r\n")
+    if not sys.stdin.isatty():
+        raise EOFError  # getpass would echo the password it reads from a pipe
     password = getpass.getpass("Password: ")
     if getpass.getpass("Repeat password: ") != password:
         message = "exactdocs: the passwords differ"

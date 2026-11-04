@@ -27,7 +27,8 @@ class Username:
 
     def __post_init__(self) -> None:
         # Frozen dataclass: normalise through object.__setattr__ so every instance is canonical.
-        normalized = unicodedata.normalize("NFKC", self.value).strip().casefold()
+        nfkc = unicodedata.normalize
+        normalized = nfkc("NFKC", nfkc("NFKC", self.value).strip().casefold())  # Unicode D145
         invalid = (
             not normalized
             or len(normalized) > MAX_USERNAME_LENGTH
