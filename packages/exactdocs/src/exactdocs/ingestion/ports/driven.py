@@ -4,7 +4,15 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
-from exactdocs.ingestion.models import Job, JobId, ProposedId, RemoteRefs, RepositoryUrl
+from exactdocs.ingestion.models import (
+    ArticleChunk,
+    Job,
+    JobId,
+    ParsedArticle,
+    ProposedId,
+    RemoteRefs,
+    RepositoryUrl,
+)
 
 
 class JobRepository(Protocol):
@@ -84,4 +92,21 @@ class LibraryIds(Protocol):
 
     async def is_taken(self, library_id: ProposedId) -> bool:
         """Tell whether a library with this ``/owner/repo`` ID already exists."""
+        ...
+
+
+class Chunker(Protocol):
+    """Cuts a parsed article into chunks at its headings, never inside a code block or table."""
+
+    @property
+    def config_hash(self) -> str:
+        """Key for chunk sets: changes with the chunker's config, its version and the parser's."""
+        ...
+
+    def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
+        """Return the chunks in reading order; their contents joined are ``article.body``.
+
+        An empty body has no chunks. This is CPU-bound and synchronous: the import use case
+        should call it through ``asyncio.to_thread``. There is no size cap yet.
+        """
         ...

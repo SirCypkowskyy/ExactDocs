@@ -33,6 +33,15 @@ class InvalidRepositoryUrlError(ValidationError):
         super().__init__(f"not a usable git URL: {problem.value}")
 
 
+class InvalidChunkingConfigError(ValidationError):
+    """The chunking settings are out of range."""
+
+    code = "invalid_chunking_config"
+
+    def __init__(self) -> None:
+        super().__init__("split_depth must be between 1 and 6")
+
+
 class NotAGitRepositoryError(ValidationError):
     """The address answers, but there is no git repository there (or none visible without login)."""
 
