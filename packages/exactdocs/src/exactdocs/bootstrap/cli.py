@@ -11,10 +11,10 @@ from cyclopts import App, Parameter
 from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.mcp import build_mcp
+from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import (
     MAX_PASSWORD_LENGTH,
@@ -145,9 +145,13 @@ async def _reset_password(settings: Settings, username: str, password: str) -> N
 
 
 async def _serve_stdio(settings: Settings) -> None:
-    container = _build(settings)
-    async with container.running(jobs=False):  # the HTTP server runs the jobs
-        await build_mcp(container).run_stdio_async(show_banner=False)
+    try:
+        container = ReadOnlyContainer.build(settings)
+        async with container.running():  # no worker, no migration: the HTTP server owns both
+            await build_stdio_mcp(container).run_stdio_async(show_banner=False)
+    except StartupError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
 
 
 def _build(settings: Settings) -> Container:

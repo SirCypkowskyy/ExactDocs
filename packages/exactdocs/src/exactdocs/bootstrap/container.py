@@ -20,7 +20,12 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
-from exactdocs.bootstrap.database import StartupError, migrate, open_database
+from exactdocs.bootstrap.database import (
+    StartupError,
+    check_schema_is_current,
+    migrate,
+    open_database,
+)
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
@@ -51,6 +56,52 @@ from exactdocs_kernel import SystemClock
 logger = logging.getLogger(__name__)
 WORK_DIR = "work"  # under the data dir: one folder per running git fetch
 KNOWN_HOSTS_FILE = "known_hosts"  # under the data dir: SSH host keys, the big three pre-seeded
+
+
+def _build_read_side(
+    engine: AsyncEngine, settings: Settings
+) -> tuple[CatalogModule, RetrievalModule]:
+    """Build the catalog and retrieval modules: everything the read-only MCP tools use."""
+    catalog = CatalogModule.build(
+        repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
+    )
+    retrieval = RetrievalModule.build(
+        searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
+        libraries=CatalogLibraries(catalog.list_libraries),
+        manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
+        chunks=SqliteChunkRepository(engine),
+        search=SqliteSearchIndex(engine),
+        query_docs_token_budget=settings.query_docs_token_budget,
+    )
+    return catalog, retrieval
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReadOnlyContainer:
+    """Catalog and retrieval over an existing database opened read-only (``serve --stdio``).
+
+    No identity, ingestion, worker, secret key, ``known_hosts`` or ``git``: nothing here can write.
+    """
+
+    engine: AsyncEngine
+    catalog: CatalogModule
+    retrieval: RetrievalModule
+
+    @classmethod
+    def build(cls, settings: Settings) -> Self:
+        """Open the database read-only; ``StartupError`` when it does not exist."""
+        engine = open_database(settings, read_only=True)
+        catalog, retrieval = _build_read_side(engine, settings)
+        return cls(engine=engine, catalog=catalog, retrieval=retrieval)
+
+    @asynccontextmanager
+    async def running(self) -> AsyncGenerator[None]:
+        """Check the schema is current (no migration), serve, then release the connections."""
+        try:
+            await check_schema_is_current(self.engine)
+            yield
+        finally:
+            await self.engine.dispose()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -110,9 +161,6 @@ class Container:
         except ValueError as error:  # fixed texts: they never repeat a key
             raise StartupError(str(error)) from None
         vault = SqliteCredentialVault(engine, secret_box)
-        catalog = CatalogModule.build(
-            repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
-        )
         identity = IdentityModule.build(
             repository=SqliteAccountRepository(engine),
             sessions=SqliteSessionRepository(engine),
@@ -120,16 +168,7 @@ class Container:
             hasher=Argon2idPasswordHasher(),
             clock=SystemClock(),
         )
-        retrieval = RetrievalModule.build(
-            searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
-            libraries=CatalogLibraries(catalog.list_libraries),
-            manifests=CatalogActiveManifests(
-                catalog.get_active_manifest, catalog.get_manifest_states
-            ),
-            chunks=SqliteChunkRepository(engine),
-            search=SqliteSearchIndex(engine),
-            query_docs_token_budget=settings.query_docs_token_budget,
-        )
+        catalog, retrieval = _build_read_side(engine, settings)
         index = RetrievalChunkIndex(
             retrieval.index_manifest,
             retrieval.get_chunk_sets,
@@ -191,7 +230,7 @@ class Container:
         """Migrate the database, serve, then release the connections.
 
         ``jobs`` also runs the job worker (and the recovery before it). Only the HTTP server
-        does: one process runs jobs, so ``serve --stdio`` passes ``False``.
+        does: one process runs jobs.
         """
         try:
             await migrate(self.engine)
