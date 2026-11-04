@@ -437,7 +437,9 @@ reproducible on every machine and in CI.
 - [ ] fixture git servers: `file://` and smart HTTP on 127.0.0.1 (`git http-backend`) for network tests
 - [ ] fixture README explains how to add content without breaking expected SHAs
 
-**Notes.** The suite is used by E4-02, E5-04, E3-05a, E3-05b, E9-01, E10-01, E10-03a (mounted
+**Notes.** Article paths are repo-relative: the scenario shorthand `guide/install.md` means
+`docs/guide/install.md` in the fixture (`docs/api/auth.md` and `docs/guide/auth.md` both exist,
+and `--path docs/` and `docs/archive/**` need the prefix). The suite is used by E4-02, E5-04, E3-05a, E3-05b, E9-01, E10-01, E10-03a (mounted
 into the container), E10-03b and RET-09 (E11-02).
 
 ---

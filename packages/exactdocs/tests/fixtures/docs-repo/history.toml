@@ -1,0 +1,29 @@
+# The fixture repository's history, oldest first. The history is linear; see README.md.
+# Each commit's tree is the previous tree, plus the files under commits/<name>/, minus `delete`.
+# Changing anything here, or any file below commits/, changes the SHAs asserted in
+# tests/fixtures/test_fixture_repo.py: read README.md first.
+
+author = "Fixture Author <fixture@exactdocs.invalid>"
+
+[[commit]]
+name = "v1.3.0"
+message = "docs: Acme Payments 1.3.0"
+date = "2025-03-03T10:00:00+00:00"
+tags = ["v1.3.0"]
+# Too big to keep in the repo, so it is generated: this many bytes, rounded up to whole lines.
+generated = { "docs/reference/oversized.md" = 2200000 }
+
+[[commit]]
+name = "v1.4.0"
+message = "docs: Acme Payments 1.4.0"
+date = "2025-06-02T10:00:00+00:00"
+tags = ["v1.4.0"]
+branches = ["main"]
+# guide/setup.md is renamed to guide/install.md (the new file is in commits/v1.4.0).
+delete = ["docs/guide/setup.md"]
+
+[[commit]]
+name = "next"
+message = "docs: draft the 2.0 migration guide"
+date = "2025-07-14T10:00:00+00:00"
+branches = ["next"]
