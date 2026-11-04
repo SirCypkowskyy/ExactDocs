@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "exactdocs": {
+      "command": "uvx",
+      "args": [
+        "exactdocs",
+        "serve",
+        "--stdio"
+      ]
+    }
+  }
+}

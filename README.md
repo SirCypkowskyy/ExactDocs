@@ -110,6 +110,23 @@ successor or replace a repository credential; the CLI signs in for the one comma
 (`--username`, `--password-stdin`); `--token` is ignored for such a command. The CLI's own `--token` is the API token, which is why the
 repository token is `--git-token-file`.
 
+### Connect an MCP client
+
+```bash
+uvx exactdocs config --client claude            # claude, claude-desktop, cursor, vscode, codex
+uvx exactdocs config --client codex --stdio     # local, read-only, no token
+uvx exactdocs skill > SKILL.md                  # the agent usage skill (also the MCP resource skill://exactdocs/SKILL.md)
+```
+
+`config` prints a snippet to paste into the client's config file. It never contains your token:
+it refers to `EXACTDOCS_TOKEN` (or, for VS Code, asks for it) unless you pass `--show-token`.
+Claude Desktop reaches HTTP servers through `mcp-remote` (pinned to `0.16.0`); replace the
+`<your-exactdocs-token>` placeholder there with your token. Desktop apps often lack `~/.local/bin`
+on their PATH: put the absolute paths from `which uvx` / `which npx` in `command`. With
+`--show-token` the snippet holds your real token, so never commit the file it goes into (the
+command warns on stderr). Prefer `--new-token`: it creates a token just for this client (asks for
+your password, like `token create`), so revoking it breaks nothing else.
+
 ### From `docker run` to a searchable library
 
 The same flow CI runs on every change ([`deploy/smoke.sh`](deploy/smoke.sh), `sh` and `curl`

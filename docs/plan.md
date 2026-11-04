@@ -1592,7 +1592,7 @@ Scenario: A working snippet for Claude Code
   And an MCP client configured with it can list libraries
 ```
 
-- [ ] clients `claude`, `cursor`, `vscode`; token created via REST (AUTH-02)
+- [ ] clients `claude`, `cursor`, `vscode` (also `claude-desktop`, `codex`); the token is a placeholder, `--show-token` uses the login token; `--new-token` creates a dedicated token via REST (AUTH-02, asks for the password)
 - [ ] a short "how to use ExactDocs" skill offered over MCP for clients that load skills
 - [ ] snippet validity test per client
 

@@ -1,0 +1,3 @@
+[mcp_servers.exactdocs]
+url = "https://docs.example.com/mcp"
+http_headers = { Authorization = "Bearer exd_secret_value" }

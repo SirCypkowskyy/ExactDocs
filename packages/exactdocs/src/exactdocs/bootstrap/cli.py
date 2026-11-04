@@ -32,6 +32,7 @@ from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_stdio_mcp
+from exactdocs.bootstrap.mcp_config import CLIENTS, SKILL_PATH, Client, render
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import (
     MAX_PASSWORD_LENGTH,
@@ -522,6 +523,79 @@ def token_revoke(
             await lib.token_revoke(api, token_id)
 
     _call(work())
+
+
+@app.command
+def config(
+    *,
+    client: Annotated[Client, Parameter(help=f"MCP client: {', '.join(CLIENTS)}.")],
+    stdio: Annotated[
+        bool, Parameter(help="Local read-only `serve --stdio` instead of HTTP with a token.")
+    ] = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+    show_token: Annotated[
+        bool,
+        Parameter(
+            help="Write your real API token (EXACTDOCS_TOKEN, --token or the login) into the "
+            "snippet. Without it the snippet refers to EXACTDOCS_TOKEN or asks for the token."
+        ),
+    ] = False,
+    new_token: Annotated[
+        bool,
+        Parameter(
+            help="Create a token for this client (asks for your password) and write it into the "
+            "snippet; revoking it later affects only this client."
+        ),
+    ] = False,
+    name: Annotated[
+        str | None, Parameter(help="With --new-token: its name (default: mcp-<client>).")
+    ] = None,
+    expires_in: Annotated[
+        int, Parameter(help="With --new-token: days until it expires.", validator=Number(gte=1))
+    ] = DEFAULT_TOKEN_DAYS,
+    username: UsernameOption = None,
+    password_stdin: PasswordStdin = False,
+) -> None:
+    """Print a ready-to-paste MCP config for a client, never containing the token unless asked."""
+    if (stdio and (show_token or new_token)) or (show_token and new_token):
+        message = (
+            "exactdocs: --stdio needs no token; --show-token and --new-token exclude each other"
+        )
+        sys.stderr.write(message + "\n")
+        raise SystemExit(lib.EXIT_USAGE)
+
+    async def work() -> tuple[str, str | None]:
+        if stdio:
+            return "", None  # no URL involved
+        if new_token:
+            async with _session(url, username, password_stdin=password_stdin) as api:
+                grant = await api.request(
+                    "POST",
+                    "/tokens",
+                    json={
+                        "name": name or f"mcp-{client}",
+                        "expires_at": (datetime.now(UTC) + timedelta(days=expires_in)).isoformat(),
+                    },
+                )
+                return api.url, grant["token"]
+        if show_token:
+            resolved = ClientConfig.resolve(url=url, token=token)
+            return resolved.url, resolved.token
+        return resolve_url(url=url), None
+
+    server, secret = _call(work())
+    if secret:
+        sys.stderr.write(
+            "exactdocs: this snippet contains your API token; do not commit the file it goes into\n"
+        )
+    sys.stdout.write(render(client, mcp_url=f"{server}/mcp", token=secret, stdio=stdio))
+
+
+@app.command
+def skill() -> None:
+    """Print the agent usage skill (SKILL.md) to save as `exactdocs/SKILL.md` in a skills folder."""
+    sys.stdout.write(SKILL_PATH.read_text(encoding="utf-8"))
 
 
 @admin.command

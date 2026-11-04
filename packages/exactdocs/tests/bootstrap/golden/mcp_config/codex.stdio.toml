@@ -1,0 +1,3 @@
+[mcp_servers.exactdocs]
+command = "uvx"
+args = ["exactdocs", "serve", "--stdio"]

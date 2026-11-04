@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "exactdocs": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "exactdocs",
+        "serve",
+        "--stdio"
+      ]
+    }
+  }
+}
