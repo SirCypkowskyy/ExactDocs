@@ -34,14 +34,22 @@ app.command(admin)
 @app.command
 def serve(
     *,
-    stdio: Annotated[bool, Parameter(help="Serve MCP over stdio instead of HTTP.")] = False,
-    host: str | None = None,
-    port: int | None = None,
-    reload: bool = False,
+    stdio: Annotated[
+        bool,
+        Parameter(
+            help="Serve MCP over stdio instead of HTTP: read-only, needs an existing database."
+        ),
+    ] = False,
+    host: Annotated[str | None, Parameter(help="HTTP only: address to bind.")] = None,
+    port: Annotated[int | None, Parameter(help="HTTP only: port to listen on.")] = None,
+    reload: Annotated[bool, Parameter(help="HTTP only: restart on code changes.")] = False,
 ) -> None:
     """Run the server: web UI + REST API + MCP over HTTP, or MCP only over stdio."""
     settings = Settings()
     if stdio:
+        if host or port or reload:
+            message = "exactdocs: --host, --port and --reload are HTTP options; --stdio has none"
+            raise SystemExit(message)
         asyncio.run(_serve_stdio(settings))
         return
     _check_startup(settings)

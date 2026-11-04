@@ -117,7 +117,10 @@ stdio needs no token and no running server, but it needs an **existing database*
 stderr naming the expected path. It uses the same data directory (`EXACTDOCS_DATA_DIR`), opens the
 SQLite file read-only (safe next to a running server, which keeps importing), runs no worker and
 no migration, and exposes the same read-only tools. If the server has since been upgraded and
-migrated the database, upgrade the stdio command too. Manage libraries through the server.
+migrated the database, upgrade the stdio command too. Manage libraries through the server. Run it as the same user as the server: with the server
+stopped, SQLite creates `exactdocs.db-wal` and `-shm` next to the database (the directory must be
+writable for that), and files owned by another user can stop the server from starting later.
+`--host`, `--port` and `--reload` are HTTP-only and rejected with `--stdio`.
 
 ## MCP tools
 

@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import unquote, urlparse
 
 from alembic import command
 from alembic.config import Config
@@ -18,7 +18,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, event
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
-from sqlalchemy.exc import ArgumentError
+from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
@@ -79,9 +79,10 @@ def _open_read_only(url: URL) -> AsyncEngine:
             "that holds it."
         )
         raise StartupError(message)
+    # Only the file is kept: query parameters of EXACTDOCS_DATABASE_URL do not carry over.
     uri = URL.create(
         url.drivername,
-        database=f"file:{quote(path.resolve().as_posix())}",
+        database=path.resolve().as_uri(),
         query={"mode": "ro", "uri": "true"},
     )
     engine = create_async_engine(uri, connect_args={"isolation_level": None})
@@ -95,6 +96,7 @@ def _configure_read_only_connection(
 ) -> None:
     cursor = dbapi_connection.cursor()
     try:
+        # Only what a reader needs: foreign_keys and synchronous matter for writes alone.
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         cursor.execute("PRAGMA query_only=ON")  # on top of mode=ro: every write is refused
     finally:
@@ -201,13 +203,33 @@ async def current_revision(engine: AsyncEngine) -> str | None:
 
 
 async def check_schema_is_current(engine: AsyncEngine) -> None:
-    """Refuse a database the Alembic history has not brought to head (a reader cannot migrate)."""
-    head = ScriptDirectory.from_config(alembic_config()).get_current_head()
-    revision = await current_revision(engine)
-    if revision != head:
-        found = f"at revision {revision}" if revision else "empty"
+    """Refuse a database a reader cannot use: unreadable, not migrated, or newer than this build."""
+    script = ScriptDirectory.from_config(alembic_config())
+    head = script.get_current_head()
+    path = Path(unquote(urlparse(engine.url.database or "").path))
+    try:
+        revision = await current_revision(engine)
+    except OperationalError as exc:
         message = (
-            f"The ExactDocs database is {found}, but this version needs {head}. "
-            "Start `exactdocs serve` to migrate it, then try again."
+            f"Cannot read {path}: {exc.orig}. In WAL mode SQLite must create {path.name}-wal and "
+            f"{path.name}-shm next to the database when no server is running, and it cannot "
+            f"in {path.parent}. Start `exactdocs serve`, or make the directory writable. Run "
+            "stdio as the same user as the server: files created by another user can stop the "
+            "server from starting later."
+        )
+        raise StartupError(message) from exc
+    if revision == head:
+        return
+    if revision and revision not in {r.revision for r in script.walk_revisions()}:
+        message = (
+            f"The ExactDocs database at {path} was migrated by a newer ExactDocs (revision "
+            f"{revision}; this one knows up to {head}). Upgrade this ExactDocs "
+            "(for uvx: `uvx --refresh exactdocs`)."
         )
         raise StartupError(message)
+    found = f"at revision {revision}" if revision else "empty"
+    message = (
+        f"The ExactDocs database at {path} is {found}, but this version needs {head}. "
+        "Start `exactdocs serve` to migrate it, then try again."
+    )
+    raise StartupError(message)

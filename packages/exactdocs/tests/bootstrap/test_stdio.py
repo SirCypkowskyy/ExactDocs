@@ -79,10 +79,9 @@ async def test_lists_libraries_with_the_server_stopped_and_leaves_the_files_alon
     assert await listed() == ["/acme/ledger", "/acme/payments"]
 
     after = snapshot(database().parent)
-    for files in (before, after):  # SQLite may create its WAL index files; never the database
-        files.pop("exactdocs.db-shm", None)
-        files.pop("exactdocs.db-wal", None)
-    assert after == before, "the database file must be byte for byte unchanged"
+    created = after.keys() - before.keys()
+    assert created <= {"exactdocs.db-shm", "exactdocs.db-wal"}, "only SQLite's WAL index files"
+    assert {name: after[name] for name in before} == before, "existing files byte for byte"
 
 
 @pytest.mark.usefixtures("demo_catalog")
@@ -177,3 +176,46 @@ def test_stdout_carries_nothing_but_mcp_frames() -> None:
     assert all(json.loads(line)["jsonrpc"] == "2.0" for line in lines)
     assert "/acme/payments" in lines[1]
     assert process.returncode == 0, stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+@pytest.mark.usefixtures("demo_catalog")
+def test_a_read_only_directory_without_wal_files_is_a_clear_startup_error() -> None:
+    directory = database().parent
+    assert not (directory / "exactdocs.db-wal").exists()  # a stopped server leaves none
+    directory.chmod(0o555)
+    try:
+        result = run_cli("serve", "--stdio")
+    finally:
+        directory.chmod(0o755)
+
+    assert result.returncode != 0
+    assert not result.stdout
+    assert str(database()) in result.stderr
+    assert "writable" in result.stderr
+    assert "same user" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.usefixtures("demo_catalog")
+async def test_a_database_from_a_newer_exactdocs_says_to_upgrade() -> None:
+    engine = open_database(Settings())
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'ffffffffffff'")
+    await engine.dispose()
+
+    container = ReadOnlyContainer.build(Settings())
+    with pytest.raises(StartupError, match="newer ExactDocs") as raised:
+        async with container.running():
+            pass
+    assert "Upgrade" in str(raised.value)
+    assert "exactdocs serve" not in str(raised.value)
+
+
+@pytest.mark.parametrize("option", ["--host=0.0.0.0", "--port=9000", "--reload"])
+def test_http_options_are_rejected_with_stdio(option: str) -> None:
+    result = run_cli("serve", "--stdio", option)
+
+    assert result.returncode != 0
+    assert not result.stdout
+    assert "HTTP options" in result.stderr

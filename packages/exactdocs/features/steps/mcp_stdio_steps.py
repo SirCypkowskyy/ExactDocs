@@ -5,7 +5,9 @@ import os
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from behave import then, when
 from behave.runner import Context
@@ -81,3 +83,53 @@ def step_missing(context: Context) -> None:
     assert not context.stdio_out
     assert str(context.empty_dir / "exactdocs.db") in context.stdio_err, context.stdio_err
     assert not context.empty_dir.exists(), "stdio must not create the data directory"
+
+
+def rpc(process: subprocess.Popen[str], frame: Mapping[str, object]) -> Any:
+    assert process.stdin is not None
+    assert process.stdout is not None
+    process.stdin.write(json.dumps(frame) + "\n")
+    process.stdin.flush()
+    return json.loads(process.stdout.readline())
+
+
+@when("an agent searches, reads and queries over stdio")
+def step_every_tool(context: Context) -> None:
+    process = start(context.settings.data_dir)
+    assert process.stdin is not None
+    rpc(process, FRAMES[0])
+    process.stdin.write(json.dumps(FRAMES[1]) + "\n")
+    answers: dict[str, Any] = {}
+
+    def call(name: str, arguments: dict[str, object]) -> Any:
+        frame = {
+            "jsonrpc": "2.0",
+            "id": len(answers) + 10,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        answers[name] = rpc(process, frame)
+        return answers[name]
+
+    library = "/fixture/docs-repo"
+    found = call("search_docs", {"library": library, "ref": "v1.4.0", "query": "retry_policy"})
+    hit = found["result"]["structuredContent"]["results"][0]
+    call("read_chunk", {"chunk_id": hit["chunk_id"]})
+    call("read_article", {"library": library, "ref": "v1.4.0", "path": hit["article_path"]})
+    call("query-docs", {"libraryId": f"{library}/v1.4.0", "query": "retry_policy"})
+    process.stdin.close()
+    process.communicate(timeout=60)
+    context.stdio_tool_answers = answers
+
+
+@then("every one of them answers from the read-only database")
+def step_every_answer(context: Context) -> None:
+    assert set(context.stdio_tool_answers) == {
+        "search_docs",
+        "read_chunk",
+        "read_article",
+        "query-docs",
+    }
+    for name, answer in context.stdio_tool_answers.items():
+        assert "error" not in answer, (name, answer)
+        assert not answer["result"].get("isError"), (name, answer)

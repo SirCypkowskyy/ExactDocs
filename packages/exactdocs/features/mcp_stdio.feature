@@ -13,3 +13,7 @@ Feature: MCP over stdio
   Scenario: stdio MCP needs an existing database
     When an agent starts "exactdocs serve --stdio" on an empty data directory
     Then it exits with an error on stderr naming the missing database
+
+  Scenario: Every read tool works on the read-only database
+    When an agent searches, reads and queries over stdio
+    Then every one of them answers from the read-only database

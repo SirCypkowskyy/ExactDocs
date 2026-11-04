@@ -174,7 +174,9 @@ the open ones are pinned by a test. It accepts a bearer API token or the session
 cookie: it is guarded by `identity.adapters.driving.mcp.ApiTokenVerifier` (a FastMCP `TokenVerifier` over the
 `IdentifyToken` port), so the token acts as its account. Tokens (`ApiToken`, `identity_api_tokens`)
 are `exd_` plus 256 random bits, stored as SHA-256, with an optional expiry; stdio MCP is not
-authenticated.
+authenticated: it runs on `ReadOnlyContainer` (database opened `mode=ro` + `query_only`, no identity,
+worker or migration). Read-side wiring lives in `_build_read_side` in `bootstrap/container.py`;
+anything new on the read path goes there so stdio inherits it.
 
 ## Background jobs
 
