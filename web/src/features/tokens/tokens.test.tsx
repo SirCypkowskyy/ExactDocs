@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TokensSection } from "./index";
@@ -54,7 +54,12 @@ describe("tokens", () => {
     localStorage.clear();
     sessionStorage.clear();
   });
-  afterEach(() => vi.unstubAllGlobals());
+  const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  });
 
   it("teaches what tokens are when there are none", async () => {
     stubApi();
@@ -70,8 +75,10 @@ describe("tokens", () => {
     renderSection();
     const list = await screen.findByRole("list", { name: "API tokens" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
-    expect(within(list).getAllByText(/never used/i)).toHaveLength(2);
-    expect(within(list).getByText("Expired")).toBeInTheDocument();
+    for (const item of within(list).getAllByRole("listitem")) {
+      expect(item).toHaveTextContent(/never used/i);
+    }
+    expect(within(list).getByText(/^Expired/)).toBeInTheDocument();
   });
 
   it("shows the secret once, copies it, and drops it from every store", async () => {
@@ -111,6 +118,14 @@ describe("tokens", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(document.body).not.toHaveTextContent(SECRET);
+    expect(
+      JSON.stringify(
+        client
+          .getQueryCache()
+          .getAll()
+          .map((q) => q.state.data),
+      ),
+    ).not.toContain(SECRET);
     expect(await screen.findByText("laptop")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/laptop.*created/i);
   });
@@ -181,5 +196,102 @@ describe("tokens", () => {
     stubApi([row(1)]);
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("token 1")).toBeInTheDocument();
+  });
+
+  async function openAndCreate(name = "laptop") {
+    await userEvent.click(await screen.findByRole("button", { name: "New token" }));
+    await userEvent.type(screen.getByLabelText("Name"), name);
+    await userEvent.click(screen.getByRole("button", { name: "Create token" }));
+  }
+
+  it("cannot be closed by Escape or an outside click while the secret is shown", async () => {
+    stubApi();
+    renderSection();
+    await openAndCreate();
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(within(dialog).getByText(SECRET)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // the guard is reset: the next form closes normally
+    await userEvent.click(screen.getByRole("button", { name: "New token" }));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("keeps the dialog open while the create request is in flight", async () => {
+    const fetchMock = stubApi();
+    let release: (r: Response) => void = () => {};
+    renderSection();
+    await screen.findByText(/no tokens yet/i);
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await openAndCreate();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    release(json({ ...row(1, { name: "laptop" }), token: SECRET }, 201));
+    expect(await screen.findByText(SECRET)).toBeInTheDocument();
+  });
+
+  it("closes the form with Cancel and creates nothing", async () => {
+    const fetchMock = stubApi();
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "New token" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(fetchMock.mock.calls.filter(([, i]) => i?.method === "POST")).toHaveLength(0);
+  });
+
+  it.each([
+    ["rejects", { writeText: vi.fn().mockRejectedValue(new Error("denied")) }],
+    ["is missing", undefined],
+  ])("selects the secret for Ctrl+C when the clipboard %s", async (_, value) => {
+    stubApi();
+    Object.defineProperty(navigator, "clipboard", { value, configurable: true });
+    renderSection();
+    await openAndCreate();
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /copy token/i }));
+    expect(await within(dialog).findByText(/press Ctrl\+C/)).toBeInTheDocument();
+    expect(window.getSelection()?.toString()).toBe(SECRET);
+  });
+
+  it("treats revoking an already-revoked token as done", async () => {
+    const fetchMock = stubApi([row(1)]);
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke token 1" }));
+    fetchMock.mockImplementationOnce(async () =>
+      json({ error: "unknown_token", detail: "gone", fields: [] }, 404),
+    );
+    await userEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("status")).toHaveTextContent(/token 1.*revoked/i);
+  });
+
+  it("offers sign-in when the session ended during create, and refetches the list", async () => {
+    const fetchMock = stubApi();
+    renderSection();
+    await screen.findByText(/no tokens yet/i);
+    fetchMock.mockImplementationOnce(async () =>
+      json({ error: "unauthenticated", detail: "no", fields: [] }, 401),
+    );
+    await openAndCreate();
+    expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/sign-in",
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([u, i]) => u === "/api/v1/tokens" && !i?.method).length,
+      ).toBeGreaterThan(1),
+    );
   });
 });

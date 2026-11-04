@@ -10,7 +10,7 @@ import {
   ConfirmTitle,
 } from "@/shared/ui/dialog";
 import { revokeToken, tokensKey, tokensQueryOptions } from "../api/tokens-query";
-import { explainTokenError, MAX_TOKENS, type Token } from "../model/token";
+import { explainTokenError, isAlreadyGone, MAX_TOKENS, type Token } from "../model/token";
 import { CreateTokenDialog } from "./create-token-dialog";
 import { TokenList } from "./token-list";
 
@@ -25,13 +25,17 @@ export function TokensSection() {
   const focusHeadingAfterClose = useRef(false);
 
   const revoke = useMutation({
-    mutationFn: revokeToken,
-    onSuccess: async (_, id) => {
+    // Already revoked elsewhere counts as done: the row should go either way.
+    mutationFn: (id: string) =>
+      revokeToken(id).catch((error: unknown) => {
+        if (!isAlreadyGone(error)) throw error;
+      }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: tokensKey }),
+    onSuccess: (_, id) => {
       const name = revoking?.id === id ? revoking.name : "Token";
       focusHeadingAfterClose.current = true;
       setRevoking(undefined);
       setAnnouncement(`${name} revoked.`);
-      await queryClient.invalidateQueries({ queryKey: tokensKey });
     },
   });
 
@@ -57,14 +61,15 @@ export function TokensSection() {
         </div>
         <Button
           aria-disabled={full}
-          className={full ? "cursor-not-allowed bg-primary/60 active:scale-100" : undefined}
+          aria-describedby={full ? "token-limit" : undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:bg-primary/60 aria-disabled:hover:bg-primary/60"
           onClick={() => !full && setCreating(true)}
         >
           New token
         </Button>
       </div>
       {full && (
-        <p className="mt-3 text-sm text-muted-foreground">
+        <p id="token-limit" className="mt-3 text-sm text-muted-foreground">
           You have {MAX_TOKENS} of {MAX_TOKENS} tokens. Revoke one you no longer use to create
           another.
         </p>
@@ -77,11 +82,18 @@ export function TokensSection() {
         {tokens.isPending ? (
           <TokenSkeleton />
         ) : tokens.isError ? (
-          <div role="alert" className="rounded-md bg-destructive/10 px-4 py-3">
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md bg-destructive/10 py-1.5 pr-1.5 pl-4"
+          >
             <p className="text-sm font-medium text-destructive">
               {explainTokenError(tokens.error)}
             </p>
-            <Button variant="ghost" className="mt-2 -ml-3" onClick={() => tokens.refetch()}>
+            <Button
+              variant="ghost"
+              className="text-destructive hover:bg-destructive/10 max-sm:-ml-3"
+              onClick={() => tokens.refetch()}
+            >
               Try again
             </Button>
           </div>
@@ -89,10 +101,11 @@ export function TokensSection() {
           <div>
             <p className="font-medium">No tokens yet.</p>
             <p className="mt-1 text-muted-foreground">
-              Create one, then send it as{" "}
-              <code className="text-sm">Authorization: Bearer exd_…</code> to{" "}
-              <code className="text-sm">/mcp</code>.
+              Create one, then send it to <code className="text-sm">/mcp</code> as a bearer token:
             </p>
+            <code className="mt-3 block overflow-x-auto rounded-md bg-secondary px-3 py-2.5 text-sm whitespace-nowrap">
+              Authorization: Bearer exd_...
+            </code>
           </div>
         ) : (
           <TokenList tokens={tokens.data} onRevoke={setRevoking} />
@@ -126,7 +139,9 @@ export function TokensSection() {
         >
           <ConfirmTitle>Revoke “{revoking?.name}”?</ConfirmTitle>
           <ConfirmDescription>
-            Anything using this token stops working at once. This can't be undone.
+            Anything using{" "}
+            {revoking ? <code className="text-foreground">{revoking.prefix}…</code> : "it"} stops
+            working at once. This can't be undone.
           </ConfirmDescription>
           <p
             role="alert"
@@ -164,11 +179,15 @@ function TokenSkeleton() {
       <div aria-hidden="true" className="divide-y divide-border border-y border-border">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center justify-between gap-4 py-4">
-            <div className="space-y-2">
-              <div className="h-4 w-32 rounded bg-secondary motion-safe:animate-pulse" />
-              <div className="h-3.5 w-56 max-w-full rounded bg-secondary motion-safe:animate-pulse" />
+            <div>
+              <div className="flex h-6 items-center">
+                <div className="h-3.5 w-32 rounded bg-secondary motion-safe:animate-pulse" />
+              </div>
+              <div className="mt-1 flex h-5 items-center">
+                <div className="h-3 w-56 max-w-full rounded bg-secondary motion-safe:animate-pulse" />
+              </div>
             </div>
-            <div className="h-9 w-16 rounded bg-secondary motion-safe:animate-pulse" />
+            <div className="h-9 w-[4.5rem] rounded bg-secondary motion-safe:animate-pulse" />
           </div>
         ))}
       </div>

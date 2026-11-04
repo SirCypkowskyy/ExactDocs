@@ -23,4 +23,5 @@ export function createToken(name: string, expiresAt: string | undefined) {
   });
 }
 
-export const revokeToken = (id: string) => sendJson<void>("DELETE", `/v1/tokens/${id}`);
+export const revokeToken = (id: string) =>
+  sendJson<void>("DELETE", `/v1/tokens/${encodeURIComponent(id)}`);

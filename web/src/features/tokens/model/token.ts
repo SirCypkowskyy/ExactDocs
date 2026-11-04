@@ -37,3 +37,10 @@ export function explainTokenError(error: unknown): string {
   if (error.status === 422) return "That name or expiry isn't accepted. Check them and try again.";
   return `Something went wrong (${error.status}). Try again.`;
 }
+
+/** The session cookie is gone: nothing here can work until the user signs in again. */
+export const isSessionEnded = (error: unknown) =>
+  error instanceof HttpError && error.status === 401;
+
+/** Revoking a token that is already gone (another tab, a password reset) is the goal reached. */
+export const isAlreadyGone = (error: unknown) => error instanceof HttpError && error.status === 404;
