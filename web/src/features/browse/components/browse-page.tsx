@@ -7,8 +7,10 @@ import { libraryQueryOptions } from "../api/browse-queries";
 import {
   type BrowseSearch,
   type LibraryDetail,
+  orderVersions,
   repoWebUrl,
   resolveVersion,
+  type SearchSlots,
   shortSha,
   type Version,
 } from "../model/browse";
@@ -19,6 +21,8 @@ interface BrowsePageProps {
   owner: string;
   repo: string;
   search: BrowseSearch;
+  /** The search box and results, composed by the route (a feature never imports another). */
+  slots?: SearchSlots | undefined;
 }
 
 function Overview({ library, version }: { library: LibraryDetail; version: Version }) {
@@ -47,7 +51,16 @@ function VersionBrowser({
   library,
   version,
   search,
+  slots,
 }: BrowsePageProps & { library: LibraryDetail; version: Version }) {
+  const scope = {
+    ref: version.ref,
+    sha: version.commit_sha,
+    otherRefs: orderVersions(library.versions)
+      .filter((v) => v.ref !== version.ref)
+      .map((v) => v.ref),
+  };
+  const searching = slots !== undefined && search.q !== undefined;
   return (
     <div className="mt-6 grid gap-x-10 gap-y-5 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] lg:items-start">
       <FilesAside
@@ -57,9 +70,14 @@ function VersionBrowser({
         version={version}
         path={search.path}
         tags={search.tags}
+        searchBox={slots?.box(scope)}
+        q={slots ? search.q : undefined}
+        match={search.match}
       />
-      <section aria-label="Article" className="min-w-0">
-        {search.path ? (
+      <section aria-label={searching ? "Search" : "Article"} className="min-w-0">
+        {searching ? (
+          slots.results(scope)
+        ) : search.path ? (
           <ArticleView
             key={search.path}
             owner={owner}
@@ -94,7 +112,7 @@ function UnknownVersion({ missing, shown }: { missing: string; shown: string }) 
   );
 }
 
-export function BrowsePage({ owner, repo, search }: BrowsePageProps) {
+export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
   const { data: library } = useSuspenseQuery(libraryQueryOptions(owner, repo));
   const { version, missing } = resolveVersion(library, search.version);
   const heading = usePageTitle(library.title || library.id);
@@ -150,6 +168,7 @@ export function BrowsePage({ owner, repo, search }: BrowsePageProps) {
           owner={owner}
           repo={repo}
           search={search}
+          slots={slots}
           library={library}
           version={version}
         />

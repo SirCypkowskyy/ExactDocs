@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { components } from "@/shared/lib/api-schema";
 
 export type LibraryDetail = components["schemas"]["LibraryDetail"];
@@ -12,6 +13,23 @@ export interface BrowseSearch {
   version?: string | undefined;
   path?: string | undefined;
   tags?: string | undefined;
+  /** The search query; the results take over the article column while it is set. */
+  q?: string | undefined;
+  /** `all` makes a search need every selected tag; absent means any. */
+  match?: "all" | undefined;
+}
+
+/** The version the page resolved, handed to the search slots (the `search` slice renders them). */
+export interface VersionScope {
+  ref: string;
+  sha: string;
+  /** The other imported versions, newest first. */
+  otherRefs: readonly string[];
+}
+
+export interface SearchSlots {
+  box: (scope: VersionScope) => ReactNode;
+  results: (scope: VersionScope) => ReactNode;
 }
 
 /** `size` is -1 (unknown) for the children of a folder that is only partly loaded. */

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronRight, FolderTree } from "lucide-react";
-import { useCallback, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import { tagsQueryOptions } from "../api/browse-queries";
 import { parseTags, type Version, visibleTags } from "../model/browse";
@@ -16,6 +16,10 @@ interface FilesAsideProps {
   version: Version;
   path: string | undefined;
   tags: string | undefined;
+  /** The search box and its query, when the search slice is mounted. */
+  searchBox?: ReactNode;
+  q?: string | undefined;
+  match?: "all" | undefined;
 }
 
 /**
@@ -29,12 +33,15 @@ export function FilesAside({
   version,
   path,
   tags: tagsParam,
+  searchBox,
+  q,
+  match,
 }: FilesAsideProps) {
   const navigate = useNavigate();
   const tags = parseTags(tagsParam);
   // On a phone the tree starts open until an article is open; after that the reader decides.
   const [chosen, setChosen] = useState<boolean>();
-  const filesOpen = chosen ?? !path;
+  const filesOpen = chosen ?? (!path && !q);
   const counted = useQuery(
     tagsQueryOptions({ owner, repo, ref: version.ref, sha: version.commit_sha }),
   );
@@ -44,7 +51,7 @@ export function FilesAside({
     navigate({
       to: "/libraries/$owner/$repo",
       params: { owner, repo },
-      search: { version: version.ref, path, tags: next },
+      search: { version: version.ref, path, tags: next, q, match },
       replace: true,
     });
   const closeFiles = useCallback(() => setChosen(false), []);
@@ -58,7 +65,7 @@ export function FilesAside({
           repo={repo}
           versions={versions}
           current={version}
-          keep={{ path, tags: tagsParam }}
+          keep={{ path, tags: tagsParam, q, match }}
         />
         <button
           type="button"
@@ -80,14 +87,18 @@ export function FilesAside({
           />
         </button>
       </div>
+      {searchBox}
       <div id="file-tree" className={cn("space-y-3", !filesOpen && "max-lg:hidden")}>
-        <TagFilter
-          tags={offered}
-          selected={tags}
-          loading={counted.isPending}
-          truncated={counted.data?.truncated ?? false}
-          onChange={setTags}
-        />
+        {/* While searching, the search box carries its own filter (same `tags` param). */}
+        {!q && (
+          <TagFilter
+            tags={offered}
+            selected={tags}
+            loading={counted.isPending}
+            truncated={counted.data?.truncated ?? false}
+            onChange={setTags}
+          />
+        )}
         <div className="max-h-[min(70dvh,32rem)] overflow-y-auto overscroll-contain lg:max-h-[calc(100dvh-14rem)]">
           <TreePane
             key={tagsParam ?? ""}

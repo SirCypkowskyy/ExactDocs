@@ -8,5 +8,11 @@ const text = (value: unknown): string | undefined => {
 
 /** Reads the URL's search: unknown keys are dropped, anything but text is ignored. */
 export function parseSearch(raw: Record<string, unknown>): BrowseSearch {
-  return { version: text(raw.version), path: text(raw.path), tags: text(raw.tags) };
+  return {
+    version: text(raw.version),
+    path: text(raw.path),
+    tags: text(raw.tags),
+    q: text(raw.q)?.trim() || undefined,
+    match: raw.match === "all" ? "all" : undefined,
+  };
 }
