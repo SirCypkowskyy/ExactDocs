@@ -398,6 +398,26 @@ that last step, which is one transaction in the catalog.
   fails with `import_too_large` instead of the process being killed. The CPU-heavy part of
   storing and indexing (DTO validation, sorting, chunk-ID hashing) runs in a thread so the event
   loop keeps serving requests. Progress is stored every 100 files or 250 ms, and at the end.
+- **Images.** Articles' relative `![](...)` images are collected at parse time (resolved against
+  the article's folder, as the web renderer does; absolute URLs, `data:` and paths leaving the
+  repository are ignored). The first checkout already holds those inside the selected paths; the
+  rest come from a second, literal-path `GitGateway.fetch_files` (glob characters escaped, no
+  README, its own download limit). Each image is read like an article (plain file, never a
+  symlink), at most `EXACTDOCS_MAX_IMAGE_BYTES` (2 MiB), and its type is **sniffed from the
+  bytes**: PNG, JPEG, GIF, WebP or SVG, anything else is `not_an_image`. A version keeps at most
+  1000 images and `EXACTDOCS_MAX_IMAGES_BYTES` (64 MiB); the rest, and images the repository
+  lacks, are listed as skipped problems of the job and never fail it. The catalog stores each
+  blob once (`catalog_image_blobs`, keyed by git blob SHA) and lists them per manifest
+  (`catalog_manifest_images`), so they are activated, superseded, removed and collected (#45)
+  together with the articles. Served by `GET /api/v1/libraries/{owner}/{repo}/asset?ref=&path=`
+  (signed-in callers only, like every `/api/v1` route; no `ref` means the default version) with
+  the stored type, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-cache` and
+  `ETag` = blob SHA (`If-None-Match` answers 304), and `Content-Security-Policy: default-src
+  'none'; style-src 'unsafe-inline'; sandbox`. **SVG** is served, not rasterized or refused (it
+  is what diagrams are made of): in an `<img>` a browser runs no script and loads nothing, and
+  opened directly it is an attachment under that CSP, so a hostile SVG can neither run nor
+  phone home. SVGs declaring entities are refused. Not stored: images in raw HTML, MDX
+  components or front matter.
 - **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
   bare commit, so the import never asks the remote again; a deleted tag does not break it.
 - **Replays.** A crash right after the activation commits re-queues the job; importing the same

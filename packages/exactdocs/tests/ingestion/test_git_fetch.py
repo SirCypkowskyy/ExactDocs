@@ -504,3 +504,41 @@ async def test_sparse_patterns_never_hide_a_file_the_selection_picks(
         fetched = {p for p in files(folder) if selection.selects(p)}
 
     assert fetched == {p for p in TREE if selection.selects(p)}
+
+
+async def test_fetch_files_checks_out_exactly_the_named_paths(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    pinned = sha(docs_repo, "v1.3.0")
+
+    async with gateway.fetch_files(
+        repository(docs_repo.file_url),
+        pinned,
+        ["docs/assets/logo.png", "docs/*", "docs/guide/[a]uth.md", "docs/nope.png"],
+        max_bytes=1024,
+    ) as dir_:
+        assert files(dir_) == {"docs/assets/logo.png"}  # no README, no glob widening
+    assert not dir_.exists()
+
+
+async def test_fetch_files_with_nothing_to_fetch_checks_out_nothing(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    async with gateway.fetch_files(
+        repository(docs_repo.file_url), sha(docs_repo, "v1.3.0"), ["bad\nname"], max_bytes=1024
+    ) as dir_:
+        assert files(dir_) == set()
+
+
+async def test_fetch_files_is_bounded_by_its_own_byte_limit(
+    work: Path, docs_repo: DocsRepo
+) -> None:
+    tight = GitCli.locate(work_root=work)
+    big = "docs/guide/configuration.md"
+
+    with pytest.raises(RepositoryTooLargeError):
+        async with tight.fetch_files(
+            repository(docs_repo.file_url), sha(docs_repo, "v1.3.0"), [big], max_bytes=-4 * 2**20
+        ):
+            pass
+    assert leftovers(work) == []

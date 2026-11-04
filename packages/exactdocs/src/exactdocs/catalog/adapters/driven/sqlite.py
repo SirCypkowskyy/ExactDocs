@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
+    LargeBinary,
     MetaData,
     Row,
     Table,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     delete,
     exists,
     insert,
+    literal,
     or_,
     select,
     text,
@@ -54,6 +56,7 @@ from exactdocs.catalog.models import (
     ManifestState,
     RefKind,
     StoredArticle,
+    StoredImage,
     TagMatch,
     TagSelection,
     Version,
@@ -145,6 +148,25 @@ manifest_renames = Table(
     Column("from_ref", Text, nullable=False),
     Column("new_path", Text, nullable=False),
     Column("similarity", Integer, nullable=False),
+)
+image_blobs = Table(
+    "catalog_image_blobs",
+    metadata,
+    Column("blob_sha", Text, primary_key=True),
+    Column("content_type", Text, nullable=False),
+    Column("data", LargeBinary, nullable=False),
+)
+manifest_images = Table(
+    "catalog_manifest_images",
+    metadata,
+    Column(
+        "manifest_id",
+        Text,
+        ForeignKey("catalog_manifests.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("path", Text, primary_key=True),
+    Column("blob_sha", Text, ForeignKey("catalog_image_blobs.blob_sha"), nullable=False),
 )
 
 _SETTINGS = TypeAdapter(LibrarySettings)  # settings are stored as one JSON document
@@ -325,9 +347,10 @@ class SqliteManifestRepository:
         manifest: Manifest,
         contents: Mapping[ContentKey, str],
         *,
+        images: Mapping[str, StoredImage] | None = None,
         version_must_exist: bool = False,
     ) -> None:
-        """Store a pending manifest and the texts it needs; stored texts stay as they are."""
+        """Store a pending manifest, its texts and image blobs; stored ones stay as they are."""
         async with self._write() as connection:
             if version_must_exist:
                 found = await connection.execute(
@@ -344,6 +367,14 @@ class SqliteManifestRepository:
                     [
                         {"blob_sha": sha, "content_version": version, "content": text}
                         for (sha, version), text in contents.items()
+                    ],
+                )
+            if images:
+                await connection.execute(
+                    sqlite_insert(image_blobs).on_conflict_do_nothing(),
+                    [
+                        {"blob_sha": sha, "content_type": i.content_type, "data": i.data}
+                        for sha, i in images.items()
                     ],
                 )
             await connection.execute(
@@ -372,6 +403,14 @@ class SqliteManifestRepository:
                             "size": e.size,
                         }
                         for e in manifest.entries
+                    ],
+                )
+            if manifest.images:
+                await connection.execute(
+                    insert(manifest_images),
+                    [
+                        {"manifest_id": manifest.id, "path": i.path, "blob_sha": i.blob_sha}
+                        for i in manifest.images
                     ],
                 )
 
@@ -535,6 +574,33 @@ class SqliteManifestRepository:
             content=row.content,
         )
 
+    async def get_image(
+        self, library_id: LibraryId, ref: VersionRef, path: str, *, with_data: bool = True
+    ) -> StoredImage | None:
+        """Return the image at ``path`` of the version's active manifest, or ``None``."""
+        joined = manifests.join(manifest_images, manifest_images.c.manifest_id == manifests.c.id)
+        query = (
+            select(
+                image_blobs.c.blob_sha,
+                image_blobs.c.content_type,
+                image_blobs.c.data if with_data else literal(b"").label("data"),
+            )
+            .select_from(
+                joined.join(image_blobs, image_blobs.c.blob_sha == manifest_images.c.blob_sha)
+            )
+            .where(
+                manifests.c.library_id == library_id.value,
+                manifests.c.ref == ref.value,
+                manifests.c.state == ManifestState.ACTIVE.value,
+                manifest_images.c.path == path,
+            )
+        )
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(query)).first()
+        if row is None:
+            return None
+        return StoredImage(blob_sha=row.blob_sha, content_type=row.content_type, data=row.data)
+
     async def activate(self, manifest_id: ManifestId, *, at: datetime) -> Version:
         """Make a pending manifest the version's active one, in one transaction."""
         async with self._write() as connection:
@@ -603,7 +669,7 @@ class SqliteManifestRepository:
             return (await connection.execute(doomed)).rowcount
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
-        """Delete manifests superseded before the cutoff, then texts no manifest uses."""
+        """Delete manifests superseded before the cutoff, then texts and images no manifest uses."""
         async with self._write() as connection:
             old = await connection.execute(
                 delete(manifests).where(
@@ -619,7 +685,14 @@ class SqliteManifestRepository:
                     )
                 )
             )
-        return GarbageCollected(manifests=old.rowcount, contents=unused.rowcount)
+            loose = await connection.execute(
+                delete(image_blobs).where(
+                    ~exists().where(manifest_images.c.blob_sha == image_blobs.c.blob_sha)
+                )
+            )
+        return GarbageCollected(
+            manifests=old.rowcount, contents=unused.rowcount, images=loose.rowcount
+        )
 
     async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
         """Delete the version row and the manifests of the ref (their entries cascade)."""

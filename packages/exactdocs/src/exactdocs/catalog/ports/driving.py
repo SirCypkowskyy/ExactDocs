@@ -9,6 +9,7 @@ from exactdocs.catalog.dtos import (
     ApplyReadmeCommand,
     Article,
     ArticleList,
+    Asset,
     CollectGarbageCommand,
     CollectionResult,
     CreateLibraryCommand,
@@ -17,6 +18,7 @@ from exactdocs.catalog.dtos import (
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetAssetQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     LibraryDetail,
@@ -142,6 +144,18 @@ class ListRenames(Protocol):
     """List every rename stored with a version (same errors as ``ResolveRenamedPath``)."""
 
     async def __call__(self, query: ListRenamesQuery) -> RenameList:
+        """Run the use case."""
+        ...
+
+
+class GetAsset(Protocol):
+    """Read one image of a version (default version without a ref).
+
+    Raises ``LibraryNotFoundError``, ``VersionNotFoundError`` or ``AssetNotFoundError`` (the
+    version has no active manifest, or the manifest has no image at that path).
+    """
+
+    async def __call__(self, query: GetAssetQuery) -> Asset:
         """Run the use case."""
         ...
 

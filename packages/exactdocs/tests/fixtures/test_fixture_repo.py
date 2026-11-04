@@ -12,7 +12,7 @@ from fixture_repo import FIXTURE, DocsRepo, build, git, git_bytes
 # Changing a file under docs-repo/ or history.toml changes these: see docs-repo/README.md.
 GOLDEN_SHAS = {
     "refs/heads/main": "3fb0656f8c6ae525d96bedadb0f826bbd9201fa2",
-    "refs/heads/next": "ea859b3dc4dfd4167845d41e8b71686b6cc868ae",
+    "refs/heads/next": "8aba09cdc045e84b7fb0d73737a6fc2fe393901c",
     "refs/tags/v1.3.0": "db8b674a770b689af277ae77afc0aa846fc43035",
     "refs/tags/v1.4.0": "3fb0656f8c6ae525d96bedadb0f826bbd9201fa2",
 }
@@ -84,7 +84,13 @@ def test_next_is_one_commit_ahead_of_v1_4_0(docs_repo: DocsRepo) -> None:
     ahead = git("rev-list", "--count", "v1.4.0..next", cwd=docs_repo.path)
     assert ahead == "1"
     changed = git("diff", "--name-status", "v1.4.0", "next", cwd=docs_repo.path)
-    assert changed.splitlines() == ["M\tdocs/guide/install.md", "A\tdocs/guide/migration.md"]
+    assert changed.splitlines() == [
+        "A\tdocs/assets/flow.svg",
+        "A\tdocs/guide/diagrams.md",
+        "M\tdocs/guide/install.md",
+        "A\tdocs/guide/migration.md",
+        "A\timg/flow.png",
+    ]
 
 
 def test_retry_policy_occurs_only_in_v1_4_0(docs_repo: DocsRepo) -> None:

@@ -186,6 +186,8 @@ class Container:
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
             renames=renames,
+            max_image_bytes=settings.max_image_bytes,
+            max_images_bytes=settings.max_images_bytes,
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),

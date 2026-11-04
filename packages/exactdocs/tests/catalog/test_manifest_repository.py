@@ -35,9 +35,11 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestImage,
     ManifestRename,
     ManifestState,
     RefKind,
+    StoredImage,
     TagMatch,
     TagSelection,
     VersionRef,
@@ -836,3 +838,102 @@ async def test_renames_go_with_their_manifest(stores: Stores) -> None:
     await stores.manifests.remove_version(PAYMENTS.id, VersionRef("v1.4.0"))
 
     assert await stores.manifests.find_rename(ManifestId("m2"), "b.md") is None
+
+
+PNG = StoredImage(blob_sha=sha("1a"), content_type="image/png", data=b"\x89PNG\r\n\x1a\n-one")
+GIF = StoredImage(blob_sha=sha("2b"), content_type="image/gif", data=b"GIF89a-two")
+
+
+def with_images(
+    stored: Manifest, paths: dict[str, StoredImage]
+) -> tuple[Manifest, dict[str, StoredImage]]:
+    """The manifest listing the images at ``paths`` and the blobs to store for it."""
+    listed = tuple(
+        ManifestImage(
+            path=path,
+            blob_sha=image.blob_sha,
+            content_type=image.content_type,
+            size=len(image.data),
+        )
+        for path, image in paths.items()
+    )
+    return replace(stored, images=listed), {i.blob_sha: i for i in paths.values()}
+
+
+async def test_only_the_active_manifest_serves_its_images(stores: Stores) -> None:
+    stored, blobs = with_images(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"img/a.png": PNG}
+    )
+    await stores.manifests.add(stored, contents(*stored.entries), images=blobs)
+    main = VersionRef("main")
+
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png") is None  # pending
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png") == PNG
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/b.png") is None
+    assert await stores.manifests.get_image(PAYMENTS.id, VersionRef("v9"), "img/a.png") is None
+    meta = await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png", with_data=False)
+    assert meta is not None
+    assert (meta.blob_sha, meta.data) == (PNG.blob_sha, b"")  # the bytes are not read
+    listing = await fetch(stores.manifests, "m1")
+    assert listing.images == ()  # like entries, images are not part of a plain read
+
+
+async def test_a_new_manifest_replaces_the_images_and_the_old_ones_are_collected(
+    stores: Stores,
+) -> None:
+    first, blobs = with_images(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"img/a.png": PNG, "img/b.gif": GIF}
+    )
+    await stores.manifests.add(first, contents(*first.entries), images=blobs)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    second, blobs = with_images(
+        manifest("m2", "main", "bbb222", entry(INSTALL, "b1"), created_at=T0 + timedelta(hours=1)),
+        {"img/a.png": PNG},  # unchanged: stays shared
+    )
+    await stores.manifests.add(second, contents(*second.entries), images=blobs)
+    await stores.manifests.activate(ManifestId("m2"), at=T0 + timedelta(hours=1))
+    main = VersionRef("main")
+
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/b.gif") is None
+    early = await stores.manifests.collect_garbage(superseded_before=T0 - timedelta(hours=1))
+    assert early.images == 0  # within the grace period
+    done = await stores.manifests.collect_garbage(superseded_before=T0 + timedelta(hours=2))
+    assert (done.manifests, done.images) == (1, 1)  # m1 and GIF; PNG is still used by m2
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png") == PNG
+
+
+async def test_removing_a_version_and_a_library_frees_their_images(stores: Stores) -> None:
+    other = replace(PAYMENTS, id=LibraryId("/acme/ledger"), title="Ledger")
+    await stores.libraries.save(other)
+    a, blobs_a = with_images(manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"x.png": PNG})
+    await stores.manifests.add(a, contents(*a.entries), images=blobs_a)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    b, blobs_b = with_images(
+        replace(manifest("m2", "main", "bbb222", entry(INSTALL, "b1")), library=other.id),
+        {"x.png": PNG, "y.gif": GIF},
+    )
+    await stores.manifests.add(b, contents(*b.entries), images=blobs_b)
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+
+    await stores.manifests.remove_library(PAYMENTS.id)
+    freed = await stores.manifests.collect_garbage(superseded_before=T0)
+
+    assert freed.images == 0  # the ledger still uses both
+    assert await stores.manifests.get_image(other.id, VersionRef("main"), "x.png") == PNG
+    await stores.manifests.remove_version(other.id, VersionRef("main"))
+    freed = await stores.manifests.collect_garbage(superseded_before=T0)
+    assert freed.images == 2
+
+
+async def test_a_discarded_pending_manifest_leaves_no_listed_images(stores: Stores) -> None:
+    stored, blobs = with_images(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"x.png": PNG}
+    )
+    await stores.manifests.add(stored, contents(*stored.entries), images=blobs)
+
+    await stores.manifests.discard_pending(
+        manifest_id=ManifestId("m1"), library_id=None, created_before=None
+    )
+
+    assert (await stores.manifests.collect_garbage(superseded_before=T0)).images == 1

@@ -16,6 +16,7 @@ from exactdocs.catalog.ports.driving import (
     DiscardPendingManifests,
     GetActiveManifest,
     GetArticle,
+    GetAsset,
     GetLibrary,
     GetManifestStates,
     ListArticles,
@@ -38,6 +39,7 @@ from exactdocs.catalog.use_cases import (
     DiscardPendingManifestsUseCase,
     GetActiveManifestUseCase,
     GetArticleUseCase,
+    GetAssetUseCase,
     GetLibraryUseCase,
     GetManifestStatesUseCase,
     ListArticlesUseCase,
@@ -70,6 +72,7 @@ class CatalogModule:
     list_articles: ListArticles
     list_tags: ListTags
     get_article: GetArticle
+    get_asset: GetAsset
     discard_pending_manifests: DiscardPendingManifests
     collect_garbage: CollectGarbage
     get_manifest_states: GetManifestStates
@@ -102,6 +105,7 @@ class CatalogModule:
             list_articles=ListArticlesUseCase(repository, manifests),
             list_tags=ListTagsUseCase(repository, manifests),
             get_article=GetArticleUseCase(repository, manifests),
+            get_asset=GetAssetUseCase(repository, manifests),
             discard_pending_manifests=DiscardPendingManifestsUseCase(manifests, clock),
             collect_garbage=CollectGarbageUseCase(manifests, clock),
             get_manifest_states=GetManifestStatesUseCase(manifests),

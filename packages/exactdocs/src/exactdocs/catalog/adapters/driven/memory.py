@@ -23,6 +23,7 @@ from exactdocs.catalog.models import (
     ManifestRename,
     ManifestState,
     StoredArticle,
+    StoredImage,
     TagSelection,
     Version,
     VersionRef,
@@ -96,15 +97,17 @@ class InMemoryManifestRepository:
     libraries: InMemoryLibraryRepository
     manifests: dict[ManifestId, Manifest] = field(default_factory=dict)
     contents: dict[ContentKey, str] = field(default_factory=dict)
+    images: dict[str, StoredImage] = field(default_factory=dict)
 
     async def add(
         self,
         manifest: Manifest,
         contents: Mapping[ContentKey, str],
         *,
+        images: Mapping[str, StoredImage] | None = None,
         version_must_exist: bool = False,
     ) -> None:
-        """Store a pending manifest and the texts it needs; stored texts stay as they are."""
+        """Store a pending manifest, its texts and image blobs; stored ones stay as they are."""
         library = self.libraries.libraries.get(manifest.library)
         if library is None:
             raise LibraryNotFoundError(str(manifest.library))
@@ -112,6 +115,8 @@ class InMemoryManifestRepository:
             raise VersionNotFoundError(str(manifest.library), str(manifest.ref))
         for key, text in contents.items():
             self.contents.setdefault(key, text)
+        for sha, image in (images or {}).items():
+            self.images.setdefault(sha, image)
         self.manifests[manifest.id] = manifest
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
@@ -193,6 +198,15 @@ class InMemoryManifestRepository:
             content=self.contents[entry.content_key],
         )
 
+    async def get_image(
+        self, library_id: LibraryId, ref: VersionRef, path: str, *, with_data: bool = True
+    ) -> StoredImage | None:
+        """Return the image at ``path`` of the version's active manifest, or ``None``."""
+        manifest = self._active(library_id, ref)
+        held = next((i for i in manifest.images if i.path == path), None) if manifest else None
+        found = self.images.get(held.blob_sha) if held else None
+        return found if found is None or with_data else replace(found, data=b"")
+
     async def activate(self, manifest_id: ManifestId, *, at: datetime) -> Version:
         """Make a pending manifest the version's active one; all or nothing."""
         manifest = self.manifests.get(manifest_id)
@@ -263,7 +277,11 @@ class InMemoryManifestRepository:
         unused = [key for key in self.contents if key not in used]
         for key in unused:
             del self.contents[key]
-        return GarbageCollected(manifests=len(old), contents=len(unused))
+        shown = {i.blob_sha for m in self.manifests.values() for i in m.images}
+        loose = [sha for sha in self.images if sha not in shown]
+        for sha in loose:
+            del self.images[sha]
+        return GarbageCollected(manifests=len(old), contents=len(unused), images=len(loose))
 
     async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
         """Delete the version row and every manifest of the ref."""
@@ -301,5 +319,5 @@ class InMemoryManifestRepository:
 
 
 def _light(manifest: Manifest) -> Manifest:
-    """Return the manifest as ``get`` does: without entries and renames."""
-    return replace(manifest, entries=(), renames=())
+    """Return the manifest as ``get`` does: without entries, renames and images."""
+    return replace(manifest, entries=(), renames=(), images=())

@@ -3,7 +3,7 @@
 import unicodedata
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -263,6 +263,15 @@ class RenameIn(_Dto):
     similarity: int = Field(ge=1, le=100, description="Percent of the content kept.")
 
 
+class ImageIn(_Dto):
+    """One image to store: the repository path articles reference, and its bytes."""
+
+    path: str = Field(min_length=1, max_length=MAX_PATH, description="Repository-relative.")
+    blob_sha: str = Field(description="Git blob SHA of the file; equal SHAs share one copy.")
+    content_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+    data: bytes = Field(repr=False)
+
+
 class StoreManifestCommand(_Dto):
     """Store the articles of `ref` at `commit_sha` as a new, pending manifest."""
 
@@ -271,6 +280,7 @@ class StoreManifestCommand(_Dto):
     kind: RefKind
     commit_sha: str
     articles: list[ArticleIn]
+    images: list[ImageIn] = []
     must_exist: bool = Field(
         default=False,
         description="Refuse (VersionNotFoundError) unless the library already has this version.",
@@ -356,11 +366,14 @@ class CollectionResult(_Dto):
 
     manifests: int
     contents: int
+    images: int = 0
 
     @classmethod
     def from_model(cls, collected: GarbageCollected) -> Self:
         """Map the domain value object."""
-        return cls(manifests=collected.manifests, contents=collected.contents)
+        return cls(
+            manifests=collected.manifests, contents=collected.contents, images=collected.images
+        )
 
 
 class TagFilter(_Dto):
@@ -615,6 +628,33 @@ class Article(ArticleInfo):
     def with_content(cls, info: ArticleInfo, content: str) -> Self:
         """Add the text to an article's metadata."""
         return cls(**dict(info), content=content)
+
+
+class GetAssetQuery(_Dto):
+    """Read the image at repository path `path` of a version; no `ref` means the default version."""
+
+    library: str = Field(min_length=1)
+    ref: str | None = None
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    known_blob_shas: list[str] = Field(
+        default=[], description="Blob SHAs the caller holds; a match answers `unchanged`."
+    )
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class Asset(_Dto):
+    """An image of a version: its bytes and the type sniffed from them when it was imported."""
+
+    blob_sha: str
+    content_type: str
+    data: bytes = Field(repr=False)
+    unchanged: bool = Field(
+        default=False, description="The blob is one of `known_blob_shas`; `data` is empty."
+    )
 
 
 class GetManifestStatesQuery(_Dto):

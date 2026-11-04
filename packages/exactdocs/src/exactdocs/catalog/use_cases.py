@@ -14,6 +14,7 @@ from exactdocs.catalog.dtos import (
     ArticleInfo,
     ArticleList,
     ArticleSummary,
+    Asset,
     CollectGarbageCommand,
     CollectionResult,
     CreateLibraryCommand,
@@ -22,6 +23,7 @@ from exactdocs.catalog.dtos import (
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetAssetQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     LibraryDetail,
@@ -48,7 +50,9 @@ from exactdocs.catalog.dtos import (
 )
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
+    AssetNotFoundError,
     ConflictingContentError,
+    ConflictingImageError,
     LibraryNotEmptyError,
     LibraryNotFoundError,
     ManifestNotFoundError,
@@ -64,8 +68,10 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestImage,
     ManifestRename,
     ParsedId,
+    StoredImage,
     TagRule,
     Version,
     VersionRef,
@@ -235,13 +241,15 @@ class StoreManifestUseCase:
         library_id = LibraryId(command.library)
         if await self.repository.get(library_id) is None:
             raise LibraryNotFoundError(command.library)
-        manifest, contents = await asyncio.to_thread(self._build, command, library_id)
-        await self.manifests.add(manifest, contents, version_must_exist=command.must_exist)
+        manifest, contents, images = await asyncio.to_thread(self._build, command, library_id)
+        await self.manifests.add(
+            manifest, contents, images=images, version_must_exist=command.must_exist
+        )
         return StoredManifest.from_model(manifest)
 
     def _build(
         self, command: StoreManifestCommand, library_id: LibraryId
-    ) -> tuple[Manifest, dict[ContentKey, str]]:
+    ) -> tuple[Manifest, dict[ContentKey, str], dict[str, StoredImage]]:
         """Build the manifest and its texts: CPU-bound for a big version, so run in a thread."""
         manifest = Manifest(
             id=ManifestId(uuid4().hex),
@@ -276,12 +284,31 @@ class StoreManifestUseCase:
                     key=lambda entry: entry.path,
                 )
             ),
+            images=tuple(
+                sorted(
+                    (
+                        ManifestImage(
+                            path=i.path,
+                            blob_sha=i.blob_sha,
+                            content_type=i.content_type,
+                            size=len(i.data),
+                        )
+                        for i in command.images
+                    ),
+                    key=lambda image: image.path,
+                )
+            ),
         )
         contents: dict[ContentKey, str] = {}
         for a in command.articles:
             if contents.setdefault((a.blob_sha, a.content_version), a.content) != a.content:
                 raise ConflictingContentError(a.blob_sha)
-        return manifest, contents
+        images: dict[str, StoredImage] = {}
+        for i in command.images:
+            stored = StoredImage(blob_sha=i.blob_sha, content_type=i.content_type, data=i.data)
+            if images.setdefault(i.blob_sha, stored) != stored:
+                raise ConflictingImageError(i.blob_sha)
+        return manifest, contents, images
 
 
 @dataclass(frozen=True, slots=True)
@@ -428,6 +455,32 @@ class GetArticleUseCase:
         paths = await self.manifests.list_paths(manifest.id, limit=MAX_SUGGESTION_SCAN)
         # difflib is CPU-bound: keep it off the event loop so a miss cannot stall other requests.
         return await asyncio.to_thread(close_paths, path, paths)
+
+
+@dataclass(frozen=True, slots=True)
+class GetAssetUseCase:
+    """Implements ``ports.driving.GetAsset``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: GetAssetQuery) -> Asset:
+        """Read one image of the version's active manifest."""
+        ref = VersionRef(query.ref) if query.ref else None
+        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        known = bool(query.known_blob_shas)
+        image = await self.manifests.get_image(
+            library.id, version.ref, query.path, with_data=not known
+        )
+        if image is not None and known and image.blob_sha in query.known_blob_shas:
+            return Asset(
+                blob_sha=image.blob_sha, content_type=image.content_type, data=b"", unchanged=True
+            )
+        if image is not None and known:  # a miss: now read the bytes
+            image = await self.manifests.get_image(library.id, version.ref, query.path)
+        if image is None:
+            raise AssetNotFoundError(str(library.id), str(version.ref), query.path)
+        return Asset(blob_sha=image.blob_sha, content_type=image.content_type, data=image.data)
 
 
 MAX_TAG_FACETS = 100

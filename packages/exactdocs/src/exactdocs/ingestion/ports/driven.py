@@ -158,6 +158,25 @@ class GitGateway(Protocol):
         """
         ...
 
+    def fetch_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> AbstractAsyncContextManager[Path]:
+        """Check out exactly these repository paths of ``commit_sha`` (the files that exist).
+
+        Like ``fetch`` (same folder rules, verbatim files, credentials, errors), but nothing else
+        is checked out, not even the README, and the download is bounded by ``max_bytes``:
+        ``RepositoryTooLargeError`` when a server sends more. Paths are literal, never patterns.
+        A path the commit does not have is simply absent from the folder.
+        """
+        ...
+
 
 class RenameSource(Protocol):
     """Ask git which files were moved between two commits, cheaply."""

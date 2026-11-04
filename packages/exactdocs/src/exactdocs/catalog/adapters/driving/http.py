@@ -2,12 +2,13 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from exactdocs.catalog.dtos import (
     Article,
     ArticleList,
     GetArticleQuery,
+    GetAssetQuery,
     GetLibraryQuery,
     LibraryDetail,
     LibraryList,
@@ -28,6 +29,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.models import TagMatch
 from exactdocs.catalog.ports.driving import (
     GetArticle,
+    GetAsset,
     GetLibrary,
     ListArticles,
     ListLibraries,
@@ -37,6 +39,22 @@ from exactdocs.catalog.ports.driving import (
     UpdateLibrary,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
+
+# Repository content is untrusted. These headers make an image safe to open directly, too:
+# nothing may load or run in its document (`default-src 'none'`, `sandbox`: no scripts even in an
+# SVG), the browser must not guess another type, and no other site may embed it.
+_ASSET_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    # The URL names a path of a ref, which can move; the bytes are named by the blob SHA (ETag).
+    # `private`: for the signed-in caller only. `no-cache`: revalidate, 304 while the SHA is equal.
+    "Cache-Control": "private, no-cache",
+}
+_SVG = "image/svg+xml"
 
 
 def build_router(
@@ -48,10 +66,12 @@ def build_router(
     list_tags: ListTags,
     get_article: GetArticle,
     resolve_renamed_path: ResolveRenamedPath,
+    get_asset: GetAsset,
     update_library: UpdateLibrary,
 ) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``."""
     router = APIRouter(prefix="/libraries", tags=["catalog"])
+    router.include_router(_asset_router(get_asset))
 
     @router.get("")
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
@@ -166,5 +186,61 @@ def build_router(
             )
         )
         return RenameAnswer(renamed=found)
+
+    return router
+
+
+def _asset_router(get_asset: GetAsset) -> APIRouter:
+    """Build the route that serves the images of a version (see ``_ASSET_HEADERS``)."""
+    router = APIRouter(tags=["catalog"])
+
+    @router.get(
+        "/{owner}/{repo}/asset",
+        response_class=Response,
+        responses={
+            200: {
+                "description": "The image's bytes, with the type sniffed when it was imported.",
+                "content": {
+                    "image/png": {},
+                    "image/jpeg": {},
+                    "image/gif": {},
+                    "image/webp": {},
+                    _SVG: {},
+                },
+            },
+            304: {"description": "The caller's copy (`If-None-Match`) is current."},
+        },
+    )
+    async def get_version_asset(
+        request: Request,
+        owner: str,
+        repo: str,
+        path: Annotated[
+            str,
+            Query(
+                min_length=1,
+                max_length=MAX_PATH,
+                description="Repository path of the image, as the article resolves it.",
+            ),
+        ],
+        ref: str | None = None,
+    ) -> Response:
+        """Serve an image an article of the version references (no ref: the default version).
+
+        Content-addressed: the `ETag` is the git blob SHA. An SVG is served as an attachment (an
+        `<img>` still shows it) under a CSP that forbids scripts and any request.
+        """
+        sent = request.headers.get("if-none-match", "")
+        known = [t.strip().removeprefix("W/").strip('"') for t in sent.split(",") if t.strip()]
+        asset = await get_asset(
+            GetAssetQuery(library=f"/{owner}/{repo}", ref=ref, path=path, known_blob_shas=known)
+        )
+        etag = f'"{asset.blob_sha}"'
+        headers = {**_ASSET_HEADERS, "ETag": etag}
+        if asset.content_type == _SVG:
+            headers["Content-Disposition"] = 'attachment; filename="image.svg"'
+        if asset.unchanged:
+            return Response(status_code=304, headers=headers)
+        return Response(asset.data, media_type=asset.content_type, headers=headers)
 
     return router

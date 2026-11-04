@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
@@ -61,14 +61,18 @@ from exactdocs.ingestion.models import (
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_MAX_ARTICLE_BYTES,
+    DEFAULT_MAX_IMAGE_BYTES,
+    DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     IMPORT_KINDS,
+    MAX_IMAGES,
     REFRESH_JOB,
     ArticleChunk,
     Credential,
     GitRename,
     ImportedArticle,
+    ImportedImage,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -98,6 +102,7 @@ from exactdocs.ingestion.models import (
     readme_summary,
     ref_tips,
     resolve_ref,
+    sniff_image,
 )
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -673,6 +678,17 @@ class ImportVersionUseCase:
     Readers see the previous state until the last step; any failure (also a cancellation)
     discards what was stored, so a version never shows half of its articles.
 
+    Images the articles reference (``![](img/a.png)``) are imported too: the ones the first
+    checkout already holds are read from it, the others (outside the selected paths) are fetched
+    in a second, literal-path checkout bounded by ``max_images_bytes``. Each is sniffed (PNG,
+    JPEG, GIF, WebP, SVG), at most ``max_image_bytes`` big, and the version keeps at most
+    ``MAX_IMAGES`` / ``max_images_bytes`` of them; any other image is listed as a problem and the
+    import goes on.
+
+    Images are held as bytes until stored, then again in the bridge's DTOs, the SQL parameters and
+    the sorted manifest: budget about 8 x ``max_images_bytes`` per job at the peak, twice with
+    two jobs at once (the 32 MiB default is a few hundred MiB).
+
     Memory: the selected text of the version is held in memory until it is stored, and again as
     chunks, as DTOs in the bridges and as SQL parameters, so a job needs several times
     ``max_import_bytes`` at its peak (and the worker runs two jobs at once). The budget makes the
@@ -688,6 +704,8 @@ class ImportVersionUseCase:
     vault: CredentialVault
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
+    max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES
+    max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES
     refresh: bool = False
     renames: RenameSource | None = None
     """Where renames come from; without it none are detected. Never a reason to fail."""
@@ -706,10 +724,13 @@ class ImportVersionUseCase:
         async with self.gateway.fetch(
             source.url, job.commit_sha, source.selection, refs=refs, credential=credential
         ) as folder:
-            articles = await self._articles(folder, source, config_hash, progress)
+            articles, wanted = await self._articles(folder, source, config_hash, progress)
             readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
+            taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
+            taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
         if not articles:
             raise NoArticlesError
+        await self._outside_images(job, source, credential, taken, progress)
         # After the fetch above has given its slot back: a second slot held while waiting for one
         # could deadlock two imports.
         renamed_from, renames = await self._renames(job, source, credential, refs, articles)
@@ -720,6 +741,7 @@ class ImportVersionUseCase:
             commit_sha=job.commit_sha,
             config_hash=config_hash,
             articles=tuple(articles),
+            images=tuple(taken.images),
             refresh=self.refresh,
             renamed_from=renamed_from,
             renames=renames,
@@ -813,9 +835,34 @@ class ImportVersionUseCase:
             log.exception("no renames known for %s %s", job.library, job.version)
         return fallback
 
+    async def _outside_images(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        taken: _ImageBudget,
+        progress: JobProgress,
+    ) -> None:
+        """Fetch the images the first checkout lacked (outside the selection); list the problems."""
+        if taken.absent and job.commit_sha and job.version:
+            async with self.gateway.fetch_files(
+                source.url,
+                job.commit_sha,
+                taken.absent,
+                max_bytes=self.max_images_bytes,
+                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
+                credential=credential,
+            ) as outside:
+                taken.absent = await asyncio.to_thread(_read_images, outside, taken.absent, taken)
+        for skip in (*taken.skipped, *(_Missing(path) for path in taken.absent)):
+            await progress.problem(
+                skip.path.encode(errors="replace").decode(), skip.code, skip.reason
+            )
+
     async def _articles(
         self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress
-    ) -> list[ImportedArticle]:
+    ) -> tuple[list[ImportedArticle], list[str]]:
+        """Return the articles and the image paths they reference (first-seen order)."""
         try:
             paths = await asyncio.to_thread(_selected_files, folder, source.selection)
         except OSError as error:
@@ -849,7 +896,7 @@ class ImportVersionUseCase:
         reused = sum(sha in chunks for _, sha, _ in loaded)
         await progress.chunking(chunked=len(unknown), reused=reused)
         chunks |= await asyncio.to_thread(self._cut, unknown)
-        return [
+        articles = [
             ImportedArticle(
                 path=path,
                 blob_sha=blob_sha,
@@ -861,6 +908,11 @@ class ImportVersionUseCase:
             )
             for path, blob_sha, parsed in loaded
         ]
+        wanted = list(dict.fromkeys(image for _, _, parsed in loaded for image in parsed.images))
+        if len(wanted) > MAX_WANTED_IMAGES:
+            reason = f"{len(wanted) - MAX_WANTED_IMAGES} more images are referenced; not looked at"
+            await progress.problem("", ProblemCode.TRUNCATED, reason)
+        return articles, wanted[:MAX_WANTED_IMAGES]
 
     def _cut(self, articles: Mapping[str, ParsedArticle]) -> dict[str, tuple[ArticleChunk, ...]]:
         return {sha: tuple(self.chunker.chunk(a)) for sha, a in articles.items()}
@@ -878,6 +930,7 @@ def _full_refs(kind: RefKind, name: str) -> list[str]:
 
 
 KNOWN_BATCH = 500
+MAX_WANTED_IMAGES = 4 * MAX_IMAGES  # distinct image paths looked for per version
 _cleanups: set[asyncio.Future[None]] = set()  # the loop holds tasks weakly
 
 
@@ -931,6 +984,88 @@ def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
     return sorted(found)
 
 
+def _full_refs(kind: RefKind, version: str) -> list[str]:
+    """Return the full ref name to try when a server refuses a bare SHA (none for a commit)."""
+    prefix = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
+    return [] if prefix is None else [prefix + version]
+
+
+@dataclass(slots=True)
+class _ImageBudget:
+    """What the images of one version may still take; the images turned away, with why."""
+
+    per_image: int
+    total: int
+    count: int = 0
+    used: int = 0
+    images: list[ImportedImage] = field(default_factory=list)
+    skipped: list[Skip | _Missing] = field(default_factory=list)
+    absent: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class _Missing:
+    """The repository has no file at this path (at the commit)."""
+
+    path: str
+    code: ProblemCode = ProblemCode.MISSING_IMAGE
+    reason: str = "no such file in the repository at this commit"
+
+
+def _through_a_link(folder: Path, path: str) -> bool:
+    """Whether any directory on the way to ``path`` is a symlink (it could lead out of ``folder``).
+
+    ``_read`` only refuses a link as the last component. Git is run with ``core.symlinks=false``,
+    so a real checkout holds none; this keeps a checkout that does from reading the host's files.
+    """
+    current = folder
+    for part in path.split("/")[:-1]:
+        current /= part
+        try:
+            if stat.S_ISLNK(current.lstat().st_mode):
+                return True
+        except OSError:
+            return False  # absent: the read reports it
+    return False
+
+
+def _read_images(folder: Path, paths: Sequence[str], budget: _ImageBudget) -> list[str]:
+    """Read the images that exist in ``folder`` into ``budget``; return the paths it lacks.
+
+    A file that is not a plain file, too big, not an allowed image by its content, or over the
+    version's budget is turned away (``budget.skipped``) and the rest goes on. Content is
+    hashed with git's blob rule, like articles.
+    """
+    absent: list[str] = []
+    for path in paths:
+        try:
+            if _through_a_link(folder, path):
+                budget.skipped.append(Skip(ProblemCode.NOT_A_FILE, "not a regular file", path))
+                continue
+            data = _read(folder / path, budget.per_image)
+        except FileNotFoundError, NotADirectoryError:
+            absent.append(path)
+            continue
+        except OSError:
+            budget.skipped.append(Skip(ProblemCode.UNREADABLE, "unreadable", path))
+            continue
+        if isinstance(data, Skip):
+            budget.skipped.append(replace(data, path=path))
+        elif (kind := sniff_image(data)) is None:
+            reason = "not a PNG, JPEG, GIF, WebP or SVG image"
+            budget.skipped.append(Skip(ProblemCode.NOT_AN_IMAGE, reason, path))
+        elif budget.count >= MAX_IMAGES or budget.used + len(data) > budget.total:
+            reason = "the version's image budget is used up"
+            budget.skipped.append(Skip(ProblemCode.IMAGE_BUDGET, reason, path))
+        else:
+            budget.count += 1
+            budget.used += len(data)
+            budget.images.append(
+                ImportedImage(path=path, blob_sha=git_blob_sha(data), content_type=kind, data=data)
+            )
+    return absent
+
+
 def _readme(folder: Path, limit: int) -> ReadmeSummary:
     """Summarize the root README (``README.md``, else ``README.mdx``); nothing if there is none.
 
@@ -957,6 +1092,7 @@ class Skip:
 
     code: ProblemCode
     reason: str
+    path: str = ""
 
 
 def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int] | Skip:

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # An import fails when its selected articles add up to more bytes than this (they are held in
     # memory, several times over, until stored).
     max_import_bytes: int = Field(default=256 * 2**20, ge=1)
+    # Images the articles reference: one above `max_image_bytes` is skipped unread, and a version
+    # keeps images until they add up to `max_images_bytes` (they are held in memory and in the
+    # database, about 8 times over at the peak; later ones are skipped and listed as problems).
+    max_image_bytes: int = Field(default=2 * 2**20, ge=1)
+    max_images_bytes: int = Field(default=32 * 2**20, ge=1)
     # Encrypts the stored tokens and deploy keys of private repositories. It must be random and
     # at least 32 characters (`openssl rand -base64 32`). Unset: a random key is generated into
     # `<data dir>/secret.key` (mode 0600) on first run. Without the key the credentials cannot be

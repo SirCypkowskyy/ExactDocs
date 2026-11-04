@@ -149,6 +149,8 @@ class ParsedArticle:
     description: str | None = None
     front_matter: dict[str, Any] = field(default_factory=dict)
     problems: tuple[str, ...] = ()
+    images: tuple[str, ...] = ()
+    """Repository paths of the images the body references by a relative link (``image_paths``)."""
 
 
 def parse_article(path: str, source: str) -> ParsedArticle:
@@ -200,7 +202,50 @@ def parse_article(path: str, source: str) -> ParsedArticle:
         description=description if isinstance(description, str) else None,
         front_matter=front_matter,
         problems=tuple(problems),
+        images=image_paths(path, body),
     )
+
+
+MAX_IMAGES_PER_ARTICLE = 100
+_MAX_IMAGE_DEPTH = 64
+_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def image_paths(article_path: str, body: str) -> tuple[str, ...]:
+    """Repository paths of the images ``![](src)`` of a Markdown body points at, first-seen order.
+
+    Mirrors the web renderer's ``repoPath``: ``src`` is resolved against the article's folder (a
+    leading ``/`` means the repository root), query and fragment are dropped, a path that leaves
+    the repository, has a scheme (``https:``, ``data:``), starts with ``//`` or holds a control
+    character, a backslash or a ``.git`` segment is ignored. At most ``MAX_IMAGES_PER_ARTICLE``.
+    """
+    found: dict[str, None] = {}
+    for token in _MARKDOWN.parse(body):
+        for child in token.children or ():
+            if child.type != "image" or len(found) >= MAX_IMAGES_PER_ARTICLE:
+                continue
+            if path := _resolve(article_path, str(child.attrGet("src") or "").strip()):
+                found[path] = None
+    return tuple(found)
+
+
+def _resolve(article_path: str, src: str) -> str | None:
+    if _SCHEME.match(src) or src.startswith("//"):
+        return None
+    target = unquote(re.split(r"[?#]", src, maxsplit=1)[0])
+    if not target or "\\" in target or not target.isprintable():
+        return None
+    parts = [] if target.startswith("/") else article_path.split("/")[:-1]
+    for part in target.split("/"):
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        elif part not in {".", ""}:
+            parts.append(part)
+    if not parts or len(parts) > _MAX_IMAGE_DEPTH or any(p.lower() == ".git" for p in parts):
+        return None
+    return "/".join(parts)
 
 
 def _load_front_matter(text: str) -> object:
@@ -353,6 +398,12 @@ class ProblemCode(StrEnum):
     BAD_FILE_NAME = "bad_file_name"
     FRONT_MATTER = "front_matter"
     """The article was imported, but its front matter is malformed or partly ignored."""
+    NOT_AN_IMAGE = "not_an_image"
+    """A referenced image is not a PNG, JPEG, GIF, WebP or SVG by its content."""
+    IMAGE_BUDGET = "image_budget"
+    """An image was left out because the version's images already use their count or byte budget."""
+    MISSING_IMAGE = "missing_image"
+    """An article references an image that the repository does not have at this commit."""
     TRUNCATED = "truncated"
     """The marker that says more files were skipped than ``MAX_JOB_PROBLEMS``."""
 
@@ -1124,6 +1175,15 @@ DEFAULT_MAX_ARTICLE_BYTES = 2 * 2**20
 DEFAULT_MAX_IMPORT_BYTES = 256 * 2**20
 """An import whose selected articles add up to more than this many bytes fails."""
 
+DEFAULT_MAX_IMAGE_BYTES = 2 * 2**20
+"""Referenced images above this many bytes are skipped without being read."""
+
+DEFAULT_MAX_IMAGES_BYTES = 32 * 2**20
+"""The images of one version are kept until they add up to this many bytes, then skipped."""
+
+MAX_IMAGES = 1000
+"""At most this many distinct images are imported per version; later ones are skipped."""
+
 MAX_JOB_PROBLEMS = 1000
 MAX_JOB_NOTES = 200
 
@@ -1161,6 +1221,45 @@ class ImportedArticle:
     chunks: tuple[ArticleChunk, ...]
 
 
+IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml")
+_SVG = re.compile(
+    # Atomic group + tempered comment: no backtracking, so a hostile file cannot stall the loop.
+    rb"\A(?:\xef\xbb\xbf)?\s*(?>(?:<\?xml[^>]*\?>|<!--(?:(?!-->).)*-->)\s*)*"
+    rb"(?:<!DOCTYPE\s+svg[^>\[]*>\s*)?<svg[\s/>]",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def sniff_image(data: bytes) -> str | None:
+    """Name the allowed image type by the content (never by the file name), else ``None``.
+
+    PNG, JPEG, GIF, WebP and SVG. An SVG is a document whose root element is ``<svg``; one that
+    declares entities is refused (nothing here parses it, but a browser would expand them).
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    # XML is case-sensitive: `<!entity` declares nothing, so only the exact spelling is refused.
+    if _SVG.match(data[:4096]) and b"<!ENTITY" not in data:
+        return "image/svg+xml"
+    return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedImage:
+    """An image an article references: its repository path, git blob SHA, sniffed type, bytes."""
+
+    path: str
+    blob_sha: str
+    content_type: str
+    data: bytes = field(repr=False)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GitRename:
     """A file git sees as moved between two commits: ``old_path`` became ``new_path``."""
@@ -1191,6 +1290,7 @@ class ImportedVersion:
     commit_sha: str
     config_hash: str
     articles: tuple[ImportedArticle, ...]
+    images: tuple[ImportedImage, ...] = ()
     refresh: bool = False
     """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
     renamed_from: str | None = None
