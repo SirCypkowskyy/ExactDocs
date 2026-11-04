@@ -64,6 +64,7 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
                 container.catalog.store_manifest,
                 container.catalog.activate_manifest,
                 container.catalog.discard_pending_manifests,
+                container.catalog.apply_readme,
             ),
             index=RetrievalChunkIndex(
                 container.retrieval.index_manifest,
