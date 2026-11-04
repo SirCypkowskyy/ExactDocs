@@ -10,8 +10,8 @@ interface VersionPickerProps {
   repo: string;
   versions: readonly Version[];
   current: Version;
-  /** What stays when the version changes: the open article and the tag filter. */
-  keep: Pick<BrowseSearch, "path" | "tags">;
+  /** What stays when the version changes: the open article, the tag filter and the search. */
+  keep: Pick<BrowseSearch, "path" | "tags" | "q" | "match">;
 }
 
 const FILTER_FROM = 8;

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { components } from "@/shared/lib/api-schema";
 
 export type LibraryDetail = components["schemas"]["LibraryDetail"];
@@ -5,13 +6,29 @@ export type Version = components["schemas"]["VersionOut"];
 export type Article = components["schemas"]["Article"];
 export type ArticleSummary = components["schemas"]["ArticleSummary"];
 export type ArticleList = components["schemas"]["ArticleList"];
-export type TagList = components["schemas"]["TagList"];
 
 /** What the browse page keeps in the URL: refs and paths are never path segments. */
 export interface BrowseSearch {
   version?: string | undefined;
   path?: string | undefined;
   tags?: string | undefined;
+  /** The search query; the results take over the article column while it is set. */
+  q?: string | undefined;
+  /** `all` makes a search need every selected tag; absent means any. */
+  match?: "all" | undefined;
+}
+
+/** The version the page resolved, handed to the search slots (the `search` slice renders them). */
+export interface VersionScope {
+  ref: string;
+  sha: string;
+  /** The other imported versions, newest first. */
+  otherRefs: readonly string[];
+}
+
+export interface SearchSlots {
+  box: (scope: VersionScope) => ReactNode;
+  results: (scope: VersionScope) => ReactNode;
 }
 
 /** `size` is -1 (unknown) for the children of a folder that is only partly loaded. */
@@ -132,19 +149,6 @@ export function buildRows(
   return rows;
 }
 
-export const parseTags = (tags: string | undefined): string[] =>
-  (tags ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-
-/** Add or remove one tag; the API ignores case, so `API` and `api` are the same tag. */
-export function toggleTag(tags: readonly string[], tag: string): string | undefined {
-  const has = tags.some((t) => t.toLowerCase() === tag.toLowerCase());
-  const next = has ? tags.filter((t) => t.toLowerCase() !== tag.toLowerCase()) : [...tags, tag];
-  return next.length ? next.join(",") : undefined;
-}
-
 /** `v2.10.0` -> [2, 10, 0]; null when the ref is not a dotted number. */
 function semver(ref: string): number[] | null {
   const m = /^v?(\d+(?:\.\d+)*)/.exec(ref);
@@ -261,14 +265,4 @@ export function showFileName(title: string, name: string): boolean {
   const stem = squash(name.replace(/\.[^.]+$/, ""));
   const words = squash(title);
   return stem !== "" && !words.startsWith(stem);
-}
-
-/** The chips to show: every selected tag first (so an active filter can always be undone), then the rest. */
-export function visibleTags(
-  selected: readonly string[],
-  facets: readonly string[],
-  limit = 14,
-): string[] {
-  const rest = facets.filter((f) => !selected.some((s) => s.toLowerCase() === f.toLowerCase()));
-  return [...selected, ...rest].slice(0, Math.max(limit, selected.length));
 }
