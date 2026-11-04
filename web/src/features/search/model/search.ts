@@ -3,28 +3,10 @@ import type { components } from "@/shared/lib/api-schema";
 export type SearchResults = components["schemas"]["SearchDocsResult"];
 export type SearchHit = components["schemas"]["SearchResultOut"];
 export type TagMatch = "any" | "all";
-export type TagCount = components["schemas"]["TagList"];
 
-/** The API's input caps (docs/rest-api.md): the query is 1000 characters, a filter 20 tags. */
-export const MAX_QUERY = 1000;
-const MAX_TAGS = 20;
-const MAX_TAG_LENGTH = 100;
-
-/** The query as sent: surrounding space dropped, capped; `undefined` when nothing is left. */
-export function normalizeQuery(raw: string | undefined): string | undefined {
-  const text = (raw ?? "").trim().slice(0, MAX_QUERY).trim();
-  return text === "" ? undefined : text;
-}
-
-export const parseTags = (tags: string | undefined): string[] =>
-  (tags ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-
-/** Tags as sent: what the API accepts, at most 20. */
-export const sendableTags = (tags: readonly string[]): string[] =>
-  tags.filter((t) => t.length <= MAX_TAG_LENGTH).slice(0, MAX_TAGS);
+/** "3 results" / "Top 20 results": the count as one phrase. */
+export const resultsNoun = (count: number, complete: boolean) =>
+  `${complete ? "" : "Top "}${count} ${count === 1 ? "result" : "results"}`;
 
 export interface Piece {
   /** Where it starts in the snippet (in characters): a stable key. */
@@ -37,7 +19,8 @@ export interface Piece {
  * Cuts a snippet into plain and highlighted pieces from `[start, end)` spans. The API counts
  * characters (code points), JavaScript strings count UTF-16 units, so the cut goes by code
  * point: an emoji before a match must not shift it. Spans outside the text are clipped,
- * overlapping ones merged. The result is text only; React escapes it.
+ * overlapping ones merged. The result is text only; React escapes it. A span may split a base
+ * character from its combining mark: that renders as two nodes and reads the same.
  */
 export function highlightPieces(
   snippet: string,
@@ -66,9 +49,8 @@ export function highlightPieces(
   return pieces;
 }
 
-/** "the match count, once": one sentence for the live region. */
+/** The count and where it was found, as one sentence for the live region. */
 export function countLabel(count: number, q: string, ref: string, complete: boolean): string {
   if (count === 0) return `No results for “${q}” in ${ref}`;
-  const noun = count === 1 ? "result" : "results";
-  return `${complete ? count : `Top ${count}`} ${noun} for “${q}” in ${ref}`;
+  return `${resultsNoun(count, complete)} for “${q}” in ${ref}`;
 }

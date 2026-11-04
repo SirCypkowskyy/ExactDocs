@@ -1,11 +1,12 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { parseTags } from "@/shared/lib/tags";
 import {
   articleQueryOptions,
   articlesPageQueryOptions,
   type VersionArgs,
 } from "../api/browse-queries";
-import { type ArticleSummary, ancestorsOf, buildRows, parseTags } from "../model/browse";
+import { type ArticleSummary, ancestorsOf, buildRows } from "../model/browse";
 
 /** What the listings of one folder (`""` is the whole version) say so far. */
 interface Scope {

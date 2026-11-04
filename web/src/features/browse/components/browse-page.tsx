@@ -25,7 +25,15 @@ interface BrowsePageProps {
   slots?: SearchSlots | undefined;
 }
 
-function Overview({ library, version }: { library: LibraryDetail; version: Version }) {
+function Overview({
+  library,
+  version,
+  searchable,
+}: {
+  library: LibraryDetail;
+  version: Version;
+  searchable: boolean;
+}) {
   return (
     <div className="fade-in max-w-3xl">
       <h2 className="font-serif text-2xl font-semibold tracking-tight">
@@ -36,6 +44,18 @@ function Overview({ library, version }: { library: LibraryDetail; version: Versi
         This is the text exactly as imported from commit{" "}
         <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>. Pick a
         file from the tree to read it.
+        {searchable && (
+          <>
+            {" "}
+            Or search every article in{" "}
+            <span className="font-mono text-foreground">{version.ref}</span>
+            <span className="hidden lg:inline">
+              {" "}
+              (press <kbd className="rounded bg-secondary px-1 font-mono text-xs">/</kbd>)
+            </span>
+            .
+          </>
+        )}
       </p>
       <div className="mt-2">
         <CommitLinks library={library} version={version} />
@@ -88,7 +108,7 @@ function VersionBrowser({
             tags={search.tags}
           />
         ) : (
-          <Overview library={library} version={version} />
+          <Overview library={library} version={version} searchable={slots !== undefined} />
         )}
       </section>
     </div>

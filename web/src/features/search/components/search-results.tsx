@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight } from "lucide-react";
-import { type KeyboardEvent, useId } from "react";
+import { type KeyboardEvent, type ReactNode, useId } from "react";
+import { parseTags } from "@/shared/lib/tags";
 import { cn } from "@/shared/lib/utils";
 import { searchQueryOptions } from "../api/search-queries";
 import { useSearchNav } from "../hooks/use-search-nav";
@@ -9,25 +9,25 @@ import type { SearchContext } from "../model/context";
 import {
   countLabel,
   highlightPieces,
-  parseTags,
+  resultsNoun,
   type SearchHit,
   type SearchResults as SearchResultData,
 } from "../model/search";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
 
 const retry =
-  "mt-3 inline-flex h-11 cursor-pointer items-center rounded-md bg-secondary px-3 text-sm font-medium outline-none transition-[background-color,transform] duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9";
-
-/** Only http(s) links from repository data. */
-const safeUrl = (url: string | null): string | undefined =>
-  url && /^https?:\/\//i.test(url) ? url : undefined;
+  "inline-flex h-11 cursor-pointer items-center rounded-md bg-secondary px-3 text-sm font-medium outline-none transition-[background-color,transform] duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9";
 
 function Snippet({ hit }: { hit: SearchHit }) {
   return (
-    <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-line text-foreground/90 [overflow-wrap:anywhere]">
+    <p className="mt-1.5 text-[15px] leading-[1.6] whitespace-pre-line text-foreground/90 [overflow-wrap:anywhere]">
       {highlightPieces(hit.snippet, hit.highlights).map((piece) =>
         piece.hit ? (
-          <mark key={piece.at} className="rounded-sm bg-mark/[0.22] px-0.5 text-foreground">
+          // No horizontal padding: a match inside a word ("RetryPolicy") must not open a gap in it.
+          <mark
+            key={piece.at}
+            className="rounded-[3px] bg-mark/[0.22] text-foreground [box-decoration-break:clone]"
+          >
             {piece.text}
           </mark>
         ) : (
@@ -38,75 +38,84 @@ function Snippet({ hit }: { hit: SearchHit }) {
   );
 }
 
-function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
-  const crumbs =
-    hit.heading_path.length > 0
-      ? hit.heading_path
-      : [hit.article_path.split("/").pop() ?? hit.article_path];
-  const source = safeUrl(hit.source_url);
+/** `A › B › C`; deeper than three levels shows `A › … › C` (the full path is the tooltip). */
+function Crumbs({ hit }: { hit: SearchHit }) {
+  const path = hit.heading_path;
+  const all = path.length > 0 ? path : [hit.article_path.split("/").pop() ?? hit.article_path];
+  const crumbs = all.length > 3 ? [all[0] ?? "", "…", all[all.length - 1] ?? ""] : all;
   return (
-    <li className="py-4 first:pt-0">
+    <span
+      title={all.length > 3 ? all.join(" › ") : undefined}
+      className="block font-serif text-lg leading-snug font-semibold [overflow-wrap:anywhere]"
+    >
+      {crumbs.map((crumb, i) => (
+        <span
+          key={crumbs.slice(0, i + 1).join("\u0000")}
+          className={i < crumbs.length - 1 ? "font-normal text-muted-foreground" : ""}
+        >
+          {i > 0 && (
+            <>
+              <span aria-hidden="true" className="px-1.5 text-muted-foreground/70">
+                ›
+              </span>
+              <span className="sr-only"> / </span>
+            </>
+          )}
+          {crumb}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
+  return (
+    // The whole row is the target (the title link stretches over it), so the hover tint covers the tags too.
+    <li className="relative rounded-md px-2 py-3 transition-colors duration-150 [@media(hover:hover)]:hover:bg-accent/70">
       <Link
         data-result=""
         to="/libraries/$owner/$repo"
         params={{ owner: ctx.owner, repo: ctx.repo }}
-        search={{ version: ctx.ref, path: hit.article_path, tags: ctx.tags }}
+        // Back returns to the results (the query is in the previous entry), so the article link
+        // carries only the version and the path.
+        search={{ version: ctx.ref, path: hit.article_path }}
         {...(hit.anchor ? { hash: hit.anchor } : {})}
-        className="-mx-2 block rounded-md px-2 py-1.5 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring [@media(hover:hover)]:hover:bg-accent/60"
+        className="rounded-md outline-none after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-ring"
       >
-        <span className="block font-serif text-lg leading-snug font-semibold [overflow-wrap:anywhere]">
-          {crumbs.map((crumb, i) => (
-            <span
-              key={crumbs.slice(0, i + 1).join("\u0000")}
-              className={i < crumbs.length - 1 ? "font-normal text-muted-foreground" : ""}
-            >
-              {i > 0 && (
-                <span aria-hidden="true" className="px-1.5 text-muted-foreground/70">
-                  ›
-                </span>
-              )}
-              {crumb}
-            </span>
-          ))}
-        </span>
+        <Crumbs hit={hit} />
         <span className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
           {hit.article_path}
         </span>
-        <Snippet hit={hit} />
       </Link>
-      {(hit.tags.length > 0 || source) && (
-        <p className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-          {hit.tags.length > 0 && <span>{hit.tags.join(" · ")}</span>}
-          {source && (
-            <a
-              href={source}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="-my-2 inline-flex min-h-11 items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8"
-            >
-              View at commit
-              <ArrowUpRight aria-hidden="true" className="size-3" />
-              <span className="sr-only">(opens the repository)</span>
-            </a>
-          )}
-        </p>
+      <Snippet hit={hit} />
+      {hit.tags.length > 0 && (
+        <ul className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+          {hit.tags.map((tag) => (
+            <li key={tag}>{tag}</li>
+          ))}
+        </ul>
       )}
     </li>
   );
 }
 
+/** Same rows as the real list (count line, title, path, two text lines, tags), so nothing moves when it lands. */
 function Skeleton() {
   return (
-    <ul aria-hidden="true" className="divide-y divide-border motion-safe:animate-pulse">
-      {["a", "b", "c", "d"].map((id) => (
-        <li key={id} className="space-y-2 py-4 first:pt-0">
-          <span className="block h-5 w-2/5 rounded bg-muted-foreground/[0.14]" />
-          <span className="block h-3 w-1/4 rounded bg-muted-foreground/[0.14]" />
-          <span className="block h-3.5 w-full rounded bg-muted-foreground/[0.14]" />
-          <span className="block h-3.5 w-4/5 rounded bg-muted-foreground/[0.14]" />
-        </li>
-      ))}
-    </ul>
+    <div aria-hidden="true" className="pending-in motion-safe:animate-pulse">
+      <span className="mb-4 block h-5 w-28 rounded bg-muted-foreground/[0.14]" />
+      <ul className="divide-y divide-border">
+        {["a", "b", "c", "d"].map((id) => (
+          <li key={id} className="space-y-2 py-3">
+            <span className="block h-5 w-2/5 rounded bg-muted-foreground/[0.14]" />
+            <span className="block h-3 w-1/4 rounded bg-muted-foreground/[0.14]" />
+            <span className="block h-3.5 w-full rounded bg-muted-foreground/[0.14]" />
+            <span className="block h-3.5 w-4/5 rounded bg-muted-foreground/[0.14]" />
+            <span className="block h-3 w-1/6 rounded bg-muted-foreground/[0.14]" />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -121,9 +130,9 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
         <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>
         {tags.length > 0 &&
           ` among articles tagged ${tags.join(ctx.match === "all" ? " and " : " or ")}`}
-        . Results always come from the version you selected.
+        . Try fewer or different words.
       </p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         {tags.length > 0 && (
           <button
             type="button"
@@ -144,9 +153,9 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
               tags: ctx.tags,
               match: ctx.match === "all" ? "all" : undefined,
             }}
-            className={cn(retry, "font-mono")}
+            className={retry}
           >
-            Try {ref}
+            Search&nbsp;<span className="font-mono">{ref}</span>&nbsp;instead
           </Link>
         ))}
       </div>
@@ -177,18 +186,23 @@ function HitList({
   stale: boolean;
 }) {
   const count = data.results.length;
-  const noun = `${data.coverage.complete ? "" : "Top "}${count} ${count === 1 ? "result" : "results"}`;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
     <div onKeyDown={onArrows}>
-      <p aria-hidden="true" className="mb-4 text-sm text-muted-foreground">
-        <span className="font-medium text-foreground">{noun}</span> in{" "}
-        <span className="font-mono">{ctx.ref}</span>
+      <p aria-hidden="true" className="mb-4 flex h-5 items-center text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {resultsNoun(count, data.coverage.complete)}
+        </span>
+        &nbsp;in&nbsp;<span className="font-mono">{ctx.ref}</span>
+        <span className="ml-3 hidden text-xs lg:inline">
+          <kbd className="font-mono">↓</kbd> to move through results
+        </span>
       </p>
+      {/* The dim waits 150 ms (transition-delay applies only when it starts): a quick answer never blinks. */}
       <ul
         className={cn(
-          "divide-y divide-border transition-opacity duration-150",
-          stale && "opacity-60",
+          "-mx-2 divide-y divide-border transition-opacity duration-150",
+          stale && "opacity-60 delay-150",
         )}
       >
         {data.results.map((hit) => (
@@ -209,9 +223,9 @@ function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) 
     <div role="alert" className="max-w-xl">
       <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
       <p className="mt-2 text-muted-foreground">
-        Couldn't search {refName}. Your query is kept; try again in a moment.
+        Couldn't search {refName}. Check your connection or try again.
       </p>
-      <button type="button" className={retry} onClick={onRetry}>
+      <button type="button" className={cn(retry, "mt-3")} onClick={onRetry}>
         Try again
       </button>
     </div>
@@ -223,28 +237,32 @@ export function SearchResults({ ctx }: { ctx: SearchContext }) {
   const heading = useId();
   const { q } = ctx;
   const result = useQuery({
-    ...searchQueryOptions({ ...ctx, q: q ?? "", tags: parseTags(ctx.tags) }),
+    ...searchQueryOptions({ ...ctx, q: q ?? "" }),
     enabled: q !== undefined,
   });
   if (q === undefined) return null;
 
   const data = result.data;
-  // While a new query loads the old hits stay (dimmed) so the page does not jump.
-  const stale = data !== undefined && (result.isPlaceholderData || result.isFetching);
+  // Old hits stay (dimmed) only while a new query loads. A background refetch of the same query
+  // neither dims nor re-announces them.
+  const stale = result.isPlaceholderData;
   const settled = data !== undefined && !stale;
 
-  let body: React.ReactNode = <Skeleton />;
-  if (result.isError && !stale)
+  let body: ReactNode = <Skeleton />;
+  if (result.isError && !stale) {
     body = <Failed refName={ctx.ref} onRetry={() => void result.refetch()} />;
-  else if (data && data.results.length > 0) body = <HitList data={data} ctx={ctx} stale={stale} />;
-  else if (data && settled) body = <NoResults ctx={ctx} q={q} />;
+  } else if (data && data.results.length > 0) {
+    body = <HitList data={data} ctx={ctx} stale={stale} />;
+  } else if (data && settled) {
+    body = <NoResults ctx={ctx} q={q} />;
+  }
 
   return (
     <section
       id={RESULTS_ID}
       aria-labelledby={heading}
-      aria-busy={stale || result.isPending}
-      className="min-h-[24rem] max-w-3xl min-w-0"
+      aria-busy={result.isFetching}
+      className="min-h-[24rem] max-w-2xl min-w-0"
     >
       <h2 id={heading} className="sr-only">
         Search results

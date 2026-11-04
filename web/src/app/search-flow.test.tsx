@@ -71,7 +71,13 @@ function mount(path: string, options: Options = {}) {
           return Response.json({ error: "boom", detail: "boom", fields: [] }, { status: 500 });
         }
         const ref = url.searchParams.get("ref") ?? "";
-        const results = (options.hits ?? { "v1.4.0": [hit(1)] })[ref] ?? [];
+        const wanted = url.searchParams.get("tags")?.split(",") ?? [];
+        const all = url.searchParams.get("tags_match") === "all";
+        const results = ((options.hits ?? { "v1.4.0": [hit(1)] })[ref] ?? []).filter((h) => {
+          const have = (h as { tags: string[] }).tags;
+          if (wanted.length === 0) return true;
+          return all ? wanted.every((t) => have.includes(t)) : wanted.some((t) => have.includes(t));
+        });
         return Response.json({
           notice: "",
           library: "/acme/payments",
@@ -120,7 +126,12 @@ function mount(path: string, options: Options = {}) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { router, searches: () => calls.filter((u) => u.pathname.endsWith("/search")) };
+  return {
+    router,
+    client,
+    calls,
+    searches: () => calls.filter((u) => u.pathname.endsWith("/search")),
+  };
 }
 
 describe("searching a version", () => {
@@ -147,7 +158,7 @@ describe("searching a version", () => {
       },
     });
     const list = (await screen.findAllByRole("link", { name: /Retries/ }))[0];
-    expect(list).toHaveTextContent("Retries›Policy");
+    expect(list).toHaveTextContent("Retries› / Policy");
     const marks = document.querySelectorAll("mark");
     expect([...marks].map((m) => m.textContent)).toEqual(["retry_policy", "<b>retry_policy</b>"]);
     expect(document.querySelector("b, script")).toBeNull();
@@ -159,8 +170,9 @@ describe("searching a version", () => {
     expect(await screen.findByRole("heading", { name: "No results in v1.3.0" })).toBeVisible();
     expect(searches()[0]?.searchParams.get("ref")).toBe("v1.3.0");
     expect(searches()[0]?.searchParams.get("q")).toBe("retry_policy");
-    await userEvent.click(screen.getByRole("link", { name: "Try v1.4.0" }));
-    expect(await screen.findByRole("link", { name: /Retries/ })).toHaveTextContent(
+    await userEvent.click(screen.getByRole("link", { name: /Search.*v1\.4\.0.*instead/ }));
+    expect(await screen.findByRole("link", { name: /Retries/ })).toBeVisible();
+    expect(document.querySelector("mark")?.closest("p")).toHaveTextContent(
       "Set retry_policy to control backoff.",
     );
     expect(searches().at(-1)?.searchParams.get("ref")).toBe("v1.4.0");
@@ -197,9 +209,9 @@ describe("searching a version", () => {
 
   it("combines tags with any or all, and sends the caps", async () => {
     const { searches } = mount("/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,guide");
-    await screen.findByRole("button", { name: "Any of" });
+    await screen.findByRole("button", { name: "Match any" });
     expect(searches().at(-1)?.searchParams.get("tags_match")).toBe("any");
-    await userEvent.click(screen.getByRole("button", { name: "All of" }));
+    await userEvent.click(screen.getByRole("button", { name: "Match all" }));
     await waitFor(() => expect(searches().at(-1)?.searchParams.get("tags_match")).toBe("all"));
     expect(searches().at(-1)?.searchParams.get("tags")).toBe("api,guide");
     expect(searches().at(-1)?.searchParams.get("limit")).toBe("20");
@@ -227,6 +239,119 @@ describe("searching a version", () => {
     mount("/libraries/acme/payments?version=v1.4.0&q=retry", { complete: false });
     expect(await screen.findByText(/Showing the best 1/)).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Top 1 result");
+  });
+
+  it("sends tags and tags_match on the wire, and the results obey all", async () => {
+    const both = hit(2, { chunk_id: "both", heading_path: ["Both"], tags: ["api", "guide"] });
+    const { searches } = mount(
+      "/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,guide&match=all",
+      { hits: { "v1.4.0": [hit(1), both] } },
+    );
+    expect(await screen.findByRole("link", { name: /Both/ })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Retries/ })).toBeNull();
+    const last = searches().at(-1);
+    expect(last?.searchParams.get("tags")).toBe("api,guide");
+    expect(last?.searchParams.get("tags_match")).toBe("all");
+  });
+
+  it("never sends a query over 1000 characters, even from an old link", async () => {
+    const { searches } = mount(`/libraries/acme/payments?version=v1.4.0&q=${"é".repeat(1500)}`);
+    await screen.findByRole("link", { name: /Retries/ });
+    const q = searches()[0]?.searchParams.get("q") ?? "";
+    expect(Array.from(q)).toHaveLength(1000);
+  });
+
+  it("drops tags the API would refuse instead of showing them selected", async () => {
+    const { searches } = mount(
+      `/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,${"x".repeat(101)}`,
+    );
+    await screen.findByRole("link", { name: /Retries/ });
+    expect(searches()[0]?.searchParams.get("tags")).toBe("api");
+    expect(screen.getByRole("button", { name: "api" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps the query, tags and match when the version changes", async () => {
+    const { router } = mount(
+      "/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,guide&match=all",
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /Change version/ }));
+    await userEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("link", { name: /v1\.3\.0/ }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        version: "v1.3.0",
+        q: "retry",
+        tags: "api,guide",
+        match: "all",
+      }),
+    );
+  });
+
+  it("clears match with the query, and pushes history on Enter so Back restores the box", async () => {
+    const { router } = mount(
+      "/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,guide&match=all",
+    );
+    const box = await screen.findByRole("searchbox");
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    await waitFor(() => expect(router.state.location.search).not.toHaveProperty("q"));
+    expect(router.state.location.search).not.toHaveProperty("match");
+    router.history.back();
+    await waitFor(() => expect(box).toHaveValue("retry"));
+    expect(router.state.location.search).toMatchObject({ q: "retry", match: "all" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "backoff{Enter}");
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ q: "backoff" }));
+    router.history.back();
+    await waitFor(() => expect(box).toHaveValue("retry"));
+  });
+
+  it("types a slash into the box instead of stealing it", async () => {
+    mount("/libraries/acme/payments?version=v1.4.0");
+    const box = await screen.findByRole("searchbox");
+    await userEvent.click(box);
+    await userEvent.keyboard("a/b");
+    expect(box).toHaveValue("a/b");
+  });
+
+  it("does not dim or re-announce the results on a background refetch", async () => {
+    const { client } = mount("/libraries/acme/payments?version=v1.4.0&q=retry");
+    await screen.findByRole("link", { name: /Retries/ });
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("1 result for “retry” in v1.4.0");
+    void client.invalidateQueries();
+    expect(status).toHaveTextContent("1 result for “retry” in v1.4.0");
+    expect(document.querySelector("ul.opacity-60")).toBeNull();
+  });
+
+  it("opens an article with only its version and path", async () => {
+    const { router } = mount("/libraries/acme/payments?version=v1.4.0&q=retry&tags=api");
+    await userEvent.click(await screen.findByRole("link", { name: /Retries/ }));
+    expect(router.state.location.search).toEqual({
+      version: "v1.4.0",
+      path: "docs/guide/retries.md",
+    });
+  });
+
+  it("filters the tree by tags only while no search is open", async () => {
+    const { calls } = mount(
+      "/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,guide&match=all",
+      { hits: { "v1.4.0": [hit(1, { tags: ["api", "guide"] })] } },
+    );
+    await screen.findByRole("link", { name: /Retries/ });
+    const listings = () => calls.filter((u) => u.pathname.endsWith("/articles"));
+    await waitFor(() => expect(listings().length).toBeGreaterThan(0));
+    expect(listings().every((u) => !u.searchParams.has("tags"))).toBe(true);
+    expect(screen.getAllByRole("button", { name: "api" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Match all" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("points at search on the empty page", async () => {
+    mount("/libraries/acme/payments?version=v1.4.0");
+    expect(await screen.findByText(/Or search every article in/)).toBeVisible();
   });
 
   it("reports a failed search and retries", async () => {

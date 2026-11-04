@@ -6,14 +6,11 @@ import {
   commitUrl,
   type LibraryDetail,
   orderVersions,
-  parseTags,
   repoWebUrl,
   resolveVersion,
   safeHref,
   showFileName,
-  toggleTag,
   type Version,
-  visibleTags,
 } from "./browse";
 import { parseSearch } from "./search";
 
@@ -78,14 +75,6 @@ describe("buildRows", () => {
   it("lists the folders of a path", () => {
     expect(ancestorsOf("docs/guide/auth.md")).toEqual(["docs", "docs/guide"]);
     expect(ancestorsOf("README.md")).toEqual([]);
-  });
-});
-
-describe("tags", () => {
-  it("parses and toggles without caring about case", () => {
-    expect(parseTags("api, guide,,")).toEqual(["api", "guide"]);
-    expect(toggleTag(["api"], "guide")).toBe("api,guide");
-    expect(toggleTag(["api"], "API")).toBeUndefined();
   });
 });
 
@@ -210,16 +199,5 @@ describe("showFileName", () => {
     expect(showFileName("Webhook retries", "webhook-retries.md")).toBe(false);
     expect(showFileName("Acme Payments", "README.md")).toBe(true);
     expect(showFileName("SDK quickstart", "getting-started.md")).toBe(true);
-  });
-});
-
-describe("visibleTags", () => {
-  it("keeps every selected tag on screen, even one ranked far down", () => {
-    const facets = Array.from({ length: 30 }, (_, i) => `t${i}`);
-    const shown = visibleTags(["t25"], facets, 5);
-    expect(shown).toHaveLength(5);
-    expect(shown[0]).toBe("t25");
-    expect(shown.filter((t) => t === "t25")).toHaveLength(1);
-    expect(visibleTags(["Gone"], ["a"], 5)).toEqual(["Gone", "a"]);
   });
 });

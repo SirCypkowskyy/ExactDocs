@@ -1,9 +1,10 @@
 import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
+import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
+import { parseTags } from "@/shared/lib/tags";
 import { useSearchNav } from "../hooks/use-search-nav";
 import type { SearchContext } from "../model/context";
-import { MAX_QUERY, normalizeQuery } from "../model/search";
-import { TagChips } from "./tag-chips";
+import { SearchTags } from "./search-tags";
 
 export const INPUT_ID = "search-input";
 export const RESULTS_ID = "search-results";
@@ -34,14 +35,16 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
     }
   }
 
-  const commit = (value: string) => {
+  // Clearing the query clears `match` with it: a hidden "all" must not come back on the next search.
+  const commit = (value: string, mode: "replace" | "push" = "push") => {
     const q = normalizeQuery(value);
     if (q === committed) return;
     setCommitted(q);
-    void update({ q });
+    void update(q ? { q } : { q, match: undefined }, mode);
   };
 
-  const settle = useEffectEvent((value: string) => commit(value));
+  // Typing replaces the history entry; Enter, Escape and the clear button push one.
+  const settle = useEffectEvent((value: string) => commit(value, "replace"));
   useEffect(() => {
     const timer = setTimeout(() => settle(draft), DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -99,6 +102,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
               autoComplete="off"
               spellCheck={false}
               enterKeyHint="search"
+              aria-keyshortcuts="/"
               maxLength={MAX_QUERY}
               placeholder={`Search ${ctx.ref}`}
               value={draft}
@@ -120,7 +124,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
                   commit("");
                   input.current?.focus();
                 }}
-                className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.92] [@media(hover:hover)]:hover:text-foreground"
+                className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] [@media(hover:hover)]:hover:text-foreground"
               >
                 <X aria-hidden="true" className="size-4" />
               </button>
@@ -129,9 +133,12 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
         </form>
       </search>
       {ctx.q && (
-        <TagChips
+        <SearchTags
           ctx={ctx}
-          onTags={(tags) => void update({ tags })}
+          tagCount={parseTags(ctx.tags).length}
+          onTags={(tags) =>
+            void update(parseTags(tags).length > 1 ? { tags } : { tags, match: undefined })
+          }
           onMatch={(match) => void update({ match: match === "all" ? "all" : undefined })}
         />
       )}

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { countLabel, highlightPieces, normalizeQuery, sendableTags } from "./search";
+import { BROWSE_KEY } from "@/shared/lib/query-keys";
+import { normalizeQuery } from "@/shared/lib/search-query";
+import { searchQueryOptions } from "../api/search-queries";
+import { countLabel, highlightPieces } from "./search";
 
 describe("highlightPieces", () => {
   it("cuts the snippet at the offsets", () => {
@@ -15,6 +18,20 @@ describe("highlightPieces", () => {
     expect(pieces.filter((p) => p.hit).map((p) => p.text)).toEqual(["retry"]);
   });
 
+  it("copes with unsorted spans, CRLF and combining marks", () => {
+    const pieces = highlightPieces("a\r\nb e\u0301x", [
+      { start: 5, end: 7 },
+      { start: 3, end: 4 },
+    ]);
+    expect(pieces.map((p) => [p.text, p.hit])).toEqual([
+      ["a\r\n", false],
+      ["b", true],
+      [" ", false],
+      ["e\u0301", true],
+      ["x", false],
+    ]);
+  });
+
   it("merges overlaps, clips out-of-range spans and keeps markup as text", () => {
     const pieces = highlightPieces("<b>a</b>", [
       { start: 0, end: 4 },
@@ -26,13 +43,32 @@ describe("highlightPieces", () => {
   });
 });
 
+describe("cache key", () => {
+  it("changes with the commit, so a re-import never shows old hits", () => {
+    const base = {
+      owner: "a",
+      repo: "b",
+      ref: "v1",
+      q: "x",
+      tags: undefined,
+      match: "any",
+    } as const;
+    expect(searchQueryOptions({ ...base, sha: "111" }).queryKey).not.toEqual(
+      searchQueryOptions({ ...base, sha: "222" }).queryKey,
+    );
+    expect(searchQueryOptions({ ...base, sha: "111" }).queryKey[0]).toBe(BROWSE_KEY[0]);
+  });
+});
+
 describe("limits", () => {
   it("normalizes the query and caps the tags", () => {
     expect(normalizeQuery("   ")).toBeUndefined();
     expect(normalizeQuery("  retry ")).toBe("retry");
     expect(normalizeQuery("x".repeat(1500))).toHaveLength(1000);
-    expect(sendableTags(Array.from({ length: 30 }, (_, i) => `t${i}`))).toHaveLength(20);
-    expect(sendableTags(["ok", "x".repeat(101)])).toEqual(["ok"]);
+    // 999 letters then an emoji (2 UTF-16 units): the cap must not cut the pair in half.
+    const capped = normalizeQuery(`${"x".repeat(999)}🚀🚀`) ?? "";
+    expect(Array.from(capped)).toHaveLength(1000);
+    expect(() => encodeURIComponent(capped)).not.toThrow();
   });
 
   it("words the count once", () => {
