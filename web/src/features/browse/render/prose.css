@@ -243,11 +243,16 @@
   border-top: 1px solid var(--border);
 }
 .doc img {
-  display: block;
+  /* inline: badge rows sit side by side; a lone image in its paragraph is a block below */
+  display: inline-block;
+  vertical-align: middle;
   max-width: 100%;
   height: auto;
   border-radius: var(--radius-lg);
   background: var(--secondary);
+}
+.doc p > img:only-child {
+  display: block;
 }
 /* An image that is not shown: a frame with the reason, not something to press. */
 .doc-noimage {

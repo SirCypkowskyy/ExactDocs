@@ -7,7 +7,7 @@ import { accessQueryOptions, articleQueryOptions } from "../api/browse-queries";
 import {
   type Article,
   commitUrl,
-  HOST_NAMES,
+  hostName,
   type LibraryDetail,
   safeHref,
   shortSha,
@@ -66,14 +66,14 @@ export function CommitLinks({
   version: Version;
   fileUrl?: string | null | undefined;
 }) {
-  const host = HOST_NAMES[library.host];
+  const host = hostName(library.host);
   const file = safeHref(fileUrl);
   const commit = commitUrl(library.host, library.source_url, version.commit_sha);
   return (
     <div className="-ml-1 flex flex-wrap items-center gap-x-4 gap-y-0">
       {file && (
         <a href={file} target="_blank" rel="noopener noreferrer" className={external}>
-          <span className={underline}>View file on {host ?? "the host"}</span>
+          <span className={underline}>View file on {host}</span>
           <ArrowUpRight aria-hidden="true" className="size-3.5" />
           <span className="sr-only">
             at commit {shortSha(version.commit_sha)} (opens a new tab)
@@ -163,15 +163,6 @@ function NotInVersion({
         </div>
       )}
       <div className="mt-6 flex flex-wrap gap-2">
-        {onHost && (
-          <a href={onHost} target="_blank" rel="noopener noreferrer" className={secondary}>
-            View on {HOST_NAMES[library.host] ?? "the host"}
-            <span className="sr-only">
-              {" "}
-              at commit {shortSha(version.commit_sha)} (opens a new tab)
-            </span>
-          </a>
-        )}
         <Link
           to="/libraries/$owner/$repo"
           params={{ owner, repo }}
@@ -189,6 +180,16 @@ function NotInVersion({
           >
             Open this path in {newest}
           </Link>
+        )}
+        {onHost && (
+          <a href={onHost} target="_blank" rel="noopener noreferrer" className={secondary}>
+            View on {hostName(library.host)}
+            <ArrowUpRight aria-hidden="true" className="ml-1 size-4" />
+            <span className="sr-only">
+              {" "}
+              at commit {shortSha(version.commit_sha)} (opens a new tab)
+            </span>
+          </a>
         )}
       </div>
     </div>

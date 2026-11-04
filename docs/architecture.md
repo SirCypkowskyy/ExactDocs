@@ -426,7 +426,7 @@ that last step, which is one transaction in the catalog.
   large), a **public** library falls back to the host's raw URL at the commit, and a private one,
   or a failed fallback, shows the alt text. Images are `loading="lazy" decoding="async"`; their size
   is not stored, so CSS bounds them (`max-width: 100%`) and no `width`/`height` is set. Links to
-  renamed articles (#66) are not followed yet.
+  renamed articles (#66) are not followed yet (#191).
 - **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
   bare commit, so the import never asks the remote again; a deleted tag does not break it.
 - **Replays.** A crash right after the activation commits re-queues the job; importing the same

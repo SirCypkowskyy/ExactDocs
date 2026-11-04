@@ -8,7 +8,7 @@ import xss from "./fixtures/xss.md?raw";
 import { grammarOf, highlight } from "./highlight";
 import { Markdown, type Where } from "./markdown";
 import { tokensOf } from "./tokens";
-import { assetUrl, classifyLink, rawUrl, repoPath } from "./urls";
+import { assetUrl, blobUrl, classifyLink, rawUrl, repoPath } from "./urls";
 
 const SHA = "a".repeat(40);
 const where = (over: Partial<Where> = {}): Where => ({
@@ -211,7 +211,7 @@ describe("links and images", () => {
       />,
     );
     expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toBe("Image not shown: A diagram");
+    expect(container.textContent).toBe("Image not available: A diagram");
   });
   it("links another article through the app's own link", () => {
     const { container } = render(
@@ -254,6 +254,15 @@ describe("relative links (table)", () => {
     ["docs/a/b.md", "mailto:a@b.c", { kind: "external", href: "mailto:a@b.c" }],
     ["docs/a/b.md", "//evil.test/x.md", { kind: "none" }],
     ["docs/a/b.md", "javascript:alert(1)", { kind: "none" }],
+    ["docs/a/b.md", "JaVaScRiPt:alert(1)", { kind: "none" }],
+    ["docs/a/b.md", " javascript:x", { kind: "none" }],
+    ["docs/a/b.md", "data:text/html,<b>x</b>", { kind: "none" }],
+    ["docs/a/b.md", "%2e%2e/%2e%2e/%2e%2e/out.md", { kind: "none" }],
+    ["docs/a/b.md", "..%2f..%2f..%2fout.md", { kind: "none" }],
+    ["docs/a/b.md", "docs/..%5c..%5cx.md", { kind: "none" }],
+    ["docs/a/b.md", "/\\evil.test/x.md", { kind: "none" }],
+    ["docs/a/b.md", "a%00.md", { kind: "none" }],
+    ["docs/a/b.md", "HTTPS://Example.COM/A", { kind: "external", href: "HTTPS://Example.COM/A" }],
   ];
   it.each(cases)("%s + %s", (from, href, want) => {
     expect(classifyLink(from, href)).toEqual(want);
@@ -291,7 +300,27 @@ describe("images", () => {
     expect(container.querySelector("img")).toHaveAttribute("src", host);
     fireEvent.error(container.querySelector("img") as Element);
     expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toBe("Image not shown: D");
+    expect(container.textContent).toBe("Image not available: D");
+  });
+  it("never builds a host URL from a path that leaves the repository", () => {
+    for (const bad of ["a/../../b", "../x", "./x", "a//b", "a\\b", "a\0b", ""]) {
+      expect(blobUrl("github", "https://github.com/acme/payments", SHA, bad), bad).toBeUndefined();
+      expect(rawUrl("github", "https://github.com/acme/payments", SHA, bad), bad).toBeUndefined();
+    }
+    expect(blobUrl("github", "https://github.com/acme/payments", SHA, "docs/a b.md")).toBe(
+      `https://github.com/acme/payments/blob/${SHA}/docs/a%20b.md`,
+    );
+  });
+  const urlCases: [string, string, string][] = [
+    ["v1/x", "a&b#c d.md", "ref=v1%2Fx&path=a%26b%23c+d.md"],
+    ["ünï", "q?x=1#h%20+.png", "ref=%C3%BCn%C3%AF&path=q%3Fx%3D1%23h%2520%2B.png"],
+  ];
+  it.each(urlCases)("asset URL for ref %s, path %s", (ref, path, query) => {
+    const url = assetUrl("o w", "r", ref, path);
+    expect(url).toBe(`/api/v1/libraries/o%20w/r/asset?${query}`);
+    const params = new URL(url, "http://x.test").searchParams;
+    expect(params.get("ref")).toBe(ref);
+    expect(params.get("path")).toBe(path);
   });
   it("never loads an image that is not a repository file", () => {
     const { container } = render(

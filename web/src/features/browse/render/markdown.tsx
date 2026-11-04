@@ -133,7 +133,23 @@ function link(node: Node, ctx: Ctx) {
   const kids = many(node.children, ctx);
   switch (target.kind) {
     case "hash":
-      return <a href={target.href}>{kids}</a>;
+      // Heading ids are `doc-<anchor>`, so the browser's own jump finds nothing: scroll there ourselves.
+      return (
+        <a
+          href={target.href}
+          onClick={() => {
+            try {
+              document
+                .getElementById(idOf(decodeURIComponent(target.href.slice(1))))
+                ?.scrollIntoView();
+            } catch {
+              // a malformed fragment points at nothing
+            }
+          }}
+        >
+          {kids}
+        </a>
+      );
     case "external":
       return (
         <a href={target.href} target="_blank" rel="noopener noreferrer">
@@ -161,19 +177,20 @@ function NoImage({ alt }: { alt: string }) {
   return (
     <span className="doc-noimage">
       <ImageOff aria-hidden="true" className="size-4 shrink-0" />
-      <span>Image not shown: {alt || "Image"}</span>
+      <span>Image not available: {alt || "Image"}</span>
     </span>
   );
 }
 
 /** An image that tries each source in turn, then shows its alt text. Size is not known: CSS bounds it. */
 function Img({ sources, alt }: { sources: readonly string[]; alt: string }) {
+  // `failed` counts the sources that errored. The caller keys this by `sources`, so a changed list
+  // (a late access answer adding the host fallback) starts again at the first.
   const [failed, setFailed] = useState(0);
   const src = sources[failed];
   if (!src) return <NoImage alt={alt} />;
   return (
     <img
-      key={src}
       src={src}
       alt={alt}
       loading="lazy"
@@ -189,7 +206,7 @@ function image(token: Token, { where }: Ctx) {
   const target = classifyLink(where.path, attr(token, "src"));
   // Only the repository's own files are loaded; nothing is fetched from elsewhere.
   const sources = target.kind === "file" ? where.imageSources(target.path) : [];
-  return <Img sources={sources} alt={alt} />;
+  return <Img key={sources.join("\n")} sources={sources} alt={alt} />;
 }
 
 function heading(node: Node, ctx: Ctx) {
