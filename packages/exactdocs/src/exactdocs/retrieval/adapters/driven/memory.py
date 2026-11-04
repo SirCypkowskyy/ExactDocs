@@ -80,6 +80,14 @@ class InMemoryChunkRepository:
         }
         return {key: c for key, c in found.items() if c is not None}
 
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[StoredChunk]:
+        """Return all chunks of one article of the manifest in order."""
+        rows = sorted(
+            (r for r in self.rows.get(manifest_id, {}).values() if r.article_path == article_path),
+            key=lambda r: r.position,
+        )
+        return [await self.get(manifest_id, r.chunk_id) for r in rows]  # ty: ignore[invalid-return-type]
+
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks."""
         rows = self.rows.get(manifest_id, {}).values()

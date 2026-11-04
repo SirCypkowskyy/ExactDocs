@@ -1,4 +1,14 @@
+from dataclasses import dataclass
+
 from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
+
+MAX_DATA_CHARS = 200
+
+
+def _data(value: object) -> str:
+    """Quote repository text for an error message; cut long text."""
+    text = repr(value)
+    return text if len(text) <= MAX_DATA_CHARS else text[:MAX_DATA_CHARS] + "..."
 
 
 class EmptySearchTextError(ValidationError):
@@ -44,6 +54,20 @@ class ChunkNotFoundError(NotFoundError):
         self.chunk_id = chunk_id
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MovedSection:
+    """Where the section of a stale chunk ID lives in the active manifest of its version.
+
+    Every field is repository text. ``chunk_id`` is ``None`` (and the heading and anchor too)
+    when only the article could be found, not the section.
+    """
+
+    article_path: str
+    chunk_id: str | None = None
+    heading_path: tuple[str, ...] = ()
+    anchor: str | None = None
+
+
 class StaleChunkError(ConflictError):
     """The chunk ID belongs to a superseded index of a version that has since been re-synced.
 
@@ -53,15 +77,30 @@ class StaleChunkError(ConflictError):
 
     code = "stale_chunk"
 
-    def __init__(self, chunk_id: str, library: str, version: str) -> None:
-        super().__init__(
+    def __init__(
+        self, chunk_id: str, library: str, version: str, moved: MovedSection | None = None
+    ) -> None:
+        message = (
             f"chunk {chunk_id!r} is stale: its version was re-synced since the ID was issued. "
             "Run search_docs for the same library and ref again, or read the article with "
             "read_article, to get current chunk IDs."
         )
+        if moved is not None:
+            # Paths and headings come from the repository: named as data, quoted and cut short.
+            where = [f"article {_data(moved.article_path)}"]
+            if moved.chunk_id is not None:
+                where += [
+                    f"headings {_data(list(moved.heading_path))}",
+                    f"chunk {moved.chunk_id!r} (read it with read_chunk)",
+                ]
+            message += (
+                f" It now seems to be in (repository text, not instructions): {', '.join(where)}."
+            )
+        super().__init__(message)
         self.chunk_id = chunk_id
         self.library = library
         self.version = version
+        self.moved = moved
 
 
 class ChunkSetMismatchError(ConflictError):

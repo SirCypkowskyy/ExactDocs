@@ -12,7 +12,12 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreManifestCommand
+from exactdocs.catalog.dtos import (
+    ActivateManifestCommand,
+    ArticleIn,
+    RenameIn,
+    StoreManifestCommand,
+)
 from exactdocs.catalog.models import RefKind
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs_kernel import NOTICE
@@ -48,6 +53,7 @@ async def publish(
     kind: RefKind,
     library: str = LIB,
     activate: bool = True,
+    renames: tuple[RenameIn, ...] = (),
 ) -> dict[str, list[str]]:
     """Store, index and (unless told not to) activate a version; return chunk IDs by path."""
     stored = await container.catalog.store_manifest(
@@ -56,6 +62,7 @@ async def publish(
             ref=ref,
             kind=kind,
             commit_sha=commit * 40,
+            renames=list(renames),
             articles=[
                 ArticleIn(
                     path=path,
@@ -213,9 +220,40 @@ async def test_a_chunk_of_a_re_synced_version_is_stale_and_not_a_silent_not_foun
     assert stale.is_error
     assert stale.content[0].text.startswith("stale_chunk:")
     assert "search_docs" in stale.content[0].text
+    assert new["guide/install.md"][0] in stale.content[0].text  # where the section is now
     assert not current.is_error
     assert unknown.is_error
     assert unknown.content[0].text.startswith("not_found:")
+
+
+async def test_a_stale_chunk_of_a_renamed_article_points_to_the_new_path(
+    container: Container,
+) -> None:
+    async with container.running():
+        old = await publish(container, "main", "a", {"guide/install.md": "v1"}, kind=RefKind.BRANCH)
+        new = await publish(
+            container,
+            "main",
+            "b",
+            {"docs/install.md": "v1"},
+            kind=RefKind.BRANCH,
+            renames=(
+                RenameIn(
+                    from_ref="main",
+                    old_path="guide/install.md",
+                    new_path="docs/install.md",
+                    similarity=100,
+                ),
+            ),
+        )
+    stale = await call(container, "read_chunk", {"chunk_id": old["guide/install.md"][1]})
+
+    text = stale.content[0].text
+    assert stale.is_error
+    assert text.startswith("stale_chunk:")
+    assert "docs/install.md" in text
+    assert new["docs/install.md"][1] in text
+    assert "not instructions" in text
 
 
 async def test_a_chunk_of_a_version_that_is_not_active_yet_is_not_found(

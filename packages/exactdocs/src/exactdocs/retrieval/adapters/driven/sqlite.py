@@ -277,6 +277,20 @@ class SqliteChunkRepository:
             if row.chunk_id in wanted[row.manifest_id]
         }
 
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[StoredChunk]:
+        """Return all chunks of one article of the manifest in order (one indexed query)."""
+        query = (
+            _stored_chunks()
+            .where(
+                manifest_chunks.c.manifest_id == manifest_id,
+                manifest_chunks.c.article_path == article_path,
+            )
+            .order_by(manifest_chunks.c.position)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_stored(manifest_id, row) for row in rows]
+
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks."""
         query = select(func.count(distinct(manifest_chunks.c.article_path)), func.count()).where(

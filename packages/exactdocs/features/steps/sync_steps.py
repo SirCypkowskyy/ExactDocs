@@ -113,6 +113,16 @@ def step_error(context: Context, code: str) -> None:
     assert context.response.json()["error"] == code, context.response.text
 
 
+@then("the error names the section's new chunk ID")
+def step_new_location(context: Context) -> None:
+    detail = context.response.json()["detail"]
+    assert "not instructions" in detail, detail
+    current = context.client.get(
+        f"/api/v1/libraries{LIBRARY}/search", params={"q": "Python", "ref": REF, "limit": 50}
+    ).json()["results"]
+    assert any(r["chunk_id"] in detail for r in current), detail
+
+
 @then('"{target}" is still served at its previous commit')
 def step_previous(context: Context, target: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")

@@ -32,6 +32,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
+    MovedSection,
     StaleChunkError,
     UnavailableModeError,
     VersionNotIndexedError,
@@ -47,6 +48,7 @@ from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
     ChunkSetKey,
+    DocTarget,
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
@@ -66,6 +68,7 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     DefaultVersions,
     Libraries,
+    RenamedPaths,
     SearchableVersions,
     SearchIndex,
 )
@@ -310,6 +313,7 @@ class ReadChunkUseCase:
     versions: SearchableVersions
     manifests: ActiveManifests
     chunks: ChunkRepository
+    renames: RenamedPaths | None = None
 
     async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
         """Serve the chunk from its version's active manifest, or say why it cannot be served."""
@@ -333,9 +337,54 @@ class ReadChunkUseCase:
         # Note: manifests the catalog already collected (E9-03) are unknown to it, so after
         # collection an old ID reports not_found, not stale, until tombstones keep them (E9-03).
         statuses = await self.manifests.statuses(ids)
-        if ManifestStatus.SUPERSEDED in statuses.values():
-            raise StaleChunkError(query.chunk_id, first.library, ref)
+        superseded = [i for i, s in statuses.items() if s is ManifestStatus.SUPERSEDED]
+        if superseded:
+            moved = await self._moved(version, ChunkId(query.chunk_id), superseded[0])
+            raise StaleChunkError(query.chunk_id, first.library, ref, moved)
         raise ChunkNotFoundError(query.chunk_id)  # only pending manifests hold it: not served yet
+
+    async def _moved(
+        self, version: SearchableVersion | None, chunk_id: ChunkId, old_manifest: str
+    ) -> MovedSection | None:
+        """Find the stale chunk's section in the active manifest: two reads, one rename lookup.
+
+        The article is the old path, or where the rename map put it. In it the section is the one
+        with the same headings and occurrence (its text may have changed), else the one with the
+        same content (its headings may have changed), else only the article is named.
+        """
+        old = await self.chunks.get(old_manifest, chunk_id)
+        if version is None or old is None:
+            return None
+        path = old.row.article_path
+        current = await self.chunks.article(version.manifest_id, path)
+        if not current and self.renames is not None:
+            path = (
+                await self.renames.new_path(
+                    DocTarget(library=version.library, version=version.version), path
+                )
+                or path
+            )
+            current = await self.chunks.article(version.manifest_id, path) if path else []
+        if not current:
+            return None  # the article is gone
+        was = old.chunk
+        match = next(
+            (
+                c
+                for c in current
+                if (c.chunk.heading_path, c.chunk.occurrence_index)
+                == (was.heading_path, was.occurrence_index)
+            ),
+            None,
+        ) or next((c for c in current if c.chunk.content_hash == was.content_hash), None)
+        if match is None:
+            return MovedSection(article_path=path)
+        return MovedSection(
+            article_path=path,
+            chunk_id=match.row.chunk_id,
+            heading_path=match.chunk.heading_path,
+            anchor=match.chunk.anchor,
+        )
 
 
 @dataclass(frozen=True, slots=True)

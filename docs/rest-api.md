@@ -93,7 +93,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   job reports `chunked` (chunk sets cut: one per distinct new file content) and `reused`
   (articles whose chunk set was stored before). Files are still fetched, read and parsed again
   (#164 tracks skipping that). The new manifest is activated in place of the old one: the version
-  keeps its ID, and chunk IDs of changed sections answer `409 stale_chunk`.
+  keeps its ID, and chunk IDs of changed sections answer `409 stale_chunk`, whose `detail` names the section's article and new chunk ID when it can be found (same headings and occurrence, else same content; following the rename map; else the article alone).
   The body lists every version with a `status`; read it rather than the HTTP status:
   `queued` (with the `job_id`), `up_to_date`, `importing` (an import of that branch is already
   queued or running: it is left alone and the others still sync), `pinned` (tags and commits never
