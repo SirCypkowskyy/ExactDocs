@@ -16,11 +16,13 @@ LIBRARY = "/fixture/docs-repo"
 SHA_LENGTH = 40
 
 
-def _call(context: Context, tool: str, arguments: dict[str, Any]) -> None:
+def _call(
+    context: Context, tool: str, arguments: dict[str, Any], *, raise_on_error: bool = True
+) -> None:
     async def go() -> Any:
         container = Container.build(context.settings)
         async with container.running(), Client(build_mcp(container)) as mcp:
-            return await mcp.call_tool(tool, arguments)
+            return await mcp.call_tool(tool, arguments, raise_on_error=raise_on_error)
 
     result = asyncio.run(go())
     context.mcp_result = result
@@ -104,3 +106,54 @@ def step_text_first(context: Context) -> None:
     body = json.loads(text)
     assert next(iter(body)) == "notice", text[:200]
     assert body["notice"] == NOTICE
+
+
+@when('an agent calls "search_docs" for "{library}" version "{ref}" and "{query}"')
+def step_search(context: Context, library: str, ref: str, query: str) -> None:
+    _call(
+        context,
+        "search_docs",
+        {"library": library, "ref": ref, "query": query},
+        raise_on_error=False,
+    )
+
+
+@when('an agent calls "search_docs" with mode "{mode}"')
+def step_search_mode(context: Context, mode: str) -> None:
+    _call(
+        context,
+        "search_docs",
+        {"library": LIBRARY, "query": "retry_policy", "mode": mode},
+        raise_on_error=False,
+    )
+
+
+@then('the result is explicitly empty for "{ref}" with retrieval mode "{mode}"')
+def step_empty(context: Context, ref: str, mode: str) -> None:
+    data = context.mcp_data
+    assert data["version"] == ref, data
+    assert data["results"] == [], data
+    assert data["retrieval_mode"] == mode, data
+    assert data["coverage"]["complete"] is True, data
+
+
+@then('the tool error says there is no index for "{target}"')
+def step_no_index(context: Context, target: str) -> None:
+    assert context.mcp_result.is_error, context.mcp_result
+    assert f"no index for {target}" in context.mcp_result.content[0].text
+
+
+@then('the tool error lists the available modes "{modes}"')
+def step_modes(context: Context, modes: str) -> None:
+    assert context.mcp_result.is_error, context.mcp_result
+    assert f"available modes: {modes}" in context.mcp_result.content[0].text
+
+
+@then("the search result has the notice and every result has a source link and a commit SHA")
+def step_search_shape(context: Context) -> None:
+    data = context.mcp_data
+    assert data["notice"] == NOTICE, data
+    assert data["results"], data
+    for result in data["results"]:
+        assert result["source_url"], result
+        assert len(result["commit_sha"]) == SHA_LENGTH, result

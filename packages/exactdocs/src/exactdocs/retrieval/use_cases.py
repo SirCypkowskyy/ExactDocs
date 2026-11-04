@@ -19,7 +19,11 @@ from exactdocs.retrieval.dtos import (
     SearchResultOut,
     SetChunkOut,
 )
-from exactdocs.retrieval.errors import ChunkNotFoundError, VersionNotIndexedError
+from exactdocs.retrieval.errors import (
+    ChunkNotFoundError,
+    UnavailableModeError,
+    VersionNotIndexedError,
+)
 from exactdocs.retrieval.models import (
     Chunk,
     ChunkId,
@@ -90,6 +94,10 @@ class SearchDocsUseCase:
         """Search the active manifest of one exact version; never fall back to another version."""
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
+        # E11: replace with the modes this instance has configured.
+        available = [m.value for m in RetrievalMode]
+        if query.mode is not None and query.mode.strip().lower() not in available:
+            raise UnavailableModeError(query.mode, available)
         version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")

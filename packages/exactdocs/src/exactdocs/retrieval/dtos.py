@@ -63,10 +63,15 @@ class SearchDocsQuery(_Dto):
         default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
     )
     limit: int = Field(default=5, ge=1, le=50)
+    mode: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Retrieval mode; default is the best one configured. Only `bm25` for now.",
+    )
 
-    @field_validator("ref", mode="before")
+    @field_validator("ref", "mode", mode="before")
     @classmethod
-    def _blank_ref_is_none(cls, value: object) -> object:
+    def _blank_is_none(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("tags", mode="before")

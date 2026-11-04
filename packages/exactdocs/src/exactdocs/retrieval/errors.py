@@ -8,6 +8,17 @@ class EmptySearchTextError(ValidationError):
         super().__init__("search text must not be empty")
 
 
+class UnavailableModeError(ValidationError):
+    """The asked retrieval mode is not configured on this instance."""
+
+    def __init__(self, mode: str, available: list[str]) -> None:
+        super().__init__(
+            f"retrieval mode {mode!r} is not available; available modes: {', '.join(available)}. "
+            "Omit mode to use the default."
+        )
+        self.mode = mode
+
+
 class VersionNotIndexedError(NotFoundError):
     """There is no index for this exact library version, so there is no answer."""
 
