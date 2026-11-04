@@ -380,29 +380,42 @@ def _words(text: str) -> set[str]:
     return {w for w in re.split(r"[^\w]+", unicodedata.normalize("NFKC", text).casefold()) if w}
 
 
+# Words agents add to a library's name ("fastapi docs"); matched with and without them.
+STOP_WORDS = frozenset({"docs", "doc", "documentation", "library", "lib", "sdk", "api", "the"})
+
+
+def _match_once(name: str, library: CatalogLibrary) -> NameMatch | None:
+    """Try the tiers best first, each only when the better ones failed (the description is dear)."""
+    wanted = _squash(name)
+    if not wanted:
+        return None
+    names = [_squash(library.id.rsplit("/", 1)[-1]), _squash(library.title)]
+    words = _words(name)
+    tiers = [
+        (NameMatch.ID, lambda: wanted == _squash(library.id)),
+        (NameMatch.EXACT, lambda: wanted in names),
+        (NameMatch.PREFIX, lambda: any(n.startswith(wanted) for n in names)),
+        (
+            NameMatch.PART,
+            lambda: (
+                any(wanted in n for n in [*names, _squash(library.id)])
+                or words <= _words(f"{library.id} {library.title}")
+            ),
+        ),
+        (NameMatch.DESCRIPTION, lambda: words <= _words(library.description)),
+    ]
+    return next((tier for tier, holds in tiers if holds()), None)
+
+
 def name_match(name: str, library: CatalogLibrary) -> NameMatch | None:
     """Match a library name against ID, title and description in memory; ``None`` is no match.
 
-    A name with no letter or digit matches nothing. Ties are broken by ``rank_matches``.
+    The name is tried as written and without ``STOP_WORDS``; the better match counts. A name with
+    no letter or digit matches nothing. Ties are broken by ``rank_matches``.
     """
-    wanted = _squash(name)
-    repo = library.id.rsplit("/", 1)[-1]
-    names = [_squash(repo), _squash(library.title)]
-    words = _words(name)
-    tests = [
-        (NameMatch.ID, wanted == _squash(library.id)),
-        (NameMatch.EXACT, wanted in names),
-        (NameMatch.PREFIX, any(n.startswith(wanted) for n in names)),
-        (
-            NameMatch.PART,
-            any(wanted in n for n in [*names, _squash(library.id)])
-            or words <= _words(f"{library.id} {library.title}"),
-        ),
-        (NameMatch.DESCRIPTION, words <= _words(library.description)),
-    ]
-    if not wanted:
-        return None
-    return next((match for match, ok in tests if ok), None)
+    kept = " ".join(w for w in re.split(r"[^\w]+", name) if w and w.casefold() not in STOP_WORDS)
+    found = [m for n in {name, kept} if (m := _match_once(n, library)) is not None]
+    return min(found, default=None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -417,19 +430,20 @@ class Candidate:
 def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
     """Order candidates, best first, by these rules in order.
 
-    1. A library named by its ID comes first, whatever the query finds;
-    2. a name found in the ID or title beats one found only in the description;
-    3. a library with hits for the query beats one without (the query re-ranks equal names);
-    4. a closer name match (exact, then prefix, then part);
-    5. more hits;
-    6. the library ID, so equal candidates always come out in the same order.
+    1. A library named by its ID comes first, whatever the query finds.
+    2. A name found in the ID or title beats one found only in the description.
+    3. An exact or prefix name beats a mere part of a name (``react`` before ``preact``).
+    4. Within that, a library with hits for the query beats one without.
+    5. A closer name match (exact, then prefix).
+    6. More hits.
+    7. The library ID, so equal candidates always come out in the same order.
     """
 
-    def key(c: Candidate) -> tuple[int, int, int, int, int, str]:
-        weak = c.match is NameMatch.DESCRIPTION
+    def key(c: Candidate) -> tuple[int, int, int, int, int, int, str]:
         return (
-            0 if c.match is NameMatch.ID else 1,
-            int(weak),
+            int(c.match is not NameMatch.ID),
+            int(c.match is NameMatch.DESCRIPTION),
+            int(c.match >= NameMatch.PART),
             int(c.hits == 0),
             c.match,
             -c.hits,

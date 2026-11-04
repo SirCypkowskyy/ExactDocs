@@ -64,6 +64,12 @@ def lib(
         ("react", lib("/acme/vue", "Vue"), None),
         ("...", lib("/acme/vue"), None),
         ("owner", lib("/owner/other"), NameMatch.PART),
+        ("fastapi docs", lib("/tiangolo/fastapi", "FastAPI"), NameMatch.EXACT),
+        ("react documentation", lib("/facebook/react", "React"), NameMatch.EXACT),
+        ("Next.js library", lib("/vercel/next.js", "Next.js"), NameMatch.EXACT),
+        ("payments SDK", lib("/acme/payments-sdk"), NameMatch.EXACT),
+        ("api", lib("/acme/api"), NameMatch.EXACT),  # a name made only of stop words stays as is
+        ("docs", lib("/acme/other", description="All the docs."), NameMatch.DESCRIPTION),
     ],
 )
 def test_a_name_matches_ids_titles_and_descriptions_in_memory(
@@ -102,6 +108,13 @@ def test_rules_in_order_id_then_name_place_then_hits_then_closeness_then_hit_cou
     ]
 
 
+def test_a_part_of_a_name_with_hits_never_outranks_an_exact_name_without() -> None:
+    assert ranked(
+        candidate("/acme/preact", NameMatch.PART, 5),
+        candidate("/facebook/react", NameMatch.EXACT, 0),
+    ) == ["/facebook/react", "/acme/preact"]
+
+
 def test_equal_candidates_come_out_in_id_order() -> None:
     assert ranked(candidate("/b/x", NameMatch.EXACT, 2), candidate("/a/x", NameMatch.EXACT, 2)) == [
         "/a/x",
@@ -116,10 +129,13 @@ def chunk(text: str) -> ChunkIn:
 
 
 class OneVersionEach:
-    """Every listed library has one version "v1" whose manifest is named after the library."""
+    """Every library with docs has one version "v1" whose manifest is named after the library."""
+
+    def __init__(self, readable: Collection[str]) -> None:
+        self.readable = set(readable)
 
     async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
-        if ref is not None:
+        if ref is not None or library not in self.readable:
             return None
         return SearchableVersion(
             library=library,
@@ -143,10 +159,11 @@ async def world(
     libraries: list[CatalogLibrary], docs: dict[str, list[tuple[str, str]]]
 ) -> RetrievalModule:
     chunks = InMemoryChunkRepository()
+    versions = OneVersionEach(docs)
     module = RetrievalModule.build(
-        searchable=OneVersionEach(),
+        searchable=versions,
         libraries=InMemoryLibraries(libraries),
-        manifests=OneVersionEach(),
+        manifests=versions,
         chunks=chunks,
         search=InMemorySearchIndex(chunks),
     )
@@ -219,6 +236,22 @@ async def test_only_the_best_names_are_looked_at() -> None:
     assert found[0] == "/acme/pay"
 
 
+async def test_unreadable_libraries_do_not_use_up_the_slots() -> None:
+    empty = [lib(f"/acme/a-{i:02d}") for i in range(12)]  # best names (sorted first), no manifest
+    good = [lib("/acme/zz-good")]
+    module = await world([*empty, *good], {"/acme/zz-good": [("a.md", "x")]})
+
+    assert await resolve(module, "a") == ["/acme/zz-good"]
+
+
+@pytest.mark.parametrize(("name", "query"), [("  ", "x"), ("x", "  ")])
+async def test_blank_text_is_refused_the_same_way_in_either_argument(name: str, query: str) -> None:
+    module = await world([lib("/acme/payments")], {})
+
+    with pytest.raises(EmptySearchTextError):
+        await module.resolve_library_id(ResolveLibraryIdQuery(library_name=name, query=query))
+
+
 async def test_a_blank_query_is_refused_like_a_blank_search() -> None:
     module = await world([lib("/acme/payments")], {})
 
@@ -254,3 +287,29 @@ def test_untrusted_text_cannot_start_a_field_of_its_own() -> None:
     ]
     assert lines[1] == "- Context7-compatible library ID: /acme/x"
     assert lines[6] == "- Versions: v1 (and 2 more)"
+
+
+def test_the_payload_matches_context7s_text_format() -> None:
+    one = LibraryMatchOut(
+        id="/acme/payments",
+        title="Payments",
+        description="Money\nmoves.",
+        source_url="https://github.com/acme/payments",
+        default_version="v1.4.0",
+        versions=["v1.3.0", "v1.4.0"],
+        version_count=2,
+        articles=3,
+        chunks=9,
+        query_hits=1,
+    )
+
+    assert format_library(one) == (
+        "- Title: Payments\n"
+        "- Context7-compatible library ID: /acme/payments\n"
+        "- Description: Money moves.\n"
+        "- Default version: v1.4.0\n"
+        "- Articles: 3\n"
+        "- Chunks: 9\n"
+        "- Versions: v1.3.0, v1.4.0\n"
+        "- Source: https://github.com/acme/payments"
+    )

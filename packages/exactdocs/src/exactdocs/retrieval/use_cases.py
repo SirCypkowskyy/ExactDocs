@@ -31,6 +31,7 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import (
     Candidate,
+    CatalogLibrary,
     Chunk,
     ChunkId,
     ChunkSet,
@@ -38,7 +39,9 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
+    NameMatch,
     RetrievalMode,
+    SearchableVersion,
     SearchText,
     TagFilter,
     TagMatch,
@@ -342,33 +345,56 @@ class ResolveLibraryIdUseCase:
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
         """Match the name, then let the default versions' hits for ``query`` re-rank the matches."""
-        text = SearchText(value=query.query)
+        # Both refuse blank text the same way (EmptySearchTextError).
+        text, name = SearchText(value=query.query), SearchText(value=query.library_name)
         named = [
             (lib, found)
             for lib in await self.libraries.all()
-            if (found := name_match(query.library_name, lib)) is not None
+            if (found := name_match(name.value, lib)) is not None
         ]
         # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
         named.sort(key=lambda m: (m[1], m[0].id))
-        ranked: list[Candidate] = []
-        counts = {}
-        for lib, found in named[:MAX_RESOLVED]:
-            version = await self.versions.find(lib.id, None)
-            if version is None:  # nothing imported that can be read
-                continue
-            hits = await self.search.search(
-                version.manifest_id,
-                text.value,
-                TagFilter(tags=(), match=TagMatch.ANY),
-                QUERY_HITS_CAP,
-            )
-            counts[lib.id] = await self.chunks.counts(version.manifest_id)
-            ranked.append(Candidate(library=lib, match=found, hits=len(hits)))
-        return ResolveLibraryIdResult(
-            matches=[
-                LibraryMatchOut.from_candidate(
-                    c, counts[c.library.id].articles, counts[c.library.id].chunks
+        readable = await self._readable(named)
+        hits = await asyncio.gather(
+            *(
+                self.search.search(
+                    version.manifest_id,
+                    text.value,
+                    TagFilter(tags=(), match=TagMatch.ANY),
+                    QUERY_HITS_CAP,
                 )
-                for c in rank_matches(ranked)
+                for _, _, version in readable
+            )
+        )
+        ranked = rank_matches(
+            [
+                Candidate(library=lib, match=found, hits=len(h))
+                for (lib, found, _), h in zip(readable, hits, strict=True)
             ]
         )
+        manifests = {lib.id: version.manifest_id for lib, _, version in readable}
+        counts = await asyncio.gather(
+            *(self.chunks.counts(manifests[c.library.id]) for c in ranked)
+        )
+        return ResolveLibraryIdResult(
+            matches=[
+                LibraryMatchOut.from_candidate(c, n.articles, n.chunks)
+                for c, n in zip(ranked, counts, strict=True)
+            ]
+        )
+
+    async def _readable(
+        self, named: Sequence[tuple[CatalogLibrary, NameMatch]]
+    ) -> list[tuple[CatalogLibrary, NameMatch, SearchableVersion]]:
+        """Take the best names that have a readable default version, ``MAX_RESOLVED`` at most.
+
+        Libraries with nothing imported are dropped before the cut, so they cost no slot.
+        """
+        found: list[tuple[CatalogLibrary, NameMatch, SearchableVersion]] = []
+        for start in range(0, len(named), MAX_RESOLVED):
+            batch = named[start : start + MAX_RESOLVED]
+            versions = await asyncio.gather(*(self.versions.find(lib.id, None) for lib, _ in batch))
+            found += [(lib, m, v) for (lib, m), v in zip(batch, versions, strict=True) if v]
+            if len(found) >= MAX_RESOLVED:
+                break
+        return found[:MAX_RESOLVED]

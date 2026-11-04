@@ -40,7 +40,7 @@ def format_library(match: LibraryMatchOut) -> str:
     return "\n".join(
         [
             f"- Title: {_line(match.title)}",
-            f"- Context7-compatible library ID: {match.id}",
+            f"- Context7-compatible library ID: {_line(match.id)}",
             f"- Description: {_line(match.description)}",
             f"- Default version: {_line(match.default_version)}",
             f"- Articles: {match.articles}",
