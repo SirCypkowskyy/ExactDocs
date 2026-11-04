@@ -7,40 +7,45 @@ same idea with **vertical slices**. All of this is enforced by tests, not by con
 
 ## Repository layout
 
-```
-pyproject.toml                  uv workspace root: dev tools, ruff, ty, pytest, behave config
-packages/
-  exactdocs-kernel/             shared kernel (separate, published package)
-    src/exactdocs_kernel/
-  exactdocs/                    the application (published as `exactdocs`)
-    src/exactdocs/
-      bootstrap/                composition root: settings, wiring, HTTP/MCP/CLI entry points
-      catalog/                  domain
-      identity/                 domain: the admin account and its web sessions (later API tokens)
-      retrieval/                domain
-      ingestion/                domain: jobs, the worker, git access and the import
-      _web/                     built web UI (gitignored, added by CI / Docker)
-    tests/                      pytest: unit, integration, architecture
-    features/                   behave: acceptance scenarios (Gherkin)
-web/                            React client (Vite, TanStack Router + Query, shadcn)
-deploy/                         Dockerfile, self-hosted runner scripts
-```
+| Path | What it is |
+|---|---|
+| `pyproject.toml` | uv workspace root: dev tools, ruff, ty, pytest and behave config, the `docs` group (Zensical) |
+| `packages/exactdocs-kernel/` | shared kernel (`src/exactdocs_kernel/`), a separate, published package |
+| `packages/exactdocs/` | the application, published as `exactdocs` (`src/exactdocs/`) |
+| `packages/exactdocs/src/exactdocs/bootstrap/` | composition root: settings, container, bridges, migrations, HTTP / MCP / CLI entry points |
+| `packages/exactdocs/src/exactdocs/catalog/` | domain: libraries, versions, manifests, article contents |
+| `packages/exactdocs/src/exactdocs/identity/` | domain: the admin account, web sessions and API tokens |
+| `packages/exactdocs/src/exactdocs/retrieval/` | domain: chunks, the BM25 index, `search_docs`, `query-docs`, `resolve-library-id` |
+| `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the worker, git access, parsing, chunking and the import |
+| `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
+| `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
+| `web/` | React client (Vite, TanStack Router and Query, shadcn); see [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md) |
+| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, self-hosted runner scripts |
+| `e2e/` | the Playwright test of the whole loop in a browser |
+| `docs/` | this site (Zensical) |
 
 ## Domains and what may import what
 
+```mermaid
+flowchart TD
+    boot["<b>bootstrap</b> (composition root)<br/>settings, adapters, bridges, HTTP / MCP / CLI"]
+    subgraph domains [Domains: never import each other]
+        direction LR
+        catalog
+        identity
+        retrieval
+        ingestion
+    end
+    kernel["<b>exactdocs_kernel</b><br/>shared kernel, standard library only"]
+    boot --> catalog & identity & retrieval & ingestion
+    catalog & identity & retrieval & ingestion --> kernel
+    retrieval -. "bridge: SearchableVersions" .-> catalog
+    ingestion -. "bridges: library sources,<br/>version publisher, removals" .-> catalog
+    ingestion -. "bridge: chunk index" .-> retrieval
 ```
-                 ┌──────────────── bootstrap (composition root) ────────────────┐
-                 │  picks adapters · wires domains via bridges · HTTP/MCP/CLI    │
-                 └───────┬───────────────────────┬───────────────────────────────┘
-                         │ imports               │ imports
-                    ┌────▼─────┐   ✗ never   ┌────▼──────┐
-                    │ catalog  │ ◄─────────► │ retrieval │   ... more domains
-                    └────┬─────┘             └────┬──────┘
-                         │                        │
-                    ┌────▼────────────────────────▼────┐
-                    │ exactdocs_kernel (shared kernel) │  stdlib only
-                    └──────────────────────────────────┘
-```
+
+Solid arrows are imports; dotted arrows are runtime calls through a bridge that lives in
+`bootstrap`, so the domains stay unaware of each other. `identity` needs no bridge.
 
 | From \ may import | own domain | other domain | `bootstrap` | `exactdocs_kernel` |
 |---|---|---|---|---|
@@ -141,6 +146,146 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   `EXACTDOCS_DATA_DIR` at one for every test) and seed data through the repository, so the
   catalog starts empty in production.
 
+### Data model
+
+Tables as created by the migrations in `bootstrap/migrations/versions`; the columns shown are the
+ones that carry the design. A solid line is a real foreign key (same domain). A dotted line is an
+ID held **by value**, which the database does not enforce.
+
+```mermaid
+erDiagram
+    catalog_libraries ||--o{ catalog_library_versions : "has"
+    catalog_libraries ||--o{ catalog_manifests : "has"
+    catalog_manifests ||--o{ catalog_manifest_entries : "lists"
+    catalog_article_contents ||--o{ catalog_manifest_entries : "shared by blob SHA"
+
+    catalog_libraries {
+        text id PK "/owner/repo"
+        text title
+        text source_url
+        json settings "paths, tag rules"
+    }
+    catalog_library_versions {
+        text library_id PK, FK
+        text ref PK "tag, branch or commit"
+        text kind
+        text commit_sha
+    }
+    catalog_manifests {
+        text id PK
+        text library_id FK
+        text ref
+        text commit_sha
+        text state "pending, active, superseded"
+    }
+    catalog_manifest_entries {
+        text manifest_id PK, FK
+        text path PK
+        text blob_sha FK
+        json tags
+        json front_matter
+    }
+    catalog_article_contents {
+        text blob_sha PK "git blob SHA"
+        int content_version PK "parser version"
+        text content "verbatim Markdown"
+    }
+
+    retrieval_chunk_sets ||--o{ retrieval_chunks : "cut into"
+    retrieval_chunk_sets ||--o{ retrieval_manifest_chunks : "reused by"
+    retrieval_manifests ||--o{ retrieval_manifest_chunks : "indexes"
+
+    retrieval_chunk_sets {
+        text blob_sha PK
+        text config_hash PK "chunking config"
+    }
+    retrieval_chunks {
+        int id PK
+        int position
+        json heading_path
+        text content
+    }
+    retrieval_manifests {
+        text manifest_id PK "by value from catalog"
+        text version_id "/owner/repo/ref"
+        text library
+    }
+    retrieval_manifest_chunks {
+        text manifest_id PK, FK
+        text chunk_id PK "version-scoped hash"
+        text article_path
+        text prev_chunk_id
+        text next_chunk_id
+    }
+
+    catalog_manifests ||..o| retrieval_manifests : "same ID, by value"
+```
+
+```mermaid
+erDiagram
+    identity_accounts ||--o{ identity_sessions : "signs in with"
+    identity_accounts ||--o{ identity_api_tokens : "owns"
+
+    identity_accounts {
+        text id PK
+        text username UK
+        text password_hash "argon2id"
+        text role
+    }
+    identity_sessions {
+        text token_hash PK "SHA-256 of the cookie"
+        text account_id FK
+        text last_used_at
+    }
+    identity_api_tokens {
+        text id PK
+        text account_id FK
+        text token_hash UK "SHA-256, exd_ prefix"
+        text expires_at
+    }
+
+    ingestion_jobs {
+        text id PK
+        text kind "import, refresh, collect"
+        text library "by value"
+        text version "ref, by value"
+        text state "queued, running, succeeded, failed"
+        int done
+        int total
+        json problems
+    }
+    ingestion_library_credentials {
+        text library PK "by value"
+        text sealed "Fernet-encrypted token or key"
+    }
+```
+
+Two derived facts worth knowing: a **chunk ID** is a hash of version, article path, heading path,
+occurrence and content, so the same section keeps its ID when a branch moves but another version
+of the same blob gets another one; and `retrieval_chunks` is keyed by *(blob SHA, chunking
+config)*, so a blob shared by many versions is chunked once.
+
+A manifest and a job each move through a small set of states:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "Manifest (catalog)" as M {
+        [*] --> pending: store
+        pending --> active: activate (one transaction)
+        active --> superseded: a newer manifest activates
+        pending --> [*]: discarded on failure
+        superseded --> [*]: garbage-collected after the grace period
+    }
+    state "Job (ingestion)" as J {
+        [*] --> queued
+        queued --> running: worker claims it
+        running --> succeeded
+        running --> failed
+        running --> queued: restart recovery
+    }
+```
+
 ## Identity: accounts and the setup guard
 
 `identity` owns accounts (`identity_accounts`: username, password hash, `role`, created time).
@@ -185,7 +330,7 @@ request. A `Job` has a kind, a library (and optionally a version), a state (`que
 `succeeded`, `failed`), `done`/`total` files, per-file problems (path, reason), an error and
 timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jobs` read them.
 
-- **Kinds are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
+- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
   maps a kind to the `JobHandler` that runs it and, optionally, a `RecoveryHook`. Handlers report
   through a `JobProgress` port; every report is stored at once. Raising fails the job: a domain
   error's message is shown to users, anything else only as `unexpected <ErrorType>` (details go
@@ -271,15 +416,19 @@ that last step, which is one transaction in the catalog.
 
 ## Web client: vertical slices
 
-```
-web/src/
-  app/                       providers, router, QueryClient: composition only
-  routes/                    TanStack Router file routes: thin, compose feature public APIs
-  features/<feature>/
-    api/                     queryOptions, fetchers (one place that knows the endpoint)
-    components/  hooks/  model/
-    index.ts                 the only import path other code may use
-  shared/ui/ shared/lib/ shared/config/   shadcn components, http client, utilities
+```mermaid
+flowchart TD
+    app["app/<br/>providers, router, QueryClient"]
+    routes["routes/<br/>TanStack Router file routes: thin"]
+    subgraph features ["features/(name) (auth, browse, libraries, library-settings, search, tokens)"]
+        index["index.ts<br/>public API"] --> inner["api/ components/ hooks/ model/"]
+    end
+    shared["shared/<br/>ui, lib, config"]
+    app --> routes
+    routes -->|public API only| index
+    routes -. "types only" .-> app
+    features --> shared
+    routes --> shared
 ```
 
 A feature mirrors a backend use case or domain view. Features never import each other; if two

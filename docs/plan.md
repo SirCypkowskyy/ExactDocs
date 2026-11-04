@@ -16,6 +16,12 @@ It holds **103 feature issues** plus **12 epic tracking issues**:
 | Next: Teams & integrations | 13 |
 | Next: Operations | 4 |
 
+!!! info "Status: MVP-1 is built (v0.2.0)"
+    The 46 MVP-1 issues are merged and released. The acceptance checklists below are the *plans*
+    the issues were written from; where the build deviated, the merged PR says why, and the
+    [as-built deviations](#deviations-from-the-plan) table collects the ones that matter. For how
+    the system works now read [Architecture](architecture.md) and [Flows](flows.md).
+
 !!! abstract "How to read this plan"
     - **Milestones** say *when* (what must be demonstrably true to close them).
     - **Epics** say *what area* of the product an issue belongs to; one epic spans milestones.
@@ -180,6 +186,25 @@ implicitly includes "`just check` passes" and "architecture tests green".
     or MCP. E8 (web) Gherkin maps to vitest tests against
     mocked API responses. One Playwright end-to-end test (setup → add fixture → browse → search)
     runs in CI with E10-03b.
+
+## Deviations from the plan
+
+What MVP-1 turned out differently from the issues as first written (source: the merged PRs).
+
+| Plan | As built | Why |
+|---|---|---|
+| Chunker: Chonkie's Markdown recipe | `markdown-it-py` behind the `Chunker` port (#27) | Chonkie's recipe downloads rules from the Hugging Face Hub (network), and its `MarkdownChef` mis-detects fences in block quotes |
+| Image budget 300 MB | 375 MB, measured 339 MB (#55) | The floor is the Python base image, git and ssh, and 57 MB of `.pyc` that keeps read-only containers from recompiling; see [Size and model-free budgets](releasing.md#size-and-model-free-budgets) |
+| MCP tools take `version` | `list_articles`, `read_article` and `search_docs` take `ref` (#38) | Matches `search_docs` and the REST `?ref=`; the context7 tools keep their own names |
+| `LibrarySummary.versions` (ref strings) | `refs` (kind, commit SHA, default flag; at most 50) plus `version_count` (#38) | Agents need the kind and commit SHA per version |
+| No tags endpoint | `GET /libraries/{owner}/{repo}/tags` lists a version's tags with counts (#50) | The UI's tag filter needs them |
+| A missing article is a plain 404 | the 404 lists up to five `close_matches` of the same version (#39) | Lets an agent correct a path in one step |
+| Job list per library | also `GET /jobs/latest` (newest job per version, #48) and `GET /libraries/{owner}/{repo}/access` (is the repository private, #51) | The library list and the article page would otherwise need a request per library |
+| Re-sync reuses the import job | re-syncs and re-imports of an existing version are `refresh` jobs; removal frees content with a `collect` job (#44, #45) | A late sync must never resurrect a removed version |
+| Private repositories: a token field | token or SSH deploy key, encrypted with `EXACTDOCS_SECRET_KEY`, offered only to the library's own host, sent only with a signed-in session (#35) | Threat model in the PR (#163) |
+| stdio MCP reuses the app container | a separate `ReadOnlyContainer` (catalog and retrieval only) over a database opened `mode=ro` (#43) | Safe next to a running server, works before any account exists, creates no files |
+| `exactdocs login` / `add` in MVP-1 | the CLI has `serve`, `admin create` and `admin reset-password`; the REST client commands are MVP-2 | The UI and the REST API cover every action (CLI-01) |
+| Setup page, tokens and library management in the UI | built (#46 to #53) | as planned |
 
 ## Milestones
 
@@ -1033,7 +1058,7 @@ Scenario: Changing the split level re-chunks without fetching
   And the previous chunks are served until the swap
 ```
 
-- [ ] settings: split level (`h1`…`h6`), min/max size with merging of tiny sections, chunker choice among supported Chonkie chunkers; validated
+- [ ] settings: split level (`h1`…`h6`), min/max size with merging of tiny sections, chunker choice among the supported chunkers (Chonkie was dropped in #27); validated
 - [ ] new config hash → new chunk sets from stored blobs; manifests re-indexed and swapped (E1-04)
 - [ ] guarantee tests (E4-02) pass for every supported setting
 
@@ -1392,7 +1417,7 @@ Scenario: Reading a neighbor chunk
 - [ ] `ReadChunk` use case (retrieval): verbatim content, location fields as in search results
 - [ ] IDs in a superseded manifest of the same version but not in the active one → `stale_chunk` (domain error); unknown IDs → `not_found` (pytest with a superseded manifest stored through the ports; the behave scenario over a real re-sync is in E9-01)
 - [ ] REST `GET /api/v1/chunks/{chunk_id}` and the article route of E1-03 (`?ref=&path=`)
-- [ ] MCP `read_article(library, version?, path)` and `read_chunk(chunk_id)`: text block + structured content (metadata, commit SHA, link, version, notice)
+- [ ] MCP `read_article(library, ref?, path)` and `read_chunk(chunk_id)`: text block + structured content (metadata, commit SHA, link, version, notice)
 - [ ] `stale_chunk` and `not_found` surface as tool errors with messages
 - [ ] close matches (edit distance / same basename), at most 5
 - [ ] unit, integration and behave tests
@@ -1421,7 +1446,7 @@ Scenario: Asking for a mode that is not configured
 
 **Criteria of success**
 
-- [ ] `search_docs(library, version?, query, tags?, mode?)` returns the E5-03 shape + notice (retrieval DTO field, E7-02)
+- [ ] `search_docs(library, query, ref?, tags?, mode?)` returns the E5-03 shape + notice (retrieval DTO field, E7-02)
 - [ ] `mode` validated against available modes (only `bm25` in MVP-1)
 - [ ] behave `mcp_search.feature` incl. wrong-version case
 
@@ -2239,7 +2264,7 @@ Scenario: Re-indexing while serving
 
 **Context.** The ASCII diagrams in README, `docs/architecture.md` and `web/README.md` are hard to maintain and cannot show flows; the docs must describe the system as built.
 
-- [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (mermaid-cli parse/render)
+- [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (`deploy/mermaid-check`: every diagram is parsed with the `mermaid` package, and ASCII art fails the build)
 - [ ] every ASCII diagram replaced by Mermaid (README *How it works*, architecture domains and bridges, web slices)
 - [ ] new diagrams: data model (ER), import flow, query flow, retrieval modes, auth, branching and releases (`gitGraph`), CI/CD and runners
 - [ ] README, architecture, releasing, index and CONTRIBUTING reflect MVP-1 as built; planned features labelled as planned; strict docs build passes

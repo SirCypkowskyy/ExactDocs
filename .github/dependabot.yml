@@ -12,6 +12,12 @@ updates:
     target-branch: develop
     groups:
       web: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /deploy/mermaid-check
+    schedule: { interval: weekly }
+    target-branch: develop
+    groups:
+      mermaid-check: { patterns: ["*"] }
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }

@@ -7,11 +7,15 @@ on:
     paths:
       - "docs/**"
       - "zensical.toml"
+      - "**/*.md"
+      - "deploy/mermaid-check/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
       - "zensical.toml"
+      - "**/*.md"
+      - "deploy/mermaid-check/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -29,6 +33,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: deploy/mermaid-check/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: deploy/mermaid-check/pnpm-lock.yaml
+      - name: Every Mermaid diagram parses and no ASCII art is left (README, docs/, web/README.md, ...)
+        run: |
+          pnpm --dir deploy/mermaid-check install --frozen-lockfile
+          pnpm --dir deploy/mermaid-check check
       - name: Build (strict mode, warnings and broken links fail)
         run: uv run --only-group docs zensical build --clean --strict
       - uses: actions/upload-pages-artifact@v5

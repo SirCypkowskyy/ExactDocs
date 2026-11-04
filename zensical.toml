@@ -20,6 +20,7 @@ nav = [
   ] },
   { "Engineering" = [
     { "Architecture" = "architecture.md" },
+    { "Flows" = "flows.md" },
     { "REST API" = "rest-api.md" },
     { "Branching and releases" = "releasing.md" },
   ] },
@@ -72,6 +73,8 @@ toc.permalink = true
 pymdownx.details = {}
 pymdownx.highlight = {}
 pymdownx.inlinehilite = {}
-pymdownx.superfences = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
 pymdownx.tasklist.custom_checkbox = true
 pymdownx.tabbed.alternate_style = true
