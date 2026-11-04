@@ -69,7 +69,7 @@ class FakeCatalog:
             ),
             None,
         )
-        if manifest is None:
+        if manifest is None or ref is None:
             return None
         return SearchableVersion(
             library=library.lower(),
