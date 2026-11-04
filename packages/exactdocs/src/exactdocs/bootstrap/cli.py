@@ -2,15 +2,28 @@
 
 import asyncio
 import getpass
+import os
 import sys
 from collections.abc import Coroutine
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import uvicorn
 from cyclopts import App, Parameter
+from cyclopts.validators import Number
 from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
+from exactdocs.bootstrap.client import (
+    ApiClient,
+    ClientConfig,
+    ClientError,
+    config_path,
+    forget,
+    machine_name,
+    normalize_url,
+    store,
+)
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
@@ -25,6 +38,8 @@ from exactdocs.identity.dtos import (
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs_kernel import DomainError
+
+DEFAULT_TOKEN_DAYS = 90
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
 
@@ -63,6 +78,129 @@ def serve(
         reload=reload,
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
+    )
+
+
+# Every command is either local (opens the database, lives in LOCAL_COMMANDS) or a client of the
+# REST API: those take `url`/`token` like the two options below, build their client with
+# `_api()` and run their work with `_call()`. A test pins the split.
+type UrlOption = Annotated[
+    str | None, Parameter(help="Server URL (default: EXACTDOCS_URL, config).")
+]
+type TokenOption = Annotated[
+    str | None, Parameter(help="API token (default: EXACTDOCS_TOKEN, config).")
+]
+
+
+def _call[T](work: Coroutine[object, object, T]) -> T:
+    """Run a client command's work; a ``ClientError`` ends the process with its message."""
+    try:
+        return asyncio.run(work)
+    except ClientError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from None
+
+
+def _api(url: str | None = None, token: str | None = None) -> ApiClient:
+    """Build the client for the resolved server and token (flags > environment > config file)."""
+    try:
+        config = ClientConfig.resolve(url=url, token=token)
+        return ApiClient(config.url, config.token)
+    except ClientError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from None
+
+
+@app.command
+def login(
+    url: str | None = None,
+    *,
+    token: Annotated[
+        str | None,
+        Parameter(
+            help="Use this existing API token instead of creating one. It lands in your shell "
+            "history and `ps`: prefer EXACTDOCS_TOKEN or --token-stdin."
+        ),
+    ] = None,
+    token_stdin: Annotated[
+        bool, Parameter(help="Read an existing API token from one line of stdin.")
+    ] = False,
+    username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
+    password_stdin: Annotated[
+        bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
+    ] = False,
+    name: Annotated[
+        str | None, Parameter(help="Name of the new token (default: this machine's name).")
+    ] = None,
+    expires_in: Annotated[
+        int, Parameter(help="Days until the new token expires.", validator=Number(gte=1))
+    ] = DEFAULT_TOKEN_DAYS,
+    no_expiry: Annotated[bool, Parameter(help="Create a token that never expires.")] = False,
+) -> None:
+    """Sign in to an instance and store the server URL and an API token for the other commands.
+
+    With a token (--token, --token-stdin or EXACTDOCS_TOKEN) no new token is created and the
+    expiry options do not apply. Otherwise the new token expires after 90 days unless told not to.
+    """
+    try:
+        server = normalize_url(url or os.environ.get("EXACTDOCS_URL") or "")
+    except ClientError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from None
+    path = config_path()
+    if token_stdin:
+        token = sys.stdin.readline().strip()
+        if not token:
+            message = "exactdocs: no token on stdin"
+            raise SystemExit(message)
+    token = token or os.environ.get("EXACTDOCS_TOKEN") or None
+    expires_at = None if no_expiry else datetime.now(UTC) + timedelta(days=expires_in)
+
+    async def work() -> str:
+        async with ApiClient(server, token) as api:
+            if token is None:
+                try:
+                    user, password = _read_login(username, password_stdin=password_stdin)
+                except EOFError, KeyboardInterrupt:
+                    message = "no username or password to read"
+                    raise ClientError(message) from None
+                grant = await api.login(user, password, name or machine_name(), expires_at)
+                secret, label = (
+                    grant["token"],
+                    f"new token {grant['name']!r} ({grant['prefix']}...), "
+                    + (f"expires {expires_at:%Y-%m-%d}" if expires_at else "no expiry"),
+                )
+            else:
+                await api.check_token()
+                secret, label = token, "the token you gave"
+        store(path, ClientConfig(url=server, token=secret))
+        return label
+
+    label = _call(work())
+    sys.stdout.write(f"Logged in to {server} with {label}; credentials stored in {path}.\n")
+
+
+def _read_login(username: str | None, *, password_stdin: bool) -> tuple[str, str]:
+    name = username if username is not None else input("Username: ")
+    if password_stdin:
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError
+        return name, line.rstrip("\r\n")
+    if not sys.stdin.isatty():
+        raise EOFError
+    return name, getpass.getpass("Password: ")
+
+
+@app.command
+def logout() -> None:
+    """Forget the stored credentials (the token stays valid until revoked in the web UI)."""
+    removed = forget(config_path())
+    sys.stdout.write(
+        "Logged out. The token is still valid on the server until you revoke it in the web UI "
+        "(Tokens).\n"
+        if removed
+        else "Not logged in.\n"
     )
 
 
@@ -189,6 +327,9 @@ def _check_startup(settings: Settings) -> None:
 def asgi_app() -> object:
     """ASGI factory used by uvicorn (also with ``--reload``)."""
     return create_app(Container.build(Settings()))
+
+
+LOCAL_COMMANDS = frozenset({"serve", "admin create", "admin reset-password"})
 
 
 def main() -> None:

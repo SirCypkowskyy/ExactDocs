@@ -92,13 +92,14 @@ def create_app(container: Container) -> FastAPI:
         return Health(status="ok", version=__version__, schema_revision=revision)
 
     v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
-    # Reachable without a caller: setup and sign-in/state/out. A test pins this list.
+    # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.
     v1.include_router(
         identity_http.build_router(
             create_first_admin=container.identity.create_first_admin,
             sign_in=container.identity.sign_in,
             sign_out=container.identity.sign_out,
             get_session_state=container.identity.get_session_state,
+            login_for_token=container.identity.login_for_token,
             secure_cookies=settings.secure_cookies,
         )
     )

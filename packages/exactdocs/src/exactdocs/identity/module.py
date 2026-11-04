@@ -21,6 +21,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyCaller,
     IdentifyToken,
     ListTokens,
+    LoginForToken,
     ResetPassword,
     RevokeToken,
     SignIn,
@@ -35,6 +36,7 @@ from exactdocs.identity.use_cases import (
     IdentifyCallerUseCase,
     IdentifyTokenUseCase,
     ListTokensUseCase,
+    LoginForTokenUseCase,
     ResetPasswordUseCase,
     RevokeTokenUseCase,
     SignInUseCase,
@@ -56,6 +58,7 @@ class IdentityModule:
     get_session_state: GetSessionState
     reset_password: ResetPassword
     create_token: CreateToken
+    login_for_token: LoginForToken
     list_tokens: ListTokens
     revoke_token: RevokeToken
     identify_token: IdentifyToken
@@ -73,6 +76,7 @@ class IdentityModule:
         """Assemble the use cases around the given driven adapters."""
         authenticate = AuthenticateUseCase(repository, hasher)
         identify_caller = IdentifyCallerUseCase(sessions, repository, clock)
+        create_token = CreateTokenUseCase(tokens, clock)
         return cls(
             get_setup_state=GetSetupStateUseCase(repository),
             create_first_admin=CreateFirstAdminUseCase(repository, hasher, clock),
@@ -82,7 +86,8 @@ class IdentityModule:
             identify_caller=identify_caller,
             get_session_state=GetSessionStateUseCase(repository, identify_caller),
             reset_password=ResetPasswordUseCase(repository, sessions, tokens, hasher),
-            create_token=CreateTokenUseCase(tokens, clock),
+            create_token=create_token,
+            login_for_token=LoginForTokenUseCase(authenticate, create_token),
             list_tokens=ListTokensUseCase(tokens),
             revoke_token=RevokeTokenUseCase(tokens),
             identify_token=IdentifyTokenUseCase(tokens, repository, clock),

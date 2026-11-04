@@ -39,6 +39,7 @@ async def client(container: Container) -> AsyncIterator[httpx.AsyncClient]:
         ("POST", "/api/v1/libraries"),
         ("DELETE", "/api/v1/libraries"),
         ("GET", "/api/v1/nope"),
+        ("POST", "/api/v1/tokens/login"),
         ("POST", "/api/v1/session"),  # only `GET /session` is exempt
         ("GET", "/api/v1/setup"),
         ("GET", "/api/v1/setup/"),

@@ -7,6 +7,7 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    LoginForTokenCommand,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
@@ -87,6 +88,14 @@ class CreateToken(Protocol):
 
     async def __call__(self, account: AccountSummary, command: CreateTokenCommand) -> TokenGrant:
         """Run the use case; ``InvalidTokenExpiryError`` if ``expires_at`` is not in the future."""
+        ...
+
+
+class LoginForToken(Protocol):
+    """Check credentials and mint a named API token; no session is started."""
+
+    async def __call__(self, command: LoginForTokenCommand) -> TokenGrant:
+        """Run the use case; ``InvalidCredentialsError`` on any mismatch."""
         ...
 
 

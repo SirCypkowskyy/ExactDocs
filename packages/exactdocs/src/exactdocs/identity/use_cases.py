@@ -13,6 +13,7 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    LoginForTokenCommand,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
@@ -51,7 +52,7 @@ from exactdocs.identity.ports.driven import (
     SessionRepository,
     TokenRepository,
 )
-from exactdocs.identity.ports.driving import Authenticate, IdentifyCaller
+from exactdocs.identity.ports.driving import Authenticate, CreateToken, IdentifyCaller
 from exactdocs_kernel import Clock
 
 
@@ -277,6 +278,22 @@ class CreateTokenUseCase:
         )
         await self.tokens.add(token)
         return TokenGrant(**TokenSummary.from_model(token).model_dump(), token=secret)
+
+
+@dataclass(frozen=True, slots=True)
+class LoginForTokenUseCase:
+    """Implements ``ports.driving.LoginForToken``."""
+
+    authenticate: Authenticate
+    create_token: CreateToken
+
+    async def __call__(self, command: LoginForTokenCommand) -> TokenGrant:
+        """Mint a token for the account the credentials belong to."""
+        query = AuthenticateQuery(username=command.username, password=command.password)
+        account = await self.authenticate(query)
+        return await self.create_token(
+            account, CreateTokenCommand(name=command.name, expires_at=command.expires_at)
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,6 +11,7 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    LoginForTokenCommand,
     SessionState,
     TokenGrant,
     TokenList,
@@ -23,6 +24,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyCaller,
     IdentifyToken,
     ListTokens,
+    LoginForToken,
     RevokeToken,
     SignIn,
     SignOut,
@@ -139,9 +141,13 @@ def build_router(
     sign_in: SignIn,
     sign_out: SignOut,
     get_session_state: GetSessionState,
+    login_for_token: LoginForToken,
     secure_cookies: bool,
 ) -> APIRouter:
-    """Expose the routes that need no session: ``/setup`` and ``/session`` (sign in, state, out).
+    """Expose the routes that need no session: ``/setup``, ``/session`` and ``/tokens/login``.
+
+    ``/session`` signs in, reports the state and signs out; ``/tokens/login`` trades credentials
+    for an API token (the CLI's login).
 
     ``secure_cookies`` forces the ``Secure`` attribute; without it the cookie is ``Secure``
     whenever the request came in over HTTPS. The cookie is HttpOnly (script never reads it) and
@@ -162,6 +168,12 @@ def build_router(
     async def get_session(request: Request, response: Response) -> SessionState:
         response.headers["Cache-Control"] = "no-store"
         return await get_session_state(request.cookies.get(SESSION_COOKIE))
+
+    @router.post("/tokens/login", status_code=201)
+    async def login(command: LoginForTokenCommand, response: Response) -> TokenGrant:
+        """Exchange a username and password for a new API token (what ``exactdocs login`` does)."""
+        response.headers["Cache-Control"] = "no-store"  # the one time the secret is shown
+        return await login_for_token(command)
 
     @router.post("/session", status_code=201)
     async def create_session(
