@@ -1053,6 +1053,7 @@
       },
       "delete": {
         "tags": [
+          "ingestion",
           "ingestion"
         ],
         "summary": "Remove Library",
@@ -1279,6 +1280,7 @@
       },
       "delete": {
         "tags": [
+          "ingestion",
           "ingestion"
         ],
         "summary": "Remove Version",
