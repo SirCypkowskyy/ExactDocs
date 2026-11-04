@@ -96,6 +96,10 @@ ignore = [
 "**/conftest.py" = ["pytest-fixture-autouse"]
 # The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
+"deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
+# Runs the app in a fresh interpreter to see which modules it imports.
+"**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

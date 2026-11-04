@@ -60,6 +60,35 @@ runs after every release, weekly, and on demand (`gh workflow run ghcr-retention
 dry-run=true` shows what would be deleted). Change `KEEP_DEV` / `KEEP_STABLE` in the workflow to
 adjust. PyPI releases are never deleted.
 
+## Size and model-free budgets
+
+RUN-02: many installs only ever use BM25, so the artifacts hold no models and no ML libraries. CI
+enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land in the job summary):
+
+| Artifact | Budget | Now | Also checked |
+|---|---|---|---|
+| wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
+| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 375 MB | 339 MB | no such model file anywhere in the filesystem |
+
+The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
+extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
+onnxruntime, model2vec, tensorflow or pydantic-ai, and that a started app imports none of them
+(`packages/exactdocs/tests/bootstrap/test_model_free.py`). The list is `ML_PACKAGES` in
+`deploy/check_artifacts.py`, shared by the script and the test. Optional AI extras (`[ai]`) are
+allowed to carry them: both checks skip `extra ==` requirements.
+
+**Chonkie is not banned** (the chunker is markdown-it-py, issue #27; Chonkie's Markdown recipe needs the
+HF Hub and network, which breaks RUN-02). If it is ever added, these extras must stay off: anything
+pulling torch, transformers, sentence-transformers, onnx/onnxruntime, huggingface-hub or model2vec
+(for Chonkie: the `semantic`, `neural`, `embeddings`, `code` and `all` extras).
+
+**Why 375 MB and not the 300 MB first planned.** The floor is the `python:3.14-slim` base (~120 MB),
+git and ssh (~25 MB git-core plus libraries; Perl is already purged) and the virtualenv (167 MB). 57 MB
+of that is precompiled `.pyc`: dropping it would reach ~297 MB but make every start of a read-only
+container recompile the whole dependency tree. Keeping it is the better trade, so the budget is the
+measured 339 MB (`du -sxb /`; `docker image inspect` reports 353 MB with overlay2 and only the compressed ~115 MB with the containerd store, so it is not used) plus about 10 % headroom for dependency and Debian security updates. Raising it needs a
+reason in the PR; lowering it is the goal if a dependency is dropped.
+
 ## Image scan
 
 Every PR (CI job *Docker image*) and every release scans the built image with

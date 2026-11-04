@@ -975,11 +975,11 @@ cuts a code block in half is useless to an agent.
 
 **Criteria of success**
 
-- [ ] driven port `Chunker`; default adapter on Chonkie's Markdown recipe; Chonkie imported only in the adapter
+- [ ] driven port `Chunker`; default adapter on markdown-it-py (issue #27: Chonkie's Markdown recipe needs the HF Hub and network, which breaks RUN-02)
 - [ ] each chunk: heading path, occurrence index (repeated headings), position, content, content hash, GitHub-style anchor, code-block languages
 - [ ] chunking-config hash computed from the effective config plus the parser/sanitizer version (E4-01), so a parser fix re-chunks instead of reusing stale chunk sets (default config now; IMP-03 in MVP-2)
 - [ ] guarantee tests on the fixture repo run against the port (heading paths, never-split code/tables, text before the first heading kept), so any chunker adapter must pass them
-- [ ] dependency `chonkie` added to `pyproject.toml` without extras that pull ML models (RUN-02)
+- [ ] dependency `markdown-it-py` added to `pyproject.toml`; no dependency that pulls ML models (RUN-02, see issue #27)
 
 **Notes.** Chunk IDs are computed by retrieval (E1-04), not by the chunker.
 
@@ -2142,9 +2142,9 @@ Scenario: The release artifacts contain no models
 
 **Criteria of success**
 
-- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 300 MB uncompressed
+- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 375 MB uncompressed (300 MB first planned; the floor is the `python:3.14-slim` base, git/ssh and the 167 MB virtualenv, and dropping 57 MB of `.pyc` would slow every start of a read-only container; see docs/releasing.md)
 - [ ] test: after app start, `sys.modules` has no `torch`, `transformers`, `sentence_transformers`, `pydantic_ai`
-- [ ] dependency review of `chonkie` extras
+- [ ] dependency review: Chonkie dropped in #27 (needs HF Hub/network); `ML_PACKAGES` in `deploy/check_artifacts.py` lists what must stay out of the default install
 
 ### E10-03a · feat: one `docker run` starts ExactDocs and a library is searchable within five minutes
 

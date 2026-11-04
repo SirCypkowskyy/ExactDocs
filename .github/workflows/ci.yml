@@ -108,6 +108,17 @@ jobs:
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # RUN-02: size budgets and no model weights (budgets and reasoning: docs/releasing.md).
+      - name: Image size budget and no model files
+        run: python3 deploy/check_artifacts.py image exactdocs:ci
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - name: Wheel size budget, no model files, no ML dependencies
+        run: |
+          cid=$(docker create exactdocs:ci)
+          docker cp "$cid:/app/.venv/lib/python3.14/site-packages/exactdocs/_web" packages/exactdocs/src/exactdocs/_web
+          docker rm "$cid" >/dev/null
+          UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
+          python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
       # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
       - name: Trivy scan
         uses: ./.github/actions/trivy-gate
@@ -137,7 +148,6 @@ jobs:
         run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
       - name: Smoke test (read-only rootfs, no capabilities)
         run: |
-          echo "image size: $(docker image inspect exactdocs:ci --format '{{.Size}}') bytes" | tee -a "$GITHUB_STEP_SUMMARY"
           flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
           docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 exactdocs:ci
           trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
