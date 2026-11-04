@@ -15,9 +15,11 @@ from exactdocs.catalog.dtos import (
     Limit,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ListTagsQuery,
     ResolvedVersion,
     ResolveVersionQuery,
     TagFilter,
+    TagList,
     UpdateLibraryCommand,
 )
 from exactdocs.catalog.models import TagMatch
@@ -26,6 +28,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     ListArticles,
     ListLibraries,
+    ListTags,
     ResolveVersion,
     UpdateLibrary,
 )
@@ -38,6 +41,7 @@ def build_router(
     get_library: GetLibrary,
     resolve_version: ResolveVersion,
     list_articles: ListArticles,
+    list_tags: ListTags,
     get_article: GetArticle,
     update_library: UpdateLibrary,
 ) -> APIRouter:
@@ -111,6 +115,10 @@ def build_router(
             cursor=cursor,
         )
         return await list_articles(query)
+
+    @router.get("/{owner}/{repo}/tags")
+    async def list_version_tags(owner: str, repo: str, ref: str | None = None) -> TagList:
+        return await list_tags(ListTagsQuery(library=f"/{owner}/{repo}", ref=ref))
 
     @router.get("/{owner}/{repo}/article")
     async def get_one_article(

@@ -95,6 +95,7 @@ async def test_domain_errors_use_the_envelope(client: httpx.AsyncClient) -> None
         "error": "not_found",
         "detail": "library '/vuejs/docs' is not in the catalog",
         "fields": [],
+        "close_matches": [],
     }
 
 
@@ -174,6 +175,7 @@ async def test_unhandled_errors_under_api_are_500_envelopes(app) -> None:
         "error": "internal_error",
         "detail": "internal server error",
         "fields": [],
+        "close_matches": [],
     }
 
 

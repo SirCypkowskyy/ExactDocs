@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
 import { LibrariesPage } from "./index";
 import { orderedVersions, syncOf } from "./model/library";
-import { relativeTime } from "./model/time";
+import { relativeTime } from "@/shared/lib/time";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const library = (over: Record<string, unknown> = {}) => {

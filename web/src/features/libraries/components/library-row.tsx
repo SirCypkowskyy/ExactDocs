@@ -4,7 +4,7 @@ import { Fragment, useId, useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import type { SyncState } from "../hooks/use-libraries";
 import { type Library, orderedVersions, shortSha, sourceLabel } from "../model/library";
-import { absoluteTimeWithZone, relativeTime } from "../model/time";
+import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { FailureDetail, SyncStatus } from "./sync-status";
 
 const SHOWN = 5;

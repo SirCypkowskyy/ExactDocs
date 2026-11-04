@@ -5,7 +5,7 @@ import { cn } from "@/shared/lib/utils";
 import { jobQueryOptions } from "../api/libraries-query";
 import type { SyncState } from "../hooks/use-libraries";
 import type { LatestJob } from "../model/library";
-import { absoluteTime, absoluteTimeWithZone, relativeTime } from "../model/time";
+import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 
 const SKIPPED_SHOWN = 5;
 

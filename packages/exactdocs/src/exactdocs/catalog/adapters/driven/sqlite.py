@@ -418,6 +418,20 @@ class SqliteManifestRepository:
         async with self.engine.connect() as connection:
             return tuple((await connection.execute(query)).scalars())
 
+    async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
+        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        # ponytail: scans the manifest's entries; add a tag side table with the one planned for
+        # the tag filter (see `_tag_condition`) when versions are large enough to notice.
+        query = text(
+            "SELECT tag.value AS name, COUNT(DISTINCT e.path) AS n"
+            " FROM catalog_manifest_entries e, json_each(e.tags) AS tag"
+            " WHERE e.manifest_id = :manifest_id"
+            " GROUP BY tag.value ORDER BY n DESC, name LIMIT :limit"
+        )
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(query, {"manifest_id": manifest_id, "limit": limit})
+            return tuple((row.name, row.n) for row in rows)
+
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:

@@ -107,3 +107,46 @@ async def test_twenty_tags_are_fine(client: httpx.AsyncClient) -> None:
     params = [("tags", f"t{i}") for i in range(20)]
 
     assert await listed(client, params) == []
+
+
+TAGS_URL = "/api/v1/libraries/acme/payments/tags"
+
+
+async def test_the_tags_of_a_version_are_counted_most_used_first(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(TAGS_URL, params={"ref": "main"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tags"] == [
+        {"tag": "api", "count": 2},
+        {"tag": "adr", "count": 1},
+        {"tag": "auth", "count": 1},
+    ]
+    assert body["ref"] == "main"
+    assert body["truncated"] is False
+
+
+async def test_the_tags_of_an_unknown_version_are_a_404(client: httpx.AsyncClient) -> None:
+    response = await client.get(TAGS_URL, params={"ref": "v9"})
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
+
+
+async def test_a_missing_article_names_its_close_matches_as_a_field(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(
+        "/api/v1/libraries/acme/payments/article", params={"ref": "main", "path": "docs/a.md"}
+    )
+
+    assert response.status_code == 404
+    assert response.json()["close_matches"] == ["a.md"]
+
+
+async def test_other_errors_have_no_close_matches(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v1/libraries/acme/nope")
+
+    assert response.json()["close_matches"] == []

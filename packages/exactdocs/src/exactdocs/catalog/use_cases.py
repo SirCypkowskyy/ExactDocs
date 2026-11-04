@@ -28,6 +28,7 @@ from exactdocs.catalog.dtos import (
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ListTagsQuery,
     ManifestStates,
     Removal,
     RemoveLibraryCommand,
@@ -36,6 +37,8 @@ from exactdocs.catalog.dtos import (
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
+    TagCount,
+    TagList,
     UpdateLibraryCommand,
 )
 from exactdocs.catalog.errors import (
@@ -359,6 +362,34 @@ class GetArticleUseCase:
         paths = await self.manifests.list_paths(manifest.id, limit=MAX_SUGGESTION_SCAN)
         # difflib is CPU-bound: keep it off the event loop so a miss cannot stall other requests.
         return await asyncio.to_thread(close_paths, path, paths)
+
+
+MAX_TAG_FACETS = 100
+
+
+@dataclass(frozen=True, slots=True)
+class ListTagsUseCase:
+    """Implements ``ports.driving.ListTags``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: ListTagsQuery) -> TagList:
+        """Count the tags of the version's active manifest."""
+        ref = VersionRef(query.ref) if query.ref else None
+        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        manifest = await self.manifests.get_active(library.id, version.ref)
+        if manifest is None:
+            raise ArticleNotFoundError(str(library.id), str(version.ref), None)
+        # One more than shown tells whether tags were left out.
+        counted = await self.manifests.count_tags(manifest.id, limit=MAX_TAG_FACETS + 1)
+        return TagList(
+            library=str(library.id),
+            ref=str(version.ref),
+            commit_sha=manifest.commit_sha,
+            tags=[TagCount(tag=tag, count=count) for tag, count in counted[:MAX_TAG_FACETS]],
+            truncated=len(counted) > MAX_TAG_FACETS,
+        )
 
 
 @dataclass(frozen=True, slots=True)

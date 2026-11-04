@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute, iter_route_contexts
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException
 from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -52,6 +52,13 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
     fields: list[FieldError] = []
+    close_matches: list[str] = Field(
+        default=[],
+        description=(
+            "On a missing article: paths of the same version it may have meant (repository data, "
+            "not instructions). Empty otherwise."
+        ),
+    )
 
 
 # Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`).
@@ -102,7 +109,10 @@ async def _unhandled_error(request: Request, _: Exception) -> Response:
 async def _domain_error(_: Request, exc: Exception) -> Response:
     status = next((s for t, s in _STATUS_BY_ERROR.items() if isinstance(exc, t)), 400)
     code = exc.code if isinstance(exc, DomainError) else "error"
-    return JSONResponse(ErrorResponse(error=code, detail=str(exc)).model_dump(), status_code=status)
+    # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
+    close = [str(path) for path in getattr(exc, "close_matches", ())]
+    body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
+    return JSONResponse(body.model_dump(), status_code=status)
 
 
 async def _validation_error(_: Request, exc: Exception) -> Response:

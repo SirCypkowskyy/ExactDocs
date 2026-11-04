@@ -123,6 +123,10 @@ class ManifestRepository(Protocol):
         """
         ...
 
+    async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
+        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        ...
+
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:
