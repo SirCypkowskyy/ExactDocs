@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { Field } from "@/shared/ui/field";
 import { setUp } from "../api/session-query";
 import { explainError, type FormProblem } from "../model/errors";
 import { MIN_PASSWORD_LENGTH, validateSetup } from "../model/session";
 import { AuthLayout } from "./auth-layout";
-import { Field } from "./field";
 import { focusField } from "./focus-field";
 import { FormAlert, SubmitButton } from "./form-parts";
 

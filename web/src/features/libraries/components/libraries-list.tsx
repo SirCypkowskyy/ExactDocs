@@ -2,6 +2,7 @@ import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { type SyncState, useNow } from "../hooks/use-libraries";
 import type { Library } from "../model/library";
+import { AddLibraryLink } from "./add-library-link";
 import { columns, LibraryRow } from "./library-row";
 
 interface LibrariesListProps {
@@ -21,8 +22,12 @@ function EmptyState() {
   };
   return (
     <div className="max-w-xl">
-      <p>No libraries yet. Index one from a git repository.</p>
-      <pre className="mt-3 whitespace-pre-wrap rounded-md bg-secondary px-4 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
+      <p>No libraries yet. Add one from a git repository.</p>
+      <div className="mt-4">
+        <AddLibraryLink />
+      </div>
+      <p className="mt-8 text-sm text-muted-foreground">Or index one from the command line:</p>
+      <pre className="mt-2 whitespace-pre-wrap rounded-md bg-secondary px-4 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
         <code>{COMMAND}</code>
       </pre>
       <button
