@@ -52,7 +52,6 @@ from exactdocs.catalog.models import (
     ManifestId,
     ParsedId,
     TagRule,
-    TagSelection,
     Version,
     VersionRef,
     close_paths,
@@ -61,7 +60,7 @@ from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
 from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
 
 # A missing article lists at most this many paths to look for close matches.
-MAX_SUGGESTION_SCAN = 50_000
+MAX_SUGGESTION_SCAN = 10_000
 
 
 async def _find_version(
@@ -295,20 +294,17 @@ class GetArticleUseCase:
         link = section_link(
             library.host.value, library.source_url, stored.commit_sha, stored.entry.path
         )
-        return Article(
-            **ArticleInfo.from_stored(str(library.id), str(version.ref), stored, link).model_dump(),
-            content=stored.content,
-        )
+        info = ArticleInfo.from_stored(str(library.id), str(version.ref), stored, link)
+        return Article.with_content(info, stored.content)
 
     async def _close(self, library: Library, version: Version, path: str) -> list[str]:
         """Paths of this version an agent may have meant (only looked up on a miss)."""
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             return []
-        entries = await self.manifests.list_entries(
-            manifest.id, prefix="", tags=TagSelection(), after=None, limit=MAX_SUGGESTION_SCAN
-        )
-        return close_paths(path, [e.path for e in entries])
+        paths = await self.manifests.list_paths(manifest.id, limit=MAX_SUGGESTION_SCAN)
+        # difflib is CPU-bound: keep it off the event loop so a miss cannot stall other requests.
+        return await asyncio.to_thread(close_paths, path, paths)
 
 
 @dataclass(frozen=True, slots=True)

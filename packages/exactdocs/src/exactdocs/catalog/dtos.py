@@ -23,6 +23,7 @@ from exactdocs_kernel import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_PATH,
     MAX_TAG_LENGTH,
     NOTICE,
     Page,
@@ -420,7 +421,7 @@ class GetArticleQuery(_Dto):
 
     library: str = Field(min_length=1)
     ref: str | None = None
-    path: str = Field(min_length=1)
+    path: str = Field(min_length=1, max_length=MAX_PATH)
 
     @field_validator("ref", mode="before")
     @classmethod
@@ -473,6 +474,11 @@ class Article(ArticleInfo):
     """One article with its Markdown, verbatim as imported."""
 
     content: str
+
+    @classmethod
+    def with_content(cls, info: ArticleInfo, content: str) -> Self:
+        """Add the text to an article's metadata."""
+        return cls(**dict(info), content=content)
 
 
 class GetManifestStatesQuery(_Dto):

@@ -8,7 +8,7 @@ Feature: Reading whole articles and single chunks verbatim
 
   Scenario: Reading an article
     When an agent reads "docs/guide/install.md" of "/fixture/docs-repo/v1.4.0"
-    Then the Markdown arrives as a plain text block, identical to the imported file
+    Then the Markdown arrives after the notice as a plain text block, identical to the imported file
     And the structured content has its front matter, commit SHA and source link
     And the structured content carries the untrusted-content notice
 

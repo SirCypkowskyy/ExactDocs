@@ -21,8 +21,8 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
-    UnavailableModeError,
     StaleChunkError,
+    UnavailableModeError,
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
@@ -208,17 +208,23 @@ class ReadChunkUseCase:
         """Serve the chunk from its version's active manifest, or say why it cannot be served."""
         chunk_id = ChunkId(query.chunk_id)
         holders = await self.chunks.manifests_with_chunk(chunk_id)
-        if not holders:
+        # The ID is a hash of the version it was issued for, so all holders share one version_id.
+        # Anything else is not a state we understand: refuse rather than guess from the first row.
+        if len({m.version_id for m in holders}) != 1:
             raise ChunkNotFoundError(query.chunk_id)
-        # The ID is a hash of the version it was issued for, so every holder is that version's.
         first = holders[0]
         ref = first.version_id.removeprefix(f"{first.library}/")
         version = await self.versions.find(first.library, ref)
         ids = {m.manifest_id for m in holders}
         if version is not None and version.manifest_id in ids:
             stored = await self.chunks.get(version.manifest_id, chunk_id)
-            if stored is not None and stored.version_id == first.version_id:
+            if (
+                stored is not None
+                and stored.version_id == f"{version.library.lower()}/{version.version}"
+            ):
                 return ChunkOut.from_stored(version, stored)
+        # Note: manifests the catalog already collected (E9-03) are unknown to it, so after
+        # collection an old ID reports not_found, not stale, until tombstones keep them (E9-03).
         statuses = await self.manifests.statuses(ids)
         if ManifestStatus.SUPERSEDED in statuses.values():
             raise StaleChunkError(query.chunk_id, first.library, ref)

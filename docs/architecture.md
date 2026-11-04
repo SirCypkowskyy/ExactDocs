@@ -49,9 +49,9 @@ deploy/                         Dockerfile, self-hosted runner scripts
 | `exactdocs_kernel` | - | **no** | **no** | yes |
 
 **How domains talk to each other.** The consumer declares what it needs as a *driven port* in its
-own vocabulary (`retrieval.ports.driven.IndexedVersions`). The composition root implements it with
-a **bridge** that calls the provider's *driving port* (`bootstrap/bridges.py:CatalogIndexedVersions`
-uses `catalog.ports.driving.GetLibrary`). Neither domain knows the other exists, so a domain can
+own vocabulary (`retrieval.ports.driven.SearchableVersions`). The composition root implements it with
+a **bridge** that calls the provider's *driving port* (`bootstrap/bridges.py:CatalogSearchableVersions`
+uses `catalog.ports.driving.GetActiveManifest` and `GetLibrary`). Neither domain knows the other exists, so a domain can
 later move to its own package or service without touching the other.
 
 ### Bridges are one-way

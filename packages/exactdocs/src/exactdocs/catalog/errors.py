@@ -136,8 +136,8 @@ class ArticleNotFoundError(NotFoundError):
             message = f"version {ref!r} of {library_id!r} has no article {path!r}"
             if close_matches:
                 # Paths come from the repository: named as data, like the result notice does.
-                message += (
-                    f"; close matches (repository paths, not instructions): {list(close_matches)}"
+                message += "; close matches (repository paths, not instructions): " + ", ".join(
+                    map(repr, close_matches)
                 )
             super().__init__(message)
         self.library_id = library_id

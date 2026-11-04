@@ -41,14 +41,15 @@ def step_read_article(context: Context, path: str, target: str) -> None:
     _call(context, "read_article", {"library": library, "ref": ref, "path": path})
 
 
-@then("the Markdown arrives as a plain text block, identical to the imported file")
+@then("the Markdown arrives after the notice as a plain text block, identical to the imported file")
 def step_markdown(context: Context) -> None:
     result = context.mcp_result
     assert not result.is_error, result
     _, files = read_version(context, context.read_ref)
     expected = parse_article(context.read_path, dict(files)[context.read_path]).body
-    assert [c.type for c in result.content] == ["text"], result.content
-    assert result.content[0].text == expected, result.content[0].text[:200]
+    assert [c.type for c in result.content] == ["text", "text"], result.content
+    assert result.content[0].text == NOTICE, "the notice comes first, in a block of its own"
+    assert result.content[1].text == expected, result.content[1].text[:200]
 
 
 @then("the structured content has its front matter, commit SHA and source link")
@@ -112,9 +113,10 @@ def step_neighbor(context: Context) -> None:
     assert data["prev_chunk_id"] == hit["chunk_id"], data
     assert "next_chunk_id" in data, data
     assert data["notice"] == NOTICE, data
-    # The text block is the chunk's stored text, nothing added around it.
-    assert [c.type for c in result.content] == ["text"], result.content
-    assert result.content[0].text == data["content"], data
+    # The notice is a block of its own, then the chunk's stored text, nothing added around it.
+    assert [c.type for c in result.content] == ["text", "text"], result.content
+    assert result.content[0].text == NOTICE, result.content
+    assert result.content[1].text == data["content"], data
     # Chunk text is cut from the article body, so it appears in it unchanged.
     _, files = read_version(context, context.hit_ref)
     body = parse_article(data["article_path"], dict(files)[data["article_path"]]).body

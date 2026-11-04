@@ -26,7 +26,7 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ResolveVersion,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_TAG_LENGTH, MAX_TAGS
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
 
 
 def build_router(
@@ -103,7 +103,10 @@ def build_router(
 
     @router.get("/{owner}/{repo}/article")
     async def get_one_article(
-        owner: str, repo: str, path: Annotated[str, Query(min_length=1)], ref: str | None = None
+        owner: str,
+        repo: str,
+        path: Annotated[str, Query(min_length=1, max_length=MAX_PATH)],
+        ref: str | None = None,
     ) -> Article:
         return await get_article(GetArticleQuery(library=f"/{owner}/{repo}", ref=ref, path=path))
 

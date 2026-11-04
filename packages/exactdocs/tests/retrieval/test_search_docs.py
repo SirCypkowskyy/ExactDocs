@@ -48,9 +48,6 @@ class FakeVersions:
             return None
         return self.by_ref.get(ref or self.default)
 
-    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
-        return target
-
     async def active_id(self, target: DocTarget) -> str | None:
         del target
         return None

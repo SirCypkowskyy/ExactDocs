@@ -15,6 +15,7 @@ from exactdocs_kernel.limits import (
     LIBRARY_ID_PATTERN,
     MAX_CURSOR,
     MAX_NAME,
+    MAX_PATH,
     MAX_TAG_INPUT,
     TOOL_HINTS,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "MAX_CURSOR",
     "MAX_LIMIT",
     "MAX_NAME",
+    "MAX_PATH",
     "MAX_TAGS",
     "MAX_TAG_INPUT",
     "MAX_TAG_LENGTH",

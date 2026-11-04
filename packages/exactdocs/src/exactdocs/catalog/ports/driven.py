@@ -89,6 +89,13 @@ class ManifestRepository(Protocol):
         """
         ...
 
+    async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
+        """Return up to ``limit`` article paths of the manifest, sorted, and nothing else.
+
+        Cheap on purpose (no titles, tags or front matter): it feeds "did you mean" suggestions.
+        """
+        ...
+
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:

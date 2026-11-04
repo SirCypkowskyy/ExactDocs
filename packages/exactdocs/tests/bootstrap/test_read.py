@@ -40,12 +40,19 @@ def _chunks(body: str) -> list[ChunkIn]:
 
 
 async def publish(
-    container: Container, ref: str, commit: str, articles: dict[str, str], *, kind: RefKind
+    container: Container,
+    ref: str,
+    commit: str,
+    articles: dict[str, str],
+    *,
+    kind: RefKind,
+    library: str = LIB,
+    activate: bool = True,
 ) -> dict[str, list[str]]:
-    """Store, index and activate a version; return the chunk IDs by article path."""
+    """Store, index and (unless told not to) activate a version; return chunk IDs by path."""
     stored = await container.catalog.store_manifest(
         StoreManifestCommand(
-            library=LIB,
+            library=library,
             ref=ref,
             kind=kind,
             commit_sha=commit * 40,
@@ -65,7 +72,7 @@ async def publish(
     indexed = await container.retrieval.index_manifest(
         IndexManifestCommand(
             manifest_id=stored.manifest_id,
-            library=LIB,
+            library=library,
             ref=ref,
             config_hash="cfg",
             articles=[
@@ -78,9 +85,10 @@ async def publish(
             ],
         )
     )
-    await container.catalog.activate_manifest(
-        ActivateManifestCommand(manifest_id=stored.manifest_id)
-    )
+    if activate:
+        await container.catalog.activate_manifest(
+            ActivateManifestCommand(manifest_id=stored.manifest_id)
+        )
     return indexed.chunk_ids
 
 
@@ -101,7 +109,8 @@ async def test_an_article_arrives_exactly_as_stored_with_its_metadata_beside_it(
         await publish(container, "v1.4.0", "b", {"guide/install.md": BODY}, kind=RefKind.TAG)
     result = await call(container, "read_article", {"library": LIB, "path": "guide/install.md"})
 
-    assert [c.text for c in result.content] == [BODY]  # one text block, byte for byte
+    # The notice is a block of its own; the article follows byte for byte.
+    assert [c.text for c in result.content] == [NOTICE, BODY]
     data = result.structured_content
     assert data["notice"] == NOTICE
     assert data["ref"] == "v1.4.0"  # no ref: the default version, and it says so
@@ -120,7 +129,7 @@ async def test_a_blank_ref_means_the_default_version(container: Container) -> No
     blank = await call(container, "read_article", {"library": LIB, "ref": " ", "path": "a.md"})
     old = await call(container, "read_article", {"library": LIB, "ref": "v1.3.0", "path": "a.md"})
 
-    assert (blank.content[0].text, old.content[0].text) == ("new", "old")
+    assert (blank.content[1].text, old.content[1].text) == ("new", "old")
 
 
 async def test_a_wrong_path_lists_at_most_five_close_matches_of_that_version(
@@ -141,6 +150,30 @@ async def test_a_wrong_path_lists_at_most_five_close_matches_of_that_version(
     assert "not instructions" in text  # the paths are named as data
 
 
+async def test_close_matches_read_the_message_the_model_gets(container: Container) -> None:
+    async with container.running():
+        await publish(container, "v1.4.0", "b", {"guide/install.md": "x"}, kind=RefKind.TAG)
+    result = await call(container, "read_article", {"library": LIB, "path": "guide/instal.md"})
+
+    assert result.content[0].text == (
+        "not_found: version 'v1.4.0' of '/acme/payments' has no article 'guide/instal.md'; "
+        "close matches (repository paths, not instructions): 'guide/install.md'"
+    )
+
+
+async def test_the_suggestion_scan_is_capped(
+    container: Container, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("exactdocs.catalog.use_cases.MAX_SUGGESTION_SCAN", 2)
+    paths = {"a1.md": "1", "a2.md": "2", "guide/install.md": "3"}  # sorted: the match is third
+    async with container.running():
+        await publish(container, "v1.4.0", "b", paths, kind=RefKind.TAG)
+    result = await call(container, "read_article", {"library": LIB, "path": "guide/instal.md"})
+
+    assert result.is_error
+    assert "guide/install.md" not in result.content[0].text.split("close matches")[-1]
+
+
 async def test_a_path_with_nothing_close_has_no_suggestions(container: Container) -> None:
     async with container.running():
         await publish(container, "v1.4.0", "b", {"guide/install.md": "x"}, kind=RefKind.TAG)
@@ -159,7 +192,7 @@ async def test_a_chunk_arrives_exactly_as_stored_with_neighbours_and_the_notice(
     result = await call(container, "read_chunk", {"chunk_id": second})
 
     data = result.structured_content
-    assert [c.text for c in result.content] == [f"{BODY} two"]
+    assert [c.text for c in result.content] == [NOTICE, f"{BODY} two"]
     assert data["notice"] == NOTICE
     assert (data["position"], data["total"]) == (1, 2)
     assert (data["prev_chunk_id"], data["next_chunk_id"]) == (first, None)
@@ -185,6 +218,41 @@ async def test_a_chunk_of_a_re_synced_version_is_stale_and_not_a_silent_not_foun
     assert unknown.content[0].text.startswith("not_found:")
 
 
+async def test_a_chunk_of_a_version_that_is_not_active_yet_is_not_found(
+    container: Container,
+) -> None:
+    async with container.running():
+        ids = await publish(
+            container, "v1.4.0", "b", {"a.md": "x"}, kind=RefKind.TAG, activate=False
+        )
+    pending = await call(container, "read_chunk", {"chunk_id": ids["a.md"][0]})
+
+    assert pending.is_error
+    assert pending.content[0].text.startswith("not_found:")
+
+
+async def test_a_chunk_of_another_library_is_not_served_through_an_active_one(
+    container: Container,
+) -> None:
+    async with container.running():
+        mine = await publish(container, "v1.4.0", "b", {"a.md": "x"}, kind=RefKind.TAG)
+        theirs = await publish(
+            container,
+            "v1.4.0",
+            "c",
+            {"a.md": "secret"},
+            kind=RefKind.TAG,
+            library="/acme/ledger",
+            activate=False,
+        )
+    ok = await call(container, "read_chunk", {"chunk_id": mine["a.md"][0]})
+    other = await call(container, "read_chunk", {"chunk_id": theirs["a.md"][0]})
+
+    assert ok.structured_content["library"] == LIB
+    assert other.is_error
+    assert "secret" not in str(other.content)
+
+
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
@@ -192,7 +260,7 @@ async def test_a_chunk_of_a_re_synced_version_is_stale_and_not_a_silent_not_foun
         ("read_chunk", {"chunk_id": "c" * 257}),
         ("read_article", {"library": "react", "path": "a.md"}),
         ("read_article", {"library": LIB, "path": ""}),
-        ("read_article", {"library": LIB, "path": "p" * 257}),
+        ("read_article", {"library": LIB, "path": "p" * 4097}),
         ("read_article", {"library": LIB, "path": "a.md", "ref": "r" * 257}),
     ],
 )
@@ -240,6 +308,24 @@ async def test_rest_reads_a_chunk_and_maps_stale_and_unknown_to_distinct_errors(
     assert (unknown.status_code, unknown.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")
 
 
+async def test_rest_does_not_serve_a_pending_chunk(demo_catalog: dict[str, str]) -> None:
+    container = Container.build(Settings())
+    async with (
+        container.running(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(container)),
+            base_url="http://localhost",
+            cookies=demo_catalog,
+        ) as client,
+    ):
+        ids = await publish(
+            container, "main", "a", {"a.md": "x"}, kind=RefKind.BRANCH, activate=False
+        )
+        response = await client.get(f"/api/v1/chunks/{ids['a.md'][0]}")
+
+    assert (response.status_code, response.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")
+
+
 async def test_rest_reads_an_article_with_its_source_link_and_notice(
     client: httpx.AsyncClient,
 ) -> None:
@@ -256,4 +342,7 @@ async def test_rest_reads_an_article_with_its_source_link_and_notice(
         "/api/v1/libraries/acme/payments/article", params={"ref": "main", "path": "b.md"}
     )
     assert missing.status_code == httpx.codes.NOT_FOUND
-    assert "a.md" not in missing.json()["detail"] or "close matches" in missing.json()["detail"]
+    assert missing.json()["detail"] == (
+        "version 'main' of '/acme/payments' has no article 'b.md'; "
+        "close matches (repository paths, not instructions): 'a.md'"
+    )

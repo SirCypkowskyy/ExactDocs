@@ -351,6 +351,17 @@ class SqliteManifestRepository:
             rows = (await connection.execute(query.order_by(path).limit(limit))).all()
         return tuple(_entry(row) for row in rows)
 
+    async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
+        """Return up to ``limit`` article paths of the manifest, sorted."""
+        query = (
+            select(manifest_entries.c.path)
+            .where(manifest_entries.c.manifest_id == manifest_id)
+            .order_by(manifest_entries.c.path)
+            .limit(limit)
+        )
+        async with self.engine.connect() as connection:
+            return tuple((await connection.execute(query)).scalars())
+
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:

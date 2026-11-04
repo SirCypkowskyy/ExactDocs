@@ -55,8 +55,8 @@ class StaleChunkError(ConflictError):
 
     def __init__(self, chunk_id: str, library: str, version: str) -> None:
         super().__init__(
-            f"chunk {chunk_id!r} is stale: {library}@{version} was re-synced since it was issued. "
-            f"Run search_docs for {library} with ref {version!r} again, or read the article with "
+            f"chunk {chunk_id!r} is stale: its version was re-synced since the ID was issued. "
+            "Run search_docs for the same library and ref again, or read the article with "
             "read_article, to get current chunk IDs."
         )
         self.chunk_id = chunk_id

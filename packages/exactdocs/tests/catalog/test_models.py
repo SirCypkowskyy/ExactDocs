@@ -1,5 +1,6 @@
 """IDs, refs, the default-version rule and short-SHA lookup: pure model tests."""
 
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -14,6 +15,7 @@ from exactdocs.catalog.errors import (
     InvalidVersionRefError,
 )
 from exactdocs.catalog.models import (
+    MAX_CLOSE_MATCHES,
     ChunkingConfig,
     HostKind,
     Library,
@@ -22,6 +24,7 @@ from exactdocs.catalog.models import (
     RefKind,
     Version,
     VersionRef,
+    close_paths,
 )
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -264,3 +267,27 @@ def test_refs_of_the_same_commit_are_not_an_ambiguous_short_sha() -> None:
     assert found is not None
     assert found.commit_sha.startswith("abc1234")
     assert found.ref.value == "aaaaaaaaaa"  # the smallest ref, so the answer is stable
+
+
+def test_close_paths_prefer_the_same_file_name_then_typos_and_stop_at_five() -> None:
+    paths = [
+        "api/install.md",
+        "docs/guide/install.md",
+        *(f"docs/guide/instal{i}.md" for i in range(9)),
+    ]
+
+    found = close_paths("docs/guide/instal.md", paths)
+
+    assert len(found) == MAX_CLOSE_MATCHES
+    assert close_paths("install.md", paths)[:2] == ["api/install.md", "docs/guide/install.md"]
+    assert close_paths("zzz/qqq.txt", paths) == []
+
+
+def test_close_paths_on_a_large_tree_stay_fast_and_bounded() -> None:
+    paths = [f"docs/section{i % 50}/page-{i}.md" for i in range(10_000)]
+    started = time.perf_counter()
+
+    found = close_paths("docs/section7/page-4999.mdx", paths)
+
+    assert len(found) <= MAX_CLOSE_MATCHES
+    assert time.perf_counter() - started < 1.0  # ~0.3 s for 50k unfiltered; a miss must stay cheap

@@ -180,3 +180,26 @@ async def test_mcp_reads_need_a_bearer(
             result = await mcp.call_tool(tool, arguments, raise_on_error=False)
     assert result.is_error
     assert "not_found" in str(result.content)
+
+
+@pytest.mark.parametrize(
+    ("credentials", "status"), [("none", 401), ("cookie", 404), ("bearer", 404)]
+)
+async def test_rest_article_read_needs_a_cookie_or_a_bearer(
+    anonymous: httpx.AsyncClient,
+    signed_in: httpx.AsyncClient,
+    token: str,
+    credentials: str,
+    status: int,
+) -> None:
+    client, headers = {
+        "none": (anonymous, {}),
+        "cookie": (signed_in, {}),
+        "bearer": (anonymous, {"authorization": f"Bearer {token}"}),
+    }[credentials]
+
+    response = await client.get(
+        "/api/v1/libraries/acme/payments/article", params={"path": "a.md"}, headers=headers
+    )
+
+    assert response.status_code == status
