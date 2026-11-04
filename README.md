@@ -77,6 +77,39 @@ only used for the server it came from. Plain `http://` is accepted for loopback 
 honoured for remote servers (the proxy sees where you connect, not your https traffic) and ignored
 for loopback. `serve` and `admin ...` stay local: they open the database directly.
 
+Manage libraries and tokens from the same login (every command takes `--url`/`--token` and, for
+scripts, `--json`; progress of `--wait` goes to stderr):
+
+```bash
+uvx exactdocs add https://github.com/acme/docs --ref v1.4.0 --path docs/ --exclude docs/archive/ --wait
+uvx exactdocs add https://github.com/acme/docs --id /acme/docs --tag-rule 'docs/api/**=api'
+uvx exactdocs libraries --json
+uvx exactdocs version add /acme/docs v1.5.0 --wait
+uvx exactdocs sync /acme/docs --wait             # re-syncs the branch versions
+uvx exactdocs remove /acme/docs/v1.4.0           # asks first; --yes skips the question
+uvx exactdocs remove /acme/docs --yes
+uvx exactdocs add git@github.com:acme/private.git --ssh-key ./deploy_key
+uvx exactdocs token create ci --expires-in 30    # asks for your password
+uvx exactdocs token list
+uvx exactdocs token revoke 0198f2c1
+```
+
+Exit codes: 0 done, 1 other failure, 2 usage or rejected input (also: `remove` without a terminal
+and without `--yes`), 3 not found, 4 conflict (an import is running, the ID is taken), 5 not signed
+in or refused, 6 an import or a sync failed (or `--wait` lost track of it), 130 interrupted.
+
+`--wait` only watches: it follows an import for `--wait-timeout` seconds (default 600) and retries
+a poll that hiccups. When it times out, loses track or you press Ctrl-C (exit 130), it says so and
+the job keeps running on the server.
+
+Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
+from a file of at most 64 KB, never from the command line; group- or world-readable files get a
+warning) and all `token` commands need **your password**, not an
+API token. REST only lets a signed-in session do that, so that a leaked token cannot mint itself a
+successor or replace a repository credential; the CLI signs in for the one command and signs out
+(`--username`, `--password-stdin`); `--token` is ignored for such a command. The CLI's own `--token` is the API token, which is why the
+repository token is `--git-token-file`.
+
 ### From `docker run` to a searchable library
 
 The same flow CI runs on every change ([`deploy/smoke.sh`](deploy/smoke.sh), `sh` and `curl`
@@ -116,8 +149,8 @@ the API tokens.
 Then add your first library in the UI (**Add library**: URL, ref, paths) or over REST, as in the
 walkthrough above. The import runs as a background job whose progress, skipped files and problems
 the UI shows. ExactDocs splits every article by its headings; a branch version is re-synced on
-demand and re-chunks only the files that changed. A command-line client for these actions
-(`exactdocs login`, `add`, `sync`...) is planned for MVP-2. Also planned: a preview of matching
+demand and re-chunks only the files that changed. The command line does the same (see
+[Use the CLI against an instance](#use-the-cli-against-an-instance)). Also planned: a preview of matching
 files before importing, auto-import of new tags, and pre-selection from a repository's
 `context7.json`. See the [Roadmap](#roadmap).
 

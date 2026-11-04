@@ -139,6 +139,15 @@ class ClientConfig:
         return cls(url=chosen_url, token=chosen_token)
 
 
+def resolve_url(*, url: str | None = None, env: Mapping[str, str] = os.environ) -> str:
+    """Return the server for a command that signs in with a password (no stored token needed)."""
+    chosen = url or env.get(URL_VARIABLE) or read_stored(config_path(env)).get("url")
+    if not chosen:
+        message = "no server configured; run `exactdocs login <url>` or set EXACTDOCS_URL"
+        raise ClientError(message)
+    return normalize_url(chosen)
+
+
 def read_stored(path: Path) -> dict[str, str]:
     """Read the config file; a missing one is empty, an unreadable one is an error."""
     try:
@@ -293,3 +302,19 @@ class ApiClient:
     async def check_token(self) -> None:
         """Raise ``ApiError`` unless the token this client holds is accepted."""
         await self.request("GET", "/libraries")
+
+    async def sign_in(self, username: str, password: str) -> None:
+        """Start a browser-style session (``POST /session``); the client keeps its cookie.
+
+        What a token cannot do (manage tokens, set a repository credential) needs a session.
+        """
+        await self.request("POST", "/session", json={"username": username, "password": password})
+
+    async def sign_out(self) -> None:
+        """End the session (``DELETE /session``); a failure is a warning, not an error."""
+        try:
+            await self.request("DELETE", "/session")
+        except ClientError:
+            sys.stderr.write(
+                "exactdocs: warning: could not end the session; it expires on its own\n"
+            )

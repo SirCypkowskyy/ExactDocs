@@ -4,7 +4,8 @@ import asyncio
 import getpass
 import os
 import sys
-from collections.abc import Coroutine
+from collections.abc import AsyncGenerator, Coroutine
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -14,6 +15,8 @@ from cyclopts.validators import Number
 from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
+from exactdocs.bootstrap import cli_library as lib
+from exactdocs.bootstrap.cli_library import exit_code
 from exactdocs.bootstrap.client import (
     ApiClient,
     ClientConfig,
@@ -22,6 +25,7 @@ from exactdocs.bootstrap.client import (
     forget,
     machine_name,
     normalize_url,
+    resolve_url,
     store,
 )
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
@@ -88,7 +92,23 @@ type UrlOption = Annotated[
     str | None, Parameter(help="Server URL (default: EXACTDOCS_URL, config).")
 ]
 type TokenOption = Annotated[
-    str | None, Parameter(help="API token (default: EXACTDOCS_TOKEN, config).")
+    str | None,
+    Parameter(help="ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token."),
+]
+type CredentialTokenOption = Annotated[
+    str | None,
+    Parameter(
+        help="ExactDocs API token (default: EXACTDOCS_TOKEN, config). Ignored when "
+        "--git-token-file or --ssh-key is given: those need your password instead."
+    ),
+]
+type WaitTimeout = Annotated[
+    int,
+    Parameter(
+        name="--wait-timeout",
+        help="With --wait: seconds to follow the import before leaving it to the server.",
+        validator=Number(gte=1),
+    ),
 ]
 
 
@@ -97,8 +117,10 @@ def _call[T](work: Coroutine[object, object, T]) -> T:
     try:
         return asyncio.run(work)
     except ClientError as exc:
-        message = f"exactdocs: {exc}"
-        raise SystemExit(message) from None
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
+    except KeyboardInterrupt:  # `--wait` has already said the job keeps running
+        raise SystemExit(lib.EXIT_INTERRUPTED) from None
 
 
 def _api(url: str | None = None, token: str | None = None) -> ApiClient:
@@ -107,8 +129,8 @@ def _api(url: str | None = None, token: str | None = None) -> ApiClient:
         config = ClientConfig.resolve(url=url, token=token)
         return ApiClient(config.url, config.token)
     except ClientError as exc:
-        message = f"exactdocs: {exc}"
-        raise SystemExit(message) from None
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
 
 
 @app.command
@@ -202,6 +224,304 @@ def logout() -> None:
         if removed
         else "Not logged in.\n"
     )
+
+
+type JsonOption = Annotated[bool, Parameter(name="--json", help="Print JSON for scripts.")]
+type WaitOption = Annotated[
+    bool, Parameter(help="Wait for the import and show its progress (on stderr).")
+]
+type PasswordStdin = Annotated[
+    bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
+]
+type UsernameOption = Annotated[str | None, Parameter(help="Asked for when omitted.")]
+
+
+@asynccontextmanager
+async def _session(
+    url: str | None, username: str | None, *, password_stdin: bool
+) -> AsyncGenerator[ApiClient]:
+    """Yield a client signed in with a password (a session), for what a token may not do.
+
+    Setting a repository credential and managing tokens need a session: a leaked token must not
+    be able to mint a successor or replace a stored credential (identity's token routes).
+
+    Yields:
+        The signed-in client; the session ends when the block does.
+
+    """
+    server = resolve_url(url=url)
+    try:
+        user, password = _read_login(username, password_stdin=password_stdin)
+    except EOFError, KeyboardInterrupt:
+        message = "no username or password to read"
+        raise ClientError(message) from None
+    async with ApiClient(server) as api:
+        await api.sign_in(user, password)
+        try:
+            yield api
+        finally:
+            await api.sign_out()
+
+
+def _credential(
+    git_token_file: str | None, ssh_key: str | None, git_user: str | None
+) -> dict | None:
+    """Read a repository credential from files (never from the command line)."""
+    path = git_token_file or ssh_key
+    try:
+        if git_token_file and ssh_key:
+            message = "give --git-token-file or --ssh-key, not both"
+            raise lib.UsageError(message)
+        secret = lib.read_secret(path) if path else None
+    except ClientError as exc:
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
+    if secret is None:
+        return None
+    if git_token_file:
+        return {"kind": "token", "token": secret.strip()} | (
+            {"username": git_user} if git_user else {}
+        )
+    return {"kind": "ssh_key", "private_key": secret}
+
+
+@app.command
+def add(
+    git_url: str,
+    *,
+    id: Annotated[str | None, Parameter(name="--id", help="Library ID /owner/repo.")] = None,  # ruff: ignore[builtin-argument-shadowing]
+    ref: Annotated[
+        str | None, Parameter(help="Tag, branch or commit (default: default branch).")
+    ] = None,
+    path: Annotated[
+        list[str] | None, Parameter(help="Folder, file or glob to import; repeatable.")
+    ] = None,
+    exclude: Annotated[list[str] | None, Parameter(help="Path to leave out; repeatable.")] = None,
+    tag_rule: Annotated[list[str] | None, Parameter(help="PATTERN=TAG; repeatable.")] = None,
+    git_token_file: Annotated[
+        str | None, Parameter(help="File holding an access token for a private https repository.")
+    ] = None,
+    git_user: Annotated[str | None, Parameter(help="User name that goes with the token.")] = None,
+    ssh_key: Annotated[
+        str | None, Parameter(help="File holding an SSH deploy key (ssh URL).")
+    ] = None,
+    username: UsernameOption = None,
+    password_stdin: PasswordStdin = False,
+    wait: WaitOption = False,
+    wait_timeout: WaitTimeout = 600,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: CredentialTokenOption = None,
+) -> None:
+    """Add a library from a git repository and queue its import.
+
+    A private repository's credential is accepted from a signed-in session only, never from an
+    API token: with --git-token-file or --ssh-key you are asked for your password.
+    """
+    credential = _credential(git_token_file, ssh_key, git_user)
+
+    async def go(api: ApiClient) -> None:
+        await lib.add_library(
+            api,
+            git_url,
+            library_id=id,
+            ref=ref,
+            include=path or (),
+            exclude=exclude or (),
+            tag_rules=tag_rule or (),
+            credential=credential,
+            wait=wait,
+            as_json=json_output,
+            give_up_after=wait_timeout,
+        )
+
+    async def work() -> None:
+        if credential is None:
+            async with _api(url, token) as api:
+                await go(api)
+        else:
+            async with _session(url, username, password_stdin=password_stdin) as api:
+                await go(api)
+
+    _call(work())
+
+
+@app.command
+def libraries(
+    *, json_output: JsonOption = False, url: UrlOption = None, token: TokenOption = None
+) -> None:
+    """List the libraries and their versions."""
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.list_libraries(api, as_json=json_output)
+
+    _call(work())
+
+
+version = App(name="version", help="Versions of a library.")
+app.command(version)
+
+
+@version.command(name="add")
+def version_add(
+    library: str,
+    ref: str,
+    *,
+    git_token_file: Annotated[
+        str | None, Parameter(help="Replace the stored access token (file).")
+    ] = None,
+    git_user: Annotated[str | None, Parameter(help="User name that goes with the token.")] = None,
+    ssh_key: Annotated[str | None, Parameter(help="Replace the stored deploy key (file).")] = None,
+    username: UsernameOption = None,
+    password_stdin: PasswordStdin = False,
+    wait: WaitOption = False,
+    wait_timeout: WaitTimeout = 600,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: CredentialTokenOption = None,
+) -> None:
+    """Import another version (tag, branch or commit) of a library, with its settings."""
+    credential = _credential(git_token_file, ssh_key, git_user)
+
+    async def go(api: ApiClient) -> None:
+        await lib.add_version(
+            api,
+            library,
+            ref,
+            credential=credential,
+            wait=wait,
+            as_json=json_output,
+            give_up_after=wait_timeout,
+        )
+
+    async def work() -> None:
+        if credential is None:
+            async with _api(url, token) as api:
+                await go(api)
+        else:
+            async with _session(url, username, password_stdin=password_stdin) as api:
+                await go(api)
+
+    _call(work())
+
+
+@app.command
+def sync(
+    library: str,
+    *,
+    wait: WaitOption = False,
+    wait_timeout: WaitTimeout = 600,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Re-sync the branch versions of a library (tags and commits never move)."""
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.sync_library(
+                api, library, wait=wait, as_json=json_output, give_up_after=wait_timeout
+            )
+
+    _call(work())
+
+
+@app.command
+def remove(
+    target: str,
+    *,
+    yes: Annotated[bool, Parameter(name=["--yes", "-y"], help="Do not ask first.")] = False,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Remove a version (/owner/repo/ref) or a whole library (/owner/repo) and its content."""
+    if not yes:
+        if not sys.stdin.isatty():
+            sys.stderr.write("exactdocs: no terminal to confirm the removal; pass --yes\n")
+            raise SystemExit(lib.EXIT_USAGE)
+        try:
+            lib.split_target(target)  # a bad target is a usage error before any question
+            sys.stderr.write(lib.removal_prompt(target))  # stderr: stdout may be --json
+            sys.stderr.flush()
+            answer = sys.stdin.readline()
+        except ClientError as exc:
+            sys.stderr.write(f"exactdocs: {exc}\n")
+            raise SystemExit(exit_code(exc)) from None
+        except KeyboardInterrupt:
+            answer = ""
+        if answer.strip().lower() not in {"y", "yes"}:
+            sys.stderr.write("exactdocs: not removed\n")
+            raise SystemExit(lib.EXIT_FAILED)
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.remove(api, target, as_json=json_output)
+
+    _call(work())
+
+
+tokens = App(name="token", help="API tokens; they need your password, not a token.")
+app.command(tokens)
+
+
+@tokens.command(name="create")
+def token_create(
+    name: str,
+    *,
+    expires_in: Annotated[
+        int, Parameter(help="Days until it expires.", validator=Number(gte=1))
+    ] = DEFAULT_TOKEN_DAYS,
+    no_expiry: Annotated[bool, Parameter(help="Never expires.")] = False,
+    username: UsernameOption = None,
+    password_stdin: PasswordStdin = False,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+) -> None:
+    """Create an API token and print it once."""
+
+    async def work() -> None:
+        async with _session(url, username, password_stdin=password_stdin) as api:
+            await lib.token_create(
+                api, name, None if no_expiry else expires_in, as_json=json_output
+            )
+
+    _call(work())
+
+
+@tokens.command(name="list")
+def token_list(
+    *,
+    username: UsernameOption = None,
+    password_stdin: PasswordStdin = False,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+) -> None:
+    """List your API tokens."""
+
+    async def work() -> None:
+        async with _session(url, username, password_stdin=password_stdin) as api:
+            await lib.token_list(api, as_json=json_output)
+
+    _call(work())
+
+
+@tokens.command(name="revoke")
+def token_revoke(
+    token_id: str,
+    *,
+    username: UsernameOption = None,
+    password_stdin: PasswordStdin = False,
+    url: UrlOption = None,
+) -> None:
+    """Revoke an API token by its ID (see `token list`)."""
+
+    async def work() -> None:
+        async with _session(url, username, password_stdin=password_stdin) as api:
+            await lib.token_revoke(api, token_id)
+
+    _call(work())
 
 
 @admin.command
