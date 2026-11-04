@@ -15,6 +15,7 @@ from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
 from exactdocs_kernel import NOTICE
 from steps.mcp_steps import call_tool
+from steps.search_steps import import_versions
 
 TWO_BLOCKS = 2
 
