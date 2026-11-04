@@ -149,7 +149,10 @@ jobs:
       - name: Smoke test (read-only rootfs, no capabilities)
         run: |
           flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
-          docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 exactdocs:ci
+          # The fixture repository is owned by the runner user; the importer lets git read local
+          # repositories of other owners (safe.directory), so it is imported as it is.
+          docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 \
+            -v "$RUNNER_TEMP/fixture-repo:/srv/acme/docs:ro" exactdocs:ci
           trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
           port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
           for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:${port}/api/health" && break; sleep 1; done
@@ -161,6 +164,19 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/v1/libraries")" = 401
           curl -fsS -c jar.txt -H 'content-type: application/json' -d "$creds" "http://127.0.0.1:${port}/api/v1/session"
           curl -fsS -b jar.txt "http://127.0.0.1:${port}/api/v1/libraries"
+          # Import the fixture end to end (job, atomic publish, chunks) and search it, rootfs read-only.
+          add='{"url":"file:///srv/acme/docs","ref":"v1.3.0","include_paths":["docs/"]}'
+          job=$(curl -fsS -b jar.txt -H 'content-type: application/json' -d "$add" "http://127.0.0.1:${port}/api/v1/libraries" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')
+          for _ in $(seq 1 60); do
+            state=$(curl -fsS -b jar.txt "http://127.0.0.1:${port}/api/v1/jobs/${job}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+            test "$state" = queued -o "$state" = running || break
+            sleep 1
+          done
+          test "$state" = succeeded
+          search() { curl -fsS -b jar.txt -G "http://127.0.0.1:${port}/api/v1/libraries/acme/docs/search" --data-urlencode "q=$1" -d "ref=$2"; }
+          search token v1.3.0 | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["results"] and {r["commit_sha"] for r in d["results"]} == {d["commit_sha"]}'
+          search retry_policy v1.3.0 | python3 -c 'import json,sys; assert json.load(sys.stdin)["results"] == []'
           curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'
           init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
           mcp=(-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$init")
@@ -181,7 +197,8 @@ jobs:
           test "$(docker exec exactdocs-ci cat /proc/1/comm)" = tini
           docker exec exactdocs-ci sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
           # What the importer needs: ssh, and git reading a repository over file://. The fixture is
-          # owned by the runner user, so git needs safe.directory (the importer issue decides how).
+          # owned by the runner user, so this stand-alone check needs safe.directory (the importer
+          # sets it for its own git calls).
           docker exec exactdocs-ci ssh -V
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
