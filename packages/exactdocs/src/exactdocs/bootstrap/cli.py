@@ -22,6 +22,8 @@ from exactdocs.identity.dtos import (
     CreateFirstAdminCommand,
     ResetPasswordCommand,
 )
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs_kernel import DomainError
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
@@ -173,6 +175,11 @@ def _build(settings: Settings) -> Container:
 
 def _check_startup(settings: Settings) -> None:
     """Fail before uvicorn starts (and before any reload worker) instead of with a traceback."""
+    try:
+        GitCli.locate()  # imports need git; --stdio only reads, so it skips this check
+    except GitNotInstalledError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
     _build(settings)  # opens no connection, so there is nothing to release
 
 
