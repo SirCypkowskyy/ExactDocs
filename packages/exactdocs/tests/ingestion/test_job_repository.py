@@ -1,5 +1,6 @@
 """Adapter contract: every ``JobRepository`` behaves the same, whatever stores the data."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -127,3 +128,24 @@ async def test_claim_never_hands_out_a_job_twice(repository: JobRepository) -> N
     second = await repository.claim_next(T0)
 
     assert (first is not None and first.state is JobState.RUNNING, second) == (True, None)
+
+
+async def test_claimers_on_separate_connections_get_one_job_per_library_and_no_duplicates() -> None:
+    """Several engines on one file stand in for several processes."""
+    engines = [open_database(Settings()) for _ in range(4)]
+    await migrate(engines[0])
+    repositories = [SqliteJobRepository(engine) for engine in engines]
+    for number in range(30):
+        await repositories[0].add(queued(f"job-{number:02}", library=f"/acme/lib-{number % 5}"))
+
+    async def claim_all(repository: SqliteJobRepository) -> list[Job]:
+        claimed = [await repository.claim_next(T0) for _ in range(10)]
+        return [job for job in claimed if job is not None]
+
+    results = await asyncio.gather(*(claim_all(r) for r in repositories for _ in range(4)))
+    for engine in engines:
+        await engine.dispose()
+
+    claimed = [job for jobs in results for job in jobs]
+    assert sorted(job.library for job in claimed) == [f"/acme/lib-{n}" for n in range(5)]
+    assert len({job.id for job in claimed}) == 5

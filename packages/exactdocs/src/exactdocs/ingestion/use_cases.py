@@ -89,6 +89,9 @@ class RecoverJobsUseCase:
         A kind without a hook has nothing to clean up. A hook that raises fails its job instead
         of keeping the app from starting, because re-running over unclean state would be worse.
         """
+        # ponytail: assumes one live process runs jobs on the database (the HTTP server; stdio
+        # does not). Several would re-queue each other's running jobs: add a lease/heartbeat
+        # column and re-queue only expired leases if that ever changes.
         for job in await self.jobs.list_running():
             hook = self.hooks.get(job.kind)
             try:
@@ -128,9 +131,14 @@ class RunNextJobUseCase:
             log.exception("job %s (%s) failed", job.id, job.kind)
             failure = _describe(error)
         now = self.clock.now()
-        await self.jobs.save(
+        final = (
             progress.job.succeeded(now) if failure is None else progress.job.failed(failure, now)
         )
+        try:
+            await self.jobs.save(final)
+        except Exception:
+            log.exception("could not store the end of job %s (%s)", job.id, job.kind)
+            raise
         return True
 
 

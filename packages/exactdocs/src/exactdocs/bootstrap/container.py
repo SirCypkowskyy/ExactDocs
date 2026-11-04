@@ -67,11 +67,18 @@ class Container:
         )
 
     @asynccontextmanager
-    async def running(self) -> AsyncGenerator[None]:
-        """Migrate the database, run the job worker, serve, then release the connections."""
+    async def running(self, *, jobs: bool = True) -> AsyncGenerator[None]:
+        """Migrate the database, serve, then release the connections.
+
+        ``jobs`` also runs the job worker (and the recovery before it). Only the HTTP server
+        does: one process runs jobs, so ``serve --stdio`` passes ``False``.
+        """
         try:
             await migrate(self.engine)
-            async with self.job_worker.running():
+            if jobs:
+                async with self.job_worker.running():
+                    yield
+            else:
                 yield
         finally:
             await self.engine.dispose()

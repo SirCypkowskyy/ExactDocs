@@ -161,10 +161,16 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   started in the app lifespan (`Container.running()`) that poll `RunNextJob`. Its use case claims
   the oldest queued job **whose library has no running job** in one atomic statement, so two jobs
   for one library never run together while other libraries run alongside.
-- **Restart.** Stopping the app lets idle workers finish and cancels a job still running after a short
-  grace period, so it stays `running` in the database. On the next start `RecoverJobs` runs each one's recovery hook (no-op by default; the
-  import registers the discard of its pending manifest), then re-queues it, and it runs from the
-  beginning. A hook that raises fails its job instead of blocking the start.
+- **Restart.** Stopping the app lets idle workers finish and cancels a job still running after
+  a short grace period, so it stays `running` in the database. On the next start `RecoverJobs`
+  runs each one's recovery hook (no-op by default; the import registers the discard of its
+  pending manifest), then re-queues it, and it runs from the beginning. A hook that raises fails
+  its job instead of blocking the start.
+- **One process runs jobs.** Only the HTTP server starts the worker and recovery
+  (`serve --stdio` does not): recovery treats every `running` job as left over from a crash, so a
+  second worker process on the same database would re-queue the first one's live jobs. The
+  claim itself is safe across processes. Several job-running processes need a lease/heartbeat
+  per job first.
 - DBOS replaces the worker behind the same driving ports in MVP-2 (resumable imports).
 
 ## Python conventions

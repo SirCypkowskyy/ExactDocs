@@ -13,11 +13,11 @@ def build_router(*, get_job: GetJob, list_library_jobs: ListLibraryJobs) -> APIR
     """Expose the job read side: one job, and the jobs of a library."""
     router = APIRouter(tags=["ingestion"])
 
-    @router.get("/jobs/{job_id}")
+    @router.get("/jobs/{job_id}", name="get_job")
     async def get_one(job_id: str) -> JobSummary:
         return await get_job(GetJobQuery(job_id=job_id))
 
-    @router.get("/libraries/{owner}/{repo}/jobs")
+    @router.get("/libraries/{owner}/{repo}/jobs", name="list_library_jobs")
     async def list_for_library(
         owner: str,
         repo: str,

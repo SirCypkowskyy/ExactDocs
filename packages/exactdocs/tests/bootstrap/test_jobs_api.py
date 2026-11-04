@@ -94,3 +94,18 @@ async def test_the_worker_starts_with_the_app_and_recovers_what_the_last_run_lef
 
     assert job.state is JobState.FAILED
     assert job.error == "no handler is registered for job kind 'gone'"
+
+
+async def test_a_process_started_without_jobs_neither_recovers_nor_runs_them() -> None:
+    """`serve --stdio` leaves the jobs to the HTTP server."""
+    first = Container.build(Settings())
+    await migrate(first.engine)
+    await SqliteJobRepository(first.engine).add(a_job("j1", kind="gone").started(NOW))
+    await first.engine.dispose()
+
+    second = Container.build(Settings())
+    async with second.running(jobs=False):
+        await asyncio.sleep(0.1)
+        job = await second.ingestion.get_job(GetJobQuery(job_id="j1"))
+
+    assert job.state is JobState.RUNNING
