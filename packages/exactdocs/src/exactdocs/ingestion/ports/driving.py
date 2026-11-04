@@ -11,9 +11,11 @@ from exactdocs.ingestion.dtos import (
     CheckRepositoryCommand,
     EnqueueJobCommand,
     GetJobQuery,
+    GetLibraryAccessQuery,
     JobList,
     JobSummary,
     LatestJobs,
+    LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RemovalResult,
@@ -37,6 +39,14 @@ class GetJob(Protocol):
     """Fetch one job; raises ``JobNotFoundError`` when it does not exist."""
 
     async def __call__(self, query: GetJobQuery) -> JobSummary:
+        """Run the use case."""
+        ...
+
+
+class GetLibraryAccess(Protocol):
+    """Say whether a library is private (has a stored credential)."""
+
+    async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
         """Run the use case."""
         ...
 

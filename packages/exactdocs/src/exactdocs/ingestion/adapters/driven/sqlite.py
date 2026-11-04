@@ -298,3 +298,11 @@ class SqliteCredentialVault:
         """Forget the library's credential."""
         async with self.engine.begin() as connection:
             await connection.execute(delete(credentials).where(credentials.c.library == library))
+
+    async def has(self, library: str) -> bool:
+        """Whether a credential row exists; it is not opened."""
+        async with self.engine.connect() as connection:
+            row = await connection.execute(
+                select(credentials.c.library).where(credentials.c.library == library)
+            )
+            return row.first() is not None

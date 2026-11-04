@@ -171,6 +171,18 @@ class ListLibraryJobsQuery(_Dto):
     cursor: str | None = None
 
 
+class GetLibraryAccessQuery(_Dto):
+    """Ask whether a library needs a credential to be read from its repository."""
+
+    library: str = Field(min_length=1)
+
+
+class LibraryAccess(_Dto):
+    """Whether the library's repository is private: it has a stored credential (token or key)."""
+
+    private: bool
+
+
 class AccessTokenIn(_Dto):
     """An HTTPS access token for a private repository. Write-only: no response repeats it."""
 

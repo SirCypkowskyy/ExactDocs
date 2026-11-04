@@ -12,6 +12,10 @@ Feature: Private repositories import with an encrypted access token
     Then the library imports
     And the token is never returned by the API
 
+  Scenario: The API says a token-backed library is private, never why
+    Given a private library was imported
+    Then the library is reported as private
+
   Scenario: A private repository is refused without the token
     When a user adds it without a token
     Then the request fails with "repository_auth_required"

@@ -24,10 +24,12 @@ from exactdocs.ingestion.dtos import (
     CredentialIn,
     EnqueueJobCommand,
     GetJobQuery,
+    GetLibraryAccessQuery,
     JobList,
     JobSummary,
     LatestJob,
     LatestJobs,
+    LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RefOut,
@@ -167,6 +169,17 @@ class GetJobUseCase:
         if job is None:
             raise JobNotFoundError(query.job_id)
         return JobSummary.from_model(job)
+
+
+@dataclass(frozen=True, slots=True)
+class GetLibraryAccessUseCase:
+    """Implements ``ports.driving.GetLibraryAccess``."""
+
+    vault: CredentialVault
+
+    async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
+        """Report a library with a stored credential as private; library IDs are lower-case."""
+        return LibraryAccess(private=await self.vault.has(query.library.lower()))
 
 
 @dataclass(frozen=True, slots=True)

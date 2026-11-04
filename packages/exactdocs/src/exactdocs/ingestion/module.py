@@ -43,6 +43,7 @@ from exactdocs.ingestion.ports.driving import (
     CheckRepository,
     EnqueueJob,
     GetJob,
+    GetLibraryAccess,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
@@ -60,6 +61,7 @@ from exactdocs.ingestion.use_cases import (
     DiscardInterruptedImportUseCase,
     EnqueueJobUseCase,
     GetJobUseCase,
+    GetLibraryAccessUseCase,
     ImportVersionUseCase,
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
@@ -97,6 +99,10 @@ class _NoCredentials:
     async def delete(self, library: str) -> None:
         del library
 
+    async def has(self, library: str) -> bool:
+        del library
+        return False
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IngestionModule:
@@ -107,6 +113,7 @@ class IngestionModule:
     check_repository: CheckRepository
     enqueue_job: EnqueueJob
     get_job: GetJob
+    get_library_access: GetLibraryAccess
     list_latest_jobs: ListLatestJobs
     list_library_jobs: ListLibraryJobs
     list_repository_refs: ListRepositoryRefs
@@ -149,6 +156,7 @@ class IngestionModule:
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),
+            get_library_access=GetLibraryAccessUseCase(vault or _NoCredentials()),
             list_latest_jobs=ListLatestJobsUseCase(jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),

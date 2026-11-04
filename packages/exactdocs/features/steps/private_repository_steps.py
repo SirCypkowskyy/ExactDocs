@@ -130,3 +130,10 @@ def step_add_version_again(context: Context) -> None:
 @then("the version imports")
 def step_version_imports(context: Context) -> None:
     assert context.job["state"] == "succeeded", context.job
+
+
+@then("the library is reported as private")
+def step_reported_private(context: Context) -> None:
+    response = context.client.get(f"/api/v1/libraries{LIBRARY}/access")
+    assert response.json() == {"private": True}, response.text
+    assert context.token not in response.text
