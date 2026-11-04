@@ -20,6 +20,7 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     GetManifestStatesQuery,
     HostKind,
+    ImageIn,
     ListLibrariesQuery,
     ListRenamesQuery,
     RemoveLibraryCommand,
@@ -414,7 +415,7 @@ class CatalogCollector:
     async def collect(self, *, grace_seconds: int) -> Collected:
         """Delete superseded manifests past the grace period and the texts nothing uses."""
         done = await self.collect_garbage(CollectGarbageCommand(grace_seconds=grace_seconds))
-        return Collected(deleted=done.manifests + done.contents)
+        return Collected(deleted=done.manifests + done.contents + done.images)
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +466,10 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
                 content=a.content,
             )
             for a in version.articles
+        ],
+        images=[
+            ImageIn(path=i.path, blob_sha=i.blob_sha, content_type=i.content_type, data=i.data)  # ty: ignore[invalid-argument-type]
+            for i in version.images
         ],
     )
 

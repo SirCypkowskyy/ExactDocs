@@ -1,9 +1,15 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
 
-from exactdocs.ingestion.models import PARSER_VERSION, parse_article, strip_invisible
+from exactdocs.ingestion.models import (
+    PARSER_VERSION,
+    parse_article,
+    sniff_image,
+    strip_invisible,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -233,3 +239,64 @@ def test_hidden_characters_cannot_hide_the_front_matter() -> None:
 
 def test_parser_version_is_an_integer_that_feeds_the_chunking_hash() -> None:
     assert isinstance(PARSER_VERSION, int)
+
+
+@pytest.mark.parametrize(
+    ("article", "body", "expected"),
+    [
+        ("docs/a/b.md", "![x](../img/f.png)", ["docs/img/f.png"]),
+        ("docs/a/b.md", "![x](./f.png?raw=1#top) ![y](f.png)", ["docs/a/f.png"]),
+        ("docs/a/b.md", "![x](/static/f.png)", ["static/f.png"]),
+        ("a.md", "![x](a%20b.png) ![x](%2e%2e/x.png)", ["a b.png"]),
+        ("docs/a.md", "![x](../../../etc/p.png)", []),
+        (
+            "docs/a.md",
+            "![x](https://e.test/a.png) ![x](data:image/png;base64,AA) ![x](//e/a.png)",
+            [],
+        ),
+        ("docs/a.md", "![x](a\\b.png) ![x](.git/config) ![x](x/.GIT/y.png) ![x]()", []),
+        ("docs/a.md", "[link](f.png) `![x](f.png)`", []),
+        ("docs/a.md", "![x](f.png) ![y](f.png)", ["docs/f.png"]),
+    ],
+)
+def test_images_are_collected_as_repository_paths(
+    article: str, body: str, expected: list[str]
+) -> None:
+    assert list(parse_article(article, body).images) == expected
+
+
+def test_an_article_references_a_bounded_number_of_images() -> None:
+    body = " ".join(f"![x](i{n}.png)" for n in range(500))
+
+    assert len(parse_article("a.md", body).images) == 100
+
+
+@pytest.mark.parametrize(
+    ("data", "kind"),
+    [
+        (b"\x89PNG\r\n\x1a\n....", "image/png"),
+        (b"\xff\xd8\xff\xe0....", "image/jpeg"),
+        (b"GIF89a....", "image/gif"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),
+        (b'<svg xmlns="http://www.w3.org/2000/svg"/>', "image/svg+xml"),
+        (
+            b'<?xml version="1.0"?>\n<!-- c -->\n<!DOCTYPE svg PUBLIC "a" "b">\n<svg/>',
+            "image/svg+xml",
+        ),
+        (b"\xef\xbb\xbf  <SVG viewBox='0 0 1 1'></SVG>", "image/svg+xml"),
+        (b"<html><svg/></html>", None),
+        (b"<!DOCTYPE svg [<!ENTITY a 'b'>]><svg/>", None),
+        (b"GIF", None),
+        (b"%PDF-1.7", None),
+        (b"", None),
+    ],
+)
+def test_images_are_recognized_by_content_only(data: bytes, kind: str | None) -> None:
+    assert sniff_image(data) == kind
+
+
+def test_a_hostile_svg_prologue_cannot_stall_the_sniffer() -> None:
+    started = time.perf_counter()
+    for data in (b"<!---->" * 600 + b"x", b"<!--" * 1000, b"<?xml ?>" * 500 + b"x"):
+        assert sniff_image(data) is None
+    assert time.perf_counter() - started < 0.1

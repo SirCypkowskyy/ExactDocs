@@ -55,6 +55,7 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.module import import_job
 from exactdocs.ingestion.ports import RenameSource
 from exactdocs.ingestion.use_cases import (
+    MAX_WANTED_IMAGES,
     ImportVersionUseCase,
     RunNextJobUseCase,
     Skip,
@@ -77,6 +78,9 @@ class Checkout:
 
     files: Mapping[str, bytes]
     links: Mapping[str, str] = field(default_factory=dict)
+    elsewhere: Mapping[str, bytes] = field(default_factory=dict)
+    """Files only ``fetch_files`` can bring: they are outside the selected paths."""
+    extra: list[tuple[list[str], int]] = field(default_factory=list)
     error: Exception | None = None
     fetched: list[tuple[str, str, list[str]]] = field(default_factory=list)
     credentials: list[Credential | None] = field(default_factory=list)
@@ -111,6 +115,28 @@ class Checkout:
             yield self.tmp
         finally:
             self.open = False
+
+    @asynccontextmanager
+    async def fetch_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs=(),
+        credential: Credential | None = None,
+    ) -> AsyncGenerator[Path]:
+        del repository, commit_sha, refs, credential
+        self.extra.append((list(paths), max_bytes))
+        assert self.tmp is not None
+        folder = self.tmp / "second"
+        folder.mkdir()
+        for name in paths:
+            if name in self.elsewhere:
+                (folder / name).parent.mkdir(parents=True, exist_ok=True)
+                (folder / name).write_bytes(self.elsewhere[name])
+        yield folder
 
 
 class Sources:
@@ -265,6 +291,9 @@ def build_world(
     rules: tuple[TagRule, ...] = (),
     max_bytes: int = 2**20,
     max_import_bytes: int = 2**30,
+    max_image_bytes: int = 2**20,
+    max_images_bytes: int = 2**30,
+    elsewhere: Mapping[str, bytes] | None = None,
     links: Mapping[str, str] | None = None,
     after_write: Callable[[Path], None] = lambda _: None,
     vault: InMemoryCredentialVault | None = None,
@@ -275,7 +304,7 @@ def build_world(
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    gateway = Checkout(files, links or {}, tmp=checkout, after_write=after_write)
+    gateway = Checkout(files, links or {}, elsewhere or {}, tmp=checkout, after_write=after_write)
     log: list[str] = []
     catalog, chunks, chunker = Side("catalog", log), Side("chunks", log), CountingChunker()
     handlers, _ = import_job(
@@ -288,6 +317,8 @@ def build_world(
         max_article_bytes=max_bytes,
         max_import_bytes=max_import_bytes,
         renames=renames,
+        max_image_bytes=max_image_bytes,
+        max_images_bytes=max_images_bytes,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -1048,3 +1079,134 @@ async def test_renames_are_not_asked_for_while_a_fetch_slot_is_held(tmp_path: Pa
     await world.run(make_job("v1.4.0"), world.progress)
 
     assert held == [False]  # two imports each holding a slot and waiting for a second could stall
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>'
+PAGE = b"# Flow\n\n![flow](../img/flow.png) ![again](../img/flow.png) ![logo](logo.svg)\n"
+
+
+async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/guide/flow.md": PAGE, "docs/guide/logo.svg": SVG},
+        elsewhere={"docs/img/flow.png": PNG},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert [(i.path, i.content_type, i.blob_sha, i.data) for i in version.images] == [
+        ("docs/guide/logo.svg", "image/svg+xml", git_blob_sha(SVG), SVG),
+        ("docs/img/flow.png", "image/png", git_blob_sha(PNG), PNG),
+    ]
+    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
+    assert world.progress.problems == []
+
+
+async def test_no_second_fetch_when_the_first_checkout_has_every_image(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": b"![](x.png)", "docs/x.png": PNG})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.gateway.extra == []
+    assert [i.path for i in world.catalog.stored[0].images] == ["docs/x.png"]
+
+
+async def test_unsafe_and_unusable_images_are_skipped_and_listed(tmp_path: Path) -> None:
+    page = (
+        b"![a](fake.png) ![b](big.png) ![c](missing.png) ![d](https://x.test/e.png)"
+        b" ![e](../../../../etc/passwd.png) ![f](text.svg) ![g](xxe.svg) ![h](ok.png)"
+    )
+    world = build_world(
+        tmp_path,
+        {
+            "docs/a.md": page,
+            "docs/fake.png": b"<html><script>alert(1)</script></html>",
+            "docs/big.png": PNG + b"x" * 100,
+            "docs/text.svg": b"just text",
+            "docs/xxe.svg": b'<!DOCTYPE svg [<!ENTITY a "b">]><svg xmlns="x"/>',
+            "docs/ok.png": PNG,
+        },
+        max_image_bytes=64,
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert [i.path for i in world.catalog.stored[0].images] == ["docs/ok.png"]
+    assert sorted((p, c) for p, c, _ in world.progress.problems) == [
+        ("docs/big.png", "too_large"),
+        ("docs/fake.png", "not_an_image"),
+        ("docs/missing.png", "missing_image"),
+        ("docs/text.svg", "not_an_image"),
+        ("docs/xxe.svg", "not_an_image"),
+    ]
+
+
+async def test_the_version_keeps_images_up_to_its_budget_and_skips_the_rest(
+    tmp_path: Path,
+) -> None:
+    files = {"docs/a.md": b"![](a.png) ![](b.png) ![](c.png)"} | {
+        f"docs/{n}.png": PNG + n.encode() for n in "abc"
+    }
+    world = build_world(tmp_path, files, max_images_bytes=2 * (len(PNG) + 1))
+
+    await world.run(make_job(), world.progress)
+
+    assert [i.path for i in world.catalog.stored[0].images] == ["docs/a.png", "docs/b.png"]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/c.png", "image_budget")]
+
+
+async def test_a_symlinked_image_is_not_followed(tmp_path: Path) -> None:
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(PNG)
+    world = build_world(tmp_path, {"docs/a.md": b"![](l.png)"}, links={"docs/l.png": str(outside)})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.stored[0].images == ()
+    assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/l.png", "not_a_file")]
+
+
+async def test_an_image_behind_a_symlinked_directory_is_not_read(tmp_path: Path) -> None:
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "secret.png").write_bytes(PNG)
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": b"![](link/secret.png)"},
+        links={"docs/link": str(host)},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.stored[0].images == ()
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/link/secret.png", "not_a_file")
+    ]
+
+
+async def test_an_article_behind_a_symlinked_directory_is_not_imported(tmp_path: Path) -> None:
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "leak.md").write_text("# Leak")
+    world = build_world(tmp_path, {"docs/a.md": b"# A"}, links={"docs/link": str(host)})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/a.md"]
+
+
+async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
+    cap = MAX_WANTED_IMAGES
+    files = {  # the parser caps one article at 100 images, so spread them over articles
+        f"docs/p{k}.md": " ".join(f"![](i{k}_{n}.png)" for n in range(100)).encode()
+        for k in range(cap // 100 + 2)
+    }
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    (extra, _) = world.gateway.extra[0]
+    assert len(extra) == cap
+    assert [c for _, c, _ in world.progress.problems].count("truncated") == 1

@@ -700,6 +700,149 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/asset": {
+      "get": {
+        "tags": [
+          "catalog",
+          "catalog"
+        ],
+        "summary": "Get Version Asset",
+        "description": "Serve an image an article of the version references (no ref: the default version).\n\nContent-addressed: the `ETag` is the git blob SHA. An SVG is served as an attachment (an\n`<img>` still shows it) under a CSP that forbids scripts and any request.",
+        "operationId": "catalog-get_version_asset",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Repository path of the image, as the article resolves it.",
+              "title": "Path"
+            },
+            "description": "Repository path of the image, as the article resolves it."
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image's bytes, with the type sniffed when it was imported.",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/gif": {},
+              "image/webp": {},
+              "image/svg+xml": {}
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's copy (`If-None-Match`) is current."
+          }
+        }
+      }
+    },
     "/api/v1/libraries": {
       "get": {
         "tags": [
@@ -5625,6 +5768,9 @@
           "unreadable",
           "bad_file_name",
           "front_matter",
+          "not_an_image",
+          "image_budget",
+          "missing_image",
           "truncated"
         ],
         "title": "ProblemCode",

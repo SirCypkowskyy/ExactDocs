@@ -44,6 +44,12 @@ class SwitchableGit:
             raise RepositoryUnreachableError(reason)
         return self.git.fetch(*args, **kwargs)  # ty: ignore[invalid-argument-type]
 
+    def fetch_files(self, *args: object, **kwargs: object):
+        if self.failing:
+            reason = "connection refused"
+            raise RepositoryUnreachableError(reason)
+        return self.git.fetch_files(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
 
 class SwitchableRenames:
     """The real rename detection, until a scenario makes git unable to compare two commits."""
@@ -116,10 +122,16 @@ def import_version(context: Context, ref: str, **settings: object) -> None:
 
 @given("ExactDocs imports the fixture docs repository")
 def step_running(context: Context) -> None:
+    start(context)
+
+
+def start(context: Context, max_image_bytes: int | None = None) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     settings = Settings(data_dir=data_dir)
+    if max_image_bytes is not None:
+        settings.max_image_bytes = max_image_bytes
     context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     git = GitCli.locate()

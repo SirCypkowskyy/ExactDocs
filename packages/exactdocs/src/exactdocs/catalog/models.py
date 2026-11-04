@@ -16,6 +16,7 @@ from exactdocs.catalog.errors import (
     InvalidArticlePathError,
     InvalidBlobShaError,
     InvalidCommitShaError,
+    InvalidImageTypeError,
     InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
@@ -343,6 +344,37 @@ class ManifestRename:
 
 MAX_SIMILARITY = 100
 MAX_RENAMES = 10_000
+IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"})
+"""The only types the catalog stores and serves (the importer sniffs, the catalog re-checks)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestImage:
+    """One image of a manifest: the repository path articles reference, and the blob it holds."""
+
+    path: str
+    blob_sha: str  # git blob SHA: images with the same blob share one stored copy
+    content_type: str
+    size: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.path or any(part in {"", ".", ".."} for part in self.path.split("/")):
+            raise InvalidArticlePathError(self.path)
+        if any(part.lower() == ".git" for part in self.path.split("/")):
+            raise InvalidArticlePathError(self.path)
+        if not _OBJECT_ID.fullmatch(self.blob_sha):
+            raise InvalidBlobShaError(self.blob_sha)
+        if self.content_type not in IMAGE_TYPES:
+            raise InvalidImageTypeError(self.content_type)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoredImage:
+    """An image as a reader gets it (and as it is stored once per blob SHA)."""
+
+    blob_sha: str
+    content_type: str
+    data: bytes = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -360,6 +392,7 @@ class Manifest:
     commit_sha: str
     created_at: datetime
     entries: tuple[ManifestEntry, ...] = ()
+    images: tuple[ManifestImage, ...] = ()
     state: ManifestState = ManifestState.PENDING
     superseded_at: datetime | None = None
     renames: tuple[ManifestRename, ...] = ()
@@ -376,6 +409,11 @@ class Manifest:
             raise DuplicateRenameError(next(p for p in olds if olds.count(p) > 1))
         if self.kind is RefKind.TAG and any(r.from_ref == self.ref for r in self.renames):
             raise SelfRenameError(str(self.ref))  # a branch's map builds up over its syncs
+        image_paths = [image.path for image in self.images]
+        if len(set(image_paths)) != len(image_paths):
+            raise DuplicateArticlePathError(
+                next(p for p in image_paths if image_paths.count(p) > 1)
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -394,6 +432,7 @@ class GarbageCollected:
 
     manifests: int
     contents: int
+    images: int = 0
 
 
 MAX_CLOSE_MATCHES = 5

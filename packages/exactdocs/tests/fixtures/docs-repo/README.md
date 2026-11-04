@@ -59,6 +59,7 @@ python packages/exactdocs/tests/fixtures/fixture_repo.py /tmp/out/fixture/docs-r
 | binary files | `docs/assets/logo.png`, `docs/legacy/binary.md` (a PNG named `.md`) |
 | oversized file (> 2 MiB) | `docs/reference/oversized.md` (generated, `v1.3.0` on) |
 | path to exclude | `docs/archive/` |
+| images referenced by an article: inside `docs/`, outside it, SVG, missing, external | `docs/guide/diagrams.md` (`next` only), `docs/assets/logo.png`, `docs/assets/flow.svg`, `img/flow.png` |
 
 The words *retry*, *retries* and *policy* appear in `v1.3.0` nowhere, on purpose: a search for
 `retry_policy` must come back empty there even when a tokenizer splits it into parts.

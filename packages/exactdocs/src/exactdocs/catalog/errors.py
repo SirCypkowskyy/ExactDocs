@@ -166,6 +166,29 @@ class ArticleNotFoundError(NotFoundError):
         self.close_matches = tuple(close_matches)
 
 
+class AssetNotFoundError(NotFoundError):
+    """The version has no active manifest, or its manifest has no image at this path."""
+
+    def __init__(self, library_id: str, ref: str, path: str) -> None:
+        super().__init__(f"version {ref!r} of {library_id!r} has no image {path!r}")
+        self.library_id = library_id
+        self.ref = ref
+
+
+class InvalidImageTypeError(ValidationError):
+    """An image's content type is not one the catalog serves."""
+
+    def __init__(self, content_type: str) -> None:
+        super().__init__(f"{content_type!r} is not an image type the catalog stores")
+
+
+class ConflictingImageError(ValidationError):
+    """One batch gives different bytes or types for the same image blob SHA."""
+
+    def __init__(self, blob_sha: str) -> None:
+        super().__init__(f"images with blob SHA {blob_sha!r} are not the same")
+
+
 class ConflictingContentError(ValidationError):
     """One batch gives different texts for the same blob SHA and content version."""
 

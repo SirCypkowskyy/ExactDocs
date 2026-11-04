@@ -13,6 +13,8 @@ from exactdocs.ingestion.models import (
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_MAX_ARTICLE_BYTES,
+    DEFAULT_MAX_IMAGE_BYTES,
+    DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     REFRESH_JOB,
@@ -189,6 +191,8 @@ def import_job(
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES,
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
     renames: RenameSource | None = None,
+    max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
+    max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions."""
     importer = ImportVersionUseCase(
@@ -201,6 +205,8 @@ def import_job(
         max_article_bytes,
         max_import_bytes,
         renames=renames,
+        max_image_bytes=max_image_bytes,
+        max_images_bytes=max_images_bytes,
     )
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)

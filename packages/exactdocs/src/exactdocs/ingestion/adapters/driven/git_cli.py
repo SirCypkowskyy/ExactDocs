@@ -58,7 +58,7 @@ import time
 from asyncio.subprocess import DEVNULL, PIPE, Process
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Self
 from urllib.parse import urlsplit
@@ -305,6 +305,56 @@ class GitCli:
             The folder with the checked-out files; it is removed afterwards.
 
         """
+        async with self.checkout(
+            repository, commit_sha, sparse_patterns(selection), refs, credential
+        ) as folder:
+            yield folder
+
+    @asynccontextmanager
+    async def fetch_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> AsyncGenerator[Path]:
+        """Implement ``GitGateway.fetch_files``: the same checkout, but of exactly these files.
+
+        The watchdog's size limit is ``max_bytes`` (plus room for git's own files) instead of
+        the whole-repository limit, so a server cannot make a few images cost a repository.
+
+        Yields:
+            The folder with the checked-out files; it is removed afterwards.
+
+        """
+        bounded = replace(self, max_fetch_bytes=max_bytes + _GIT_OVERHEAD)
+        async with bounded.checkout(
+            repository,
+            commit_sha,
+            [p for path in paths if (p := _literal(path))] or ["!/*"],
+            refs,
+            credential,
+        ) as folder:
+            yield folder
+
+    @asynccontextmanager
+    async def checkout(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        sparse: list[str],
+        refs: Sequence[str],
+        credential: Credential | None,
+    ) -> AsyncGenerator[Path]:
+        """Check out the sparse lines of the commit into a folder of its own (see ``fetch``).
+
+        Yields:
+            The folder with the checked-out files; it is removed afterwards.
+
+        """
         if (
             repository.url.startswith("-")
             or not repository.url.isprintable()
@@ -320,7 +370,7 @@ class GitCli:
                 deadline = asyncio.get_running_loop().time() + self.fetch_timeout
                 auth = _Auth.of(repository, credential)
                 await self._populate(
-                    folder, repository.url, commit_sha, selection, refs, deadline, auth
+                    folder, repository.url, commit_sha, sparse, refs, deadline, auth
                 )
                 yield folder
             finally:
@@ -350,14 +400,14 @@ class GitCli:
         folder: Path,
         url: str,
         sha: str,
-        selection: PathSelection,
+        sparse_lines: list[str],
         refs: Sequence[str],
         deadline: float,
         auth: _Auth | None = None,
     ) -> None:
         git = self._stepper(folder, url, deadline, auth)
         ssh = repository_url_is_ssh(url)
-        await _prepare(git, folder, url, "\n".join(sparse_patterns(selection)) + "\n", ssh=ssh)
+        await _prepare(git, folder, url, "\n".join(sparse_lines) + "\n", ssh=ssh)
         await _fetch_commit(git, sha, refs, ssh=ssh)
         out = await git("checkout", "-q", "--detach", "--no-recurse-submodules", sha)
         if out.code:
@@ -564,6 +614,20 @@ class MissingGit:
         del repository, old_sha, new_sha, refs, credential
         raise GitNotInstalledError
 
+    def fetch_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> AbstractAsyncContextManager[Path]:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository, commit_sha, paths, max_bytes, refs, credential
+        return _no_git()
+
 
 @asynccontextmanager
 async def _no_git() -> AsyncGenerator[Path]:
@@ -693,6 +757,21 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
     # An overflowing exclusion is dropped: over-fetching is safe, `selects` runs again later.
     excludes = [f"!{p}" for e in selection.exclude if (part := _anchored(e)) for p in part]
     return [*includes, *_ROOT_README, *excludes]
+
+
+_GIT_OVERHEAD = 4 * 2**20  # .git of a one-commit, blob-less fetch: trees, refs, config
+
+
+def _literal(path: str) -> str | None:
+    """Return a sparse-checkout line that matches exactly this repository path, or ``None``.
+
+    Glob characters are escaped, so a hostile file name cannot widen the checkout; a path with
+    a control character (a newline would start a new pattern) is refused.
+    """
+    if not path or not path.isprintable():
+        return None
+    escaped = re.sub(r"([\\*?\[\]])", r"\\\1", path)
+    return "/" + (escaped[:-1] + "\\ " if escaped.endswith(" ") else escaped)
 
 
 def _anchored(pattern: str) -> list[str] | None:

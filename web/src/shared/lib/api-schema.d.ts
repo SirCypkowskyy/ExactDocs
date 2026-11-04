@@ -95,6 +95,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/asset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Version Asset
+         * @description Serve an image an article of the version references (no ref: the default version).
+         *
+         *     Content-addressed: the `ETag` is the git blob SHA. An SVG is served as an attachment (an
+         *     `<img>` still shows it) under a CSP that forbids scripts and any request.
+         */
+        readonly get: operations["catalog-get_version_asset"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries": {
         readonly parameters: {
             readonly query?: never;
@@ -1381,7 +1404,7 @@ export interface components {
          * @description Why a file shows up in a job's problems; stable, clients may branch on it.
          * @enum {string}
          */
-        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "truncated";
+        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated";
         /**
          * RefOut
          * @description A tag or branch and the commit it points at.
@@ -2387,6 +2410,98 @@ export interface operations {
         readonly responses: {
             /** @description Successful Response */
             readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-get_version_asset": {
+        readonly parameters: {
+            readonly query: {
+                /** @description Repository path of the image, as the article resolves it. */
+                readonly path: string;
+                readonly ref?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The image's bytes, with the type sniffed when it was imported. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/png": unknown;
+                    readonly "image/jpeg": unknown;
+                    readonly "image/gif": unknown;
+                    readonly "image/webp": unknown;
+                    readonly "image/svg+xml": unknown;
+                };
+            };
+            /** @description The caller's copy (`If-None-Match`) is current. */
+            readonly 304: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

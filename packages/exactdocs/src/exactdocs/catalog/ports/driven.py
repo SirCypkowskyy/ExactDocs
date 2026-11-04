@@ -14,6 +14,7 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestRename,
     StoredArticle,
+    StoredImage,
     TagSelection,
     Version,
     VersionRef,
@@ -72,11 +73,14 @@ class ManifestRepository(Protocol):
         manifest: Manifest,
         contents: Mapping[ContentKey, str],
         *,
+        images: Mapping[str, StoredImage] | None = None,
         version_must_exist: bool = False,
     ) -> None:
-        """Store a pending manifest with its entries, renames and the texts it needs.
+        """Store a pending manifest with its entries, renames, texts and image blobs.
 
-        One transaction. A text whose key is already stored is left as it is (idempotent).
+        One transaction. A text whose key is already stored is left as it is (idempotent); so
+        is an image blob (``images`` is keyed by blob SHA; the manifest lists which path holds
+        which blob).
         With ``version_must_exist`` the version row is checked in the same transaction and
         ``VersionNotFoundError`` raised when it is missing: a removal either comes first (this
         fails) or later (it deletes this pending manifest, so activating it fails). Either way a
@@ -157,6 +161,15 @@ class ManifestRepository(Protocol):
         """Return one article of the version's active manifest, or ``None``."""
         ...
 
+    async def get_image(
+        self, library_id: LibraryId, ref: VersionRef, path: str, *, with_data: bool = True
+    ) -> StoredImage | None:
+        """Return the image at ``path`` of the version's active manifest, or ``None``.
+
+        Without ``with_data`` the bytes are not read (``data`` is empty): enough to compare SHAs.
+        """
+        ...
+
     async def activate(self, manifest_id: ManifestId, *, at: datetime) -> Version:
         """Make a pending manifest the version's active one, atomically.
 
@@ -180,7 +193,7 @@ class ManifestRepository(Protocol):
         ...
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
-        """Delete manifests superseded before the cutoff, then texts no manifest uses."""
+        """Delete manifests superseded before the cutoff, then texts and images no manifest uses."""
         ...
 
     async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
