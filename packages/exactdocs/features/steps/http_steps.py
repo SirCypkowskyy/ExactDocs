@@ -22,8 +22,12 @@ from exactdocs.catalog.models import (
     Version,
     VersionRef,
 )
-from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
-from exactdocs.identity.models import Account, AccountId, Role, Username
+from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccountRepository,
+    SqliteSessionRepository,
+)
+from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -63,7 +67,9 @@ DEMO_LIBRARIES = [
 ]
 
 
-# Ends the setup state (the API refuses everything before an account exists); never signs in.
+# Ends the setup state (the API refuses everything before an account exists). The admin is signed
+# in by a session planted directly: the demo steps are not about signing in.
+DEMO_COOKIE = "demo-session-token"
 NOT_A_HASH = "not-a-hash"
 PLACEHOLDER_ADMIN = Account(
     id=AccountId("00000000000000000000000000000001"),
@@ -78,6 +84,15 @@ async def store_demo_catalog(settings: Settings) -> None:
     container = Container.build(settings)
     async with container.running():
         await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
+        now = datetime.now(UTC)
+        await SqliteSessionRepository(container.engine).add(
+            Session(
+                token_hash=hash_token(DEMO_COOKIE),
+                account_id=PLACEHOLDER_ADMIN.id,
+                created_at=now,
+                last_used_at=now,
+            )
+        )
         repository = SqliteLibraryRepository(container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)
@@ -92,7 +107,11 @@ def step_running(context: Context) -> None:
     context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     context.client = stack.enter_context(
-        TestClient(create_app(Container.build(settings)), base_url="http://localhost")
+        TestClient(
+            create_app(Container.build(settings)),
+            base_url="http://localhost",
+            cookies={SESSION_COOKIE: DEMO_COOKIE},
+        )
     )
 
 

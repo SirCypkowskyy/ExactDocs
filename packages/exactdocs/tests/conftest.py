@@ -15,8 +15,12 @@ from exactdocs.catalog.models import (
     Version,
     VersionRef,
 )
-from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
-from exactdocs.identity.models import Account, AccountId, Role, Username
+from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccountRepository,
+    SqliteSessionRepository,
+)
+from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from fixture_repo import DocsRepo, served
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -69,6 +73,10 @@ PLACEHOLDER_ADMIN = Account(
 )
 
 
+# The admin is signed in with this session, planted directly (signing in would cost a hash).
+DEMO_COOKIE = "demo-session-token"
+
+
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Never touch the real data directory: every test starts on an empty one."""
@@ -79,14 +87,28 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-async def demo_catalog() -> None:
-    """Set the instance up and store the demo libraries, as earlier runs of the app would have."""
+async def demo_catalog() -> dict[str, str]:
+    """Set the instance up and store the demo libraries, as earlier runs of the app would have.
+
+    Returns:
+        The cookies of the admin's signed-in session, for the test's HTTP client.
+    """
     container = Container.build(Settings())
     async with container.running():
         await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
+        now = datetime.now(UTC)
+        await SqliteSessionRepository(container.engine).add(
+            Session(
+                token_hash=hash_token(DEMO_COOKIE),
+                account_id=PLACEHOLDER_ADMIN.id,
+                created_at=now,
+                last_used_at=now,
+            )
+        )
         repository = SqliteLibraryRepository(container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)
+    return {SESSION_COOKIE: DEMO_COOKIE}
 
 
 @pytest.fixture(scope="session")

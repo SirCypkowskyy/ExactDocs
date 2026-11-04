@@ -6,12 +6,26 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.identity.ports.driven import AccountRepository, PasswordHasher
-from exactdocs.identity.ports.driving import Authenticate, CreateFirstAdmin, GetSetupState
+from exactdocs.identity.ports.driven import AccountRepository, PasswordHasher, SessionRepository
+from exactdocs.identity.ports.driving import (
+    Authenticate,
+    CreateFirstAdmin,
+    GetSessionState,
+    GetSetupState,
+    IdentifyCaller,
+    ResetPassword,
+    SignIn,
+    SignOut,
+)
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
     CreateFirstAdminUseCase,
+    GetSessionStateUseCase,
     GetSetupStateUseCase,
+    IdentifyCallerUseCase,
+    ResetPasswordUseCase,
+    SignInUseCase,
+    SignOutUseCase,
 )
 from exactdocs_kernel import Clock
 
@@ -23,12 +37,31 @@ class IdentityModule:
     get_setup_state: GetSetupState
     create_first_admin: CreateFirstAdmin
     authenticate: Authenticate
+    sign_in: SignIn
+    sign_out: SignOut
+    identify_caller: IdentifyCaller
+    get_session_state: GetSessionState
+    reset_password: ResetPassword
 
     @classmethod
-    def build(cls, *, repository: AccountRepository, hasher: PasswordHasher, clock: Clock) -> Self:
+    def build(
+        cls,
+        *,
+        repository: AccountRepository,
+        sessions: SessionRepository,
+        hasher: PasswordHasher,
+        clock: Clock,
+    ) -> Self:
         """Assemble the use cases around the given driven adapters."""
+        authenticate = AuthenticateUseCase(repository, hasher)
+        identify_caller = IdentifyCallerUseCase(sessions, repository, clock)
         return cls(
             get_setup_state=GetSetupStateUseCase(repository),
             create_first_admin=CreateFirstAdminUseCase(repository, hasher, clock),
-            authenticate=AuthenticateUseCase(repository, hasher),
+            authenticate=authenticate,
+            sign_in=SignInUseCase(authenticate, sessions, clock),
+            sign_out=SignOutUseCase(sessions),
+            identify_caller=identify_caller,
+            get_session_state=GetSessionStateUseCase(repository, identify_caller),
+            reset_password=ResetPasswordUseCase(repository, sessions, hasher),
         )

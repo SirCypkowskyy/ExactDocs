@@ -46,13 +46,15 @@ async def publish(container: Container, ref: str, kind: RefKind, commit: str, *p
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
+async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClient]:
     container = Container.build(Settings())
     # ASGITransport does not run the app's lifespan, which is what migrates the database.
     async with (
         container.running(),
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=create_app(container)), base_url="http://localhost"
+            transport=httpx.ASGITransport(app=create_app(container)),
+            base_url="http://localhost",
+            cookies=demo_catalog,
         ) as client,
     ):
         await publish(container, "release/1.4", RefKind.BRANCH, "c", "guide/install.md")

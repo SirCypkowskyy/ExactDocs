@@ -45,3 +45,45 @@ def test_a_password_outside_the_bounds_names_both_bounds(
 
     assert "12 to 1024 characters" in message
     assert password not in message
+
+
+def reset(monkeypatch: pytest.MonkeyPatch, stdin: str, *args: str) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    cli.app(["admin", "reset-password", *args], exit_on_error=False, result_action="return_value")
+
+
+def test_reset_password_changes_the_password_and_never_prints_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+    new = "a brand new passphrase"
+
+    reset(monkeypatch, new + "\n", "--username", "Ada", "--password-stdin")
+
+    out = capsys.readouterr().out
+    assert "'Ada'" in out
+    assert new not in out
+    assert GOOD not in out
+
+
+def test_reset_password_of_an_unknown_account_names_the_problem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+
+    with pytest.raises(SystemExit) as raised:
+        reset(monkeypatch, GOOD + "\n", "--username", "nobody", "--password-stdin")
+
+    assert "no account" in str(raised.value.code)
+
+
+def test_reset_password_refuses_a_short_password_without_echoing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+
+    with pytest.raises(SystemExit) as raised:
+        reset(monkeypatch, "short\n", "--username", "ada", "--password-stdin")
+
+    assert "12 to 1024 characters" in str(raised.value.code)
+    assert "short\n" not in str(raised.value.code)

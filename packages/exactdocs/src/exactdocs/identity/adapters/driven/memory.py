@@ -1,6 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 
-from exactdocs.identity.models import Account, Username
+from exactdocs.identity.models import Account, AccountId, Session, Username
 
 
 @dataclass(slots=True)
@@ -20,6 +21,52 @@ class InMemoryAccountRepository:
         """Return the account with this username, or ``None``."""
         return self.accounts.get(username)
 
+    async def get_by_id(self, account_id: AccountId) -> Account | None:
+        """Return the account with this id, or ``None``."""
+        return next((a for a in self.accounts.values() if a.id == account_id), None)
+
+    async def set_password_hash(self, account_id: AccountId, password_hash: str) -> None:
+        """Replace the account's password hash."""
+        account = await self.get_by_id(account_id)
+        if account is not None:
+            self.accounts[account.username] = replace(account, password_hash=password_hash)
+
     async def any_exists(self) -> bool:
         """Return whether at least one account exists."""
         return bool(self.accounts)
+
+
+@dataclass(slots=True)
+class InMemorySessionRepository:
+    """Implements ``ports.driven.SessionRepository``. For tests."""
+
+    sessions: dict[str, Session] = field(default_factory=dict)
+
+    async def add(self, session: Session) -> None:
+        """Store a new session."""
+        self.sessions[session.token_hash] = session
+
+    async def get(self, token_hash: str) -> Session | None:
+        """Return the session with this token hash, or ``None``."""
+        return self.sessions.get(token_hash)
+
+    async def touch(self, token_hash: str, at: datetime) -> None:
+        """Record that the session was used at ``at``."""
+        if (session := self.sessions.get(token_hash)) is not None:
+            self.sessions[token_hash] = replace(session, last_used_at=at)
+
+    async def delete(self, token_hash: str) -> None:
+        """Remove the session."""
+        self.sessions.pop(token_hash, None)
+
+    async def delete_for_account(self, account_id: AccountId) -> None:
+        """Remove every session of the account."""
+        self.sessions = {h: s for h, s in self.sessions.items() if s.account_id != account_id}
+
+    async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
+        """Remove sessions last used before ``idle_before`` or created before ``created_before``."""
+        self.sessions = {
+            h: s
+            for h, s in self.sessions.items()
+            if s.last_used_at >= idle_before and s.created_at >= created_before
+        }

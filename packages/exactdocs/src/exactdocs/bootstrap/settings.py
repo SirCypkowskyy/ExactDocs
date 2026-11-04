@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # `*.example.com`) and browser origins (e.g. `https://docs.example.com`), comma-separated.
     allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
     allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # The session cookie is `Secure` whenever a request arrives over HTTPS (uvicorn reads
+    # X-Forwarded-Proto from `forwarded_allow_ips`). Set this when TLS ends at a proxy that does
+    # not forward the scheme.
+    secure_cookies: bool = False
     # Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`).
     forwarded_allow_ips: str = "127.0.0.1,::1"
 

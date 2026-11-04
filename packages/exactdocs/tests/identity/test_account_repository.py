@@ -14,6 +14,7 @@ from exactdocs.identity.models import Account, AccountId, Role, Username
 from exactdocs.identity.ports import AccountRepository
 
 NOT_A_HASH = "$argon2id$not-a-real-hash"
+ANOTHER_HASH = "$argon2id$another"
 
 
 def account(name: str) -> Account:
@@ -60,3 +61,21 @@ async def test_concurrent_first_accounts_store_exactly_one(repository: AccountRe
     results = await asyncio.gather(*(repository.add_first(account(f"user{i}")) for i in range(8)))
 
     assert results.count(True) == 1
+
+
+async def test_an_account_is_found_by_id(repository: AccountRepository) -> None:
+    await repository.add_first(account("ada"))
+
+    assert await repository.get_by_id(AccountId("id-ada")) == account("ada")
+    assert await repository.get_by_id(AccountId("id-nobody")) is None
+
+
+async def test_the_password_hash_can_be_replaced(repository: AccountRepository) -> None:
+    await repository.add_first(account("ada"))
+
+    await repository.set_password_hash(AccountId("id-ada"), ANOTHER_HASH)
+
+    stored = await repository.get(Username("ada"))
+    assert stored is not None
+    assert stored.password_hash == ANOTHER_HASH
+    assert (stored.id, stored.username) == (AccountId("id-ada"), Username("ada"))

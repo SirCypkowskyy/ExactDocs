@@ -12,14 +12,20 @@ from fastapi.testclient import TestClient
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
-from exactdocs.identity.models import Account, AccountId, Role, Username
+from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccountRepository,
+    SqliteSessionRepository,
+)
+from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.models import Job, JobId, JobKind
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 NOT_A_HASH = "not-a-hash"
-# Ends the setup state (the API refuses everything before an account exists); never signs in.
+# Ends the setup state (the API refuses everything before an account exists). A session planted
+# directly signs it in: these steps are not about signing in.
+ADMIN_COOKIE = "admin-session-cookie"
 PLACEHOLDER_ADMIN = Account(
     id=AccountId("00000000000000000000000000000001"),
     username=Username("admin"),
@@ -53,6 +59,15 @@ def step_running(context: Context) -> None:
     )
     accounts = SqliteAccountRepository(context.container.engine)
     context.client.portal.call(accounts.add_first, PLACEHOLDER_ADMIN)
+    session = Session(
+        token_hash=hash_token(ADMIN_COOKIE),
+        account_id=PLACEHOLDER_ADMIN.id,
+        created_at=datetime.now(UTC),
+        last_used_at=datetime.now(UTC),
+    )
+    sessions = SqliteSessionRepository(context.container.engine)
+    context.client.portal.call(sessions.add, session)
+    context.client.cookies.set(SESSION_COOKIE, ADMIN_COOKIE)
 
 
 @given('a job over {total:d} files of "{library}" that has finished {done:d}')

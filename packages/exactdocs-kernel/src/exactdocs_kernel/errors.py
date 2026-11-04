@@ -27,3 +27,9 @@ class ValidationError(DomainError):
     """The request is well-formed but violates a business rule."""
 
     code = "validation_error"
+
+
+class UnauthenticatedError(DomainError):
+    """The caller is not signed in, or the credentials they gave are wrong."""
+
+    code = "unauthenticated"

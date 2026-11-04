@@ -16,7 +16,7 @@ packages/
     src/exactdocs/
       bootstrap/                composition root: settings, wiring, HTTP/MCP/CLI entry points
       catalog/                  domain
-      identity/                 domain: the admin account (later sessions, API tokens)
+      identity/                 domain: the admin account and its web sessions (later API tokens)
       retrieval/                domain
       ingestion/                domain: jobs and the worker (git access, import use cases to come)
       _web/                     built web UI (gitignored, added by CI / Docker)
@@ -153,6 +153,22 @@ the running server) can never create two admins. `bootstrap/rest.py:SetupGuard` 
 `403 setup_required` for everything under `/api/v1` until an account exists (default deny; the
 exemptions are `POST /setup`, `GET /session` and `openapi.json`) and stops asking the database
 once one does.
+
+### Sessions
+
+`POST /api/v1/session` starts a server-side session (`identity_sessions`): a 256-bit random token
+goes to the browser in an HttpOnly, SameSite=Lax cookie (`Path=/api`, `Secure` over HTTPS), and
+only its SHA-256 is stored, so a leaked database holds no usable token. A session ends after
+7 days without use or 30 days in all (`models.IDLE_TIMEOUT`/`ABSOLUTE_TIMEOUT`, checked against the
+kernel `Clock`); using it writes `last_used_at` at most once an hour. Signing out deletes the row,
+so a copied cookie dies too, and `exactdocs admin reset-password` changes the hash first and then
+deletes all the account's sessions. CSRF: SameSite=Lax plus the app-wide `OriginCheck` (foreign
+`Origin` on an unsafe request is 403).
+
+"Who is the caller" is one dependency, `identity.adapters.driving.http.build_current_caller`,
+applied to the whole protected router in `bootstrap/http.py`; new domain routers go there, and
+the open ones are pinned by a test. Sessions are the only credential today; API tokens (E2-03)
+extend that one dependency. `/mcp` never reads the cookie.
 
 ## Background jobs
 

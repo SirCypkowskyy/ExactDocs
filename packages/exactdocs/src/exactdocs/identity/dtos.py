@@ -1,10 +1,10 @@
 """Data crossing the identity boundary (into and out of driving ports). Immutable, validated."""
 
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from exactdocs.identity.models import Account
+from exactdocs.identity.models import MAX_USERNAME_LENGTH, Account
 
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 1024  # bounds the work a request can make the hasher do
@@ -43,5 +43,27 @@ class CreateFirstAdminCommand(_Dto):
 class AuthenticateQuery(_Dto):
     """A username and password to check."""
 
-    username: str
+    username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)  # cap the input before normalising
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
+
+
+class ResetPasswordCommand(_Dto):
+    """A new password for an existing account (the operator's recovery path)."""
+
+    username: str
+    password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+
+
+class SessionGrant(_Dto):
+    """A new session. ``token`` is the only copy of the secret; hand it to the browser."""
+
+    token: SecretStr
+    account: AccountSummary
+    max_age: int  # seconds until the session cannot be used any more, even if never idle
+
+
+class SessionState(_Dto):
+    """What the UI needs to know first: is setup due, is anyone signed in, and who."""
+
+    state: Literal["setup_required", "signed_out", "signed_in"]
+    account: AccountSummary | None = None

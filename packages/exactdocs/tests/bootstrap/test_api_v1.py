@@ -30,12 +30,16 @@ def app(container: Container):
 
 
 @pytest.fixture
-async def client(app, container: Container) -> AsyncIterator[httpx.AsyncClient]:
+async def client(
+    app, container: Container, demo_catalog: dict[str, str]
+) -> AsyncIterator[httpx.AsyncClient]:
     # ASGITransport does not run the app's lifespan, which is what migrates the database.
     async with (
         container.running(),
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://localhost",
+            cookies=demo_catalog,
         ) as client,
     ):
         yield client

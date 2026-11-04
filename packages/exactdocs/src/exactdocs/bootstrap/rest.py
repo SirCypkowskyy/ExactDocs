@@ -17,12 +17,19 @@ from starlette.exceptions import HTTPException
 from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
+from exactdocs_kernel import (
+    ConflictError,
+    DomainError,
+    NotFoundError,
+    UnauthenticatedError,
+    ValidationError,
+)
 
 V1_PREFIX = "/api/v1"
 OPENAPI_PATH = f"{V1_PREFIX}/openapi.json"
 
 _STATUS_BY_ERROR: dict[type[DomainError], int] = {
+    UnauthenticatedError: 401,
     NotFoundError: 404,
     ConflictError: 409,
     ValidationError: 422,
@@ -52,6 +59,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in {
         400: "The request cannot be processed (error code in `error`).",
+        401: "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
         403: "Refused: the instance has no admin account yet (`setup_required`).",
         404: "The thing does not exist or is not visible to the caller.",
         409: "The request conflicts with the current state.",
@@ -122,8 +130,7 @@ def v1_openapi_json(app: FastAPI) -> str:
 
 
 # (method, path) pairs that stay reachable before the first admin exists: `POST /setup` is the
-# way out of that state. `GET /session` is reserved for E2-02 (the UI learns the session state
-# there); the route does not exist yet.
+# way out of that state, and `GET /session` is how the UI learns that it is in it.
 SETUP_EXEMPT = frozenset(
     {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
 )

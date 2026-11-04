@@ -4,6 +4,42 @@
  */
 
 export interface paths {
+    readonly "/api/v1/setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Setup */
+        readonly post: operations["identity-setup"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/session": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Session */
+        readonly get: operations["identity-get_session"];
+        readonly put?: never;
+        /** Create Session */
+        readonly post: operations["identity-create_session"];
+        /** Delete Session */
+        readonly delete: operations["identity-delete_session"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries": {
         readonly parameters: {
             readonly query?: never;
@@ -89,17 +125,17 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/v1/setup": {
+    readonly "/api/v1/search": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /** Search */
+        readonly get: operations["retrieval-search"];
         readonly put?: never;
-        /** Setup */
-        readonly post: operations["identity-setup"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -132,23 +168,6 @@ export interface paths {
         };
         /** List Library Jobs */
         readonly get: operations["ingestion-list_library_jobs"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/v1/search": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Search */
-        readonly get: operations["retrieval-search"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -235,6 +254,19 @@ export interface components {
             readonly tags: readonly string[];
             /** Size */
             readonly size: number;
+        };
+        /**
+         * AuthenticateQuery
+         * @description A username and password to check.
+         */
+        readonly AuthenticateQuery: {
+            /** Username */
+            readonly username: string;
+            /**
+             * Password
+             * Format: password
+             */
+            readonly password: string;
         };
         /**
          * ChunkingOut
@@ -473,6 +505,18 @@ export interface components {
             readonly excerpts: readonly components["schemas"]["ExcerptOut"][];
         };
         /**
+         * SessionState
+         * @description What the UI needs to know first: is setup due, is anyone signed in, and who.
+         */
+        readonly SessionState: {
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "setup_required" | "signed_out" | "signed_in";
+            readonly account?: components["schemas"]["AccountSummary"] | null;
+        };
+        /**
          * TagRuleOut
          * @description Articles whose path matches `pattern` get `tag`.
          */
@@ -512,6 +556,308 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readonly "identity-setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateFirstAdminCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-get_session": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionState"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-create_session": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AuthenticateQuery"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionState"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-delete_session": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "catalog-list_all": {
         readonly parameters: {
             readonly query?: {
@@ -535,6 +881,15 @@ export interface operations {
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -610,6 +965,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Refused: the instance has no admin account yet (`setup_required`). */
             readonly 403: {
                 headers: {
@@ -672,6 +1036,15 @@ export interface operations {
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -753,6 +1126,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Refused: the instance has no admin account yet (`setup_required`). */
             readonly 403: {
                 headers: {
@@ -824,6 +1206,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Refused: the instance has no admin account yet (`setup_required`). */
             readonly 403: {
                 headers: {
@@ -862,30 +1253,40 @@ export interface operations {
             };
         };
     };
-    readonly "identity-setup": {
+    readonly "retrieval-search": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query: {
+                readonly library: string;
+                readonly version: string;
+                readonly query: string;
+                readonly limit?: number;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["CreateFirstAdminCommand"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description Successful Response */
-            readonly 201: {
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AccountSummary"];
+                    readonly "application/json": components["schemas"]["SearchDocsResult"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -953,6 +1354,15 @@ export interface operations {
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -1031,69 +1441,8 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The thing does not exist or is not visible to the caller. */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The request conflicts with the current state. */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    readonly "retrieval-search": {
-        readonly parameters: {
-            readonly query: {
-                readonly library: string;
-                readonly version: string;
-                readonly query: string;
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description Successful Response */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SearchDocsResult"];
-                };
-            };
-            /** @description The request cannot be processed (error code in `error`). */
-            readonly 400: {
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

@@ -71,7 +71,9 @@ async def test_setup_creates_the_admin_and_opens_the_api(client: httpx.AsyncClie
     assert (body["username"], body["role"]) == ("ada", "admin")
     assert set(body) == {"id", "username", "role"}
     assert CREDENTIALS["password"] not in created.text
-    assert (await client.get("/api/v1/libraries")).status_code == 200
+    # Past the setup guard now; the admin still has to sign in (`POST /api/v1/session`).
+    refused = await client.get("/api/v1/libraries")
+    assert (refused.status_code, refused.json()["error"]) == (401, "unauthenticated")
 
 
 async def test_setup_works_once(client: httpx.AsyncClient) -> None:
@@ -121,5 +123,5 @@ async def test_an_admin_created_elsewhere_ends_the_setup_state(client: httpx.Asy
             )
         )
 
-    assert (await client.get("/api/v1/libraries")).status_code == 200
+    assert (await client.get("/api/v1/libraries")).status_code == 401  # no longer `setup_required`
     assert (await client.post("/api/v1/setup", json=CREDENTIALS)).status_code == 409

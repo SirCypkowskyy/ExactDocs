@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
@@ -91,7 +91,22 @@ def create_app(container: Container) -> FastAPI:
         return Health(status="ok", version=__version__, schema_revision=revision)
 
     v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
+    # Reachable without a session: setup and sign-in/state/out. A test pins this list.
     v1.include_router(
+        identity_http.build_router(
+            create_first_admin=container.identity.create_first_admin,
+            sign_in=container.identity.sign_in,
+            sign_out=container.identity.sign_out,
+            get_session_state=container.identity.get_session_state,
+            secure_cookies=settings.secure_cookies,
+        )
+    )
+    # Everything else needs a signed-in caller. Add new domain routers here.
+    current_caller = identity_http.build_current_caller(
+        identify_caller=container.identity.identify_caller
+    )
+    protected = APIRouter(dependencies=[Depends(current_caller)])
+    protected.include_router(
         catalog_http.build_router(
             list_libraries=container.catalog.list_libraries,
             get_library=container.catalog.get_library,
@@ -100,16 +115,16 @@ def create_app(container: Container) -> FastAPI:
             get_article=container.catalog.get_article,
         )
     )
-    v1.include_router(
-        identity_http.build_router(create_first_admin=container.identity.create_first_admin)
+    protected.include_router(
+        retrieval_http.build_router(search_docs=container.retrieval.search_docs)
     )
-    v1.include_router(
+    protected.include_router(
         ingestion_http.build_router(
             get_job=container.ingestion.get_job,
             list_library_jobs=container.ingestion.list_library_jobs,
         )
     )
-    v1.include_router(retrieval_http.build_router(search_docs=container.retrieval.search_docs))
+    v1.include_router(protected)
     api.include_router(v1)
     app.include_router(api)
 
