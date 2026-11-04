@@ -11,6 +11,11 @@ const ALLOWED_IN_JS = [
   /^https:\/\/react\.dev\/errors/,
   /^https:\/\/github\.com\/(acme\/payments|owner\/repo)/,
   /^http:\/\/(localhost|exactdocs\.invalid)/,
+  // highlight.js comments, never fetched
+  /^https:\/\/github\.com\/highlightjs\/highlight\.js\//,
+  // browse/render/urls.ts builds links and image URLs from the library's own source URL
+  /^https:\/\/github\.com\/$/,
+  /^https:\/\/raw\.githubusercontent\.com\/\$\{/,
 ];
 // A host starts with a letter or digit: `"https://" + x` and `https://${x}` build one at run time.
 const ABSOLUTE = /https?:\/\/[A-Za-z0-9][^\s"'`)\\<>]+/g;
