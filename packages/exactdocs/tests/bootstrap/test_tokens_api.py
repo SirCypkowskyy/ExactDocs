@@ -133,6 +133,41 @@ async def test_a_wrong_bearer_is_not_rescued_by_a_valid_cookie(admin: httpx.Asyn
     assert response.status_code == 401
 
 
+async def test_an_empty_or_foreign_authorization_is_not_rescued_by_a_valid_cookie(
+    admin: httpx.AsyncClient,
+) -> None:
+    for value in ("Bearer ", "Bearer", "Basic abc", "exd_raw"):
+        response = await admin.get("/api/v1/libraries", headers={"authorization": value})
+        assert response.status_code == 401, value
+
+
+async def test_another_accounts_token_is_a_404_like_a_missing_one(
+    admin: httpx.AsyncClient, container: Container
+) -> None:
+    async with container.engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO identity_accounts VALUES ('bob', 'bob', 'x', 'admin', '2026-01-01');")
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO identity_api_tokens (id, account_id, name, token_hash, prefix, "
+                "created_at) VALUES ('t-bob', 'bob', 'b', 'h', 'exd_', '2026-01-01')"
+            )
+        )
+
+    foreign = await admin.delete("/api/v1/tokens/t-bob")
+    missing = await admin.delete("/api/v1/tokens/nope")
+
+    assert (foreign.status_code, foreign.json()["error"]) == (404, "unknown_token")
+    assert foreign.json() == missing.json()
+
+
+async def test_the_token_name_has_a_length_limit_in_the_schema(admin: httpx.AsyncClient) -> None:
+    response = await admin.post("/api/v1/tokens", json={"name": "x" * 1000})
+
+    assert response.status_code == 422
+
+
 async def test_creating_a_token_validates_its_input(admin: httpx.AsyncClient) -> None:
     yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
     for body, status, code in [
@@ -232,14 +267,17 @@ async def test_an_mcp_client_with_the_token_lists_the_libraries_until_it_is_revo
                 await mcp.call_tool("list_libraries", {})
 
 
-async def test_mcp_refuses_callers_without_a_valid_token(
-    app: FastAPI, anonymous: httpx.AsyncClient
+async def test_mcp_refuses_callers_without_a_valid_token_even_with_a_session_cookie(
+    app: FastAPI, anonymous: httpx.AsyncClient, admin: httpx.AsyncClient
 ) -> None:
+    # Sent by hand: the jar would not send a cookie scoped to `/api` to `/mcp` anyway.
+    cookie = {"cookie": f"exactdocs_session={admin.cookies['exactdocs_session']}"}
     async with app.router.lifespan_context(app):
-        for headers in ({}, bearer("exd_wrong"), bearer("")):
-            response = await anonymous.post(
-                "/mcp",
-                json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
-                headers={"accept": "application/json, text/event-stream", **headers},
-            )
-            assert response.status_code == 401, headers
+        for extra in ({}, cookie):
+            for auth in ({}, bearer("exd_wrong"), bearer(""), {"authorization": "Basic abc"}):
+                response = await anonymous.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                    headers={"accept": "application/json, text/event-stream", **extra, **auth},
+                )
+                assert response.status_code == 401, (extra.keys(), auth)

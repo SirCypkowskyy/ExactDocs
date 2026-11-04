@@ -81,7 +81,7 @@ class IdentityModule:
             sign_out=SignOutUseCase(sessions),
             identify_caller=identify_caller,
             get_session_state=GetSessionStateUseCase(repository, identify_caller),
-            reset_password=ResetPasswordUseCase(repository, sessions, hasher),
+            reset_password=ResetPasswordUseCase(repository, sessions, tokens, hasher),
             create_token=CreateTokenUseCase(tokens, clock),
             list_tokens=ListTokensUseCase(tokens),
             revoke_token=RevokeTokenUseCase(tokens),

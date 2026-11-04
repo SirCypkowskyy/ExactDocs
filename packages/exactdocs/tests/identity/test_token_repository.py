@@ -82,3 +82,21 @@ async def test_delete_is_scoped_to_the_account(repository: TokenRepository) -> N
     assert await repository.delete(ADA, "t1")
     assert await repository.get("hash-t1") is None
     assert not await repository.delete(ADA, "t1")
+
+
+async def test_expired_tokens_are_deleted_and_live_ones_stay(repository: TokenRepository) -> None:
+    await repository.add(token("old", created=NOW - timedelta(days=5)))
+    await repository.add(token("new"))
+
+    await repository.delete_expired(NOW)
+
+    assert [t.id for t in await repository.list_for_account(ADA)] == ["new"]
+
+
+async def test_deleting_for_an_account_removes_all_its_tokens(repository: TokenRepository) -> None:
+    await repository.add(token("t1"))
+    await repository.add(token("t2"))
+
+    await repository.delete_for_account(ADA)
+
+    assert await repository.list_for_account(ADA) == []

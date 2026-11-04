@@ -65,6 +65,15 @@ class InvalidTokenExpiryError(ValidationError):
         super().__init__("a token must expire in the future")
 
 
+class TooManyTokensError(ConflictError):
+    """The account already holds the most tokens it may."""
+
+    code = "too_many_tokens"
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"an account may hold at most {limit} API tokens; revoke one first")
+
+
 class InvalidTokenError(UnauthenticatedError):
     """An API token that is unknown, expired or revoked; deliberately not told apart."""
 

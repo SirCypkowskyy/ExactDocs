@@ -24,7 +24,7 @@ class ApiTokenVerifier(TokenVerifier):
         except InvalidTokenError:
             return None
         return AccessToken(
-            token=token,
+            token="",  # the secret is not kept in the request-scoped auth object
             client_id=account.id,
             scopes=[],
             claims={"username": account.username, "role": account.role},

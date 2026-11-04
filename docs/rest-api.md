@@ -53,5 +53,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `prefix`, `created_at`, `expires_at`, `last_used_at`; newest first) and `DELETE /tokens/{id}`
   revokes one at once (204; 404 `unknown_token` for another account's or a missing id). The
   secret is 256 random bits and only its SHA-256 is stored. An unknown, expired or revoked token is
-  the same 401. `last_used_at` is written at most hourly. The three token routes need the
-  **session cookie**, not a token, so a stolen token cannot create a successor.
+  the same 401. `last_used_at` is written at most hourly, best effort (a failed write is logged
+  and the request goes on). Expired tokens are purged when a new one is created. An account holds
+  at most 50 tokens (409 `too_many_tokens`). A password reset revokes all of the account's
+  tokens. The three token routes need the **session cookie**, not a token, so a stolen token
+  cannot create a successor.

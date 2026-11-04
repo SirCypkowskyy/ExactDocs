@@ -11,16 +11,22 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
-from exactdocs.identity.dtos import AccountSummary, CreateFirstAdminCommand, CreateTokenCommand
+from exactdocs.identity.dtos import (
+    AccountSummary,
+    CreateFirstAdminCommand,
+    CreateTokenCommand,
+    ResetPasswordCommand,
+)
 from exactdocs.identity.errors import (
     InvalidTokenError,
     InvalidTokenExpiryError,
     InvalidTokenNameError,
+    TooManyTokensError,
     UnknownTokenError,
 )
 from exactdocs.identity.models import VALUE_PREFIX, hash_token
 from exactdocs.identity.module import IdentityModule
-from exactdocs.identity.use_cases import TOUCH_INTERVAL
+from exactdocs.identity.use_cases import MAX_TOKENS_PER_ACCOUNT, TOUCH_INTERVAL
 
 START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -159,3 +165,60 @@ async def test_two_tokens_never_share_a_secret(world: World) -> None:
 
     assert first.token != second.token
     assert first.id != second.id
+
+
+async def test_a_password_reset_revokes_the_accounts_tokens(world: World) -> None:
+    grant = await world.identity.create_token(world.ada, CreateTokenCommand(name="laptop"))
+
+    await world.identity.reset_password(
+        ResetPasswordCommand(username="ada", password=SecretStr("a brand new passphrase"))
+    )
+
+    with pytest.raises(InvalidTokenError):
+        await world.identity.identify_token(grant.token)
+    assert (await world.identity.list_tokens(world.ada)).tokens == []
+
+
+async def test_creating_a_token_purges_the_expired_ones(world: World) -> None:
+    soon = START + timedelta(days=1)
+    await world.identity.create_token(world.ada, CreateTokenCommand(name="old", expires_at=soon))
+    world.clock.current = START + timedelta(days=2)
+
+    await world.identity.create_token(world.ada, CreateTokenCommand(name="new"))
+
+    assert [t.name for t in (await world.identity.list_tokens(world.ada)).tokens] == ["new"]
+
+
+async def test_an_account_holds_a_limited_number_of_tokens(world: World) -> None:
+    for i in range(MAX_TOKENS_PER_ACCOUNT):
+        await world.identity.create_token(world.ada, CreateTokenCommand(name=f"t{i}"))
+
+    with pytest.raises(TooManyTokensError):
+        await world.identity.create_token(world.ada, CreateTokenCommand(name="one too many"))
+
+
+class LockedTokens(InMemoryTokenRepository):
+    async def touch(self, token_hash: str, at: datetime) -> None:
+        raise RuntimeError(token_hash, at)
+
+
+async def test_a_failing_last_used_write_does_not_fail_the_authentication(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = IdentityModule.build(
+        repository=InMemoryAccountRepository(),
+        sessions=InMemorySessionRepository(),
+        tokens=LockedTokens(),
+        hasher=FakeHasher(),
+        clock=MovableClock(),
+    )
+    ada = await identity.create_first_admin(
+        CreateFirstAdminCommand(username="ada", password=SecretStr("correct horse battery staple"))
+    )
+    grant = await identity.create_token(ada, CreateTokenCommand(name="laptop"))
+
+    account = await identity.identify_token(grant.token)
+
+    assert account.username == "ada"
+    assert "could not record API token use" in caplog.text
+    assert grant.token not in caplog.text

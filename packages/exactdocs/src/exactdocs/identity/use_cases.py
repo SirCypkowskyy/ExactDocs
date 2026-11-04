@@ -1,5 +1,6 @@
 """Identity use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
@@ -27,6 +28,7 @@ from exactdocs.identity.errors import (
     InvalidTokenExpiryError,
     InvalidUsernameError,
     NotSignedInError,
+    TooManyTokensError,
     UnknownAccountError,
     UnknownTokenError,
 )
@@ -113,6 +115,8 @@ class AuthenticateUseCase:
         return AccountSummary.from_model(account)
 
 
+logger = logging.getLogger(__name__)
+MAX_TOKENS_PER_ACCOUNT = 50
 TOKEN_BYTES = 32  # 256 bits of randomness
 # Using a session only writes `last_used_at` when it is older than this: a read-only request
 # should not cost a database write each time, and it is tiny next to the 7-day idle timeout.
@@ -224,10 +228,13 @@ class ResetPasswordUseCase:
 
     accounts: AccountRepository
     sessions: SessionRepository
+    tokens: TokenRepository
     hasher: PasswordHasher
 
     async def __call__(self, command: ResetPasswordCommand) -> None:
-        """Set the new password, then end all the account's sessions.
+        """Set the new password, then end all the account's sessions and revoke its API tokens.
+
+        A reset is the recovery after a compromise, so nothing issued before it may survive.
 
         In this order, so nobody can sign in with the old password once the sessions are gone.
         """
@@ -240,6 +247,7 @@ class ResetPasswordUseCase:
         password_hash = await self.hasher.hash(command.password.get_secret_value())
         await self.accounts.set_password_hash(account.id, password_hash)
         await self.sessions.delete_for_account(account.id)
+        await self.tokens.delete_for_account(account.id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +262,9 @@ class CreateTokenUseCase:
         now = self.clock.now()
         if command.expires_at is not None and command.expires_at <= now:
             raise InvalidTokenExpiryError
+        await self.tokens.delete_expired(now)
+        if len(await self.tokens.list_for_account(AccountId(account.id))) >= MAX_TOKENS_PER_ACCOUNT:
+            raise TooManyTokensError(MAX_TOKENS_PER_ACCOUNT)
         secret = VALUE_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
         token = ApiToken(
             id=uuid7().hex,
@@ -314,5 +325,8 @@ class IdentifyTokenUseCase:
         if account is None:
             raise InvalidTokenError
         if found.last_used_at is None or now - found.last_used_at >= TOUCH_INTERVAL:
-            await self.tokens.touch(token_hash, now)
+            try:
+                await self.tokens.touch(token_hash, now)
+            except Exception:  # ruff: ignore[blind-except] - bookkeeping must not break a valid token
+                logger.warning("could not record API token use")
         return AccountSummary.from_model(account)

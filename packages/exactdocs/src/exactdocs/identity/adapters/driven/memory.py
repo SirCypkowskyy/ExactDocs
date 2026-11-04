@@ -103,3 +103,11 @@ class InMemoryTokenRepository:
                 del self.tokens[token_hash]
                 return True
         return False
+
+    async def delete_for_account(self, account_id: AccountId) -> None:
+        """Remove every token of the account."""
+        self.tokens = {h: t for h, t in self.tokens.items() if t.account_id != account_id}
+
+    async def delete_expired(self, now: datetime) -> None:
+        """Remove the tokens whose expiry is at or before ``now``."""
+        self.tokens = {h: t for h, t in self.tokens.items() if not t.is_expired(now)}

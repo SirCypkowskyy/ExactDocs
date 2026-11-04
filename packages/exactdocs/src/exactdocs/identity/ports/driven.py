@@ -84,6 +84,14 @@ class TokenRepository(Protocol):
         """Remove the account's token with this id; ``False`` when there is none."""
         ...
 
+    async def delete_for_account(self, account_id: AccountId) -> None:
+        """Remove every token of the account."""
+        ...
+
+    async def delete_expired(self, now: datetime) -> None:
+        """Remove the tokens whose expiry is at or before ``now``."""
+        ...
+
 
 class PasswordHasher(Protocol):
     """A memory-hard, salted password KDF. Hashes are self-describing strings."""

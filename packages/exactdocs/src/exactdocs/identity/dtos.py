@@ -5,7 +5,7 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
 
-from exactdocs.identity.models import MAX_USERNAME_LENGTH, Account, ApiToken
+from exactdocs.identity.models import MAX_TOKEN_NAME_LENGTH, MAX_USERNAME_LENGTH, Account, ApiToken
 
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 1024  # bounds the work a request can make the hasher do
@@ -73,7 +73,7 @@ class SessionState(_Dto):
 class CreateTokenCommand(_Dto):
     """A new API token for the caller. ``expires_at`` (timezone-aware) is optional."""
 
-    name: str
+    name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)  # cap the input before validating
     expires_at: AwareDatetime | None = None
 
 

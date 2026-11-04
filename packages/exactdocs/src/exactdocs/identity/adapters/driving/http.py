@@ -15,6 +15,7 @@ from exactdocs.identity.dtos import (
     TokenGrant,
     TokenList,
 )
+from exactdocs.identity.errors import InvalidTokenError
 from exactdocs.identity.ports.driving import (
     CreateFirstAdmin,
     CreateToken,
@@ -49,7 +50,8 @@ _session_cookie = APIKeyCookie(
     auto_error=False,
 )
 
-# Same here: a bad or missing bearer token must end in the API's own 401, not FastAPI's.
+# Only documents the scheme in OpenAPI; `current_caller` reads the raw header itself, so that
+# `Authorization: Bearer ` (empty) or any odd value is still refused rather than skipped.
 _api_token = HTTPBearer(
     scheme_name="ApiToken",
     description="An API token from `POST /api/v1/tokens`: `Authorization: Bearer exd_...`.",
@@ -84,11 +86,16 @@ def build_current_caller(
     session_caller = build_session_caller(identify_caller=identify_caller)
 
     async def current_caller(
-        bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_api_token)] = None,
+        request: Request,
+        _documented: Annotated[HTTPAuthorizationCredentials | None, Depends(_api_token)] = None,
         session_token: Annotated[str | None, Depends(_session_cookie)] = None,
     ) -> AccountSummary:
-        if bearer is not None:
-            return await identify_token(bearer.credentials)
+        authorization = request.headers.get("authorization")
+        if authorization is not None:
+            scheme, _, credentials = authorization.partition(" ")
+            if scheme.lower() != "bearer":
+                raise InvalidTokenError
+            return await identify_token(credentials.strip())
         return await session_caller(session_token)
 
     return current_caller

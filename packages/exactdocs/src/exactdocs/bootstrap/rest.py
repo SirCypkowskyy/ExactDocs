@@ -145,7 +145,8 @@ class SetupGuard:
     removed in the MVP, so the first ``False`` is remembered for the life of the process.
 
     Only ``/api/v1`` is guarded (every method, HEAD and OPTIONS included). ``/mcp`` and
-    ``/.well-known`` are left to the MCP token verifier (E2-03).
+    ``/.well-known`` are guarded by their own API-token check
+    (``identity.adapters.driving.mcp``).
     """
 
     app: ASGIApp

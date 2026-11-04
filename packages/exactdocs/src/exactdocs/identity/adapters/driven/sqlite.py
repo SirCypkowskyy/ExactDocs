@@ -253,6 +253,19 @@ class SqliteTokenRepository:
             result = await connection.execute(statement)
         return result.rowcount == 1
 
+    async def delete_for_account(self, account_id: AccountId) -> None:
+        """Remove every token of the account."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(api_tokens).where(api_tokens.c.account_id == account_id)
+            )
+
+    async def delete_expired(self, now: datetime) -> None:
+        """Remove the tokens whose expiry is at or before ``now``."""
+        statement = delete(api_tokens).where(api_tokens.c.expires_at <= _stamp(now))
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
 
 def _token(row: Row[Any]) -> ApiToken:
     return ApiToken(

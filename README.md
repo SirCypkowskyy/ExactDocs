@@ -54,7 +54,8 @@ Passwords are stored as argon2id hashes.
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
-`admin create`): it sets a new password and signs the admin out everywhere.
+`admin create`): it sets a new password, signs the admin out everywhere and revokes
+the API tokens.
 
 Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
