@@ -15,7 +15,7 @@ from exactdocs.ingestion.dtos import (
 from exactdocs.ingestion.errors import JobNotFoundError, UnknownJobKindError
 from exactdocs.ingestion.models import Job, JobId, JobKind
 from exactdocs.ingestion.ports.driven import JobHandler, JobRepository, RecoveryHook
-from exactdocs_kernel import Clock, DomainError
+from exactdocs_kernel import Clock, DomainError, paginate
 
 log = logging.getLogger(__name__)
 
@@ -65,10 +65,14 @@ class ListLibraryJobsUseCase:
     jobs: JobRepository
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
-        """List the library's latest jobs, newest first."""
-        return JobList.from_models(
-            await self.jobs.list_for_library(query.library, limit=query.limit)
+        """List a page of the library's jobs, newest first."""
+        # ponytail: loads all of the library's jobs, then pages in memory; a keyset query in
+        # the repository once a library has thousands of jobs.
+        jobs = await self.jobs.list_for_library(query.library)
+        page = paginate(
+            jobs, key=lambda job: job.id, limit=query.limit, cursor=query.cursor, descending=True
         )
+        return JobList.from_page(page)
 
 
 @dataclass(frozen=True, slots=True)

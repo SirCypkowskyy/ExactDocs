@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 
 from exactdocs.ingestion.dtos import GetJobQuery, JobList, JobSummary, ListLibraryJobsQuery
 from exactdocs.ingestion.ports.driving import GetJob, ListLibraryJobs
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT
 
 
 def build_router(*, get_job: GetJob, list_library_jobs: ListLibraryJobs) -> APIRouter:
@@ -18,10 +19,13 @@ def build_router(*, get_job: GetJob, list_library_jobs: ListLibraryJobs) -> APIR
 
     @router.get("/libraries/{owner}/{repo}/jobs")
     async def list_for_library(
-        owner: str, repo: str, limit: Annotated[int, Query(ge=1, le=200)] = 50
+        owner: str,
+        repo: str,
+        limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> JobList:
         return await list_library_jobs(
-            ListLibraryJobsQuery(library=f"/{owner}/{repo}", limit=limit)
+            ListLibraryJobsQuery(library=f"/{owner}/{repo}", limit=limit, cursor=cursor)
         )
 
     return router

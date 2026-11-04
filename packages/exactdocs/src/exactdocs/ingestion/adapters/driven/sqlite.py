@@ -57,14 +57,9 @@ class SqliteJobRepository:
             row = (await connection.execute(select(jobs).where(jobs.c.id == job_id))).first()
         return _job(row) if row else None
 
-    async def list_for_library(self, library: str, *, limit: int) -> Sequence[Job]:
-        """Return the library's latest ``limit`` jobs, newest first."""
-        query = (
-            select(jobs)
-            .where(jobs.c.library == library)
-            .order_by(jobs.c.created_at.desc(), jobs.c.id.desc())
-            .limit(limit)
-        )
+    async def list_for_library(self, library: str) -> Sequence[Job]:
+        """Return the library's jobs, newest first (job IDs are time-ordered)."""
+        query = select(jobs).where(jobs.c.library == library).order_by(jobs.c.id.desc())
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 

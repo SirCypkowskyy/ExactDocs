@@ -29,10 +29,10 @@ class InMemoryJobRepository:
         """Return the job, or ``None``."""
         return self.jobs.get(job_id)
 
-    async def list_for_library(self, library: str, *, limit: int) -> Sequence[Job]:
-        """Return the library's latest ``limit`` jobs, newest first."""
+    async def list_for_library(self, library: str) -> Sequence[Job]:
+        """Return the library's jobs, newest first (job IDs are time-ordered)."""
         mine = [job for job in self.jobs.values() if job.library == library]
-        return sorted(mine, key=lambda job: (job.created_at, job.id), reverse=True)[:limit]
+        return sorted(mine, key=lambda job: job.id, reverse=True)
 
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""

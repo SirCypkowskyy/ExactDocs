@@ -1,12 +1,12 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
-from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from exactdocs.ingestion.models import FileProblem, Job, JobState
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
 
 
 class _Dto(BaseModel):
@@ -61,14 +61,19 @@ class JobSummary(_Dto):
 
 
 class JobList(_Dto):
-    """Jobs of one library, newest first."""
+    """A page of the jobs of one library, newest first."""
 
     jobs: list[JobSummary]
+    next_cursor: str | None = Field(
+        description="Pass as `cursor` to get the next page; null on the last page."
+    )
 
     @classmethod
-    def from_models(cls, jobs: Iterable[Job]) -> Self:
-        """Map domain entities, keeping their order."""
-        return cls(jobs=[JobSummary.from_model(job) for job in jobs])
+    def from_page(cls, page: Page[Job]) -> Self:
+        """Map a page of domain entities."""
+        return cls(
+            jobs=[JobSummary.from_model(job) for job in page.items], next_cursor=page.next_cursor
+        )
 
 
 class EnqueueJobCommand(_Dto):
@@ -86,7 +91,8 @@ class GetJobQuery(_Dto):
 
 
 class ListLibraryJobsQuery(_Dto):
-    """The latest ``limit`` jobs of one library."""
+    """One page of a library's jobs: ``limit`` items after the ``cursor`` of the previous page."""
 
     library: str = Field(min_length=1)
-    limit: Annotated[int, Field(ge=1, le=200)] = 50
+    limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
+    cursor: str | None = None

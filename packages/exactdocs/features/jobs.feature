@@ -13,12 +13,12 @@ Feature: Background jobs
     And the job is running with 4 of 10 files done
 
   Scenario: Listing the jobs of a library, newest first
-    Given a finished job "first" of "/acme/payments"
-    And a finished job "second" of "/acme/payments"
-    And a finished job "other" of "/acme/ledger"
+    Given a finished job "job-1" of "/acme/payments"
+    And a finished job "job-2" of "/acme/payments"
+    And a finished job "job-3" of "/acme/ledger"
     When I list the jobs of the library "/acme/payments"
     Then the response status is 200
-    And the jobs are, newest first: "second", "first"
+    And the jobs are, newest first: "job-2", "job-1"
 
   Scenario: Asking for a job that does not exist
     When I request the job "no-such-job"

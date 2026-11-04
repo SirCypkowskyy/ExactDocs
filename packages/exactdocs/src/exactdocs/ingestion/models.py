@@ -1,8 +1,8 @@
-"""Ingestion entities and pure logic: jobs, and article parsing (front matter, title rule and
-removal of invisible characters).
+"""Ingestion entities and pure logic: jobs, and article parsing.
 
-Nothing here touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX,
-``import`` and ``export`` lines stay in the body as text and are never executed.
+Parsing covers front matter, the title rule and removal of invisible characters. Nothing here
+touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX, ``import`` and
+``export`` lines stay in the body as text and are never executed.
 """
 
 import math

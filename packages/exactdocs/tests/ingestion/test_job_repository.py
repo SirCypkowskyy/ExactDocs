@@ -75,16 +75,15 @@ async def test_save_replaces_the_job(repository: JobRepository) -> None:
     assert await repository.get(JobId("j1")) == progressed
 
 
-async def test_a_library_lists_its_latest_jobs_newest_first(repository: JobRepository) -> None:
-    for job in (queued("a", minute=1), queued("b", minute=3), queued("c", minute=2)):
+async def test_a_library_lists_its_own_jobs_newest_first(repository: JobRepository) -> None:
+    # IDs are time-ordered (uuid7), so "newest" is the highest ID
+    for job in (queued("job-2"), queued("job-1"), queued("job-3")):
         await repository.add(job)
-    await repository.add(queued("other", library="/acme/ledger", minute=4))
+    await repository.add(queued("job-4", library="/acme/ledger"))
 
-    listed = await repository.list_for_library("/acme/payments", limit=10)
-    latest = await repository.list_for_library("/acme/payments", limit=2)
+    listed = await repository.list_for_library("/acme/payments")
 
-    assert [job.id for job in listed] == ["b", "c", "a"]
-    assert [job.id for job in latest] == ["b", "c"]
+    assert [job.id for job in listed] == ["job-3", "job-2", "job-1"]
 
 
 async def test_list_running_returns_only_running_jobs(repository: JobRepository) -> None:

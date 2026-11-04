@@ -25,8 +25,12 @@ def a_job(job_id: str, library: str = "/acme/payments", kind: str = "import") ->
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
-    container = Container.build(Settings())
+def container() -> Container:
+    return Container.build(Settings())
+
+
+@pytest.fixture
+async def client(container: Container) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=create_app(container))
     # ASGITransport does not run the app's lifespan, which migrates the database.
     async with (
@@ -47,7 +51,23 @@ async def test_a_library_without_jobs_has_an_empty_list(client: httpx.AsyncClien
     response = await client.get("/api/v1/libraries/acme/payments/jobs")
 
     assert response.status_code == 200
-    assert response.json() == {"jobs": []}
+    assert response.json() == {"jobs": [], "next_cursor": None}
+
+
+async def test_a_library_lists_its_jobs_newest_first_in_pages(
+    container: Container, client: httpx.AsyncClient
+) -> None:
+    repository = SqliteJobRepository(container.engine)
+    for job_id in ("job-1", "job-2", "job-3"):
+        await repository.add(a_job(job_id).started(NOW).succeeded(NOW))
+    url = "/api/v1/libraries/acme/payments/jobs"
+
+    first = (await client.get(url, params={"limit": 2})).json()
+    second = (await client.get(url, params={"limit": 2, "cursor": first["next_cursor"]})).json()
+
+    assert [job["id"] for job in first["jobs"]] == ["job-3", "job-2"]
+    assert [job["id"] for job in second["jobs"]] == ["job-1"]
+    assert second["next_cursor"] is None
 
 
 async def test_the_limit_of_the_job_list_is_validated(client: httpx.AsyncClient) -> None:

@@ -22,8 +22,8 @@ class JobRepository(Protocol):
         """Return the job, or ``None``."""
         ...
 
-    async def list_for_library(self, library: str, *, limit: int) -> Sequence[Job]:
-        """Return the library's latest ``limit`` jobs, newest first."""
+    async def list_for_library(self, library: str) -> Sequence[Job]:
+        """Return the library's jobs, newest first (job IDs are time-ordered)."""
         ...
 
     async def list_running(self) -> Sequence[Job]:

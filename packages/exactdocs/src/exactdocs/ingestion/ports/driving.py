@@ -28,7 +28,7 @@ class GetJob(Protocol):
 
 
 class ListLibraryJobs(Protocol):
-    """List a library's latest jobs, newest first."""
+    """List a page of a library's jobs, newest first."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
         """Run the use case."""

@@ -142,10 +142,16 @@ async def test_a_library_lists_only_its_own_jobs_newest_first(build_module) -> N
     second = await module.enqueue_job(enqueue(library="/acme/payments"))
 
     listed = await module.list_library_jobs(ListLibraryJobsQuery(library="/acme/payments"))
-    latest = await module.list_library_jobs(ListLibraryJobsQuery(library="/acme/payments", limit=1))
+    page = await module.list_library_jobs(ListLibraryJobsQuery(library="/acme/payments", limit=1))
+    rest = await module.list_library_jobs(
+        ListLibraryJobsQuery(library="/acme/payments", limit=1, cursor=page.next_cursor)
+    )
 
     assert [job.id for job in listed.jobs] == [second.id, first.id]
-    assert [job.id for job in latest.jobs] == [second.id]
+    assert listed.next_cursor is None
+    assert [job.id for job in page.jobs] == [second.id]
+    assert [job.id for job in rest.jobs] == [first.id]
+    assert rest.next_cursor is None
 
 
 async def test_two_jobs_for_one_library_never_run_together(build_module) -> None:
