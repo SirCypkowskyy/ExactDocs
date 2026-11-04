@@ -122,6 +122,9 @@ TOOL_CALLS = [
 ]
 
 
+VERBATIM_TOOLS = {"read_article", "read_chunk"}
+
+
 @pytest.mark.parametrize(("tool", "arguments"), TOOL_CALLS)
 async def test_the_notice_comes_first_in_the_text_every_client_reads(
     container: Container, tool: str, arguments: dict[str, Any]
@@ -143,7 +146,9 @@ async def test_every_tool_declares_a_required_notice_and_the_same_hints(
     async with container.running(), Client(build_mcp(container)) as mcp:
         tools = await mcp.list_tools()
 
-    assert {t.name for t in tools} == {name for name, _ in TOOL_CALLS}  # a new tool lands here
+    # A new tool lands here: either in TOOL_CALLS (notice first in the text) or in VERBATIM_TOOLS
+    # (the text block is the stored text itself, so the notice is only in the structured content).
+    assert {t.name for t in tools} == {name for name, _ in TOOL_CALLS} | VERBATIM_TOOLS
     for tool in tools:
         schema = tool.output_schema or {}
         assert "notice" in schema["properties"], tool.name

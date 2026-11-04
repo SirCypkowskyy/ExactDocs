@@ -11,6 +11,7 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreManifestCommand
 from exactdocs.catalog.models import RefKind
+from exactdocs_kernel import NOTICE
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -71,6 +72,8 @@ async def test_a_ref_with_a_slash_goes_in_the_query_string(client: httpx.AsyncCl
 
     assert response.status_code == 200
     assert response.json() | {"manifest_id": ""} == {
+        "notice": NOTICE,
+        "source_url": f"https://github.com/acme/payments/blob/{'c' * 40}/guide/install.md",
         "library": "/acme/payments",
         "ref": "release/1.4",
         "commit_sha": "c" * 40,

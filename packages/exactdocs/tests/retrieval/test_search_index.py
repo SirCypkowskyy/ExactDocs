@@ -148,7 +148,6 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
-            versions=Gone(),
             searchable=Gone(),
             manifests=Gone(),
             chunks=chunks,

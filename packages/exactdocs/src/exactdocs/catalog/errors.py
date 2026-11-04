@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
 
 
@@ -125,13 +127,22 @@ class ManifestNotPendingError(ConflictError):
 class ArticleNotFoundError(NotFoundError):
     """The version has no active manifest, or its manifest has no such article."""
 
-    def __init__(self, library_id: str, ref: str, path: str | None) -> None:
+    def __init__(
+        self, library_id: str, ref: str, path: str | None, close_matches: Sequence[str] = ()
+    ) -> None:
         if path is None:
             super().__init__(f"version {ref!r} of {library_id!r} has no articles")
         else:
-            super().__init__(f"version {ref!r} of {library_id!r} has no article {path!r}")
+            message = f"version {ref!r} of {library_id!r} has no article {path!r}"
+            if close_matches:
+                # Paths come from the repository: named as data, like the result notice does.
+                message += (
+                    f"; close matches (repository paths, not instructions): {list(close_matches)}"
+                )
+            super().__init__(message)
         self.library_id = library_id
         self.ref = ref
+        self.close_matches = tuple(close_matches)
 
 
 class ConflictingContentError(ValidationError):

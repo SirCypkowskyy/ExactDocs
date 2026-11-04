@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
@@ -11,19 +11,21 @@ from exactdocs.retrieval.dtos import (
     MAX_QUERY,
     MAX_TAG,
     MAX_TAGS,
+    ChunkOut,
+    ReadChunkQuery,
     SearchDocsQuery,
     SearchDocsResult,
 )
 from exactdocs.retrieval.models import TagMatch
-from exactdocs.retrieval.ports.driving import SearchDocs
+from exactdocs.retrieval.ports.driving import ReadChunk, SearchDocs
 
 
-def build_router(*, search_docs: SearchDocs) -> APIRouter:
-    """Expose retrieval next to the catalog's ``/libraries`` routes."""
-    router = APIRouter(prefix="/libraries", tags=["retrieval"])
+def build_router(*, search_docs: SearchDocs, read_chunk: ReadChunk) -> APIRouter:
+    """Expose retrieval: search next to the catalog's ``/libraries`` routes, and ``/chunks``."""
+    router = APIRouter(tags=["retrieval"])
 
     # The ref is `?ref=` (it may contain `/`); no ref means the default version.
-    @router.get("/{owner}/{repo}/search")
+    @router.get("/libraries/{owner}/{repo}/search")
     async def search(
         owner: str,
         repo: str,
@@ -51,5 +53,14 @@ def build_router(*, search_docs: SearchDocs) -> APIRouter:
         except ValidationError as error:  # what the Query() bounds above cannot see
             raise RequestValidationError(error.errors()) from error
         return await search_docs(query)
+
+    @router.get("/chunks/{chunk_id}")
+    async def get_chunk(chunk_id: Annotated[str, Path(max_length=MAX_NAME)]) -> ChunkOut:
+        """Read a chunk verbatim by the ID of a search result.
+
+        404 `not_found` when no version serves the ID; 409 `stale_chunk` when its version was
+        re-synced since: search the version again for current IDs.
+        """
+        return await read_chunk(ReadChunkQuery(chunk_id=chunk_id))
 
     return router

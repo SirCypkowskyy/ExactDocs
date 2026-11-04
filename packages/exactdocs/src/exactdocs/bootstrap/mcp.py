@@ -52,6 +52,11 @@ def build_mcp(container: Container) -> FastMCP:
         mcp,
         list_libraries=container.catalog.list_libraries,
         list_articles=container.catalog.list_articles,
+        get_article=container.catalog.get_article,
     )
-    retrieval_mcp.register_tools(mcp, search_docs=container.retrieval.search_docs)
+    retrieval_mcp.register_tools(
+        mcp,
+        search_docs=container.retrieval.search_docs,
+        read_chunk=container.retrieval.read_chunk,
+    )
     return mcp

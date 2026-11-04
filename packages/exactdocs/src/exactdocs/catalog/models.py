@@ -1,9 +1,10 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from difflib import get_close_matches
 from enum import StrEnum
 from typing import Any, NewType, Self
 
@@ -351,3 +352,14 @@ class GarbageCollected:
 
     manifests: int
     contents: int
+
+
+MAX_CLOSE_MATCHES = 5
+
+
+def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHES) -> list[str]:
+    """Paths an agent may mean by ``wanted``: the same file name elsewhere, then near typos."""
+    name = wanted.rsplit("/", 1)[-1]
+    same_name = sorted(p for p in paths if p.rsplit("/", 1)[-1] == name)
+    typos = get_close_matches(wanted, paths, n=limit, cutoff=0.7)
+    return list(dict.fromkeys([*same_name, *typos]))[:limit]

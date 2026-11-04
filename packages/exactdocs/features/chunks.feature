@@ -40,8 +40,22 @@ Feature: Version-scoped chunk IDs
     Given "/acme/payments" version "main" is indexed as "first" at commit "aaa111":
       | path             | text    |
       | guide/install.md | install |
-    When I read the second chunk of "guide/install.md" in "first" as "/acme/payments" version "main"
+    When I read the second chunk of "guide/install.md" in "first"
     Then the chunk cannot be found
     When the manifest "first" is activated
-    And I read the second chunk of "guide/install.md" in "first" as "/acme/payments" version "main"
+    And I read the second chunk of "guide/install.md" in "first"
     Then the chunk says "install two" and its previous chunk is the first one
+
+  Scenario: A chunk ID from a superseded manifest says it is stale
+    Given "/acme/payments" version "main" is indexed as "first" at commit "aaa111":
+      | path             | text       |
+      | guide/install.md | install v1 |
+    When the manifest "first" is activated
+    And "/acme/payments" version "main" is indexed as "second" at commit "bbb222":
+      | path             | text       |
+      | guide/install.md | install v2 |
+    When the manifest "second" is activated
+    And I read the second chunk of "guide/install.md" in "first"
+    Then the chunk is stale and says how to find the current one
+    When I read the second chunk of "guide/install.md" in "second"
+    Then the chunk says "install v2 two" and its previous chunk is the first one

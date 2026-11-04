@@ -1,6 +1,7 @@
 """Steps for reading articles and chunks verbatim, over MCP and REST."""
 
 import asyncio
+from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
 
@@ -13,7 +14,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.ingestion.models import parse_article
 from exactdocs_kernel import NOTICE
-from steps.search_steps import REPOSITORY, _read_version
+from steps.search_steps import REPOSITORY, read_version
 
 SHA_LENGTH = 40
 
@@ -44,7 +45,7 @@ def step_read_article(context: Context, path: str, target: str) -> None:
 def step_markdown(context: Context) -> None:
     result = context.mcp_result
     assert not result.is_error, result
-    _, files = _read_version(context, context.read_ref)
+    _, files = read_version(context, context.read_ref)
     expected = parse_article(context.read_path, dict(files)[context.read_path]).body
     assert [c.type for c in result.content] == ["text"], result.content
     assert result.content[0].text == expected, result.content[0].text[:200]
@@ -55,7 +56,8 @@ def step_structured(context: Context) -> None:
     data = context.mcp_result.structured_content
     commit = context.commits[context.read_ref]
     assert data["front_matter"]["title"], data
-    assert data["commit_sha"] == commit and len(commit) == SHA_LENGTH, data
+    assert len(commit) == SHA_LENGTH, commit
+    assert data["commit_sha"] == commit, data
     assert data["source_url"] == f"{REPOSITORY}/blob/{commit}/{quote(context.read_path)}", data
     assert (data["ref"], data["path"]) == (context.read_ref, context.read_path), data
     assert "content" not in data, "the text is the text block, not repeated"
@@ -87,7 +89,7 @@ def step_search_result(context: Context, query: str, target: str) -> None:
     response = context.client.get(
         f"/api/v1/libraries/{owner}/{repo}/search", params={"q": query, "ref": ref}
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == HTTPStatus.OK, response.text
     # The first hit with a next chunk, so the neighbor read has somewhere to go.
     context.hit = next(r for r in response.json()["results"] if r["next_chunk_id"])
     context.hit_ref = ref
@@ -114,7 +116,7 @@ def step_neighbor(context: Context) -> None:
     assert [c.type for c in result.content] == ["text"], result.content
     assert result.content[0].text == data["content"], data
     # Chunk text is cut from the article body, so it appears in it unchanged.
-    _, files = _read_version(context, context.hit_ref)
+    _, files = read_version(context, context.hit_ref)
     body = parse_article(data["article_path"], dict(files)[data["article_path"]]).body
     assert data["content"].strip() in body, data["content"]
 

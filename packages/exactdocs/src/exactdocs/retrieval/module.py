@@ -11,16 +11,16 @@ from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
     GetChunkSets,
-    ReadChunk,
     IndexManifest,
+    ReadChunk,
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
     GetChunkSetsUseCase,
-    ReadChunkUseCase,
     IndexManifestUseCase,
+    ReadChunkUseCase,
     SearchDocsUseCase,
 )
 from exactdocs_kernel import Clock, SystemClock
