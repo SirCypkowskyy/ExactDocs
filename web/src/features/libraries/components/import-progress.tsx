@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Check, CircleAlert } from "lucide-react";
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { cn } from "@/shared/lib/utils";
@@ -117,12 +117,35 @@ function Meter({ id, job, state, known }: MeterProps) {
   );
 }
 
-function Failure({ job }: { job: Job | undefined }) {
+function Failure({
+  job,
+  variant,
+  id,
+}: {
+  job: Job | undefined;
+  variant: "library" | "version";
+  id: string;
+}) {
+  const [, owner = "", repo = ""] = id.split("/");
   return (
     <div className="mt-5">
       <p>
-        The library was created, but this version did not finish importing, so it has no articles
-        yet. Fix the cause below, then sync it again from the libraries page.
+        {variant === "library" ? (
+          <>
+            The library was created, but this version did not finish importing, so it has no
+            articles yet. Fix the cause below, then sync it again from the library's{" "}
+            <Link
+              to="/libraries/$owner/$repo/settings"
+              params={{ owner, repo }}
+              className="rounded underline decoration-mark/40 underline-offset-4 outline-none hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              settings page
+            </Link>
+            .
+          </>
+        ) : (
+          "This version did not finish importing, so it was not added. Fix the cause below, then add it again."
+        )}
       </p>
       <p className="mt-4 text-sm font-medium">Details from the server</p>
       <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
@@ -135,8 +158,12 @@ function Failure({ job }: { job: Job | undefined }) {
 const backLink = (primary: boolean) => cn(buttonVariants(primary ? {} : { variant: "ghost" }));
 
 interface Props {
-  added: AddedLibrary;
-  onAddAnother: () => void;
+  /** A new library, or a version added to one: both answer with the same fields. */
+  added: Pick<AddedLibrary, "library_id" | "ref" | "commit_sha" | "job_id">;
+  /** Present when a whole new library was added: offers another one once this import is done. */
+  onAddAnother?: (() => void) | undefined;
+  /** Shown in place of the default buttons once the import is over. */
+  finish?: ReactNode;
 }
 
 /** The list and its sync badges must not show the old state once the import is over. */
@@ -154,14 +181,26 @@ function Actions({
   over,
   succeeded,
   onAddAnother,
+  finish,
 }: {
   over: boolean;
   succeeded: boolean;
-  onAddAnother: () => void;
+  onAddAnother: (() => void) | undefined;
+  finish: ReactNode;
 }) {
-  return over ? (
+  // Inside another page the exit is that page's own (Close), from the first second.
+  return finish ? (
+    <div
+      className={cn(
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        over ? "fade-in mt-8" : "mt-6",
+      )}
+    >
+      {finish}
+    </div>
+  ) : over ? (
     <div className="fade-in mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-      {succeeded && (
+      {succeeded && onAddAnother && (
         <button type="button" onClick={onAddAnother} className={backLink(false)}>
           Add another
         </button>
@@ -182,6 +221,51 @@ function Actions({
   );
 }
 
+/** A new library names the library; a version added to one names the version (we are on the library already). */
+function Heading({
+  ref,
+  version,
+  verb,
+  refName,
+  libraryId,
+}: {
+  ref: React.Ref<HTMLHeadingElement>;
+  version: boolean;
+  verb: string;
+  refName: string;
+  libraryId: string;
+}) {
+  const Tag = version ? "h3" : "h2";
+  return (
+    <Tag
+      id="progress-title"
+      ref={ref}
+      tabIndex={-1}
+      className={cn(
+        "font-semibold outline-none",
+        version ? "text-lg" : "font-serif text-2xl tracking-tight",
+      )}
+    >
+      {verb}{" "}
+      <span className="font-mono text-[0.9em] font-normal [overflow-wrap:anywhere]">
+        {version ? refName : <LibraryId id={libraryId} />}
+      </span>
+    </Tag>
+  );
+}
+
+/** Under the heading: the ref and commit; for a version, the library it belongs to instead of its ref. */
+function Subline({ added, library }: { added: Props["added"]; library: boolean }) {
+  return (
+    <p className="mt-2 text-muted-foreground">
+      <span className="font-mono text-[13px]">{library ? added.ref : added.library_id}</span>
+      <span aria-hidden="true"> · </span>
+      <span className="font-mono text-[13px]">{shortSha(added.commit_sha)}</span>
+      <span className="sr-only"> commit</span>
+    </p>
+  );
+}
+
 interface OutcomeProps {
   id: string;
   job: Job | undefined;
@@ -190,10 +274,11 @@ interface OutcomeProps {
   summary: ProblemSummary;
   gone: boolean;
   lostContact: boolean;
+  variant: "library" | "version";
 }
 
 /** What the job has to say right now: progress, the failure, or the files it skipped. */
-function Outcome({ id, job, state, skipped, summary, gone, lostContact }: OutcomeProps) {
+function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant }: OutcomeProps) {
   const finished = state === "succeeded" || state === "failed";
   const known = (job?.total ?? 0) > 0;
   return (
@@ -212,14 +297,14 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact }: Outcom
           {!finished && <Meter id={id} job={job} state={state} known={known} />}
         </div>
       )}
-      {state === "failed" && <Failure job={job} />}
+      {state === "failed" && <Failure job={job} variant={variant} id={id} />}
       {finished && <SkippedList summary={summary} />}
     </>
   );
 }
 
 /** Watches the import job of a library that was just added, including the files it skipped. */
-export function ImportProgress({ added, onAddAnother }: Props) {
+export function ImportProgress({ added, onAddAnother, finish }: Props) {
   const { data: job, error } = useQuery(importJobQueryOptions(added.job_id));
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus({ preventScroll: true }), []);
@@ -239,23 +324,14 @@ export function ImportProgress({ added, onAddAnother }: Props) {
 
   return (
     <section aria-labelledby="progress-title" className="fade-in">
-      <h2
-        id="progress-title"
+      <Heading
         ref={heading}
-        tabIndex={-1}
-        className="font-serif text-2xl font-semibold tracking-tight outline-none"
-      >
-        {state === "failed" ? "Import failed" : finished ? "Imported" : "Importing"}{" "}
-        <span className="font-mono text-[0.8em] font-normal">
-          <LibraryId id={added.library_id} />
-        </span>
-      </h2>
-      <p className="mt-2 text-muted-foreground">
-        <span className="font-mono text-[13px]">{added.ref}</span>
-        <span aria-hidden="true"> · </span>
-        <span className="font-mono text-[13px]">{shortSha(added.commit_sha)}</span>
-        <span className="sr-only"> commit</span>
-      </p>
+        version={!onAddAnother}
+        verb={state === "failed" ? "Import failed" : finished ? "Imported" : "Importing"}
+        refName={added.ref}
+        libraryId={added.library_id}
+      />
+      <Subline added={added} library={Boolean(onAddAnother)} />
       <p role="status" className="sr-only">
         {announced}
       </p>
@@ -268,13 +344,42 @@ export function ImportProgress({ added, onAddAnother }: Props) {
         summary={summary}
         gone={gone}
         lostContact={lostContact}
+        variant={onAddAnother ? "library" : "version"}
       />
 
       <Actions
         over={finished || gone}
         succeeded={state === "succeeded"}
         onAddAnother={onAddAnother}
+        finish={finish}
       />
     </section>
+  );
+}
+
+/** One import job as a single quiet line with its bar, for a list of jobs (a re-sync queues one per branch). */
+export function JobLine({ jobId, label }: { jobId: string; label: string }) {
+  const { data: job, error } = useQuery(importJobQueryOptions(jobId));
+  const state = job?.state ?? "queued";
+  const finished = state === "succeeded" || state === "failed";
+  const gone = error instanceof HttpError && error.status < 500 && !job;
+  const known = (job?.total ?? 0) > 0;
+  const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
+  useRefreshListsWhen(finished);
+  if (gone) return <p className="text-sm text-muted-foreground">Progress for {label} is gone.</p>;
+  return (
+    <div className="text-sm">
+      {/* Heard once per phase, never per file. */}
+      <p role="status" className="sr-only">
+        {finished && `${label}: ${phaseText(state, job?.done ?? 0, skipped, job?.error ?? null)}`}
+      </p>
+      <Status job={job} state={state} known={known} skipped={skipped} />
+      {!finished && <Meter id={label} job={job} state={state} known={known} />}
+      {state === "failed" && job?.error && (
+        <p className="mt-1 text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
+          {job.error}
+        </p>
+      )}
+    </div>
   );
 }

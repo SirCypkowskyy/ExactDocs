@@ -1,15 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, CircleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Input } from "@/shared/ui/input";
-import { repositoryRefsQueryOptions } from "../api/add-library";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   decodeChoice,
   encodeChoice,
   filterRefs,
   type RefChoice,
   type RepositoryRefs,
-} from "../model/add-library";
+  repositoryRefsQueryOptions,
+} from "@/shared/lib/refs";
+import { Input } from "./input";
 
 const FILTER_FROM = 15;
 const selectClass =
@@ -19,7 +19,11 @@ interface Props {
   url: string;
   choice: RefChoice;
   typed: string;
-  error: string | undefined;
+  error: ReactNode;
+  /** Branches and tags to leave out (already imported versions). */
+  exclude?: readonly string[] | undefined;
+  /** Ask for a choice instead of presetting the default branch (add-a-version forms). */
+  explicit?: boolean | undefined;
   onChoice: (choice: RefChoice) => void;
   /** The list could not be loaded: only typing a version is left. */
   onUnavailable: () => void;
@@ -27,17 +31,27 @@ interface Props {
 }
 
 function Select({
-  refs,
+  refs: all,
   choice,
   error,
+  exclude,
+  explicit,
   onChoice,
 }: {
   refs: RepositoryRefs;
   choice: RefChoice;
-  error: string | undefined;
+  error: ReactNode;
+  exclude: readonly string[] | undefined;
+  explicit: boolean | undefined;
   onChoice: (c: RefChoice) => void;
 }) {
   const [query, setQuery] = useState("");
+  const left = new Set(exclude);
+  const refs = {
+    ...all,
+    branches: all.branches.filter((b) => !left.has(b.name)),
+    tags: all.tags.filter((t) => !left.has(t.name)),
+  };
   const many = refs.branches.length + refs.tags.length > FILTER_FROM;
   const branches = filterRefs(refs.branches, query);
   const tags = filterRefs(refs.tags, query);
@@ -89,9 +103,15 @@ function Select({
           onChange={(e) => onChoice(decodeChoice(e.target.value))}
           className={selectClass}
         >
-          <option value="default">
-            Default branch{refs.default_branch ? ` (${refs.default_branch})` : ""}
-          </option>
+          {explicit ? (
+            <option value="none" disabled>
+              Choose a branch or tag…
+            </option>
+          ) : (
+            <option value="default">
+              Default branch{refs.default_branch ? ` (${refs.default_branch})` : ""}
+            </option>
+          )}
           {branches.length > 0 && (
             <optgroup label={`Branches (${branches.length})`}>
               {branches.map((b) => (
@@ -132,7 +152,17 @@ function Select({
 }
 
 /** Branch and tag picker for the repository that was just checked. */
-export function RefPicker({ url, choice, typed, error, onChoice, onUnavailable, onTyped }: Props) {
+export function RefPicker({
+  url,
+  choice,
+  typed,
+  error,
+  exclude,
+  explicit,
+  onChoice,
+  onUnavailable,
+  onTyped,
+}: Props) {
   const { data, isPending, isError, refetch, isFetching } = useQuery(
     repositoryRefsQueryOptions(url),
   );
@@ -141,8 +171,12 @@ export function RefPicker({ url, choice, typed, error, onChoice, onUnavailable, 
     if (isError) onUnavailable();
   }, [isError, onUnavailable]);
   const message = error ? (
-    <p id="ref-error" className="fade-in text-sm font-medium text-destructive">
-      {error}
+    <p
+      id="ref-error"
+      className="fade-in flex items-start gap-1.5 text-sm font-medium text-destructive"
+    >
+      <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+      <span>{error}</span>
     </p>
   ) : null;
   return (
@@ -175,7 +209,16 @@ export function RefPicker({ url, choice, typed, error, onChoice, onUnavailable, 
           </button>
         </p>
       )}
-      {data && <Select refs={data} choice={choice} error={error} onChoice={onChoice} />}
+      {data && (
+        <Select
+          refs={data}
+          choice={choice}
+          error={error}
+          exclude={exclude}
+          explicit={explicit}
+          onChoice={onChoice}
+        />
+      )}
       {(choice.kind === "other" || isError) && (
         <Input
           id="ref-typed"

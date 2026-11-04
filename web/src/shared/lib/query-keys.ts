@@ -4,3 +4,6 @@
  * `queryClient.invalidateQueries({ queryKey: BROWSE_KEY })`.
  */
 export const BROWSE_KEY = ["browse"] as const;
+
+/** The root of the libraries list, its sync badges and import jobs. */
+export const LIBRARIES_KEY = ["libraries"] as const;

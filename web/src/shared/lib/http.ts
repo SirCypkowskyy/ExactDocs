@@ -72,9 +72,9 @@ export function getJson<T>(path: ApiPath, init?: RequestInit & { query?: Query }
   return request<T>(path, { ...rest, credentials: "same-origin" }, query);
 }
 
-/** JSON POST/DELETE against the ExactDocs API (the session cookie rides along, same-origin). */
+/** JSON POST/PATCH/DELETE against the ExactDocs API (the session cookie rides along, same-origin). */
 export function sendJson<T>(
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: ApiPath,
   body?: unknown,
 ): Promise<T> {
