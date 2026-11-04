@@ -10,6 +10,7 @@ from exactdocs.ingestion.models import (
     FileProblem,
     Job,
     JobState,
+    ProblemCode,
     RefKind,
     RepositoryHost,
     ResolvedRef,
@@ -22,15 +23,22 @@ class _Dto(BaseModel):
 
 
 class FileProblemSummary(_Dto):
-    """A file the job skipped and the reason."""
+    """A problem with a file: skipped (`skipped`) or imported with a note. `code` is stable."""
 
     path: str
-    reason: str
+    code: ProblemCode
+    reason: str = Field(description="A sentence for people; may change, branch on `code`.")
+    skipped: bool = Field(description="False when the file was imported despite the problem.")
 
     @classmethod
     def from_model(cls, problem: FileProblem) -> Self:
         """Map a domain value."""
-        return cls(path=problem.path, reason=problem.reason)
+        return cls(
+            path=problem.path,
+            code=problem.code,
+            reason=problem.reason,
+            skipped=problem.code.skipped,
+        )
 
 
 class JobSummary(_Dto):
@@ -113,7 +121,7 @@ class LatestJob(_Dto):
             state=job.state,
             done=job.done,
             total=job.total,
-            skipped=len(job.problems),
+            skipped=sum(p.code.skipped for p in job.problems),
             error=job.error,
             created_at=job.created_at,
             started_at=job.started_at,

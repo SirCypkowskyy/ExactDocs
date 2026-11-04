@@ -27,6 +27,7 @@ from exactdocs.ingestion.models import (
     JobId,
     ParsedArticle,
     PathSelection,
+    ProblemCode,
     ProposedId,
     RefKind,
     RepositoryHost,
@@ -145,13 +146,13 @@ class CountingChunker:
 @dataclass(slots=True)
 class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
-    problems: list[tuple[str, str]] = field(default_factory=list)
+    problems: list[tuple[str, str, str]] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
 
-    async def problem(self, path: str, reason: str) -> None:
-        self.problems.append((path, reason))
+    async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        self.problems.append((path, code, reason))
 
 
 def make_job(
@@ -355,6 +356,9 @@ async def test_files_that_cannot_be_read_are_skipped_with_a_reason(tmp_path: Pat
         {
             "docs/ok.md": INSTALL.encode(),
             "docs/latin1.md": "caf\xe9".encode("latin-1"),
+            "docs/utf16.md": "# caf\xe9".encode("utf-16"),
+            "docs/binary.md": b"\x89PNG\0\0",
+            "docs/undecodable.md": b"caf\x81",
             "docs/big.md": b"x" * 100,
         },
         links={"docs/link.md": str(secret)},
@@ -363,13 +367,18 @@ async def test_files_that_cannot_be_read_are_skipped_with_a_reason(tmp_path: Pat
 
     await world.run(make_job(), world.progress)
 
-    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/ok.md"]
-    assert dict(world.progress.problems) == {
-        "docs/big.md": "larger than 50 bytes",
-        "docs/latin1.md": "not valid UTF-8",
-        "docs/link.md": "not a regular file",
+    articles = {a.path: a for a in world.catalog.stored[0].articles}
+    assert sorted(articles) == ["docs/latin1.md", "docs/ok.md", "docs/utf16.md"]
+    assert "caf\xe9" in articles["docs/latin1.md"].content
+    assert "caf\xe9" in articles["docs/utf16.md"].content
+    assert {path: code for path, code, _ in world.progress.problems} == {
+        "docs/big.md": ProblemCode.TOO_LARGE,
+        "docs/binary.md": ProblemCode.BINARY,
+        "docs/undecodable.md": ProblemCode.UNDECODABLE,
+        "docs/link.md": ProblemCode.NOT_A_FILE,
     }
-    assert world.progress.reports[-1] == (4, 4)  # skipped files count as processed
+    assert ("docs/big.md", ProblemCode.TOO_LARGE, "larger than 50 bytes") in world.progress.problems
+    assert world.progress.reports[-1] == (7, 7)  # skipped files count as processed
 
 
 async def test_a_file_name_that_is_not_utf8_is_skipped_with_a_printable_path(
@@ -381,8 +390,8 @@ async def test_a_file_name_that_is_not_utf8_is_skipped_with_a_printable_path(
     await world.run(make_job(), world.progress)
 
     assert [a.path for a in world.catalog.stored[0].articles] == ["docs/ok.md"]
-    ((path, reason),) = world.progress.problems
-    assert reason == "file name is not valid UTF-8"
+    ((path, code, _),) = world.progress.problems
+    assert code == ProblemCode.BAD_FILE_NAME
     assert path.isprintable()
     path.encode()  # would raise on a lone surrogate
 
@@ -401,7 +410,7 @@ async def test_a_file_that_cannot_be_opened_is_skipped_not_fatal(tmp_path: Path)
     await world.run(make_job(), world.progress)
 
     assert [a.path for a in world.catalog.stored[0].articles] == ["docs/ok.md"]
-    assert world.progress.problems == [("docs/locked.md", "unreadable")]
+    assert world.progress.problems == [("docs/locked.md", ProblemCode.UNREADABLE, "unreadable")]
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
@@ -498,7 +507,7 @@ async def test_progress_is_stored_now_and_then_not_for_every_file() -> None:
     await progress.report(done=0, total=1000)
     for done in range(1, 1001):
         await progress.report(done=done, total=1000)
-        await progress.problem(f"docs/{done}.md", "skipped")
+        await progress.problem(f"docs/{done}.md", ProblemCode.BINARY, "skipped")
 
     assert jobs.saves < 30
     assert (progress.job.done, progress.job.total) == (1000, 1000)
@@ -508,7 +517,24 @@ async def test_progress_is_stored_now_and_then_not_for_every_file() -> None:
 def test_a_job_lists_a_bounded_number_of_skipped_files() -> None:
     job = make_job()
     for i in range(MAX_JOB_PROBLEMS + 50):
-        job = job.with_problem(f"docs/{i}.md", "skipped")
+        job = job.with_problem(f"docs/{i}.md", ProblemCode.BINARY, "skipped")
 
     assert len(job.problems) == MAX_JOB_PROBLEMS + 1
     assert not job.problems[-1].path
+    assert job.problems[-1].code == ProblemCode.TRUNCATED
+
+
+async def test_front_matter_problems_are_listed_per_file_and_the_article_is_imported(
+    tmp_path: Path,
+) -> None:
+    broken = "---\ntitle: [unclosed\n---\n# Install\n\nbody\n"
+    world = build_world(
+        tmp_path, {"docs/broken.md": broken.encode(), "docs/ok.md": INSTALL.encode()}
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/broken.md", "docs/ok.md"]
+    ((path, code, reason),) = world.progress.problems
+    assert (path, code) == ("docs/broken.md", ProblemCode.FRONT_MATTER)
+    assert reason.startswith("malformed front matter")

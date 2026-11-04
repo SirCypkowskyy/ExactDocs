@@ -266,11 +266,32 @@ class JobState(StrEnum):
     FAILED = "failed"
 
 
+class ProblemCode(StrEnum):
+    """Why a file shows up in a job's problems; stable, clients may branch on it."""
+
+    BINARY = "binary"
+    TOO_LARGE = "too_large"
+    UNDECODABLE = "undecodable"
+    NOT_A_FILE = "not_a_file"
+    UNREADABLE = "unreadable"
+    BAD_FILE_NAME = "bad_file_name"
+    FRONT_MATTER = "front_matter"
+    """The article was imported, but its front matter is malformed or partly ignored."""
+    TRUNCATED = "truncated"
+    """The marker that says more problems happened than ``MAX_JOB_PROBLEMS``."""
+
+    @property
+    def skipped(self) -> bool:
+        """Whether the file was left out of the version (as opposed to imported with a note)."""
+        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED}
+
+
 @dataclass(frozen=True, slots=True)
 class FileProblem:
-    """A file a job skipped, and why."""
+    """A problem with one file of an import: ``code`` is the stable kind, ``reason`` the text."""
 
     path: str
+    code: ProblemCode
     reason: str
 
 
@@ -332,17 +353,13 @@ class Job:
             raise InvalidProgressError(done, total)
         return replace(self, done=done, total=total)
 
-    def with_problem(self, path: str, reason: str) -> Self:
-        """Record a skipped file; the job goes on. Beyond ``MAX_JOB_PROBLEMS`` they are dropped.
-
-        # E3-05b: the listing of skipped files is designed there; this is only a safeguard.
-        """
+    def with_problem(self, path: str, code: ProblemCode, reason: str) -> Self:
+        """Record a problem with a file; the job goes on. Beyond ``MAX_JOB_PROBLEMS``: a marker."""
         if len(self.problems) > MAX_JOB_PROBLEMS:
             return self
         if len(self.problems) == MAX_JOB_PROBLEMS:
-            path, reason = "", "more files were skipped; they are not listed"
-            return replace(self, problems=(*self.problems, FileProblem(path, reason)))
-        return replace(self, problems=(*self.problems, FileProblem(path, reason)))
+            path, code, reason = "", ProblemCode.TRUNCATED, "more problems; they are not listed"
+        return replace(self, problems=(*self.problems, FileProblem(path, code, reason)))
 
     def succeeded(self, now: datetime) -> Self:
         """Mark the job as finished."""

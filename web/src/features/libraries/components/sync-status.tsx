@@ -13,7 +13,8 @@ function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
   const [all, setAll] = useState(false);
   const { data } = useQuery(jobQueryOptions(job.id, open && job.skipped > 0));
   if (job.skipped === 0) return null;
-  const problems = data?.problems ?? [];
+  // notes on imported files (e.g. front matter) are not skips; the count above excludes them
+  const problems = (data?.problems ?? []).filter((p) => p.skipped);
   return (
     <>
       <p className="mt-3 text-muted-foreground">Skipped files ({job.skipped})</p>

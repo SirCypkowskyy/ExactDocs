@@ -1,13 +1,14 @@
 """Ingestion use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
 import asyncio
+import codecs
 import logging
 import os
 import stat
 import time
 import uuid
 from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
@@ -51,6 +52,7 @@ from exactdocs.ingestion.models import (
     NewLibrary,
     ParsedArticle,
     PathSelection,
+    ProblemCode,
     ProposedId,
     RefKind,
     RepositoryUrl,
@@ -246,8 +248,8 @@ class _Progress:
         else:
             await self._save_if_due()
 
-    async def problem(self, path: str, reason: str) -> None:
-        self.job = self.job.with_problem(path, reason)
+    async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        self.job = self.job.with_problem(path, code, reason)
         await self._save_if_due()
 
     async def _save_if_due(self) -> None:
@@ -434,16 +436,18 @@ class ImportVersionUseCase:
         used = 0
         for done, path in enumerate(paths, 1):
             result = await asyncio.to_thread(_load, folder, path, self.max_article_bytes)
-            if isinstance(result, str):  # why the file was skipped; E3-05b grades these
-                await progress.problem(path.encode(errors="replace").decode(), result)
+            shown = path.encode(errors="replace").decode()
+            if isinstance(result, Skip):
+                await progress.problem(shown, result.code, result.reason)
             else:
                 blob_sha, parsed, size = result
                 used += size
                 if used > self.max_import_bytes:
                     raise ImportTooLargeError(self.max_import_bytes)
                 loaded.append((path, blob_sha, parsed))
+                for problem in parsed.problems:  # the article is imported; the note is listed
+                    await progress.problem(shown, ProblemCode.FRONT_MATTER, problem)
             await progress.report(done=done, total=len(paths))
-        # E3-05b: ParsedArticle.problems (malformed front matter, bad tags) are not reported yet.
         blobs = list(dict.fromkeys(blob_sha for _, blob_sha, _ in loaded))
         chunks: dict[str, tuple[ArticleChunk, ...]] = {}
         for start in range(0, len(blobs), KNOWN_BATCH):
@@ -530,43 +534,77 @@ def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
     return sorted(found)
 
 
-def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int] | str:
-    """Read and parse one file, or say why it is skipped (never echoing its content).
+@dataclass(frozen=True, slots=True)
+class Skip:
+    """Why a file is left out of the version (never echoes its content)."""
+
+    code: ProblemCode
+    reason: str
+
+
+def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int] | Skip:
+    """Read, decode and parse one file, or say why it is skipped.
 
     Returns the blob SHA, the article and the byte size. A file over ``limit`` bytes is not read
-    at all. Anything that is not a plain file (a symlink could point outside the checkout), not
-    UTF-8 or not readable is skipped; decoding other charsets is E3-05b.
+    at all. Anything that is not a plain file (a symlink could point outside the checkout) or not
+    readable is skipped, as is text that no supported encoding decodes.
     The blob SHA is hashed from the checked-out bytes, which equals git's because the
     ``GitGateway`` must check files out verbatim (no eol or filter conversion).
     """
     try:
         path.encode()
     except UnicodeEncodeError:
-        return "file name is not valid UTF-8"
+        return Skip(ProblemCode.BAD_FILE_NAME, "file name is not valid UTF-8")
     try:
         data = _read(folder / path, limit)
     except OSError:
-        return "unreadable"
-    if isinstance(data, str):
+        return Skip(ProblemCode.UNREADABLE, "unreadable")
+    if isinstance(data, Skip):
         return data
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return "not valid UTF-8"
+    text = _decode(data)
+    if isinstance(text, Skip):
+        return text
     return git_blob_sha(data), parse_article(path, text), len(data)
 
 
-def _read(file: Path, limit: int) -> bytes | str:
+_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
+def _decode(data: bytes) -> str | Skip:
+    """UTF-8, else UTF-16/32 announced by a BOM, else Windows-1252; NUL bytes mean binary.
+
+    Windows-1252 stands in for Latin-1 (it is a superset where text lives); bytes it leaves
+    undefined make the file undecodable. A real charset detector is not worth a dependency.
+    """
+    for bom, codec in _BOMS:
+        if data.startswith(bom):
+            with suppress(UnicodeDecodeError):
+                return data.decode(codec)
+    if b"\0" in data:
+        return Skip(ProblemCode.BINARY, "binary file")
+    for codec in ("utf-8-sig", "cp1252"):
+        with suppress(UnicodeDecodeError):
+            return data.decode(codec)
+    return Skip(ProblemCode.UNDECODABLE, "not text in any supported encoding")
+
+
+def _read(file: Path, limit: int) -> bytes | Skip:
     """Return the bytes of a plain file of up to ``limit`` bytes, else why it is skipped."""
-    too_big = f"larger than {limit} bytes"
+    too_big = Skip(ProblemCode.TOO_LARGE, f"larger than {limit} bytes")
+    not_a_file = Skip(ProblemCode.NOT_A_FILE, "not a regular file")
     info = file.lstat()
     if not stat.S_ISREG(info.st_mode):
-        return "not a regular file"
+        return not_a_file
     if info.st_size > limit:
         return too_big
     with _open_plain(file) as handle:
         if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):  # swapped since lstat
-            return "not a regular file"
+            return not_a_file
         data = handle.read(limit + 1)
     return data if len(data) <= limit else too_big
 

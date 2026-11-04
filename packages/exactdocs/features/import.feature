@@ -12,9 +12,18 @@ Feature: An import publishes a complete version or nothing
     And "/fixture/docs-repo/v1.3.0" lists every selected article
     And every article and chunk carries the commit SHA of "v1.3.0"
 
-  Scenario: Files that cannot be read are skipped and listed, not fatal
+  Scenario: One bad file does not fail the import
     When "docs/" of the fixture repository at "v1.3.0" is imported
-    Then the skipped files are "docs/legacy/binary.md, docs/legacy/latin1.md, docs/legacy/undecodable.md, docs/reference/oversized.md"
+    Then the import succeeds
+    And the job lists these skipped files:
+      | path                        | code        | reason                              |
+      | docs/legacy/binary.md       | binary      | binary file                         |
+      | docs/legacy/undecodable.md  | undecodable | not text in any supported encoding  |
+      | docs/reference/oversized.md | too_large   | larger than 2097152 bytes           |
+
+  Scenario: A Latin-1 file is decoded, not skipped
+    When "docs/" of the fixture repository at "v1.3.0" is imported
+    Then the article "docs/legacy/latin1.md" of "/fixture/docs-repo/v1.3.0" keeps its accented characters
 
   Scenario: A failed import leaves the previous state served
     Given "/fixture/docs-repo/next" is imported

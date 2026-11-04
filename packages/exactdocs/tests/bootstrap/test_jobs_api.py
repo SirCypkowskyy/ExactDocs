@@ -13,7 +13,7 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.dtos import GetJobQuery
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
+from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")  # also ends the setup state
 
@@ -125,8 +125,8 @@ async def test_the_latest_jobs_are_one_per_version_and_say_how_many_files_were_s
     await repository.add(
         a_job("job-2")
         .started(NOW)
-        .with_problem("docs/a.md", "invalid front matter")
-        .with_problem("docs/b.md", "undecodable")
+        .with_problem("docs/a.md", ProblemCode.FRONT_MATTER, "invalid front matter")
+        .with_problem("docs/b.md", ProblemCode.UNDECODABLE, "not text")
         .succeeded(NOW)
     )
     await repository.add(a_job("job-3", library="/acme/ledger").started(NOW).failed("boom", NOW))
@@ -137,7 +137,7 @@ async def test_the_latest_jobs_are_one_per_version_and_say_how_many_files_were_s
     jobs = response.json()["jobs"]
     assert [(j["library"], j["state"], j["skipped"], j["error"]) for j in jobs] == [
         ("/acme/ledger", "failed", 0, "boom"),
-        ("/acme/payments", "succeeded", 2, None),
+        ("/acme/payments", "succeeded", 1, None),  # a note on an imported file is not a skip,
     ]
     assert all("problems" not in j for j in jobs)
 

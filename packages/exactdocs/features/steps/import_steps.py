@@ -22,10 +22,9 @@ from exactdocs.ingestion.models import RefKind
 from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 
 LIBRARY = "/fixture/docs-repo"
-# Selected by "docs/" yet unreadable: E3-05b reports why; here they are only skipped and listed.
+# Selected by "docs/" yet not imported: skipped and listed with a reason (latin1.md is decoded).
 UNREADABLE = [
     "docs/legacy/binary.md",
-    "docs/legacy/latin1.md",
     "docs/legacy/undecodable.md",
     "docs/reference/oversized.md",
 ]
@@ -222,10 +221,27 @@ def step_commit(context: Context, ref: str) -> None:
     assert {sha for _, sha in hits} == {commit}, hits
 
 
-@then('the skipped files are "{paths}"')
-def step_skipped(context: Context, paths: str) -> None:
+@then("the import succeeds")
+def step_import_succeeds(context: Context) -> None:
     assert context.job["state"] == "succeeded", context.job
-    assert sorted(p["path"] for p in context.job["problems"]) == paths.split(", "), context.job
+
+
+@then("the job lists these skipped files:")
+def step_skipped(context: Context) -> None:
+    listed = [(p["path"], p["code"], p["reason"]) for p in context.job["problems"]]
+    expected = [(r["path"], r["code"], r["reason"]) for r in context.table or []]
+    assert listed == expected, listed
+    assert all(p["skipped"] for p in context.job["problems"])
+
+
+@then('the article "{path}" of "{target}" keeps its accented characters')
+def step_accents(context: Context, path: str, target: str) -> None:
+    ref = target.removeprefix(LIBRARY + "/")
+    response = context.client.get(
+        f"/api/v1/libraries{LIBRARY}/article", params={"ref": ref, "path": path}
+    )
+    assert response.status_code == HTTPStatus.OK, response.text
+    assert "enregistr\u00e9e" in response.json()["content"], response.text
 
 
 @then('"{target}" still serves the previous commit')

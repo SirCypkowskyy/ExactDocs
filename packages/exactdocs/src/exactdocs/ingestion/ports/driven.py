@@ -15,6 +15,7 @@ from exactdocs.ingestion.models import (
     NewLibrary,
     ParsedArticle,
     PathSelection,
+    ProblemCode,
     ProposedId,
     RemoteRefs,
     RepositoryUrl,
@@ -64,8 +65,8 @@ class JobProgress(Protocol):
         """``done`` of ``total`` files processed."""
         ...
 
-    async def problem(self, path: str, reason: str) -> None:
-        """Record a skipped file; the job goes on."""
+    async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        """Record a problem with a file (skipped or imported with a note); the job goes on."""
         ...
 
 

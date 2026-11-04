@@ -10,7 +10,7 @@ from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, RefKind
+from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -51,8 +51,8 @@ async def test_every_field_survives_a_round_trip(repository: JobRepository) -> N
         queued("j1")
         .started(T0 + timedelta(seconds=5))
         .progressed(done=4, total=10)
-        .with_problem("assets/logo.png", "binary")
-        .with_problem("guide/ünï.md", "undecodable")
+        .with_problem("assets/logo.png", ProblemCode.BINARY, "binary file")
+        .with_problem("guide/ünï.md", ProblemCode.UNDECODABLE, "not text")
         .failed("boom", T0 + timedelta(seconds=9, microseconds=7))
     )
 

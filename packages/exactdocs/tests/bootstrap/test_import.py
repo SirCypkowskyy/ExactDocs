@@ -37,6 +37,7 @@ from exactdocs.ingestion.models import (
     Job,
     JobId,
     ParsedArticle,
+    ProblemCode,
     RefKind,
 )
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
@@ -50,7 +51,7 @@ from fixture_repo import DocsRepo, git
 
 LIBRARY = "/fixture/docs-repo"
 LIBRARIES = (LIBRARY, "/fixture/other", "/fixture/third")
-UNREADABLE = {"docs/legacy/binary.md", "docs/legacy/latin1.md", "docs/legacy/undecodable.md"}
+UNREADABLE = {"docs/legacy/binary.md", "docs/legacy/undecodable.md"}
 
 
 class CountingChunker:
@@ -67,7 +68,7 @@ class CountingChunker:
 class Progress:
     async def report(self, *, done: int, total: int) -> None: ...
 
-    async def problem(self, path: str, reason: str) -> None: ...
+    async def problem(self, path: str, code: ProblemCode, reason: str) -> None: ...
 
 
 class CrashError(Exception):

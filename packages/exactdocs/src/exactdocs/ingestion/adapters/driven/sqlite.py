@@ -19,7 +19,15 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.ingestion.models import FileProblem, Job, JobId, JobKind, JobState, RefKind
+from exactdocs.ingestion.models import (
+    FileProblem,
+    Job,
+    JobId,
+    JobKind,
+    JobState,
+    ProblemCode,
+    RefKind,
+)
 
 # The ingestion's tables, prefixed `ingestion_`. The schema itself is created by an Alembic
 # revision in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -145,7 +153,9 @@ def _values(job: Job) -> Mapping[str, Any]:
         "state": job.state,
         "done": job.done,
         "total": job.total,
-        "problems": json.dumps([{"path": p.path, "reason": p.reason} for p in job.problems]),
+        "problems": json.dumps(
+            [{"path": p.path, "code": p.code, "reason": p.reason} for p in job.problems]
+        ),
         "error": job.error,
         "created_at": _text(job.created_at),
         "started_at": _text(job.started_at),
@@ -168,7 +178,10 @@ def _job(row: Row) -> Job:
         state=JobState(row.state),
         done=row.done,
         total=row.total,
-        problems=tuple(FileProblem(**problem) for problem in json.loads(row.problems)),
+        problems=tuple(
+            FileProblem(problem["path"], ProblemCode(problem["code"]), problem["reason"])
+            for problem in json.loads(row.problems)
+        ),
         error=row.error,
         created_at=created_at,
         started_at=_moment(row.started_at),

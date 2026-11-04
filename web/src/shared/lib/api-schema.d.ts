@@ -543,13 +543,22 @@ export interface components {
         };
         /**
          * FileProblemSummary
-         * @description A file the job skipped and the reason.
+         * @description A problem with a file: skipped (`skipped`) or imported with a note. `code` is stable.
          */
         readonly FileProblemSummary: {
             /** Path */
             readonly path: string;
-            /** Reason */
+            readonly code: components["schemas"]["ProblemCode"];
+            /**
+             * Reason
+             * @description A sentence for people; may change, branch on `code`.
+             */
             readonly reason: string;
+            /**
+             * Skipped
+             * @description False when the file was imported despite the problem.
+             */
+            readonly skipped: boolean;
         };
         /**
          * HostKind
@@ -746,6 +755,12 @@ export interface components {
              */
             readonly last_imported_at: string | null;
         };
+        /**
+         * ProblemCode
+         * @description Why a file shows up in a job's problems; stable, clients may branch on it.
+         * @enum {string}
+         */
+        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "truncated";
         /**
          * RefOut
          * @description A tag or branch and the commit it points at.
