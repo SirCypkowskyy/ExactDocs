@@ -10,6 +10,7 @@ site_url = "https://sircypkowskyy.github.io/ExactDocs/"
 repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
+extra_javascript = ["https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js"]
 docs_dir = "docs"
 site_dir = "site"
 nav = [
@@ -20,6 +21,7 @@ nav = [
   ] },
   { "Engineering" = [
     { "Architecture" = "architecture.md" },
+    { "Flows" = "flows.md" },
     { "REST API" = "rest-api.md" },
     { "Branching and releases" = "releasing.md" },
   ] },
@@ -72,6 +74,8 @@ toc.permalink = true
 pymdownx.details = {}
 pymdownx.highlight = {}
 pymdownx.inlinehilite = {}
-pymdownx.superfences = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
 pymdownx.tasklist.custom_checkbox = true
 pymdownx.tabbed.alternate_style = true

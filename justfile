@@ -109,6 +109,8 @@ docs:
 
 # Build the documentation site into site/ (strict, like CI)
 docs-build:
+    pnpm --dir deploy/mermaid-check install --frozen-lockfile
+    pnpm --dir deploy/mermaid-check check
     uv run --only-group docs zensical build --clean --strict
 
 # ---------------------------------------------------------------- repo

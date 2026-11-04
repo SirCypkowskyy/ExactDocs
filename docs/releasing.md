@@ -11,6 +11,29 @@
 Flow: `feature/12-version-filter` → PR into `develop` (squash: one commit per issue) → PR
 `develop` → `main` (merge commit or rebase, keeping the squashed history) → tag on `main`.
 
+```mermaid
+gitGraph
+    commit id: "v0.1.1" tag: "v0.1.1"
+    branch develop
+    checkout develop
+    branch "feature/12-version-filter"
+    commit id: "work"
+    commit id: "tests"
+    checkout develop
+    merge "feature/12-version-filter" id: "squash: one commit per issue"
+    branch "docs/123-mvp1-docs"
+    commit id: "docs"
+    checkout develop
+    merge "docs/123-mvp1-docs" id: "squash"
+    commit id: "v0.2.0.dev1" tag: "v0.2.0.dev1"
+    checkout main
+    merge develop id: "release PR (merge or rebase)" tag: "v0.2.0"
+```
+
+The branch names in the graph are examples. `feature/*`, `bugfix/*`, `docs/*` and `chore/*` branches are squashed into `develop`; `develop` is
+merged (or rebased) into `main`; a tag on `develop` publishes a dev pre-release, a tag on `main`
+a stable release. The registry then keeps only the newest images ([Image retention](#image-retention)).
+
 The merge methods are enforced by repository rulesets on the target branch, so they apply to every
 PR into it, whatever the source branch (a rare `main` → `develop` back-merge is squashed too).
 
@@ -122,6 +145,33 @@ a stale scanner stops finding new vulnerabilities.
 The CI Docker job uses the runner VM's own BuildKit (`driver: docker`), so layers and cache mounts
 persist between jobs on the same VM (see `deploy/runners/README.md`); the release uses the GitHub
 Actions cache instead (`scope=exactdocs`), because it builds multi-arch with a throwaway builder.
+
+## CI/CD and runners
+
+Every workflow runs on two LXD virtual machines on the GB10 host (see `deploy/runners/README.md`),
+matched by the labels `self-hosted, linux, ARM64, exactdocs`.
+
+```mermaid
+flowchart LR
+    gh["GitHub<br/>PR, push to main or develop, tag v*"]
+    subgraph gb10 ["Dell Pro Max GB10 (ARM64)"]
+        subgraph vms ["LXD runner VMs: exactdocs-runner-1, -2"]
+            ci["CI<br/>python, web, image, uvx + browser e2e"]
+            docs["Docs<br/>Mermaid check, zensical build --strict"]
+            rel["Release<br/>meta, web, python, pypi-kernel, pypi, image, github-release"]
+            ret["GHCR retention"]
+        end
+    end
+    gh -->|PR and push| ci
+    gh -->|"docs/**, zensical.toml (PRs: any .md)"| docs
+    gh -->|tag| rel
+    rel -->|after each release, weekly, on demand| ret
+    docs -->|push to main| pages["GitHub Pages"]
+    rel --> pypi["PyPI (trusted publishing)"]
+    rel --> ghcr["ghcr.io image, multi-arch, signed"]
+    rel --> ghrel["GitHub Release"]
+    ret --> ghcr
+```
 
 ## What the release workflow does
 

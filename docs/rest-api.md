@@ -100,6 +100,22 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (once per distinct reason) and named in the message. A later sync that finds the branch up to
   date after a failure records a succeeded no-op job, so the error no longer shows.
 
+## Jobs, access and health
+
+- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh` or `collect`; state `queued`,
+  `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; problems).
+  `GET /jobs/latest` is the newest job of every library version in one call (`{"jobs": [...]}`,
+  with `skipped` instead of the problem list), which the library list uses to show freshness and
+  sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
+  library's jobs, newest first.
+- **Private repositories**: a `credential` (`{"kind": "token", ...}` or `{"kind": "ssh_key", ...}`)
+  is accepted by `POST /repositories/check`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
+  and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
+  and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
+  `{"private": true | false}`: whether the library has a stored credential.
+- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version` and the database's
+  `schema_revision`.
+
 ## Job problems
 
 `GET /api/v1/jobs/{id}` lists the problems an import found per file as
