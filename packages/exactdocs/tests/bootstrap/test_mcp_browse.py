@@ -479,7 +479,10 @@ async def test_resources_list_is_capped_paged_and_names_the_version(container: C
         while pages[-1].next_cursor:
             pages.append(await mcp.list_resources_mcp(cursor=pages[-1].next_cursor))
         templates = await mcp.list_resource_templates()
-        listed = [r for page in pages for r in page.resources]
+        # exactdocs:// articles only: first-party resources (skill://) have no ref and no notice
+        listed = [
+            r for page in pages for r in page.resources if str(r.uri).startswith("exactdocs://")
+        ]
         read = await mcp.read_resource(listed[0].uri)
 
     assert len(listed) == MAX_LISTED_RESOURCES
@@ -587,6 +590,9 @@ async def test_every_resource_read_starts_with_the_notice(container: Container) 
         listed = await mcp.list_resources()
         assert {t.uri_template for t in templates} == set(SAMPLE_URIS)  # a new template lands here
         from_templates = [await mcp.read_resource(SAMPLE_URIS[t.uri_template]) for t in templates]
+        # Guards below cover `exactdocs://` articles only: other listed resources (e.g. the trusted
+        # first-party `skill://` one) are ours, carry no untrusted text, no notice and no ref.
+        listed = [r for r in listed if str(r.uri).startswith("exactdocs://")]
         from_list = [await mcp.read_resource(r.uri) for r in listed]
 
     assert listed

@@ -84,7 +84,10 @@ class ExactDocsMCP(FastMCP):
                 after = base64.urlsafe_b64decode(params.cursor.encode()).decode()
             except ValueError as exc:
                 raise MCPError(code=INVALID_PARAMS, message="invalid cursor") from exc
-        items = [r for r in full.resources if after is None or str(r.uri) > after]
+        items = sorted(
+            (r for r in full.resources if after is None or str(r.uri) > after),
+            key=lambda r: str(r.uri),
+        )
         page = items[: catalog_mcp.RESOURCE_PAGE_SIZE]
         more = len(items) > len(page)
         return ListResourcesResult(

@@ -71,7 +71,11 @@ def step_list(context: Context) -> None:
         pages: list[ListResourcesResult] = [await mcp.list_resources_mcp()]
         while pages[-1].next_cursor:
             pages.append(await mcp.list_resources_mcp(cursor=pages[-1].next_cursor))
-        reads = [await mcp.read_resource(pages[0].resources[0].uri)]
+        reads = [
+            await mcp.read_resource(
+                next(r for r in pages[0].resources if str(r.uri).startswith("exactdocs://")).uri
+            )
+        ]
         return [pages, reads]
 
     context.pages, context.listed_reads = asyncio.run(_with_client(context, action))
@@ -83,8 +87,10 @@ def step_listed(context: Context, size: int) -> None:
     assert context.pages[0].resources
     for page in context.pages:
         assert len(page.resources) <= size
+        # `ref` is required of `exactdocs://` articles only; first-party resources (skill://) have none
         for resource in page.resources:
-            assert f"?ref={DEFAULT_REF}" in str(resource.uri), resource.uri
+            if str(resource.uri).startswith("exactdocs://"):
+                assert f"?ref={DEFAULT_REF}" in str(resource.uri), resource.uri
 
 
 @then("reading a listed resource gives the notice first")
