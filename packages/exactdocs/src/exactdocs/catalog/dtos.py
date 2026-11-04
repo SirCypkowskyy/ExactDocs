@@ -1,9 +1,17 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from exactdocs.catalog.models import (
     GarbageCollected,
@@ -530,6 +538,76 @@ class CreateLibraryCommand(_Dto):
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+
+
+MAX_TITLE = 200
+MAX_DESCRIPTION = 1000
+_Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
+_Description = Annotated[str, Field(max_length=MAX_DESCRIPTION)]
+
+
+def _clean(text: str) -> str:
+    r"""Drop control and format characters (zero-width, bidi, tags, escapes); keep \n and \t."""
+    return "".join(
+        c for c in text if c in "\n\t" or unicodedata.category(c) not in {"Cc", "Cf", "Co", "Cs"}
+    )
+
+
+class LibraryPatch(_Dto):
+    """The fields a user may change; at least one must be given."""
+
+    title: Annotated[str, StringConstraints(min_length=1, max_length=MAX_TITLE)] | None = Field(
+        default=None, description="A single line of text. Null or absent: unchanged."
+    )
+    description: Annotated[str, StringConstraints(max_length=MAX_DESCRIPTION)] | None = Field(
+        default=None,
+        description="Empty is allowed: no description. Null or absent: unchanged.",
+    )
+
+    @field_validator("title")
+    @classmethod
+    def _single_line(cls, title: str | None) -> str | None:
+        if title is None:
+            return None
+        if any(unicodedata.category(c) in {"Zl", "Zp"} or c in "\n\r\v\f\x85" for c in title):
+            message = "the title must be a single line"
+            raise ValueError(message)
+        title = " ".join(_clean(title).split())
+        if not title:
+            message = "the title must have visible text"
+            raise ValueError(message)
+        return title
+
+    @field_validator("description")
+    @classmethod
+    def _plain(cls, description: str | None) -> str | None:
+        return None if description is None else _clean(description).strip()
+
+    @model_validator(mode="after")
+    def _says_something(self) -> Self:
+        if self.title is None and self.description is None:
+            message = "give a title or a description"
+            raise ValueError(message)
+        return self
+
+
+class UpdateLibraryCommand(LibraryPatch):
+    """Set the title and/or description of a library by hand; they are then kept for good."""
+
+    id: str = Field(min_length=1)
+
+
+class ApplyReadmeCommand(_Dto):
+    """What the root README of an imported version says; used only if it is the default version.
+
+    A missing value (the README has no heading or no paragraph) means: the repository name as
+    title, no description.
+    """
+
+    library: str = Field(min_length=1)
+    ref: str = Field(min_length=1)
+    title: _Title | None = None
+    description: _Description | None = None
 
 
 class DiscardLibraryCommand(_Dto):

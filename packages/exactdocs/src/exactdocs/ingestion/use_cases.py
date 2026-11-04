@@ -54,12 +54,14 @@ from exactdocs.ingestion.models import (
     PathSelection,
     ProblemCode,
     ProposedId,
+    ReadmeSummary,
     RefKind,
     RepositoryUrl,
     TagRule,
     article_tags,
     git_blob_sha,
     parse_article,
+    readme_summary,
     ref_tips,
     resolve_ref,
 )
@@ -400,6 +402,7 @@ class ImportVersionUseCase:
             source.url, job.commit_sha, source.selection, refs=refs
         ) as folder:
             articles = await self._articles(folder, source, config_hash, progress)
+            readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
         if not articles:
             raise NoArticlesError
         version = ImportedVersion(
@@ -423,6 +426,16 @@ class ImportVersionUseCase:
             cleanup.add_done_callback(_cleanups.discard)
             await asyncio.shield(cleanup)
             raise
+        # The version is live now: a catalog that cannot take the README's text must not fail it.
+        try:
+            await self.versions.describe(
+                library=job.library,
+                ref=job.version,
+                title=readme.title,
+                description=readme.description,
+            )
+        except Exception:
+            log.exception("could not apply the README of %s %s", job.library, job.version)
 
     async def _articles(
         self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress
@@ -532,6 +545,26 @@ def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
             if selection.selects(path):
                 found.append(path)
     return sorted(found)
+
+
+def _readme(folder: Path, limit: int) -> ReadmeSummary:
+    """Summarize the root README (``README.md``, else ``README.mdx``); nothing if there is none.
+
+    It is read whatever the path selection says (the git gateway always fetches it) and is as
+    untrusted as any article. A README that is a symlink, not a plain file, too big or not
+    UTF-8 counts as absent (the first of the two names that exists decides). This never raises:
+    the summary is a nicety and must not fail an import whose articles are fine.
+    """
+    for name in ("README.md", "README.mdx"):
+        try:
+            data = _read(folder / name, limit)
+            return ReadmeSummary() if isinstance(data, Skip) else readme_summary(data.decode())
+        except FileNotFoundError:
+            continue
+        except Exception:
+            log.exception("could not summarize the README of a checkout")
+            return ReadmeSummary()
+    return ReadmeSummary()
 
 
 @dataclass(frozen=True, slots=True)

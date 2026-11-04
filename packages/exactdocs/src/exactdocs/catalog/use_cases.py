@@ -9,6 +9,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyReadmeCommand,
     Article,
     ArticleInfo,
     ArticleList,
@@ -32,6 +33,7 @@ from exactdocs.catalog.dtos import (
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
+    UpdateLibraryCommand,
 )
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
@@ -113,6 +115,55 @@ class CreateLibraryUseCase:
         )
         await self.repository.add(library)
         return LibraryDetail.from_model(library)
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateLibraryUseCase:
+    """Implements ``ports.driving.UpdateLibrary``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: UpdateLibraryCommand) -> LibraryDetail:
+        """Change the given fields and remember that a user chose them."""
+        library = await self.repository.get(LibraryId(command.id))
+        if library is None:
+            raise LibraryNotFoundError(command.id)
+        await self.repository.set_text(
+            library.id, title=command.title, description=command.description
+        )
+        updated = await self.repository.get(library.id)
+        if updated is None:  # deleted in between
+            raise LibraryNotFoundError(command.id)
+        return LibraryDetail.from_model(updated)
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyReadmeUseCase:
+    """Implements ``ports.driving.ApplyReadme``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: ApplyReadmeCommand) -> None:
+        """Follow the default version's README for every field a user has not edited.
+
+        The README of any other version is ignored. No heading means the repository name as
+        title, no paragraph means no description, so a field never keeps text a README dropped.
+
+        Only the two text columns are written, in one statement that keeps edited fields, so a
+        concurrent user edit survives. The caller does not retry: if this fails the library keeps
+        its old text until the default version is imported again.
+        """
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        default = library.default_version()
+        if default is None or default.ref != VersionRef(command.ref):
+            return
+        await self.repository.follow_readme(
+            library.id,
+            title=command.title or library.id.value.rsplit("/", 1)[-1],
+            description=command.description or "",
+        )
 
 
 @dataclass(frozen=True, slots=True)

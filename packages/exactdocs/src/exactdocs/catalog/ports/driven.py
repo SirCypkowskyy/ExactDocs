@@ -45,6 +45,23 @@ class LibraryRepository(Protocol):
         """Store the library, replacing any earlier entry with the same ID."""
         ...
 
+    async def set_text(
+        self, library_id: LibraryId, *, title: str | None, description: str | None
+    ) -> None:
+        """Set the given fields (not ``None``) and mark them as edited by a user.
+
+        Touches nothing else, so it cannot undo a concurrent change. Absent IDs are ignored.
+        """
+        ...
+
+    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
+        """Set title and description, except a field a user edited, in one atomic step.
+
+        The edited flags are read by the write itself, so a user's edit that lands in between
+        is never overwritten. Absent IDs are ignored.
+        """
+        ...
+
 
 class ManifestRepository(Protocol):
     """Persistence for manifests and the article texts they share, keyed by content key."""

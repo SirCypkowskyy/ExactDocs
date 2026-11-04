@@ -11,12 +11,14 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     LibraryDetail,
     LibraryList,
+    LibraryPatch,
     Limit,
     ListArticlesQuery,
     ListLibrariesQuery,
     ResolvedVersion,
     ResolveVersionQuery,
     TagFilter,
+    UpdateLibraryCommand,
 )
 from exactdocs.catalog.models import TagMatch
 from exactdocs.catalog.ports.driving import (
@@ -25,6 +27,7 @@ from exactdocs.catalog.ports.driving import (
     ListArticles,
     ListLibraries,
     ResolveVersion,
+    UpdateLibrary,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
 
@@ -36,6 +39,7 @@ def build_router(
     resolve_version: ResolveVersion,
     list_articles: ListArticles,
     get_article: GetArticle,
+    update_library: UpdateLibrary,
 ) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``."""
     router = APIRouter(prefix="/libraries", tags=["catalog"])
@@ -49,6 +53,13 @@ def build_router(
     @router.get("/{owner}/{repo}")
     async def get_one(owner: str, repo: str) -> LibraryDetail:
         return await get_library(GetLibraryQuery(id=f"/{owner}/{repo}"))
+
+    @router.patch("/{owner}/{repo}")
+    async def update_one(owner: str, repo: str, patch: LibraryPatch) -> LibraryDetail:
+        """Set the title and/or description; an edited field is no longer taken from the README."""
+        return await update_library(
+            UpdateLibraryCommand(id=f"/{owner}/{repo}", **patch.model_dump(exclude_unset=True))
+        )
 
     @router.get("/{owner}/{repo}/versions/{ref:path}")
     async def get_version(owner: str, repo: str, ref: str) -> ResolvedVersion:

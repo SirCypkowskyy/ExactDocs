@@ -106,6 +106,7 @@ def step_running(context: Context) -> None:
     context.add_cleanup(stack.close)
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     settings = Settings(data_dir=data_dir)
+    context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     git = GitCli.locate()
     context.git = SwitchableGit(git)

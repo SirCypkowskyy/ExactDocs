@@ -108,6 +108,7 @@ class World:
             c.catalog.store_manifest,
             c.catalog.activate_manifest,
             c.catalog.discard_pending_manifests,
+            c.catalog.apply_readme,
         )
         return ImportVersionUseCase(
             gateway=git_cli,

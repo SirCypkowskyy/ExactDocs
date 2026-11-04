@@ -94,6 +94,7 @@ class Side:
     name: str
     log: list[str]
     stored: list[ImportedVersion] = field(default_factory=list)
+    described: list[tuple[str, str, str | None, str | None]] = field(default_factory=list)
     known_sets: dict[str, tuple[ArticleChunk, ...]] = field(default_factory=dict)
     known_calls: list[int] = field(default_factory=list)
     fail_at: str | None = None
@@ -116,6 +117,12 @@ class Side:
 
     async def activate(self, manifest_id: str) -> None:
         await self._step(f"activate {manifest_id}")
+
+    async def describe(
+        self, *, library: str, ref: str, title: str | None, description: str | None
+    ) -> None:
+        await self._step("describe")
+        self.described.append((library, ref, title, description))
 
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
@@ -226,7 +233,12 @@ async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_fi
 ) -> None:
     await world.run(make_job(), world.progress)
 
-    assert world.log == ["catalog store", "chunks index m1", "catalog activate m1"]
+    assert world.log == [
+        "catalog store",
+        "chunks index m1",
+        "catalog activate m1",
+        "catalog describe",
+    ]
     (version,) = world.catalog.stored
     assert (version.library, version.ref, version.kind, version.commit_sha) == (
         "/a/b",
@@ -244,6 +256,66 @@ async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_fi
     assert [c.heading_path for c in auth.chunks] == [("Auth",), ("Auth", "Issue")]
     assert world.progress.reports == [(0, 2), (1, 2), (2, 2)]
     assert world.gateway.fetched == [(SHA, "", ["refs/tags/v1"])]
+
+
+README = b"# Acme\n\nA payments SDK.\n"
+
+
+async def test_the_root_readme_is_offered_after_activation_even_outside_the_selection(
+    tmp_path: Path,
+) -> None:
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode(), "README.md": README})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+    assert world.catalog.described == [("/a/b", "v1", "Acme", "A payments SDK.")]
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/auth.md"]
+
+
+async def test_readme_md_wins_over_readme_mdx(tmp_path: Path) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.mdx": b"# Mdx\n", "README.md": b"# Md\n"}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Md", None)]
+
+
+@pytest.mark.parametrize(
+    "readme", [None, b"\xff\xfe not utf-8", b"x" * 3000], ids=["missing", "not-utf8", "too-big"]
+)
+async def test_an_unusable_readme_is_offered_as_empty(tmp_path: Path, readme: bytes | None) -> None:
+    files = {"docs/a.md": INSTALL.encode()} | ({} if readme is None else {"README.md": readme})
+    world = build_world(tmp_path, files, max_bytes=2048)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+
+
+async def test_a_catalog_that_refuses_the_readme_does_not_fail_the_import(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "README.md": README})
+    world.catalog.fail_at = "describe"
+
+    await world.run(make_job(), world.progress)
+
+    assert world.log == [
+        "catalog store",
+        "chunks index m1",
+        "catalog activate m1",
+        "catalog describe",
+    ]
+
+
+async def test_nothing_is_offered_when_the_import_fails(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "README.md": README})
+    world.chunks.fail_at = "index m1"
+
+    with pytest.raises(RuntimeError):
+        await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == []
 
 
 async def test_rule_tags_come_before_front_matter_tags(tmp_path: Path) -> None:
@@ -581,3 +653,39 @@ def test_decode(data: bytes, expected: str | ProblemCode) -> None:
         assert result.code == expected
     else:
         assert result == expected
+
+
+async def test_a_readme_that_is_a_symlink_is_absent(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": INSTALL.encode(), "secret.md": README},
+        links={"README.md": "secret.md"},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+
+
+async def test_a_readme_that_is_not_a_plain_file_is_absent(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode()})
+    world.gateway.after_write = lambda folder: os.mkfifo(folder / "README.md")
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+
+
+async def test_a_summary_that_blows_up_does_not_fail_the_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def explode(source: str) -> object:
+        raise RecursionError(source)
+
+    monkeypatch.setattr("exactdocs.ingestion.use_cases.readme_summary", explode)
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "README.md": README})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]

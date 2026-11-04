@@ -16,7 +16,7 @@ LIBRARY = "/fixture/docs-repo"
 SHA_LENGTH = 40
 
 
-def _call(
+def call_tool(
     context: Context, tool: str, arguments: dict[str, Any], *, raise_on_error: bool = True
 ) -> None:
     async def go() -> Any:
@@ -31,24 +31,24 @@ def _call(
 
 @when('an agent calls "list_libraries"')
 def step_list_libraries(context: Context) -> None:
-    _call(context, "list_libraries", {})
+    call_tool(context, "list_libraries", {})
 
 
 @when('an agent calls "list_articles" for "{library}" with limit {limit:d}')
 def step_list_articles_limit(context: Context, library: str, limit: int) -> None:
     context.mcp_arguments = {"library": library, "limit": limit}
-    _call(context, "list_articles", context.mcp_arguments)
+    call_tool(context, "list_articles", context.mcp_arguments)
 
 
 @when('an agent calls "list_articles"')
 def step_list_articles(context: Context) -> None:
-    _call(context, "list_articles", {"library": LIBRARY})
+    call_tool(context, "list_articles", {"library": LIBRARY})
 
 
 @when("it calls again with that cursor")
 def step_next_page(context: Context) -> None:
     context.first_page = context.mcp_data
-    _call(
+    call_tool(
         context,
         "list_articles",
         {**context.mcp_arguments, "cursor": context.first_page["next_cursor"]},
@@ -110,7 +110,7 @@ def step_text_first(context: Context) -> None:
 
 @when('an agent calls "search_docs" for "{library}" version "{ref}" and "{query}"')
 def step_search(context: Context, library: str, ref: str, query: str) -> None:
-    _call(
+    call_tool(
         context,
         "search_docs",
         {"library": library, "ref": ref, "query": query},
@@ -120,7 +120,7 @@ def step_search(context: Context, library: str, ref: str, query: str) -> None:
 
 @when('an agent calls "search_docs" with mode "{mode}"')
 def step_search_mode(context: Context, mode: str) -> None:
-    _call(
+    call_tool(
         context,
         "search_docs",
         {"library": LIBRARY, "query": "retry_policy", "mode": mode},

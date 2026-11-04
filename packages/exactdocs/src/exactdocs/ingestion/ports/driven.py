@@ -184,6 +184,17 @@ class VersionPublisher(Protocol):
         """Make the pending manifest what its version serves, all at once."""
         ...
 
+    async def describe(
+        self, *, library: str, ref: str, title: str | None, description: str | None
+    ) -> None:
+        """Offer the root README's heading and first paragraph of an activated version.
+
+        The catalog decides what to do with them: it only takes the default version's README
+        and never replaces a title or description a user edited. ``None`` means the README
+        had none.
+        """
+        ...
+
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
         """Delete the library's pending manifests (only ``manifest_id``'s when given)."""
         ...

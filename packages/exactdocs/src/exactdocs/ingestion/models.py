@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlsplit
 
 import yaml
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
@@ -116,6 +117,7 @@ _FrontMatterLoader.yaml_implicit_resolvers = {
     for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 _MARKDOWN = MarkdownIt("commonmark")
+_README_MARKDOWN = MarkdownIt("commonmark").enable("table")  # a table is not a description
 
 
 def malformed_front_matter_length(body: str) -> int:
@@ -247,6 +249,69 @@ def _title(declared: object, body: str, path: str) -> str:
             if heading:
                 return heading
     return PurePosixPath(path).stem
+
+
+README_TITLE_MAX = 120
+README_DESCRIPTION_MAX = 500
+
+
+@dataclass(frozen=True, slots=True)
+class ReadmeSummary:
+    """What a root README says about its library; ``None`` where it says nothing usable."""
+
+    title: str | None = None
+    description: str | None = None
+
+
+def readme_summary(source: str) -> ReadmeSummary:
+    """Take the first heading and the first paragraph after it from untrusted README text.
+
+    Run through ``parse_article`` first, so invisible characters and front matter are gone. Only
+    plain text is kept (no markup, images or HTML), whitespace is collapsed and the values are
+    cut to ``README_TITLE_MAX`` / ``README_DESCRIPTION_MAX``. Paragraphs inside lists or quotes,
+    and paragraphs with no text (badges, images), are skipped. Without a heading the first
+    paragraph of the file is used.
+    """
+    tokens = _README_MARKDOWN.parse(parse_article("README.md", source).body)
+    title, start = None, 0
+    for index, token in enumerate(tokens):
+        if token.type == "heading_open" and (text := _inline_text(tokens[index + 1])):
+            title, start = text[:README_TITLE_MAX].rstrip(), index
+            break
+    description = None
+    for index in range(start, len(tokens)):
+        if (
+            tokens[index].type == "paragraph_open"
+            and tokens[index].level == 0
+            and (text := _inline_text(tokens[index + 1], skip_link_only=True))
+        ):
+            description = text[:README_DESCRIPTION_MAX].rstrip()
+            break
+    return ReadmeSummary(title=title, description=description)
+
+
+def _inline_text(inline: Token, *, skip_link_only: bool = False) -> str:
+    """Join the visible text of an inline token, collapsing whitespace.
+
+    With ``skip_link_only`` a line that is nothing but links (a nav bar) gives ``""``.
+    """
+    words, outside, in_link = [], [], False
+    for child in inline.children or []:
+        match child.type:
+            case "link_open":
+                in_link = True
+            case "link_close":
+                in_link = False
+            case "softbreak" | "hardbreak":
+                words.append(" ")
+                outside.append(" ")
+            case "text" | "code_inline":
+                words.append(child.content)
+                if not in_link:
+                    outside.append(child.content)
+    if skip_link_only and not "".join(outside).strip(" |-*\u00b7\u2022"):
+        return ""
+    return " ".join("".join(words).split())
 
 
 # ---------------------------------------------------------------- jobs

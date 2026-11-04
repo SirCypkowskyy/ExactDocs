@@ -42,6 +42,7 @@ PAYMENTS = Library(
     source_url="https://github.com/acme/payments",
     host=HostKind.GITHUB,
     default_branch=VersionRef("main"),
+    title_edited=True,
     settings=LibrarySettings(
         include_paths=("docs",),
         exclude_paths=("docs/internal", "**/*.draft.md"),
@@ -202,3 +203,27 @@ async def test_a_rule_stored_under_an_older_normal_form_still_loads(
 def test_a_rule_whose_tag_cannot_be_one_is_refused(tag: str) -> None:
     with pytest.raises(InvalidSettingsError):
         TagRule(pattern="docs/**", tag=tag)
+
+
+async def test_set_text_changes_only_the_given_fields_and_marks_them(
+    repository: LibraryRepository,
+) -> None:
+    await repository.save(replace(PAYMENTS, title_edited=False))
+
+    await repository.set_text(PAYMENTS.id, title=None, description="New text")
+    await repository.set_text(LibraryId("/x/y"), title="Ghost", description=None)
+
+    assert await repository.get(PAYMENTS.id) == replace(
+        PAYMENTS, title_edited=False, description="New text", description_edited=True
+    )
+    assert await repository.get(LibraryId("/x/y")) is None
+
+
+async def test_follow_readme_keeps_edited_fields(repository: LibraryRepository) -> None:
+    await repository.save(replace(PAYMENTS, title_edited=True, description_edited=False))
+
+    await repository.follow_readme(PAYMENTS.id, title="README", description="README text")
+
+    assert await repository.get(PAYMENTS.id) == replace(
+        PAYMENTS, title_edited=True, description="README text", description_edited=False
+    )

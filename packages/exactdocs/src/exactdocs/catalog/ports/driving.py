@@ -6,6 +6,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyReadmeCommand,
     Article,
     ArticleList,
     CollectGarbageCommand,
@@ -27,6 +28,7 @@ from exactdocs.catalog.dtos import (
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
+    UpdateLibraryCommand,
 )
 
 
@@ -157,5 +159,28 @@ class DiscardLibrary(Protocol):
     """
 
     async def __call__(self, command: DiscardLibraryCommand) -> None:
+        """Run the use case."""
+        ...
+
+
+class UpdateLibrary(Protocol):
+    """Set a library's title and/or description by hand; later README imports keep them.
+
+    Raises ``LibraryNotFoundError``.
+    """
+
+    async def __call__(self, command: UpdateLibraryCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class ApplyReadme(Protocol):
+    """Take title and description from the README of a just-imported version.
+
+    Only the default version's README counts, and only for a field no user has edited. Raises
+    ``LibraryNotFoundError``.
+    """
+
+    async def __call__(self, command: ApplyReadmeCommand) -> None:
         """Run the use case."""
         ...

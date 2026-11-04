@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from pydantic import TypeAdapter
 from sqlalchemy import (
+    Boolean,
     Column,
     ColumnElement,
     ForeignKey,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     Table,
     Text,
     and_,
+    case,
     delete,
     exists,
     insert,
@@ -69,6 +71,8 @@ libraries = Table(
     Column("default_branch", Text),
     Column("pinned_version", Text),  # LIB-10 (MVP-2): never written or read yet
     Column("settings", Text, nullable=False),
+    Column("title_edited", Boolean, nullable=False, server_default="0"),
+    Column("description_edited", Boolean, nullable=False, server_default="0"),
 )
 library_versions = Table(
     "catalog_library_versions",
@@ -134,6 +138,8 @@ _LIBRARY_COLUMNS = (
     libraries.c.host,
     libraries.c.default_branch,
     libraries.c.settings,
+    libraries.c.title_edited,
+    libraries.c.description_edited,
 )
 
 
@@ -183,6 +189,37 @@ class SqliteLibraryRepository:
             )
             await _insert_versions(connection, library)
 
+    async def set_text(
+        self, library_id: LibraryId, *, title: str | None, description: str | None
+    ) -> None:
+        """Update only the given columns and their edited flags."""
+        values: dict[str, str | bool] = {}
+        if title is not None:
+            values |= {"title": title, "title_edited": True}
+        if description is not None:
+            values |= {"description": description, "description_edited": True}
+        if not values:
+            return
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                update(libraries).where(libraries.c.id == library_id.value).values(**values)
+            )
+
+    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
+        """One UPDATE that keeps every field whose edited flag is set."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                update(libraries)
+                .where(libraries.c.id == library_id.value)
+                .values(
+                    title=case((libraries.c.title_edited, libraries.c.title), else_=title),
+                    description=case(
+                        (libraries.c.description_edited, libraries.c.description),
+                        else_=description,
+                    ),
+                )
+            )
+
     async def _load(self, *where: ColumnElement[bool]) -> Sequence[Library]:
         chosen = select(libraries.c.id).where(*where)
         async with self.engine.connect() as connection:
@@ -212,6 +249,8 @@ class SqliteLibraryRepository:
                 default_branch=VersionRef(row.default_branch) if row.default_branch else None,
                 settings=_SETTINGS.validate_json(row.settings),
                 versions=frozenset(versions[row.id]),
+                title_edited=row.title_edited,
+                description_edited=row.description_edited,
             )
             for row in rows
         )
@@ -523,7 +562,7 @@ async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version
     )
 
 
-def _library_values(library: Library) -> dict[str, str | None]:
+def _library_values(library: Library) -> dict[str, str | bool | None]:
     return {
         "title": library.title,
         "description": library.description,
@@ -531,6 +570,8 @@ def _library_values(library: Library) -> dict[str, str | None]:
         "host": library.host.value,
         "default_branch": None if library.default_branch is None else library.default_branch.value,
         "settings": _SETTINGS.dump_json(library.settings).decode(),
+        "title_edited": library.title_edited,
+        "description_edited": library.description_edited,
     }
 
 
