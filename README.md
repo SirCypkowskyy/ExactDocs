@@ -169,6 +169,21 @@ says which version answered. Planned: hosts that support MCP Apps (Claude, ChatG
 render articles and results as UI.
 All tools are read-only, and everything returned is marked as external content.
 
+### context7 over REST
+
+The same two operations for integrations that do not speak MCP, with context7's parameter
+names and shapes (same use cases, budget and API tokens as the tools above):
+
+- `GET /api/v1/c7/search?libraryName=&query=` is `resolve-library-id`: JSON `{results: [{id, title,
+  description, branch, versions, ...}], searchFilterApplied}`.
+- `GET /api/v1/c7/docs?libraryId=&query=&language=&type=txt|json` is `query-docs`: `type=txt`
+  (default) returns the tool's text byte for byte; `type=json` returns `infoSnippets`
+  (one per chunk, `codeSnippets` is always empty).
+
+Both mark their content as untrusted: JSON carries `notice`, the text carries it in the
+`X-ExactDocs-Notice` header. Errors use the API's `{error, detail}` envelope, not context7's
+`{error, message}`.
+
 ## Retrieval
 
 The pipeline upgrades itself to whatever you configure:
