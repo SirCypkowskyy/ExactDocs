@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
@@ -228,17 +228,6 @@ export function VersionsSection(props: Props) {
   const removedOk = useRef(false);
   const now = useNow();
 
-  useEffect(() => {
-    if (activity.by !== "versions") setNotice("");
-  }, [activity]);
-
-  // `transitionend` ends it; this covers reduced motion, where no transition runs.
-  useEffect(() => {
-    if (adding || !mounted) return;
-    const id = setTimeout(() => setMounted(false), 260);
-    return () => clearTimeout(id);
-  }, [adding, mounted]);
-
   const remove = useMutation({
     mutationFn: (version: SettingsVersion) =>
       removeVersion(owner, repo, version.ref).catch((error: unknown) => {
@@ -269,6 +258,8 @@ export function VersionsSection(props: Props) {
 
   function closeAdd() {
     setAdding(false);
+    // `transitionend` unmounts the card; without a transition (reduced motion) nothing fires it.
+    setTimeout(() => setMounted(false), 300);
     requestAnimationFrame(() => addButton.current?.focus());
   }
 
@@ -325,7 +316,7 @@ export function VersionsSection(props: Props) {
       </div>
 
       <p role="status" className="mt-4 min-h-5 text-sm">
-        {notice && (
+        {notice && activity.by === "versions" && (
           <span className="fade-in inline-flex items-start gap-1.5">
             <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
             {notice}

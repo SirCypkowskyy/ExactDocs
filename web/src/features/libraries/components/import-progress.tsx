@@ -248,6 +248,18 @@ function Heading({
   );
 }
 
+/** Under the heading: the ref and commit; for a version, the library it belongs to instead of its ref. */
+function Subline({ added, library }: { added: Props["added"]; library: boolean }) {
+  return (
+    <p className="mt-2 text-muted-foreground">
+      <span className="font-mono text-[13px]">{library ? added.ref : added.library_id}</span>
+      <span aria-hidden="true"> · </span>
+      <span className="font-mono text-[13px]">{shortSha(added.commit_sha)}</span>
+      <span className="sr-only"> commit</span>
+    </p>
+  );
+}
+
 interface OutcomeProps {
   id: string;
   job: Job | undefined;
@@ -313,22 +325,7 @@ export function ImportProgress({ added, onAddAnother, finish }: Props) {
         refName={added.ref}
         libraryId={added.library_id}
       />
-      <p className="mt-2 text-muted-foreground">
-        {!onAddAnother && (
-          <>
-            <span className="font-mono text-[13px]">{added.library_id}</span>
-            <span aria-hidden="true"> · </span>
-          </>
-        )}
-        {onAddAnother && (
-          <>
-            <span className="font-mono text-[13px]">{added.ref}</span>
-            <span aria-hidden="true"> · </span>
-          </>
-        )}
-        <span className="font-mono text-[13px]">{shortSha(added.commit_sha)}</span>
-        <span className="sr-only"> commit</span>
-      </p>
+      <Subline added={added} library={Boolean(onAddAnother)} />
       <p role="status" className="sr-only">
         {announced}
       </p>
@@ -355,16 +352,7 @@ export function ImportProgress({ added, onAddAnother, finish }: Props) {
 }
 
 /** One import job as a single quiet line with its bar, for a list of jobs (a re-sync queues one per branch). */
-export function JobLine({
-  jobId,
-  label,
-  onFinish,
-}: {
-  jobId: string;
-  label: string;
-  /** Called once when the job ends, so a row that listed it can say it is over. */
-  onFinish?: ((state: "succeeded" | "failed") => void) | undefined;
-}) {
+export function JobLine({ jobId, label }: { jobId: string; label: string }) {
   const { data: job, error } = useQuery(importJobQueryOptions(jobId));
   const state = job?.state ?? "queued";
   const finished = state === "succeeded" || state === "failed";
@@ -372,9 +360,6 @@ export function JobLine({
   const known = (job?.total ?? 0) > 0;
   const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
   useRefreshListsWhen(finished);
-  useEffect(() => {
-    if (state === "succeeded" || state === "failed") onFinish?.(state);
-  }, [state, onFinish]);
   if (gone) return <p className="text-sm text-muted-foreground">Progress for {label} is gone.</p>;
   return (
     <div className="text-sm">

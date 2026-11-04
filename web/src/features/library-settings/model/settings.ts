@@ -187,10 +187,6 @@ const STATUS_WORDS: Record<SyncedVersion["status"], string> = {
 };
 export const statusWords = (s: SyncedVersion["status"]) => STATUS_WORDS[s];
 
-/** A version whose import finished after the re-sync queued it. */
-export type RowOutcome = "succeeded" | "failed";
-export const outcomeWords = (o: RowOutcome) => (o === "succeeded" ? "Updated" : "Update failed");
-
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** One sentence for the whole re-sync, so the outcome reads before the per-version rows. */
@@ -218,11 +214,7 @@ export interface JobViews {
   /** The full import view: heading, progress, skipped files; `finish` replaces its buttons. */
   Import: ComponentType<{ added: AddedVersion; finish: ReactNode }>;
   /** One job as a compact line with its bar. */
-  Line: ComponentType<{
-    jobId: string;
-    label: string;
-    onFinish?: ((state: RowOutcome) => void) | undefined;
-  }>;
+  Line: ComponentType<{ jobId: string; label: string }>;
 }
 
 /** The last action a section started; the others clear their own notices when it is not theirs. */

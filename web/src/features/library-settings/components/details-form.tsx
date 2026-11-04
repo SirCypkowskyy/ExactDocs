@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Info } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Field, TextareaField } from "@/shared/ui/field";
@@ -42,11 +42,6 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
   const draft = { title, description };
   const patch = changedFields(library, draft);
   const unchanged = Object.keys(patch).length === 0;
-
-  // Another section started something: "Saved." is no longer the latest news.
-  useEffect(() => {
-    if (activity.by !== "details") setSaved(false);
-  }, [activity]);
 
   const save = useMutation({
     mutationFn: () => saveDetails(owner, repo, patch),
@@ -135,7 +130,7 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
             {save.isPending ? "Saving" : "Save changes"}
           </Button>
           <p role="status" className="min-h-5 text-sm">
-            {saved && unchanged && (
+            {saved && unchanged && activity.by === "details" && (
               <span className="fade-in inline-flex items-center gap-1.5">
                 <Check aria-hidden="true" className="size-4 text-mark" />
                 Saved.

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, CircleAlert } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { relativeTime } from "@/shared/lib/time";
 import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
@@ -10,9 +10,7 @@ import {
   type Activity,
   explainSync,
   type JobViews,
-  outcomeWords,
   type Problem,
-  type RowOutcome,
   type SyncedLibrary,
   type SyncedVersion,
   shortSha,
@@ -30,24 +28,26 @@ interface Props {
 }
 
 function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
-  // A queued import ends while the page is open: the row must say so, not stay "Updating".
-  const [outcome, setOutcome] = useState<RowOutcome>();
-  const onFinish = useCallback((state: RowOutcome) => setOutcome(state), []);
   const live = (v.status === "queued" || v.status === "importing") && v.job_id;
-  const failed = v.status === "failed" || outcome === "failed";
-  const words = outcome ? outcomeWords(outcome) : statusWords(v.status);
+  const failed = v.status === "failed";
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
         <span className="font-mono text-[15px] font-medium [overflow-wrap:anywhere]">{v.ref}</span>
-        <span className="inline-flex items-center gap-1.5 text-sm">
-          {failed ? (
-            <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-          ) : v.status === "up_to_date" || outcome === "succeeded" ? (
-            <Check aria-hidden="true" className="size-4 shrink-0 text-mark" />
-          ) : null}
-          <span className={failed ? "font-medium text-destructive" : undefined}>{words}</span>
-        </span>
+        {/* A live row's own job line says how it is going and when it ends. */}
+        {!live && (
+          <span className="inline-flex items-center gap-1.5 text-sm">
+            {failed && (
+              <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
+            )}
+            {v.status === "up_to_date" && (
+              <Check aria-hidden="true" className="size-4 shrink-0 text-mark" />
+            )}
+            <span className={failed ? "font-medium text-destructive" : undefined}>
+              {statusWords(v.status)}
+            </span>
+          </span>
+        )}
       </div>
       {v.status === "queued" && (
         <p className="mt-0.5 flex items-center gap-1.5 font-mono text-[13px] text-muted-foreground">
@@ -57,7 +57,7 @@ function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
           <span className="sr-only"> (previous commit to new commit)</span>
         </p>
       )}
-      {v.status === "failed" && (
+      {failed && (
         <p className="mt-0.5 text-sm text-muted-foreground">
           The branch is gone from the repository, or its import could not be queued. The version
           keeps serving what it had.
@@ -65,7 +65,7 @@ function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
       )}
       {live && (
         <div className="mt-2 max-w-sm">
-          <Line jobId={v.job_id ?? ""} label={v.ref} onFinish={onFinish} />
+          <Line jobId={v.job_id ?? ""} label={v.ref} />
         </div>
       )}
     </li>
@@ -79,13 +79,8 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
   const [result, setResult] = useState<{ data: SyncedLibrary; at: string }>();
   const [problem, setProblem] = useState<Problem>();
 
-  // Something else was started: last check's news and last failure are old.
-  useEffect(() => {
-    if (activity.by !== "sync") {
-      setResult(undefined);
-      setProblem(undefined);
-    }
-  }, [activity]);
+  // Something else was started since: last check's news and last failure are old.
+  const current = activity.by === "sync";
 
   const sync = useMutation({
     mutationFn: () => syncLibrary(owner, repo),
@@ -102,8 +97,10 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
     },
   });
 
-  const rows = result?.data.versions.filter((v) => v.status !== "pinned") ?? [];
-  const pinned = result?.data.versions.filter((v) => v.status === "pinned") ?? [];
+  const shown = current ? result : undefined;
+  const shownProblem = current ? problem : undefined;
+  const rows = shown?.data.versions.filter((v) => v.status !== "pinned") ?? [];
+  const pinned = shown?.data.versions.filter((v) => v.status === "pinned") ?? [];
 
   return (
     <section aria-labelledby="sync-heading" className="mt-12 border-t border-border pt-10">
@@ -129,21 +126,21 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
           {sync.isPending ? "Checking" : "Re-sync now"}
         </Button>
       </div>
-      <div className={problem ? "mt-4" : undefined}>
+      <div className={shownProblem ? "mt-4" : undefined}>
         <FormAlert
           id="sync-alert"
-          message={problem?.message}
-          link={problem?.link}
-          tone={problem?.tone}
+          message={shownProblem?.message}
+          link={shownProblem?.link}
+          tone={shownProblem?.tone}
         />
       </div>
       {/* Only the headline is announced; the live job lines below would chatter on every poll. */}
-      <p role="status" className={result ? "mt-4 font-medium" : undefined}>
-        {result && (
+      <p role="status" className={shown ? "mt-4 font-medium" : undefined}>
+        {shown && (
           <span className="fade-in">
-            {syncHeadline(result.data)}{" "}
+            {syncHeadline(shown.data)}{" "}
             <span className="font-normal text-muted-foreground">
-              Checked <time dateTime={result.at}>{relativeTime(result.at, now)}</time>.
+              Checked <time dateTime={shown.at}>{relativeTime(shown.at, now)}</time>.
             </span>
           </span>
         )}

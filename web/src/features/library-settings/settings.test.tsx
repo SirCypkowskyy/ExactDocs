@@ -144,23 +144,10 @@ const jobs = {
       {finish}
     </div>
   ),
-  Line: ({
-    jobId,
-    label,
-    onFinish,
-  }: {
-    jobId: string;
-    label: string;
-    onFinish?: ((state: "succeeded" | "failed") => void) | undefined;
-  }) => (
-    <div>
-      <p>
-        job {jobId} for {label}
-      </p>
-      <button type="button" onClick={() => onFinish?.("succeeded")}>
-        finish {label}
-      </button>
-    </div>
+  Line: ({ jobId, label }: { jobId: string; label: string }) => (
+    <p>
+      job {jobId} for {label}
+    </p>
   ),
 };
 
@@ -568,35 +555,6 @@ describe("the page", () => {
     await waitFor(() =>
       expect(screen.queryByText(/Everything is up to date/)).not.toBeInTheDocument(),
     );
-  });
-});
-
-describe("re-sync rows follow their job", () => {
-  it("says a queued version was updated once its job ends", async () => {
-    serve({
-      sync: () => ({
-        status: 202,
-        body: {
-          library_id: "/acme/payments",
-          versions: [
-            {
-              ref: "main",
-              ref_kind: "branch",
-              status: "queued",
-              previous_commit_sha: SHA,
-              commit_sha: SHA2,
-              job_id: "j5",
-            },
-          ],
-        },
-      }),
-    });
-    renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
-    expect(await screen.findByText("Updating")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "finish main" }));
-    expect(await screen.findByText("Updated")).toBeInTheDocument();
-    expect(screen.queryByText("Updating")).not.toBeInTheDocument();
   });
 });
 
