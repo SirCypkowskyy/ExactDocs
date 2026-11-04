@@ -7,9 +7,9 @@ on:
     paths:
       - "docs/**"
       - "zensical.toml"
-      - "**/*.md"
-      - "deploy/mermaid-check/**"
       - ".github/workflows/docs.yml"
+  # Pull requests also run for any Markdown file, so the Mermaid check covers README and the rest;
+  # pushes to main only redeploy Pages when the published site changes.
   pull_request:
     paths:
       - "docs/**"

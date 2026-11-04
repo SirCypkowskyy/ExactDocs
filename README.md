@@ -247,7 +247,8 @@ or `POST /api/v1/libraries/{owner}/{repo}/versions`:
   answers `credentials_required`; send the credential again with the new version request.
 
 ExactDocs reads repositories with the system `git` binary (in the Docker image; on `uvx` it must be
-on `PATH`; without it the server still starts, logs a warning and repository checks answer
+on `PATH`; `exactdocs serve` refuses to start without it. Only where that check is skipped, such as
+`--stdio` (which never imports), a missing git is a warning and repository checks answer
 `git_not_installed`). URLs may be `https://`, `http://`, `ssh://`, `user@host:path` or `file://`;
 credentials never go in the URL (they are refused, never echoed or logged), and
 `POST /api/v1/repositories/check` runs git with prompts, user git config and ssh keys switched off
@@ -325,9 +326,8 @@ flowchart TD
 ## Privacy and observability
 
 ExactDocs makes no outbound connections you did not configure: only your git hosts, your model
-endpoints and, if enabled, your OpenTelemetry collector. No analytics, no update checks.
-Telemetry and the Prometheus endpoint are **off by default**; query text is never exported
-unless you opt in.
+endpoints (planned). No analytics, no update checks. OpenTelemetry export and the Prometheus
+endpoint are planned and off; nothing in this version sends or exposes telemetry.
 
 This is tested, not just promised, in
 [`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py): an import over

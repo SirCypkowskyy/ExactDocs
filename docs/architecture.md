@@ -181,7 +181,7 @@ erDiagram
     catalog_manifest_entries {
         text manifest_id PK, FK
         text path PK
-        text blob_sha FK
+        text blob_sha FK "with content_version, composite"
         json tags
         json front_matter
     }

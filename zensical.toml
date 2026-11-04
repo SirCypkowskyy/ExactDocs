@@ -10,6 +10,7 @@ site_url = "https://sircypkowskyy.github.io/ExactDocs/"
 repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
+extra_javascript = ["https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js"]
 docs_dir = "docs"
 site_dir = "site"
 nav = [

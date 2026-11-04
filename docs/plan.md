@@ -18,7 +18,7 @@ It holds **103 feature issues** plus **12 epic tracking issues**:
 
 !!! info "Status: MVP-1 is built (v0.2.0)"
     The 46 MVP-1 issues are merged and released. The acceptance checklists below are the *plans*
-    the issues were written from; where the build deviated, the merged PR says why, and the
+    the issues were written from (the checkboxes are not ticked retroactively: GitHub is the source of truth); where the build deviated, the merged PR says why, and the
     [as-built deviations](#deviations-from-the-plan) table collects the ones that matter. For how
     the system works now read [Architecture](architecture.md) and [Flows](flows.md).
 

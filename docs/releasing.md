@@ -163,7 +163,7 @@ flowchart LR
         end
     end
     gh -->|PR and push| ci
-    gh -->|docs/** or zensical.toml| docs
+    gh -->|"docs/**, zensical.toml (PRs: any .md)"| docs
     gh -->|tag| rel
     rel -->|after each release, weekly, on demand| ret
     docs -->|push to main| pages["GitHub Pages"]
