@@ -53,11 +53,6 @@ function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
           keeps serving what it had.
         </p>
       )}
-      {v.status === "pinned" && (
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Tags and commits point at one commit for good, so there is nothing to update.
-        </p>
-      )}
       {live && (
         <div className="mt-2 max-w-sm">
           <Line jobId={v.job_id as string} label={v.ref} />
@@ -111,7 +106,7 @@ export function SyncSection({ owner, repo, Line }: Props) {
           {sync.isPending ? "Checking" : "Re-sync now"}
         </Button>
       </div>
-      <div className="mt-4 max-w-xl">
+      <div className="mt-4">
         <FormAlert id="sync-alert" message={problem?.message} link={problem?.link} />
         {problem?.detail && (
           <p className="-mt-2 mb-5 text-sm text-muted-foreground [overflow-wrap:anywhere]">
@@ -119,7 +114,7 @@ export function SyncSection({ owner, repo, Line }: Props) {
           </p>
         )}
       </div>
-      <div className="max-w-xl">
+      <div>
         {/* Only the headline is announced; the live job lines below would chatter on every poll. */}
         <p role="status" className="min-h-6 font-medium">
           {result && <span className="fade-in">{syncHeadline(result)}</span>}

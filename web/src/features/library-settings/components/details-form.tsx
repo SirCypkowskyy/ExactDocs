@@ -78,42 +78,44 @@ export function DetailsForm({ owner, repo, library }: Props) {
   };
 
   return (
-    <form onSubmit={submit} noValidate className="mt-6 flex flex-col gap-5">
+    <form onSubmit={submit} noValidate className="mt-4">
       <FormAlert id="details-alert" message={problem?.message} link={problem?.link} />
-      <Field
-        id="title"
-        label="Title"
-        autoComplete="off"
-        maxLength={MAX_TITLE + 50}
-        value={title}
-        error={errors.title}
-        hint="Shown in the library list and as the page heading."
-        onChange={(e) => edit("title")(e.target.value)}
-      />
-      <TextareaField
-        id="description"
-        label="Description"
-        value={description}
-        error={errors.description}
-        hint={`Shown on the library page. Up to ${MAX_DESCRIPTION} characters, and it can be empty.`}
-        onChange={(e) => edit("description")(e.target.value)}
-      />
-      <p className="text-sm text-muted-foreground">
-        A field you change here stays as you wrote it when the library is imported again. Until then
-        it follows the repository's README.
-      </p>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <Button
-          type="submit"
-          aria-disabled={save.isPending || unchanged}
-          aria-busy={save.isPending}
-          className="min-w-32 aria-disabled:cursor-default"
-        >
-          {save.isPending ? "Saving" : "Save changes"}
-        </Button>
-        <p role="status" className="min-h-5 text-sm text-muted-foreground">
-          {saved && unchanged && <span className="fade-in">Saved.</span>}
+      <div className="flex flex-col gap-5">
+        <Field
+          id="title"
+          label="Title"
+          autoComplete="off"
+          maxLength={MAX_TITLE + 50}
+          value={title}
+          error={errors.title}
+          hint="Shown in the library list and as the page heading."
+          onChange={(e) => edit("title")(e.target.value)}
+        />
+        <TextareaField
+          id="description"
+          label="Description"
+          value={description}
+          error={errors.description}
+          hint={`Shown on the library page. Up to ${MAX_DESCRIPTION} characters, and it can be empty.`}
+          onChange={(e) => edit("description")(e.target.value)}
+        />
+        <p className="text-sm text-muted-foreground">
+          A field you change here stays as you wrote it when the library is imported again. Until
+          then it follows the repository's README.
         </p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Button
+            type="submit"
+            aria-disabled={save.isPending || unchanged}
+            aria-busy={save.isPending}
+            className="min-w-32 aria-disabled:cursor-default"
+          >
+            {save.isPending ? "Saving" : "Save changes"}
+          </Button>
+          <p role="status" className="min-h-5 text-sm text-muted-foreground">
+            {saved && unchanged && <span className="fade-in">Saved.</span>}
+          </p>
+        </div>
       </div>
     </form>
   );

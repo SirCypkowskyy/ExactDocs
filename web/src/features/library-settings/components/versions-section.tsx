@@ -137,41 +137,46 @@ function AddVersionForm({
   }
 
   return (
-    <form onSubmit={submit} noValidate className="flex flex-col gap-5">
-      <FormAlert id="add-version-alert" message={problem?.message} link={problem?.link} />
-      <RefPicker
-        url={library.source_url}
-        choice={choice}
-        typed={typed}
-        error={fieldError}
-        onChoice={(c) => {
-          setChoice(c);
-          setFieldError(undefined);
-          if (c.kind === "other") {
-            requestAnimationFrame(() => document.getElementById("ref-typed")?.focus());
-          }
-        }}
-        onUnavailable={unavailable}
-        onTyped={(v) => {
-          setTyped(v);
-          setFieldError(undefined);
-        }}
-      />
-      <p className="text-sm text-muted-foreground">
-        It is imported with the same paths and tag rules as the other versions.
-      </p>
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          aria-disabled={add.isPending}
-          aria-busy={add.isPending}
-          className="min-w-32"
-        >
-          {add.isPending ? "Adding" : "Add version"}
-        </Button>
+    <form onSubmit={submit} noValidate>
+      <h3 className="text-lg font-semibold">Add a version</h3>
+      <div className="mt-4">
+        <FormAlert id="add-version-alert" message={problem?.message} link={problem?.link} />
+      </div>
+      <div className="flex flex-col gap-5">
+        <RefPicker
+          url={library.source_url}
+          choice={choice}
+          typed={typed}
+          error={fieldError}
+          onChoice={(c) => {
+            setChoice(c);
+            setFieldError(undefined);
+            if (c.kind === "other") {
+              requestAnimationFrame(() => document.getElementById("ref-typed")?.focus());
+            }
+          }}
+          onUnavailable={unavailable}
+          onTyped={(v) => {
+            setTyped(v);
+            setFieldError(undefined);
+          }}
+        />
+        <p className="text-sm text-muted-foreground">
+          It is imported with the same paths and tag rules as the other versions.
+        </p>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            aria-disabled={add.isPending}
+            aria-busy={add.isPending}
+            className="min-w-32"
+          >
+            {add.isPending ? "Adding" : "Add version"}
+          </Button>
+        </div>
       </div>
     </form>
   );
@@ -264,8 +269,7 @@ export function VersionsSection(props: Props) {
       >
         <div className="overflow-hidden" inert={!adding}>
           {adding && (
-            <div className="mt-6 max-w-xl rounded-lg bg-secondary/60 p-4 sm:p-5">
-              <h3 className="mb-4 text-lg font-semibold">Add a version</h3>
+            <div className="mt-6 rounded-lg bg-secondary/60 p-4 sm:p-5">
               <AddVersionForm {...props} onClose={closeAdd} />
             </div>
           )}
@@ -281,7 +285,7 @@ export function VersionsSection(props: Props) {
         )}
       </p>
 
-      <div className="mt-2 max-w-xl">
+      <div className="mt-2">
         {versions.length === 0 ? (
           <p className="text-muted-foreground">
             No versions yet. Add one, or wait for the first import to finish.

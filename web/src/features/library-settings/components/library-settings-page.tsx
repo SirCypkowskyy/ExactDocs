@@ -43,7 +43,7 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
       >
         Settings
       </h1>
-      <div className="max-w-2xl">
+      <div className="max-w-xl">
         <section aria-labelledby="details-heading" className="mt-8">
           <h2 id="details-heading" className="font-serif text-2xl font-semibold tracking-tight">
             Details
