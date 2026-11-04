@@ -1,19 +1,23 @@
 #!/bin/sh
 # The "docker run to a searchable library" flow of README Quick start, over HTTP, with sh and curl
-# only. usage: smoke.sh BASE_URL REPOSITORY_URL LIBRARY_ID REF
+# only. usage: smoke.sh BASE_URL REPOSITORY_URL LIBRARY_ID REF [COMMIT_SHA]
+# LIBRARY_ID carries its leading slash; COMMIT_SHA, when given, is what REF must resolve to.
+# The assertions are those of the fixture repository (docs/reference/naming.md, "token" present,
+# "retry_policy" absent at v1.3.0).
 #   e.g. smoke.sh http://127.0.0.1:3000 file:///fixture/docs-repo /fixture/docs-repo v1.3.0
 # Needs a fresh instance (no admin yet). Exits non-zero at the first step that fails.
 set -eu
-base=$1 repo=$2 lib=$3 ref=$4
+base=$1 repo=$2 lib=$3 ref=$4 want_sha=${5:-}
 jar=$(mktemp)
 trap 'rm -f "$jar"' EXIT
 json='content-type: application/json'
-field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; } # first string field of a one-line JSON body
+field() { grep -o "\"$1\":\"[^\"]*\"" | head -n1 | sed 's/^[^:]*:"\(.*\)"$/\1/'; } # first string field "$1" of a JSON body
 step() { echo "--- $*"; }
 
 step "wait for the server"
 for _ in $(seq 1 60); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; sleep 1; done
-curl -fsS "$base/api/health"; echo
+curl -fsS "$base/api/health" || { echo "server did not start"; exit 1; }
+echo
 
 step "setup, sign in"
 # a fresh instance offers only the setup; setup does not sign in
@@ -44,25 +48,29 @@ fi
 
 step "list and read an article"
 articles=$(curl -fsS -H "$auth" -G "$base/api/v1/libraries$lib/articles" -d "ref=$ref")
-path=$(echo "$articles" | field path)
-test -n "$path"
-echo "first article: $path"
-curl -fsS -H "$auth" -G "$base/api/v1/libraries$lib/article" -d "ref=$ref" --data-urlencode "path=$path" | grep -q '"content'
+sha=$(echo "$articles" | field commit_sha)
+test -n "$sha"
+test -z "$want_sha" || test "$sha" = "$want_sha"
+path=docs/reference/naming.md
+echo "$articles" | grep -q "\"path\":\"$path\""
+echo "article: $path @ $sha"
+curl -fsS -H "$auth" -G "$base/api/v1/libraries$lib/article" -d "ref=$ref" --data-urlencode "path=$path" | grep -q 'Naming conventions'
 
 step "search over REST"
 # "token" is in v1.3.0; retry_policy exists only from v1.4.0 and never in v1.3.0
 hits=$(curl -fsS -H "$auth" -G "$base/api/v1/libraries$lib/search" -d "ref=$ref" -d q=token)
 echo "$hits" | grep -q '"results":\[{'
+echo "$hits" | grep -q "\"commit_sha\":\"$sha\""
 curl -fsS -H "$auth" -G "$base/api/v1/libraries$lib/search" -d "ref=$ref" -d q=retry_policy | grep -q '"results":\[\]'
 
 step "MCP query-docs over HTTP"
 mcp() { curl -fsS -H "$auth" -H "$json" -H 'accept: application/json, text/event-stream' -H 'mcp-protocol-version: 2025-06-18' "$@" "$base/mcp"; }
-mcp -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' >/dev/null
+mcp -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' | grep -q '"serverInfo"'
 mcp -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
 answer=$(mcp -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"query-docs\",\"arguments\":{\"libraryId\":\"$lib/$ref\",\"query\":\"token\"}}}")
 echo "$answer" | head -c 300; echo
 echo "$answer" | grep -q '"result"'
-! echo "$answer" | grep -q '"isError":true'
+if echo "$answer" | grep -q '"isError":true'; then echo "query-docs returned isError"; exit 1; fi
 echo "$answer" | grep -q "Source: docs/"
 
 step "web UI, token required and revocable, Host header checked"

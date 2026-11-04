@@ -151,16 +151,20 @@ jobs:
           flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
           # The fixture repository is owned by the runner user; the importer lets git read local
           # repositories of other owners (safe.directory), so it is imported as it is.
-          # RUN-01: the clock covers docker run through the first MCP answer (the image is built).
+          # RUN-01: the clock covers docker run through the whole smoke flow, web UI and token
+          # checks included (the image is already built). No step needs the network (the only
+          # repository URL is file://); the default bridge does not enforce that.
+          docker volume rm -f exactdocs-ci-data >/dev/null  # a stale volume would not be a fresh instance
           start=$(date +%s)
           docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 \
-            -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci
-          trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
+            -v exactdocs-ci-data:/data -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci
+          trap 'docker logs exactdocs-ci; docker stop exactdocs-ci; docker volume rm exactdocs-ci-data || true' EXIT
           port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
           # setup, sign in, token, import the fixture, list/read, search, MCP query-docs (deploy/smoke.sh)
-          deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0
+          deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
           elapsed=$(( $(date +%s) - start ))
-          echo "docker run to searchable library: ${elapsed}s (limit 300s)" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "docker run to end of smoke flow: ${elapsed}s (limit 300s)" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
           test "$elapsed" -lt 300
           # Hardening as built: unprivileged, tini is PID 1, no pip, no setuid files.
           test "$(docker exec exactdocs-ci id -u)" = 10001
