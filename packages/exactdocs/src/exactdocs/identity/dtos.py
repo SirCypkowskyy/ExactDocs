@@ -48,6 +48,14 @@ class AuthenticateQuery(_Dto):
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
 
 
+class LoginForTokenCommand(_Dto):
+    """Credentials exchanged for an API token (the CLI's login); ``name`` labels the token."""
+
+    username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)
+    password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
+    name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)
+
+
 class ResetPasswordCommand(_Dto):
     """A new password for an existing account (the operator's recovery path)."""
 

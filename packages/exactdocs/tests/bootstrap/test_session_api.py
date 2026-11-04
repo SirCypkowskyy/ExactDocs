@@ -238,6 +238,7 @@ async def test_only_setup_and_the_session_routes_are_open(client: httpx.AsyncCli
         ("GET", "/api/v1/session"),
         ("POST", "/api/v1/session"),
         ("DELETE", "/api/v1/session"),
+        ("POST", "/api/v1/tokens/login"),
     }
     assert spec["components"]["securitySchemes"]["SessionCookie"]["in"] == "cookie"
 

@@ -51,6 +51,22 @@ curl -X POST http://localhost:3000/api/v1/setup -H 'content-type: application/js
   -d '{"username": "ada", "password": "a long passphrase"}'
 ```
 
+### Use the CLI against an instance
+
+The other commands are clients of the REST API, so they work against any instance you can reach:
+
+```bash
+uvx exactdocs login https://docs.example.com   # asks for username and password
+uvx exactdocs login http://localhost:3000 --token exd_...   # or reuse an existing API token
+uvx exactdocs logout                           # forget the stored credentials
+```
+
+`login` creates an API token named after your machine and stores the server URL and token in
+`config.json` in your user config directory (mode 0600; the token is never printed). Resolution
+order: flags, then `EXACTDOCS_URL` / `EXACTDOCS_TOKEN`, then that file. A stored token is only used
+for the server it came from. Plain `http://` is accepted for `localhost` only; anything else needs
+`https://`. `serve` and `admin ...` stay local: they open the database directly.
+
 ### From `docker run` to a searchable library
 
 The same flow CI runs on every change ([`deploy/smoke.sh`](deploy/smoke.sh), `sh` and `curl`

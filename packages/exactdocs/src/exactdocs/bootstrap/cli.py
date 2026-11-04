@@ -2,6 +2,7 @@
 
 import asyncio
 import getpass
+import os
 import sys
 from collections.abc import Coroutine
 from typing import Annotated
@@ -11,6 +12,16 @@ from cyclopts import App, Parameter
 from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
+from exactdocs.bootstrap.client import (
+    ApiClient,
+    ClientConfig,
+    ClientError,
+    config_path,
+    forget,
+    machine_name,
+    normalize_url,
+    store,
+)
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
@@ -64,6 +75,101 @@ def serve(
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
     )
+
+
+# Every command is either local (opens the database, lives in LOCAL_COMMANDS) or a client of the
+# REST API: those take `url`/`token` like the two options below, build their client with
+# `_api()` and run their work with `_call()`. A test pins the split.
+type UrlOption = Annotated[
+    str | None, Parameter(help="Server URL (default: EXACTDOCS_URL, config).")
+]
+type TokenOption = Annotated[
+    str | None, Parameter(help="API token (default: EXACTDOCS_TOKEN, config).")
+]
+
+
+def _call[T](work: Coroutine[object, object, T]) -> T:
+    """Run a client command's work; a ``ClientError`` ends the process with its message."""
+    try:
+        return asyncio.run(work)
+    except ClientError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from None
+
+
+def _api(url: str | None = None, token: str | None = None) -> ApiClient:
+    """Build the client for the resolved server and token (flags > environment > config file)."""
+    try:
+        config = ClientConfig.resolve(url=url, token=token)
+        return ApiClient(config.url, config.token)
+    except ClientError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from None
+
+
+@app.command
+def login(
+    url: str | None = None,
+    *,
+    token: Annotated[
+        str | None, Parameter(help="Use this existing API token instead of creating one.")
+    ] = None,
+    username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
+    password_stdin: Annotated[
+        bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
+    ] = False,
+    name: Annotated[
+        str | None, Parameter(help="Name of the new token (default: this machine's name).")
+    ] = None,
+) -> None:
+    """Sign in to an instance and store the server URL and an API token for the other commands."""
+    try:
+        server = normalize_url(url or os.environ.get("EXACTDOCS_URL") or "")
+    except ClientError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from None
+    path = config_path()
+
+    async def work() -> str:
+        async with ApiClient(server, token) as api:
+            if token is None:
+                try:
+                    user, password = _read_login(username, password_stdin=password_stdin)
+                except EOFError, KeyboardInterrupt:
+                    message = "no username or password to read"
+                    raise ClientError(message) from None
+                grant = await api.login(user, password, name or machine_name())
+                secret, label = (
+                    grant["token"],
+                    f"new token {grant['name']!r} ({grant['prefix']}...)",
+                )
+            else:
+                await api.check_token()
+                secret, label = token, "the token you gave"
+        store(path, ClientConfig(url=server, token=secret))
+        return label
+
+    label = _call(work())
+    sys.stdout.write(f"Logged in to {server} with {label}; credentials stored in {path}.\n")
+
+
+def _read_login(username: str | None, *, password_stdin: bool) -> tuple[str, str]:
+    name = username if username is not None else input("Username: ")
+    if password_stdin:
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError
+        return name, line.rstrip("\r\n")
+    if not sys.stdin.isatty():
+        raise EOFError
+    return name, getpass.getpass("Password: ")
+
+
+@app.command
+def logout() -> None:
+    """Forget the stored credentials (the token stays valid until revoked in the web UI)."""
+    removed = forget(config_path())
+    sys.stdout.write("Logged out.\n" if removed else "Not logged in.\n")
 
 
 @admin.command
@@ -189,6 +295,9 @@ def _check_startup(settings: Settings) -> None:
 def asgi_app() -> object:
     """ASGI factory used by uvicorn (also with ``--reload``)."""
     return create_app(Container.build(Settings()))
+
+
+LOCAL_COMMANDS = frozenset({"serve", "admin create", "admin reset-password"})
 
 
 def main() -> None:

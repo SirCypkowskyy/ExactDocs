@@ -203,6 +203,7 @@ OPEN_ROUTES = {
     ("GET", "/api/v1/session"),
     ("POST", "/api/v1/session"),
     ("DELETE", "/api/v1/session"),
+    ("POST", "/api/v1/tokens/login"),
     ("GET", "/api/v1/openapi.json"),
 }
 
@@ -281,3 +282,31 @@ async def test_mcp_refuses_callers_without_a_valid_token_even_with_a_session_coo
                     headers={"accept": "application/json, text/event-stream", **extra, **auth},
                 )
                 assert response.status_code == 401, (extra.keys(), auth)
+
+
+async def test_logging_in_for_a_token_needs_no_session_and_starts_none(
+    anonymous: httpx.AsyncClient,
+) -> None:
+    response = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": "laptop"})
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
+    grant = response.json()
+    assert (grant["name"], grant["token"].startswith("exd_")) == ("laptop", True)
+    listed = await anonymous.get("/api/v1/libraries", headers=bearer(grant["token"]))
+    assert listed.status_code == 200
+
+
+async def test_logging_in_for_a_token_refuses_bad_credentials_alike(
+    anonymous: httpx.AsyncClient,
+) -> None:
+    for login in [
+        {**LOGIN, "password": "wrong horse battery staple"},
+        {**LOGIN, "username": "bob"},
+    ]:
+        response = await anonymous.post("/api/v1/tokens/login", json={**login, "name": "laptop"})
+
+        assert (response.status_code, response.json()["error"]) == (401, "invalid_credentials")
+    response = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": " "})
+    assert (response.status_code, response.json()["error"]) == (422, "invalid_token_name")

@@ -39,6 +39,7 @@ dependencies = [
     "cyclopts>=4",
     "fastapi>=0.120",
     "fastmcp>=4",
+    "httpx2>=2",
     "markdown-it-py>=4",
     "mcp>=2",
     "platformdirs>=4",
