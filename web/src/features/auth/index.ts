@@ -1,6 +1,7 @@
 // Public API of the `auth` slice. Everything else in this folder is private.
 
 export { AccountPanel } from "./components/account-panel";
+export { AppShell } from "./components/app-shell";
 export { NotFound } from "./components/not-found";
 export { Pending } from "./components/pending";
 export { RouteError } from "./components/route-error";

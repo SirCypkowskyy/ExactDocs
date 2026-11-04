@@ -1,6 +1,5 @@
 import { createFileRoute, Navigate, Outlet, redirect, useLocation } from "@tanstack/react-router";
-import { AppShell } from "@/app/app-shell";
-import { guard, resolveGuard, useSession } from "@/features/auth";
+import { AppShell, guard, resolveGuard, useSession } from "@/features/auth";
 
 // Everything behind sign-in lives under this pathless layout.
 export const Route = createFileRoute("/_app")({

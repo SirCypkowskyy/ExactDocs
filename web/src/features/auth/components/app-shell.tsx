@@ -1,6 +1,7 @@
 import { Link, useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { SignOutButton, useSession } from "@/features/auth";
+import { useSession } from "../hooks/use-session";
+import { SignOutButton } from "./sign-out-button";
 
 const navLink =
   "rounded-md px-2 py-2 text-sm font-medium text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:text-foreground aria-[current=page]:shadow-[inset_0_-2px_0_var(--mark)] sm:px-3";
