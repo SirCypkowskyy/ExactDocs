@@ -4,7 +4,7 @@
 #
 # Layers go from "changes rarely" to "changes every commit", so a source-only edit rebuilds only
 # the last steps of each stage:
-#   web      pnpm version -> pnpm-lock.yaml (pnpm fetch) -> manifests (install --offline) -> sources
+#   web      pnpm version -> pnpm-lock.yaml (pnpm fetch) -> manifests (install --prefer-offline) -> sources
 #   python   uv.lock (exported requirements, hashes) -> workspace sources + UI -> VERSION
 #
 # Hardening: base images are pinned by digest (Dependabot, `docker` ecosystem on /deploy, bumps
@@ -15,7 +15,7 @@
 # with /data (the volume) as the only writable path.
 #
 # Secrets: none enter the build. The only build arguments are VERSION, REVISION and CREATED
-# (metadata), PNPM_VERSION and TARGETARCH. Never add a token or key as an ARG or ENV: both stay
+# (metadata), PNPM_VERSION and DEBIAN_REFRESH (the package-index cache key). Never add a token or key as an ARG or ENV: both stay
 # readable in the image history. Git credentials are stored by the app in /data at run time.
 
 # --- web UI: platform-independent static files, so build once on the native platform
@@ -26,13 +26,17 @@ RUN npm install --global "pnpm@${PNPM_VERSION}"
 WORKDIR /web
 # Download every package of the lockfile (and its pnpmfile, whose checksum the lockfile records)
 # into a store that stays in the layer: the cache mount
-# speeds up a changed lockfile, but a CI runner restoring layers has no mount content.
+# speeds up a changed lockfile, but a builder restoring layers from a remote cache has no mount content.
 COPY web/pnpm-lock.yaml web/.pnpmfile.cjs ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
     pnpm fetch && cp -a /root/.local/share/pnpm/store /pnpm-store
 COPY web/package.json web/pnpm-workspace.yaml ./
 RUN test "$(node -p "require('./package.json').packageManager")" = "pnpm@${PNPM_VERSION}" \
     || { echo "PNPM_VERSION must equal packageManager in web/package.json" >&2; exit 1; }; \
+    # --prefer-offline, not --offline: pnpm 12's minimumReleaseAge check needs registry metadata
+    # for every lockfile entry (also other platforms' packages that `pnpm fetch` skips), so
+    # --offline fails with ERR_PNPM_NO_OFFLINE_META. No package is downloaded (all come from the
+    # store), but the build needs registry access: this layer is not hermetic.
     pnpm install --prefer-offline --frozen-lockfile --store-dir /pnpm-store
 COPY web/ ./
 RUN pnpm build
@@ -103,12 +107,14 @@ RUN : "$DEBIAN_REFRESH" \
 # --- runtime. apt needs RUN, so on the other architecture this stage runs under QEMU (binfmt
 # is installed on the runners, see deploy/runners/create-vms.sh); only apt-get, dpkg, rm and find run
 # there, never Python (which crashes under QEMU).
-FROM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS runtime
+FROM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS runtime-tools
 # Debian package versions are not pinned (hadolint DL3008): security fixes arrive with each build.
 # git and openssh-client are for the importer, tini is PID 1 (reaps git children, forwards signals).
 # git depends on the full Perl (50 MB) only for scripts the importer never runs (git svn, send-email,
-# add -p, ...): purge it. perl-base stays, Debian needs it. (Names are those of trixie: dpkg only
-# warns when one is not installed, so after a Debian bump check the image size in the CI log.)
+# add -p, ...): purge it. perl-base stays, Debian needs it. The dependency state is left
+# intentionally broken (git-core still "depends" on perl): never run `apt-get install -f` or
+# `dpkg --audit` fixes here. (Names are those of trixie: dpkg only warns when one is not
+# installed, so after a Debian bump check the image size in the CI log.)
 # ssh refuses to run for a uid without a passwd entry, hence the exactdocs user (10001).
 RUN --mount=type=bind,from=apt-lists,source=/var/lib/apt/lists,target=/var/lib/apt/lists,rw \
     apt-get install -y --no-install-recommends ca-certificates git openssh-client tini \
@@ -118,6 +124,9 @@ RUN --mount=type=bind,from=apt-lists,source=/var/lib/apt/lists,target=/var/lib/a
     && find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
     && echo 'exactdocs:x:10001:' >> /etc/group \
     && echo 'exactdocs:x:10001:10001::/data:/usr/sbin/nologin' >> /etc/passwd
+
+# --- the application on top of the tools. CI builds `runtime-tools` alone for linux/amd64 (QEMU).
+FROM runtime-tools AS runtime
 COPY --from=build --chown=10001:10001 /data /data
 COPY --from=build /app/.venv /app/.venv
 ENV PATH=/app/.venv/bin:$PATH \
@@ -131,7 +140,7 @@ USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/health', timeout=2)"]
 ENTRYPOINT ["tini", "--", "exactdocs"]
 CMD ["serve"]

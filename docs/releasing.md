@@ -75,6 +75,8 @@ When it fails:
    pinned: the Dockerfile's `DEBIAN_REFRESH` build argument (the date in a release, the ISO week
    in CI) makes a new build fetch fresh package indexes, so it also picks up a fixed `git` or
    `openssh-client`.
+   Because the week is part of the cache key, the first Docker build of each ISO week (Monday)
+   re-runs the apt steps and is about a minute slower; that is expected, not a cache bug.
 2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.
 3. Only if the finding does not apply to ExactDocs and cannot be fixed yet, accept it: add the ID
    to `.trivyignore` with a comment above it saying why, the date and who accepted it, in the PR
@@ -82,6 +84,15 @@ When it fails:
 
 Unfixed findings are not listed by the gate; check them occasionally with
 `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/aquasecurity/trivy image <image>`.
+
+The scanner and the linter are pinned by digest in `run:`/`env:` text, which Dependabot does not
+read: bump `hadolint/hadolint` (`.github/workflows/ci.yml`, job *image*) and
+`ghcr.io/aquasecurity/trivy` (`.github/actions/trivy-gate/action.yml`) by hand at every release, or
+a stale scanner stops finding new vulnerabilities.
+
+The CI Docker job uses the runner VM's own BuildKit (`driver: docker`), so layers and cache mounts
+persist between jobs on the same VM (see `deploy/runners/README.md`); the release uses the GitHub
+Actions cache instead (`scope=exactdocs`), because it builds multi-arch with a throwaway builder.
 
 ## What the release workflow does
 

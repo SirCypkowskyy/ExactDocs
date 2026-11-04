@@ -199,6 +199,7 @@ jobs:
             VERSION=${{ needs.meta.outputs.version }}
             DEBIAN_REFRESH=${{ steps.refresh.outputs.date }}
           cache-from: type=gha,scope=exactdocs
+          cache-to: type=gha,scope=exactdocs,mode=max
       - name: Trivy scan
         uses: ./.github/actions/trivy-gate
         with:
