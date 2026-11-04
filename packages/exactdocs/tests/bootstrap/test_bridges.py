@@ -3,7 +3,10 @@ from datetime import UTC, datetime
 import pytest
 
 from exactdocs.bootstrap.bridges import CatalogIndexedVersions
-from exactdocs.catalog.adapters.driven.memory import InMemoryLibraryRepository
+from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryLibraryRepository,
+    InMemoryManifestRepository,
+)
 from exactdocs.catalog.models import (
     HostKind,
     Library,
@@ -37,8 +40,11 @@ PAYMENTS = Library(
         }
     ),
 )
+_LIBRARIES = InMemoryLibraryRepository.of([PAYMENTS])
 BRIDGE = CatalogIndexedVersions(
-    CatalogModule.build(repository=InMemoryLibraryRepository.of([PAYMENTS])).resolve_version
+    CatalogModule.build(
+        repository=_LIBRARIES, manifests=InMemoryManifestRepository(_LIBRARIES)
+    ).resolve_version
 )
 
 

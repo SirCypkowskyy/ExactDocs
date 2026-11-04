@@ -48,21 +48,23 @@ def paginate[T](
     if not 1 <= limit <= MAX_LIMIT:
         msg = f"limit must be between 1 and {MAX_LIMIT}, got {limit}"
         raise ValueError(msg)
-    after = _decode(cursor) if cursor is not None else None
+    after = decode_cursor(cursor) if cursor is not None else None
     rest = [
         item
         for item in items
         if after is None or (key(item) < after if descending else key(item) > after)
     ]
     page, more = rest[:limit], len(rest) > limit
-    return Page(page, _encode(key(page[-1])) if more else None)
+    return Page(page, encode_cursor(key(page[-1])) if more else None)
 
 
-def _encode(key: str) -> str:
+def encode_cursor(key: str) -> str:
+    """Opaque cursor for the last key served (for lists that page in the database)."""
     return urlsafe_b64encode(key.encode()).decode().rstrip("=")
 
 
-def _decode(cursor: str) -> str:
+def decode_cursor(cursor: str) -> str:
+    """Return the key a cursor stands for; ``InvalidCursorError`` when it is malformed."""
     try:
         return b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True).decode()
     except Base64Error, UnicodeDecodeError:

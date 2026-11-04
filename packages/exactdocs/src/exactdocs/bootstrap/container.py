@@ -9,7 +9,10 @@ from exactdocs.bootstrap.bridges import CatalogIndexedVersions
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog import CatalogModule
-from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
+from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteLibraryRepository,
+    SqliteManifestRepository,
+)
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
@@ -41,7 +44,9 @@ class Container:
         connection; ``running()`` migrates the schema and releases the engine afterwards.
         """
         engine = open_database(settings)
-        catalog = CatalogModule.build(repository=SqliteLibraryRepository(engine))
+        catalog = CatalogModule.build(
+            repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
+        )
         identity = IdentityModule.build(
             repository=SqliteAccountRepository(engine),
             hasher=Argon2idPasswordHasher(),

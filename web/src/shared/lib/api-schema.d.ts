@@ -55,6 +55,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/articles": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Version Articles */
+        readonly get: operations["catalog-list_version_articles"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/article": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get One Article */
+        readonly get: operations["catalog-get_one_article"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/setup": {
         readonly parameters: {
             readonly query?: never;
@@ -138,6 +172,69 @@ export interface components {
             readonly username: string;
             /** Role */
             readonly role: string;
+        };
+        /**
+         * Article
+         * @description One article with its Markdown and the commit it comes from.
+         */
+        readonly Article: {
+            /** Path */
+            readonly path: string;
+            /** Title */
+            readonly title: string;
+            /** Tags */
+            readonly tags: readonly string[];
+            /** Size */
+            readonly size: number;
+            /** Library */
+            readonly library: string;
+            /** Ref */
+            readonly ref: string;
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /** Manifest Id */
+            readonly manifest_id: string;
+            /** Front Matter */
+            readonly front_matter: {
+                readonly [key: string]: unknown;
+            };
+            /** Content */
+            readonly content: string;
+        };
+        /**
+         * ArticleList
+         * @description A page of articles of one manifest, sorted by path.
+         */
+        readonly ArticleList: {
+            /** Library */
+            readonly library: string;
+            /** Ref */
+            readonly ref: string;
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /** Manifest Id */
+            readonly manifest_id: string;
+            /** Articles */
+            readonly articles: readonly components["schemas"]["ArticleSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+        };
+        /**
+         * ArticleSummary
+         * @description An article as listed in a tree: no content.
+         */
+        readonly ArticleSummary: {
+            /** Path */
+            readonly path: string;
+            /** Title */
+            readonly title: string;
+            /** Tags */
+            readonly tags: readonly string[];
+            /** Size */
+            readonly size: number;
         };
         /**
          * ChunkingOut
@@ -571,6 +668,151 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResolvedVersion"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-list_version_articles": {
+        readonly parameters: {
+            readonly query?: {
+                readonly ref?: string | null;
+                /** @description Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything. */
+                readonly path_prefix?: string;
+                readonly limit?: number;
+                readonly cursor?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ArticleList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-get_one_article": {
+        readonly parameters: {
+            readonly query: {
+                readonly path: string;
+                readonly ref?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Article"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

@@ -102,21 +102,27 @@ async def test_get_needs_the_whole_id(repository: LibraryRepository) -> None:
     assert await repository.get(LibraryId("/other/payments")) is None
 
 
-async def test_saving_again_replaces_the_library_and_its_versions(
+async def test_saving_again_updates_the_library_and_adds_versions_but_keeps_existing_ones(
     repository: LibraryRepository,
 ) -> None:
+    # Activating a manifest moves versions too, so a save from an older read must not undo that.
     await repository.save(PAYMENTS)
+    moved = version("main", RefKind.BRANCH, "ffff")  # same ref, other commit: stored one wins
+    added = version("v2.0.0", RefKind.TAG, "d1")
     newer = replace(
         PAYMENTS,
         title="Payments 2",
         default_branch=None,
-        versions=frozenset({version("v2.0.0", RefKind.TAG, "d1")}),
+        versions=frozenset({moved, added}),
     )
 
     await repository.save(newer)
 
-    assert await repository.get(PAYMENTS.id) == newer
-    assert await repository.list_all() == (newer,)
+    saved = await repository.get(PAYMENTS.id)
+    assert saved is not None
+    assert (saved.title, saved.default_branch) == ("Payments 2", None)
+    assert saved.versions == PAYMENTS.versions | {added}
+    assert await repository.list_all() == (saved,)
 
 
 async def test_a_library_without_versions_is_kept(repository: LibraryRepository) -> None:

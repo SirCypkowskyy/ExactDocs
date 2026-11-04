@@ -96,6 +96,8 @@ def create_app(container: Container) -> FastAPI:
             list_libraries=container.catalog.list_libraries,
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
+            list_articles=container.catalog.list_articles,
+            get_article=container.catalog.get_article,
         )
     )
     v1.include_router(

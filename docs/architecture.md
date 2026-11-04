@@ -58,8 +58,9 @@ later move to its own package or service without touching the other.
 
 Bridges point in one direction only: **retrieval → catalog** and **ingestion → catalog /
 retrieval**. Catalog calls no other domain, and nothing calls ingestion, so the domain graph has
-no cycles. An architecture test (planned in E1-03 of the [delivery plan](plan.md)) checks the
-direction of every bridge in `bootstrap/bridges.py`.
+no cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
+imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
+on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
 
 The kernel `NOTICE` constant (the untrusted-content notice every MCP result carries, see the
 *MCP-07* story) is a reviewed kernel addition: it is shared text, not business logic, so it lives
@@ -119,6 +120,14 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   recreates the table, and with the pragma on SQLite would cascade-delete the rows of tables
   that reference it) and fails, rolling back, if `PRAGMA foreign_key_check` finds a violation
   before the commit.
+- **Version storage (catalog):** a version's articles are a **manifest** (`catalog_manifests`,
+  `catalog_manifest_entries`: path, blob SHA, title, tags, front matter, size) over article
+  content shared by git blob SHA (`catalog_article_contents`, stored once). A manifest is
+  `pending` (invisible) until `ActivateManifest` flips it in one transaction: the previous
+  manifest becomes `superseded`, this one `active` (a partial unique index allows one active
+  manifest per version) and the version moves to the manifest's commit. Readers only ever see the
+  active manifest. Other domains hold manifest IDs by value. Superseded manifests stay for a grace
+  period, then `CollectGarbage` deletes them and the contents no manifest uses.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
@@ -196,6 +205,7 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
 |---|---|
 | Domain isolation, layer direction, adapter rules, framework-free core, no cycles, kernel purity | ArchUnitPython, `packages/exactdocs/tests/architecture/test_architecture.py` |
 | Fixed module set per domain, driving/driven split | same file (filesystem check) |
+| Bridges point one way: retrieval to catalog, ingestion to catalog / retrieval | `test_bridge_direction.py` |
 | No `abc.ABC`, no relative imports, every ruff rule incl. preview | ruff (`select = ["ALL"]`, `preview = true`) |
 | Protocol conformance, types | ty |
 | Web: features don't import each other; `shared` imports no feature; routes use feature public APIs | fallow (`web/.fallowrc.json`) + Biome `noRestrictedImports` |

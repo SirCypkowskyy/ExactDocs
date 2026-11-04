@@ -2,7 +2,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from exactdocs.catalog.adapters.driven.memory import InMemoryLibraryRepository
+from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryLibraryRepository,
+    InMemoryManifestRepository,
+)
 from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery, ResolveVersionQuery
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
@@ -19,7 +22,6 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
-from exactdocs.catalog.ports import LibraryRepository
 
 
 def version(ref: str, kind: RefKind, sha: str, hour: int = 12) -> Version:
@@ -44,7 +46,7 @@ def library(name: str, *versions: Version) -> Library:
 
 @pytest.fixture
 def catalog() -> CatalogModule:
-    repository: LibraryRepository = InMemoryLibraryRepository.of(
+    repository = InMemoryLibraryRepository.of(
         [
             library(
                 "payments",
@@ -61,7 +63,9 @@ def catalog() -> CatalogModule:
             library("empty"),
         ]
     )
-    return CatalogModule.build(repository=repository)
+    return CatalogModule.build(
+        repository=repository, manifests=InMemoryManifestRepository(repository)
+    )
 
 
 async def test_lists_libraries_sorted_by_id_with_sorted_refs_and_the_default(
