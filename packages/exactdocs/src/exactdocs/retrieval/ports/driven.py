@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
+    CatalogLibrary,
     ChunkId,
     ChunkSet,
     ChunkSetKey,
@@ -17,6 +18,7 @@ from exactdocs.retrieval.models import (
     SearchHit,
     StoredChunk,
     TagFilter,
+    VersionCounts,
 )
 
 
@@ -31,6 +33,14 @@ class SearchableVersions(Protocol):
 
         ``None`` when there is no such version or it has no active manifest.
         """
+        ...
+
+
+class Libraries(Protocol):
+    """The libraries the catalog lists, in retrieval's own terms."""
+
+    async def all(self) -> Sequence[CatalogLibrary]:
+        """Return every library that has a default version; the rest cannot be queried."""
         ...
 
 
@@ -86,6 +96,10 @@ class ChunkRepository(Protocol):
         self, manifest_id: str, chunk_ids: Sequence[ChunkId]
     ) -> Mapping[ChunkId, StoredChunk]:
         """Return the chunks of the manifest that exist, by ID, in one query."""
+        ...
+
+    async def counts(self, manifest_id: str) -> VersionCounts:
+        """Count the manifest's articles and chunks; zeros for an unknown manifest."""
         ...
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:

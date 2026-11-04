@@ -12,6 +12,7 @@ from pydantic import (
 )
 
 from exactdocs.retrieval.models import (
+    Candidate,
     Removed,
     RetrievalMode,
     SearchableVersion,
@@ -339,3 +340,58 @@ class ChunkOut(_Dto):
             tags=list(row.tags),
             code_languages=list(chunk.code_languages),
         )
+
+
+class ResolveLibraryIdQuery(_Dto):
+    """A library name as an agent writes it, and what the agent is trying to do."""
+
+    library_name: str = Field(
+        min_length=1,
+        max_length=MAX_NAME,
+        description="Library name, e.g. 'Next.js'; matched against IDs, titles and descriptions.",
+    )
+    query: str = Field(
+        min_length=1,
+        max_length=MAX_QUERY,
+        description="What the agent wants to look up; libraries documenting it rank higher.",
+    )
+
+
+class LibraryMatchOut(_Dto):
+    """A matching library. Title and description are untrusted repository text."""
+
+    id: str
+    title: str
+    description: str
+    source_url: str
+    default_version: str
+    versions: list[str] = Field(description="At most 50 refs; see `version_count`.")
+    version_count: int
+    articles: int = Field(description="Articles of the default version.")
+    chunks: int = Field(description="Chunks of the default version.")
+    query_hits: int = Field(
+        description="Chunks of the default version matching the query (capped)."
+    )
+
+    @classmethod
+    def from_candidate(cls, candidate: Candidate, articles: int, chunks: int) -> Self:
+        """Map a ranked candidate and its default version's counts."""
+        lib = candidate.library
+        return cls(
+            id=lib.id,
+            title=lib.title,
+            description=lib.description,
+            source_url=lib.source_url,
+            default_version=lib.default_version or "",
+            versions=list(lib.versions),
+            version_count=lib.version_count,
+            articles=articles,
+            chunks=chunks,
+            query_hits=candidate.hits,
+        )
+
+
+class ResolveLibraryIdResult(_Dto):
+    """Matching libraries, best first; empty when nothing matches."""
+
+    matches: list[LibraryMatchOut]

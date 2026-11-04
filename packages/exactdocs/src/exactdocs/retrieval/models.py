@@ -7,7 +7,7 @@ import unicodedata
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from itertools import groupby
 from typing import NewType
 
@@ -338,3 +338,116 @@ def source_link(version: SearchableVersion, article_path: str, anchor: str) -> s
     return section_link(
         version.host.value, version.repository_url, version.commit_sha, article_path, anchor
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogLibrary:
+    """A library as the catalog lists it. Title and description are untrusted repository text."""
+
+    id: str
+    title: str
+    description: str
+    source_url: str
+    default_version: str | None
+    versions: tuple[str, ...]
+    version_count: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VersionCounts:
+    """What one version holds: articles (with at least one chunk) and chunks."""
+
+    articles: int
+    chunks: int
+
+
+class NameMatch(IntEnum):
+    """How well a library name matches a library; lower is better. See ``name_match``."""
+
+    ID = 0  # `/owner/repo` or `owner/repo`
+    EXACT = 1  # the repo segment or the title, ignoring case and punctuation
+    PREFIX = 2  # the repo segment or the title starts with the name
+    PART = 3  # the name is inside the ID or title, or all its words are
+    DESCRIPTION = 4  # only the description has all its words
+
+
+def _squash(text: str) -> str:
+    """Lowercase, letters and digits only: ``Next.js`` and ``nextjs`` and ``next-js`` agree."""
+    return "".join(c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum())
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.split(r"[^\w]+", unicodedata.normalize("NFKC", text).casefold()) if w}
+
+
+# Words agents add to a library's name ("fastapi docs"); matched with and without them.
+STOP_WORDS = frozenset({"docs", "doc", "documentation", "library", "lib", "sdk", "api", "the"})
+
+
+def _match_once(name: str, library: CatalogLibrary) -> NameMatch | None:
+    """Try the tiers best first, each only when the better ones failed (the description is dear)."""
+    wanted = _squash(name)
+    if not wanted:
+        return None
+    names = [_squash(library.id.rsplit("/", 1)[-1]), _squash(library.title)]
+    words = _words(name)
+    tiers = [
+        (NameMatch.ID, lambda: wanted == _squash(library.id)),
+        (NameMatch.EXACT, lambda: wanted in names),
+        (NameMatch.PREFIX, lambda: any(n.startswith(wanted) for n in names)),
+        (
+            NameMatch.PART,
+            lambda: (
+                any(wanted in n for n in [*names, _squash(library.id)])
+                or words <= _words(f"{library.id} {library.title}")
+            ),
+        ),
+        (NameMatch.DESCRIPTION, lambda: words <= _words(library.description)),
+    ]
+    return next((tier for tier, holds in tiers if holds()), None)
+
+
+def name_match(name: str, library: CatalogLibrary) -> NameMatch | None:
+    """Match a library name against ID, title and description in memory; ``None`` is no match.
+
+    The name is tried as written and without ``STOP_WORDS``; the better match counts. A name with
+    no letter or digit matches nothing. Ties are broken by ``rank_matches``.
+    """
+    kept = " ".join(w for w in re.split(r"[^\w]+", name) if w and w.casefold() not in STOP_WORDS)
+    found = [m for n in {name, kept} if (m := _match_once(n, library)) is not None]
+    return min(found, default=None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Candidate:
+    """A library whose name matched, with how many chunks of its default version match the query."""
+
+    library: CatalogLibrary
+    match: NameMatch
+    hits: int = 0
+
+
+def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """Order candidates, best first, by these rules in order.
+
+    1. A library named by its ID comes first, whatever the query finds.
+    2. A name found in the ID or title beats one found only in the description.
+    3. An exact or prefix name beats a mere part of a name (``react`` before ``preact``).
+    4. Within that, a library with hits for the query beats one without.
+    5. A closer name match (exact, then prefix).
+    6. More hits.
+    7. The library ID, so equal candidates always come out in the same order.
+    """
+
+    def key(c: Candidate) -> tuple[int, int, int, int, int, int, str]:
+        return (
+            int(c.match is not NameMatch.ID),
+            int(c.match is NameMatch.DESCRIPTION),
+            int(c.match >= NameMatch.PART),
+            int(c.hits == 0),
+            c.match,
+            -c.hits,
+            c.library.id,
+        )
+
+    return sorted(candidates, key=key)

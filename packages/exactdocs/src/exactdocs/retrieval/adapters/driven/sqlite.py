@@ -17,7 +17,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     delete,
+    distinct,
     exists,
+    func,
     insert,
     select,
     tuple_,
@@ -34,6 +36,7 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     Removed,
     StoredChunk,
+    VersionCounts,
 )
 
 # Retrieval's tables, prefixed `retrieval_`. The schema itself is created by an Alembic revision
@@ -287,6 +290,15 @@ class SqliteChunkRepository:
             )
             for row in rows
         }
+
+    async def counts(self, manifest_id: str) -> VersionCounts:
+        """Count the manifest's articles and chunks."""
+        query = select(func.count(distinct(manifest_chunks.c.article_path)), func.count()).where(
+            manifest_chunks.c.manifest_id == manifest_id
+        )
+        async with self.engine.connect() as connection:
+            articles, chunk_count = (await connection.execute(query)).one()
+        return VersionCounts(articles=articles, chunks=chunk_count)
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
         """Return every indexed manifest that has a row for this chunk ID (any status)."""

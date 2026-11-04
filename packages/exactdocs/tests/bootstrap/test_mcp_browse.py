@@ -149,10 +149,13 @@ TOOL_CALLS = [
     ("search_docs", {"library": "/acme/payments", "query": "x"}),
     ("read_article", {"library": "/acme/payments", "path": "guide/a.md"}),
     ("read_chunk", {"chunk_id": CHUNK_ID}),
+    ("resolve-library-id", {"libraryName": "payments", "query": "x"}),
 ]
 # The verbatim tools put the notice in a block of its own, before the untouched text.
 NOTICE_AND_TEXT = 2
-NOTICE_BLOCK_TOOLS = {"read_article", "read_chunk"}
+NOTICE_BLOCK_TOOLS = {"read_article", "read_chunk", "resolve-library-id"}
+# context7-shaped: no output schema, so no `notice` field; the notice is the first text block.
+CONTEXT7_TOOLS = {"resolve-library-id"}
 
 
 @pytest.mark.parametrize(("tool", "arguments"), TOOL_CALLS)
@@ -167,6 +170,10 @@ async def test_the_notice_comes_first_in_the_text_every_client_reads(
         # The notice is a block of its own and the stored text follows it untouched.
         assert result.content[0].text == NOTICE
         assert len(result.content) == NOTICE_AND_TEXT
+        if tool in CONTEXT7_TOOLS:
+            assert result.structured_content is None
+            assert result.content[1].text.startswith("Available Libraries:")
+            return
         assert result.structured_content is not None
         assert result.structured_content["notice"] == NOTICE
         return
@@ -185,9 +192,12 @@ async def test_every_tool_declares_a_required_notice_and_the_same_hints(
 
     assert {t.name for t in tools} == {name for name, _ in TOOL_CALLS}  # a new tool lands here
     for tool in tools:
-        schema = tool.output_schema or {}
-        assert "notice" in schema["properties"], tool.name
-        assert "notice" in schema["required"], tool.name
+        if tool.name in CONTEXT7_TOOLS:  # the notice is its first text block, tested above
+            assert tool.output_schema is None, tool.name
+        else:
+            assert tool.output_schema is not None, tool.name  # a new tool must declare one
+            assert "notice" in tool.output_schema["properties"], tool.name
+            assert "notice" in tool.output_schema["required"], tool.name
         assert tool.annotations is not None
         assert tool.annotations.title, tool.name
         assert tool.annotations.read_only_hint is True

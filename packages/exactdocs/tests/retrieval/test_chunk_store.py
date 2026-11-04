@@ -11,6 +11,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryLibraries,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
@@ -39,6 +40,7 @@ from exactdocs.retrieval.models import (
     ManifestStatus,
     SearchableVersion,
     SourceHost,
+    VersionCounts,
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
@@ -162,6 +164,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
+            libraries=InMemoryLibraries(),
             searchable=catalog,
             manifests=catalog,
             chunks=chunks,
@@ -612,3 +615,10 @@ async def test_chunk_sets_shared_by_two_libraries_stay_when_one_is_removed(world
 
     assert (removed.manifests, removed.chunk_sets) == (1, 1)
     assert await world.count_chunk_sets() == 1
+
+
+async def test_a_manifest_counts_its_articles_and_chunks(world: World) -> None:
+    await world.index("m1", "main", {"guide/a.md": "a1", "guide/b.md": "b1"})
+
+    assert await world.chunks.counts("m1") == VersionCounts(articles=2, chunks=4)
+    assert await world.chunks.counts("unknown") == VersionCounts(articles=0, chunks=0)

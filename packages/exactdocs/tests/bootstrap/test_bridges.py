@@ -4,6 +4,7 @@ import pytest
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogLibraries,
     CatalogLibraryIds,
     CatalogSearchableVersions,
 )
@@ -29,6 +30,7 @@ from exactdocs.catalog.models import (
 from exactdocs.catalog.module import CatalogModule
 from exactdocs.ingestion.models import ProposedId
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
+from exactdocs_kernel import MAX_LIMIT
 
 PAYMENTS = Library(
     id=LibraryId("/acme/payments"),
@@ -148,3 +150,27 @@ async def test_a_searchable_version_needs_an_active_manifest_and_names_its_sourc
     assert await SEARCHABLE.find("/acme/payments", "abc12340") is None  # not an exact ref
     assert await SEARCHABLE.find("/vuejs/docs", None) is None
     assert await SEARCHABLE.find("/acme/payments", "v 1") is None  # not a ref at all
+
+
+async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a_version() -> None:
+    many = [
+        Library(
+            id=LibraryId(f"/acme/lib-{i:03d}"),
+            title=f"Lib {i}",
+            source_url="https://github.com/acme/x",
+            host=HostKind.GITHUB,
+            versions=PAYMENTS.versions if i else frozenset(),
+        )
+        for i in range(MAX_LIMIT + 5)
+    ]
+    repository = InMemoryLibraryRepository.of(many)
+    catalog = CatalogModule.build(
+        repository=repository, manifests=InMemoryManifestRepository(repository)
+    )
+
+    found = await CatalogLibraries(catalog.list_libraries).all()
+
+    assert len(found) == MAX_LIMIT + 4  # lib-000 has no version
+    assert found[0].id == "/acme/lib-001"
+    assert (found[0].title, found[0].default_version) == ("Lib 1", "v1.4.0")
+    assert found[0].version_count == len(PAYMENTS.versions)

@@ -20,6 +20,7 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     GetManifestStatesQuery,
     HostKind,
+    ListLibrariesQuery,
     RemoveLibraryCommand,
     RemoveVersionCommand,
     StoreManifestCommand,
@@ -42,6 +43,7 @@ from exactdocs.catalog.ports.driving import (
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
+    ListLibraries,
     RemoveLibrary,
     RemoveVersion,
     StoreManifest,
@@ -68,7 +70,13 @@ from exactdocs.retrieval.dtos import (
     IndexManifestCommand,
     RemoveChunksCommand,
 )
-from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion, SourceHost
+from exactdocs.retrieval.models import (
+    CatalogLibrary,
+    DocTarget,
+    ManifestStatus,
+    SearchableVersion,
+    SourceHost,
+)
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
@@ -76,7 +84,7 @@ from exactdocs.retrieval.ports.driving import (
     IndexManifest,
     RemoveChunks,
 )
-from exactdocs_kernel import NotFoundError, ValidationError
+from exactdocs_kernel import MAX_LIMIT, NotFoundError, ValidationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +119,36 @@ class CatalogSearchableVersions:
             repository_url=detail.source_url,
             host=SourceHost(detail.host.value),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogLibraries:
+    """Implements ``retrieval.ports.driven.Libraries`` using the catalog."""
+
+    list_libraries: ListLibraries
+
+    async def all(self) -> Sequence[CatalogLibrary]:
+        """Read every page of the catalog's list, skipping libraries with no default version."""
+        found: list[CatalogLibrary] = []
+        cursor = None
+        while True:
+            page = await self.list_libraries(ListLibrariesQuery(limit=MAX_LIMIT, cursor=cursor))
+            found += [
+                CatalogLibrary(
+                    id=lib.id,
+                    title=lib.title,
+                    description=lib.description,
+                    source_url=lib.source_url,
+                    default_version=lib.default_version,
+                    versions=tuple(r.ref for r in lib.refs),
+                    version_count=lib.version_count,
+                )
+                for lib in page.libraries
+                if lib.default_version is not None
+            ]
+            cursor = page.next_cursor
+            if cursor is None:
+                return found
 
 
 @dataclass(frozen=True, slots=True)

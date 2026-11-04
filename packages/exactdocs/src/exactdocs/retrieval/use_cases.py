@@ -12,9 +12,12 @@ from exactdocs.retrieval.dtos import (
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    LibraryMatchOut,
     ReadChunkQuery,
     RemoveChunksCommand,
     RemovedChunks,
+    ResolveLibraryIdQuery,
+    ResolveLibraryIdResult,
     SearchDocsQuery,
     SearchDocsResult,
     SearchResultOut,
@@ -27,6 +30,8 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
+    Candidate,
+    CatalogLibrary,
     Chunk,
     ChunkId,
     ChunkSet,
@@ -34,14 +39,20 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
+    NameMatch,
     RetrievalMode,
+    SearchableVersion,
     SearchText,
     TagFilter,
+    TagMatch,
     article_chunk_rows,
+    name_match,
+    rank_matches,
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    Libraries,
     SearchableVersions,
     SearchIndex,
 )
@@ -315,3 +326,75 @@ class RemoveChunksUseCase:
         return RemovedChunks.from_model(
             await self.chunks.remove([i for i in asked if i not in known])
         )
+
+
+# Only the best name matches are looked at: each costs a search. Results are capped to the same.
+MAX_RESOLVED = 10
+# How many matching chunks count as "documents it"; enough to tell libraries apart, cheap to get.
+QUERY_HITS_CAP = 5
+
+
+@dataclass(frozen=True, slots=True)
+class ResolveLibraryIdUseCase:
+    """Implements ``ports.driving.ResolveLibraryId``."""
+
+    libraries: Libraries
+    versions: SearchableVersions
+    search: SearchIndex
+    chunks: ChunkRepository
+
+    async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
+        """Match the name, then let the default versions' hits for ``query`` re-rank the matches."""
+        # Both refuse blank text the same way (EmptySearchTextError).
+        text, name = SearchText(value=query.query), SearchText(value=query.library_name)
+        named = [
+            (lib, found)
+            for lib in await self.libraries.all()
+            if (found := name_match(name.value, lib)) is not None
+        ]
+        # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
+        named.sort(key=lambda m: (m[1], m[0].id))
+        readable = await self._readable(named)
+        hits = await asyncio.gather(
+            *(
+                self.search.search(
+                    version.manifest_id,
+                    text.value,
+                    TagFilter(tags=(), match=TagMatch.ANY),
+                    QUERY_HITS_CAP,
+                )
+                for _, _, version in readable
+            )
+        )
+        ranked = rank_matches(
+            [
+                Candidate(library=lib, match=found, hits=len(h))
+                for (lib, found, _), h in zip(readable, hits, strict=True)
+            ]
+        )
+        manifests = {lib.id: version.manifest_id for lib, _, version in readable}
+        counts = await asyncio.gather(
+            *(self.chunks.counts(manifests[c.library.id]) for c in ranked)
+        )
+        return ResolveLibraryIdResult(
+            matches=[
+                LibraryMatchOut.from_candidate(c, n.articles, n.chunks)
+                for c, n in zip(ranked, counts, strict=True)
+            ]
+        )
+
+    async def _readable(
+        self, named: Sequence[tuple[CatalogLibrary, NameMatch]]
+    ) -> list[tuple[CatalogLibrary, NameMatch, SearchableVersion]]:
+        """Take the best names that have a readable default version, ``MAX_RESOLVED`` at most.
+
+        Libraries with nothing imported are dropped before the cut, so they cost no slot.
+        """
+        found: list[tuple[CatalogLibrary, NameMatch, SearchableVersion]] = []
+        for start in range(0, len(named), MAX_RESOLVED):
+            batch = named[start : start + MAX_RESOLVED]
+            versions = await asyncio.gather(*(self.versions.find(lib.id, None) for lib, _ in batch))
+            found += [(lib, m, v) for (lib, m), v in zip(batch, versions, strict=True) if v]
+            if len(found) >= MAX_RESOLVED:
+                break
+        return found[:MAX_RESOLVED]
