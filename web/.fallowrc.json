@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/fallow/schema.json",
-  "entry": ["doctor.config.ts", ".pnpmfile.cjs"],
+  "entry": ["scripts/check-dist.mjs", "doctor.config.ts", ".pnpmfile.cjs"],
   "ignorePatterns": ["src/routeTree.gen.ts"],
   "ignoreExports": [
     {
@@ -66,6 +66,8 @@
         "index.html",
         "vite.config.ts",
         "doctor.config.ts",
+        "scripts/check-dist.mjs",
+        "scripts/check-dist.test.mjs",
         ".pnpmfile.cjs"
       ]
     }
