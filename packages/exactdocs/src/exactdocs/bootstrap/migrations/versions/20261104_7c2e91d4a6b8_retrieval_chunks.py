@@ -1,14 +1,14 @@
 """Chunks are stored once per content and addressed per manifest.
 
 Revision ID: 7c2e91d4a6b8
-Revises: 5f87041a0ed2
+Revises: 9b3e5a7c1d42
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "7c2e91d4a6b8"
-down_revision = "5f87041a0ed2"
+down_revision = "9b3e5a7c1d42"
 branch_labels = None
 depends_on = None
 
