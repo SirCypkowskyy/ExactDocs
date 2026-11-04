@@ -32,8 +32,8 @@ function LibraryName({ id }: { id: string }) {
   const { owner, repo } = splitLibrary(id);
   return (
     <span className="flex min-w-0 items-baseline">
-      <span className="min-w-0 max-w-[40%] shrink truncate opacity-70">{owner}/</span>
-      <span className="min-w-0 max-w-[60%] shrink-0 truncate font-medium">{repo}</span>
+      <span className="min-w-0 shrink truncate opacity-70">{owner}/</span>
+      <span className="max-w-full shrink-0 truncate font-medium">{repo}</span>
     </span>
   );
 }
