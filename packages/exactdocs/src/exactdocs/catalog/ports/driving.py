@@ -10,7 +10,9 @@ from exactdocs.catalog.dtos import (
     ArticleList,
     CollectGarbageCommand,
     CollectionResult,
+    CreateLibraryCommand,
     DiscardedManifests,
+    DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
@@ -133,5 +135,27 @@ class GetActiveManifest(Protocol):
     """Name the manifest that serves a version, for domains that hold manifest IDs."""
 
     async def __call__(self, query: GetActiveManifestQuery) -> ActiveManifest:
+        """Run the use case."""
+        ...
+
+
+class CreateLibrary(Protocol):
+    """Add a library without versions.
+
+    Raises ``LibraryAlreadyExistsError`` or a validation error.
+    """
+
+    async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class DiscardLibrary(Protocol):
+    """Remove a library that has no versions yet (the undo of ``CreateLibrary``).
+
+    Does nothing for an unknown ID; raises ``LibraryNotEmptyError`` when it has versions.
+    """
+
+    async def __call__(self, command: DiscardLibraryCommand) -> None:
         """Run the use case."""
         ...

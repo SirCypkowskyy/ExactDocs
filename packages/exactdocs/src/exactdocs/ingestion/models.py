@@ -10,9 +10,11 @@ import ipaddress
 import json
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
+from functools import lru_cache
 from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import Any, NewType, Self
@@ -22,9 +24,13 @@ import yaml
 from markdown_it import MarkdownIt
 
 from exactdocs.ingestion.errors import (
+    AmbiguousRefError,
     InvalidChunkingConfigError,
+    InvalidPathPatternError,
     InvalidProgressError,
     InvalidRepositoryUrlError,
+    PatternProblem,
+    UnknownRefError,
     UrlProblem,
 )
 
@@ -236,6 +242,8 @@ def _title(declared: object, body: str, path: str) -> str:
 
 JobId = NewType("JobId", str)
 JobKind = NewType("JobKind", str)
+IMPORT_JOB = JobKind("import")
+"""The kind of job that imports one version of a library."""
 
 
 class JobState(StrEnum):
@@ -259,7 +267,8 @@ class FileProblem:
 class Job:
     """A long task for one library (optionally one version) and how far it got.
 
-    ``total`` is 0 until the job knows its size. Every transition returns a new job.
+    ``total`` is 0 until the job knows its size. ``commit_sha`` is the commit the job's
+    ``version`` was pinned to when it was queued. Every transition returns a new job.
     """
 
     id: JobId
@@ -267,6 +276,7 @@ class Job:
     library: str
     version: str | None
     state: JobState
+    commit_sha: str | None = None
     done: int = 0
     total: int = 0
     problems: tuple[FileProblem, ...] = ()
@@ -277,7 +287,14 @@ class Job:
 
     @classmethod
     def queued(
-        cls, *, job_id: JobId, kind: JobKind, library: str, version: str | None, now: datetime
+        cls,
+        *,
+        job_id: JobId,
+        kind: JobKind,
+        library: str,
+        version: str | None,
+        now: datetime,
+        commit_sha: str | None = None,
     ) -> Self:
         """Create a job that waits for the worker."""
         return cls(
@@ -285,6 +302,7 @@ class Job:
             kind=kind,
             library=library,
             version=version,
+            commit_sha=commit_sha,
             state=JobState.QUEUED,
             created_at=now,
         )
@@ -533,3 +551,251 @@ class ArticleChunk:
     content_hash: str
     anchor: str  # GitHub-style, unique in the article; empty before the first heading
     code_languages: tuple[str, ...] = ()
+
+
+class RefKind(StrEnum):
+    """What a requested ref turned out to be."""
+
+    TAG = "tag"
+    BRANCH = "branch"
+    COMMIT = "commit"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResolvedRef:
+    """A ref pinned to a commit. For a commit, ``name`` is the full SHA."""
+
+    name: str
+    kind: RefKind
+    commit_sha: str
+
+
+_HEADS, _TAGS, _PEELED = "refs/heads/", "refs/tags/", "^{}"
+_SHA_PREFIX = re.compile(r"[0-9a-f]{7,64}")
+
+
+def ref_tips(refs: RemoteRefs) -> tuple[ResolvedRef, ...]:
+    """List the branches then the tags a remote advertises, each sorted, with commit SHAs.
+
+    An annotated tag points at a tag object; its ``^{}`` line carries the commit, which is used.
+    """
+    branches: dict[str, str] = {}
+    tags: dict[str, str] = {}
+    peeled: dict[str, str] = {}
+    for ref in refs.refs:
+        if ref.name.startswith(_HEADS) and (name := branch_name(ref.name.removeprefix(_HEADS))):
+            branches[name] = ref.sha
+        elif ref.name.startswith(_TAGS):
+            tag = ref.name.removeprefix(_TAGS)
+            if tag.endswith(_PEELED):
+                peeled[tag.removesuffix(_PEELED)] = ref.sha
+            else:
+                tags[tag] = ref.sha
+    return (
+        *(
+            ResolvedRef(name=n, kind=RefKind.BRANCH, commit_sha=s)
+            for n, s in sorted(branches.items())
+        ),
+        *(
+            ResolvedRef(name=n, kind=RefKind.TAG, commit_sha=peeled.get(n, s))
+            for n, s in sorted(tags.items())
+            if branch_name(n)
+        ),
+    )
+
+
+def resolve_ref(refs: RemoteRefs, requested: str | None) -> ResolvedRef:
+    """Pin ``requested`` to a commit using only what the remote advertises.
+
+    No ref means the default branch. A name is a tag (preferred) or a branch; otherwise a full
+    or short (7+ characters) commit SHA that is the tip of some advertised ref.
+    ponytail: a commit that is not a ref tip cannot be seen by ``ls-remote``, so it is refused;
+    verify it with a fetch (E3-03) if importing arbitrary commits matters.
+    """
+    tips = ref_tips(refs)
+    if requested is None:
+        default = next(
+            (t for t in tips if t.kind is RefKind.BRANCH and t.name == refs.default_branch), None
+        )
+        if default is None:
+            raise UnknownRefError(None)
+        return default
+    named = {t.kind: t for t in tips if t.name == requested}
+    if found := named.get(RefKind.TAG) or named.get(RefKind.BRANCH):
+        return found
+    prefix = requested.lower()
+    commits = {
+        t.commit_sha
+        for t in tips
+        if _SHA_PREFIX.fullmatch(prefix) and t.commit_sha.startswith(prefix)
+    }
+    if len(commits) > 1:
+        raise AmbiguousRefError(prefix)
+    if not commits:
+        raise UnknownRefError(requested)
+    (sha,) = commits
+    return ResolvedRef(name=sha, kind=RefKind.COMMIT, commit_sha=sha)
+
+
+ARTICLE_SUFFIXES = (".md", ".mdx")
+_MAX_PATTERNS = 64
+_MAX_PATTERN = 256
+_MAX_PATH = 1024
+_MAX_SEGMENT = 255
+_GLOB_CHARS = frozenset("*?{")
+
+type _Token = str | tuple[str, ...]  # text, or the alternatives of a `{a,b}`
+_ANY, _ONE = "*", "?"  # as tokens they are the 1-tuples ("*",) and ("?",)
+type _Segment = tuple[_Token, ...] | None  # None: `**`, any number of folders
+
+
+@dataclass(frozen=True, slots=True)
+class _Glob:
+    segments: tuple[_Segment, ...]
+    folder: bool  # a plain name also selects everything below it
+
+
+def _segment(text: str) -> _Segment:
+    """Split one path segment into tokens; ``**`` alone is a globstar."""
+    if text == "**":
+        return None
+    tokens: list[_Token] = []
+    literal = ""
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char in "*?{":
+            if literal:
+                tokens.append(literal)
+                literal = ""
+            if char == "{":
+                end = text.find("}", i)
+                if end < 0:
+                    raise InvalidPathPatternError(PatternProblem.BRACE)
+                tokens.append(("{", *text[i + 1 : end].split(",")))
+                i = end
+            elif not (char == "*" and tokens and tokens[-1] == (_ANY,)):  # `**` in a name is `*`
+                tokens.append((char,))
+        else:
+            literal += char
+        i += 1
+    if literal:
+        tokens.append(literal)
+    return tuple(tokens)
+
+
+@lru_cache(maxsize=512)
+def _glob(pattern: str) -> _Glob:
+    """Parse a cleaned pattern. Matching never backtracks: see ``_matches``."""
+    folder = not _GLOB_CHARS & set(pattern)
+    parts = pattern.split("/")
+    if not parts[-1]:  # `docs/` is `docs/**`
+        parts[-1] = "**"
+    segments: list[_Segment] = []
+    for part in parts:
+        segment = _segment(part)
+        if segment is None and segments and segments[-1] is None:
+            continue  # `**/**` is `**`
+        segments.append(segment)
+    return _Glob(tuple(segments), folder)
+
+
+def _name_matches(tokens: tuple[_Token, ...], name: str) -> bool:
+    """Match one segment: the set of reachable positions, so the time is tokens x length."""
+    if len(name) > _MAX_SEGMENT:
+        return False
+    reach = {0}
+    for token in tokens:
+        if isinstance(token, str):
+            reach = {p + len(token) for p in reach if name.startswith(token, p)}
+        elif token == (_ANY,):
+            reach = set(range(min(reach), len(name) + 1)) if reach else set()
+        elif token == (_ONE,):
+            reach = {p + 1 for p in reach if p < len(name)}
+        else:
+            reach = {p + len(a) for p in reach for a in token[1:] if name.startswith(a, p)}
+        if not reach:
+            return False
+    return len(name) in reach
+
+
+def _matches(glob: _Glob, path: str) -> bool:
+    """Match ``path`` folder by folder, keeping the set of positions reached so far.
+
+    ``**`` reaches every position from the first one on. Linear in pattern segments times path
+    segments, whatever the pattern (a regex would backtrack on stacked wildcards).
+    """
+    if len(path) > _MAX_PATH:
+        return False
+    names = path.split("/")
+    reach = {0}
+    for segment in glob.segments:
+        if segment is None:
+            reach = set(range(min(reach), len(names) + 1))
+        else:
+            reach = {i + 1 for i in reach if i < len(names) and _name_matches(segment, names[i])}
+        if not reach:
+            return False
+    return len(names) in reach or (glob.folder and bool(reach))
+
+
+def _clean_pattern(raw: str) -> str:
+    pattern = raw.strip().removeprefix("./")
+    if not pattern or len(pattern) > _MAX_PATTERN or not pattern.isprintable():
+        raise InvalidPathPatternError(PatternProblem.EMPTY)
+    parts = pattern.split("/")
+    if (
+        pattern.startswith("/")
+        or "\\" in pattern
+        or any(p in {"", ".", ".."} for p in parts[:-1])
+        or parts[-1] in {".", ".."}
+    ):
+        raise InvalidPathPatternError(PatternProblem.PATH)
+    _glob(pattern)  # fails on an unclosed brace
+    return pattern
+
+
+@dataclass(frozen=True, slots=True)
+class PathSelection:
+    """Which repository files are articles: ``include`` minus ``exclude``, only ``.md``/``.mdx``.
+
+    Patterns are repo-relative with ``/`` (an absolute path, ``..`` or a backslash is refused) and
+    **case-sensitive**: ``Docs/`` does not match ``docs/``. Only the ``.md``/``.mdx`` suffix is
+    case-insensitive. ``docs/`` is a folder and all below it, ``docs`` a file or a folder, ``*``
+    and ``?`` stay within one name, ``**`` as a whole name crosses folders, ``{a,b}`` is a choice
+    (not nestable; ``{}`` matches nothing; a lone ``}`` is a plain character). No ``include``
+    means every ``.md``/``.mdx`` file. An exclusion always wins.
+    """
+
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+
+    @classmethod
+    def of(cls, include: Sequence[str] = (), exclude: Sequence[str] = ()) -> Self:
+        """Validate and normalise the patterns (blank, duplicate-free, bounded)."""
+        if len(include) + len(exclude) > _MAX_PATTERNS:
+            raise InvalidPathPatternError(PatternProblem.TOO_MANY)
+        return cls(
+            include=tuple(dict.fromkeys(map(_clean_pattern, include))),
+            exclude=tuple(dict.fromkeys(map(_clean_pattern, exclude))),
+        )
+
+    def selects(self, path: str) -> bool:
+        """Tell whether the file at this repo-relative path is an article."""
+        if not path.lower().endswith(ARTICLE_SUFFIXES):
+            return False
+        if any(_matches(_glob(p), path) for p in self.exclude):
+            return False
+        return not self.include or any(_matches(_glob(p), path) for p in self.include)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NewLibrary:
+    """What a library is created from: its repository, default branch and doc selection."""
+
+    library_id: ProposedId
+    title: str
+    source_url: str
+    host: RepositoryHost
+    default_branch: str | None
+    selection: PathSelection

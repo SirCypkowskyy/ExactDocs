@@ -58,3 +58,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   at most 50 tokens (409 `too_many_tokens`). A password reset revokes all of the account's
   tokens. The three token routes need the **session cookie**, not a token, so a stolen token
   cannot create a successor.
+- **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
+  "exclude_paths"?}`) validates everything first, then stores the library with its selection and
+  queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`
+  or `commit`), `commit_sha` and `job_id`, and a `Location` header with the library. `ref` is a tag,
+  a branch (a tag wins over a branch of the same name), or a full or short (7+ characters) commit
+  SHA that is the tip of a branch or tag; omitted, it is the default branch. A ref that is
+  not found is 422 `unknown_ref`, a short SHA that starts two commits 422 `ambiguous_ref`, a bad
+  pattern 422 `invalid_path_pattern`, a taken ID 409 `library_id_taken`. Patterns are repo-relative,
+  case-sensitive, never absolute or with `..`: `docs/` (a folder), `docs/**`, `*.md`,
+  `{a,b}`; no `include_paths` means every `.md`/`.mdx` file, only those are ever articles, and an
+  exclusion always wins. The library has no versions until its import has run; the job records the
+  pinned ref and commit. `GET /repositories/refs?url=` lists `default_branch`, `branches` and `tags`
+  (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
+  Like `/repositories/check`, both accept `file://`, localhost and private addresses (see
+  SECURITY.md).

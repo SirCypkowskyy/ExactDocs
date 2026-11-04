@@ -85,7 +85,13 @@ export interface paths {
         /** List All */
         readonly get: operations["catalog-list_all"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * Add
+         * @description Create a library, pin its ref to a commit and queue the import (see the job ID).
+         *
+         *     `Location` is the new library.
+         */
+        readonly post: operations["ingestion-add"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -197,6 +203,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/repositories/refs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Refs
+         * @description List the tags and branches of a repository (the URL is never echoed back).
+         */
+        readonly get: operations["ingestion-list_refs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/jobs/{job_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -246,6 +272,55 @@ export interface components {
             readonly username: string;
             /** Role */
             readonly role: string;
+        };
+        /**
+         * AddLibraryCommand
+         * @description Create a library from a git repository, with its doc selection, and queue its import.
+         */
+        readonly AddLibraryCommand: {
+            /**
+             * Url
+             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             */
+            readonly url: string;
+            /**
+             * Library Id
+             * @description `/owner/repo`; omitted: the one proposed from the URL.
+             */
+            readonly library_id?: string | null;
+            /**
+             * Ref
+             * @description A tag, a branch or a full or short commit SHA; omitted: the default branch.
+             */
+            readonly ref?: string | null;
+            /**
+             * Include Paths
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file.
+             */
+            readonly include_paths?: readonly string[];
+            /**
+             * Exclude Paths
+             * @description Folders, files or globs to leave out; they win.
+             */
+            readonly exclude_paths?: readonly string[];
+        };
+        /**
+         * AddedLibrary
+         * @description The new library, the commit its ref was pinned to, and the queued import.
+         */
+        readonly AddedLibrary: {
+            /** Library Id */
+            readonly library_id: string;
+            /**
+             * Ref
+             * @description The tag or branch name, or the full SHA of a commit.
+             */
+            readonly ref: string;
+            readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /** Job Id */
+            readonly job_id: string;
         };
         /**
          * Article
@@ -478,6 +553,11 @@ export interface components {
             readonly library: string;
             /** Version */
             readonly version: string | null;
+            /**
+             * Commit Sha
+             * @description The commit `version` was pinned to, if any.
+             */
+            readonly commit_sha: string | null;
             readonly state: components["schemas"]["JobState"];
             /** Done */
             readonly done: number;
@@ -562,11 +642,15 @@ export interface components {
             readonly default_version: string | null;
         };
         /**
-         * RefKind
-         * @description What a version was imported from.
-         * @enum {string}
+         * RefOut
+         * @description A tag or branch and the commit it points at.
          */
-        readonly RefKind: "tag" | "branch" | "commit";
+        readonly RefOut: {
+            /** Name */
+            readonly name: string;
+            /** Commit Sha */
+            readonly commit_sha: string;
+        };
         /**
          * RepositoryHost
          * @description Where a repository is hosted, by exact host name; ``git`` is any other server.
@@ -574,13 +658,30 @@ export interface components {
          */
         readonly RepositoryHost: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
         /**
+         * RepositoryRefs
+         * @description What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most.
+         */
+        readonly RepositoryRefs: {
+            /** Default Branch */
+            readonly default_branch: string | null;
+            /** Branches */
+            readonly branches: readonly components["schemas"]["RefOut"][];
+            /** Tags */
+            readonly tags: readonly components["schemas"]["RefOut"][];
+            /**
+             * Truncated
+             * @description True when branches or tags were cut at 1000 each.
+             */
+            readonly truncated: boolean;
+        };
+        /**
          * ResolvedVersion
          * @description The version an ID resolved to; always states which one was used.
          */
         readonly ResolvedVersion: {
             /** Ref */
             readonly ref: string;
-            readonly kind: components["schemas"]["RefKind"];
+            readonly kind: components["schemas"]["exactdocs__catalog__models__RefKind"];
             /** Commit Sha */
             readonly commit_sha: string;
             /**
@@ -685,7 +786,7 @@ export interface components {
         readonly VersionOut: {
             /** Ref */
             readonly ref: string;
-            readonly kind: components["schemas"]["RefKind"];
+            readonly kind: components["schemas"]["exactdocs__catalog__models__RefKind"];
             /** Commit Sha */
             readonly commit_sha: string;
             /**
@@ -699,6 +800,18 @@ export interface components {
              */
             readonly is_default: boolean;
         };
+        /**
+         * RefKind
+         * @description What a version was imported from.
+         * @enum {string}
+         */
+        readonly exactdocs__catalog__models__RefKind: "tag" | "branch" | "commit";
+        /**
+         * RefKind
+         * @description What a requested ref turned out to be.
+         * @enum {string}
+         */
+        readonly exactdocs__ingestion__models__RefKind: "tag" | "branch" | "commit";
     };
     responses: never;
     parameters: never;
@@ -1313,6 +1426,84 @@ export interface operations {
             };
         };
     };
+    readonly "ingestion-add": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddLibraryCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AddedLibrary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "catalog-get_one": {
         readonly parameters: {
             readonly query?: never;
@@ -1730,6 +1921,82 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CheckedRepository"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-list_refs": {
+        readonly parameters: {
+            readonly query: {
+                readonly url: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RepositoryRefs"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

@@ -8,6 +8,7 @@ from exactdocs.ingestion.models import (
     ArticleChunk,
     Job,
     JobId,
+    NewLibrary,
     ParsedArticle,
     ProposedId,
     RemoteRefs,
@@ -109,4 +110,19 @@ class Chunker(Protocol):
         An empty body has no chunks. This is CPU-bound and synchronous: the import use case
         should call it through ``asyncio.to_thread``. There is no size cap yet.
         """
+        ...
+
+
+class NewLibraries(Protocol):
+    """Where ingestion puts a library it was asked to add (the catalog, in its own words)."""
+
+    async def add(self, library: NewLibrary) -> str:
+        """Store the library and return its canonical ID.
+
+        Raises a conflict when the ID is taken and a validation error when it is not a valid ID.
+        """
+        ...
+
+    async def discard(self, library_id: str) -> None:
+        """Remove a library that was just added and has no versions (the undo of ``add``)."""
         ...

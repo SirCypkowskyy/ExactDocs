@@ -13,7 +13,9 @@ from exactdocs.catalog.dtos import (
     ArticleSummary,
     CollectGarbageCommand,
     CollectionResult,
+    CreateLibraryCommand,
     DiscardedManifests,
+    DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
@@ -32,14 +34,17 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
     ConflictingContentError,
+    LibraryNotEmptyError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
+    HostKind,
     Library,
     LibraryId,
+    LibrarySettings,
     Manifest,
     ManifestEntry,
     ManifestId,
@@ -77,6 +82,45 @@ class ListLibrariesUseCase:
             libraries, key=lambda lib: lib.id.value, limit=query.limit, cursor=query.cursor
         )
         return LibraryList.from_page(page)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateLibraryUseCase:
+    """Implements ``ports.driving.CreateLibrary``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
+        """Store a new library without versions; the repository refuses a taken ID."""
+        library = Library(
+            id=LibraryId(command.id),
+            title=command.title,
+            source_url=command.source_url,
+            host=HostKind(command.host),
+            default_branch=VersionRef(command.default_branch) if command.default_branch else None,
+            settings=LibrarySettings(
+                include_paths=tuple(command.include_paths),
+                exclude_paths=tuple(command.exclude_paths),
+            ),
+        )
+        await self.repository.add(library)
+        return LibraryDetail.from_model(library)
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardLibraryUseCase:
+    """Implements ``ports.driving.DiscardLibrary``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: DiscardLibraryCommand) -> None:
+        """Remove the library if it exists and has no versions."""
+        library = await self.repository.get(LibraryId(command.id))
+        if library is None:
+            return
+        if library.versions:
+            raise LibraryNotEmptyError(str(library.id))
+        await self.repository.delete(library.id)
 
 
 @dataclass(frozen=True, slots=True)

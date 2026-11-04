@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Self
 
 from exactdocs.catalog.errors import (
+    LibraryAlreadyExistsError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     ManifestNotPendingError,
@@ -42,6 +43,16 @@ class InMemoryLibraryRepository:
     async def get(self, library_id: LibraryId) -> Library | None:
         """Return the library with this ID, or ``None``."""
         return self.libraries.get(library_id)
+
+    async def add(self, library: Library) -> None:
+        """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken."""
+        if library.id in self.libraries:
+            raise LibraryAlreadyExistsError(library.id.value)
+        self.libraries[library.id] = library
+
+    async def delete(self, library_id: LibraryId) -> None:
+        """Remove the library, if present."""
+        self.libraries.pop(library_id, None)
 
     async def save(self, library: Library) -> None:
         """Store the library; versions it already has are kept as they are, new ones are added."""

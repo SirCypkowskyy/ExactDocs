@@ -19,6 +19,14 @@ from exactdocs_kernel import SystemClock
 IMPORT = JobKind("import")
 
 
+class _NoLibraries:
+    async def add(self, library: object) -> str:
+        raise NotImplementedError
+
+    async def discard(self, library_id: str) -> None:
+        raise NotImplementedError
+
+
 class _NoLibraryIds:
     async def is_taken(self, library_id: str) -> bool:
         del library_id
@@ -35,6 +43,7 @@ def start_app(
         clock=SystemClock(),
         remote=MissingGit(),
         library_ids=_NoLibraryIds(),
+        libraries=_NoLibraries(),
         handlers=handlers,
         recovery_hooks=hooks or {},
     )

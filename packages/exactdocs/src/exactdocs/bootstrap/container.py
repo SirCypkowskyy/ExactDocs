@@ -10,6 +10,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogIndexedVersions,
     CatalogLibraryIds,
+    CatalogNewLibraries,
 )
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
@@ -29,8 +30,9 @@ from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
-from exactdocs.ingestion.errors import GitNotInstalledError
-from exactdocs.ingestion.ports.driven import GitRemote
+from exactdocs.ingestion.errors import GitNotInstalledError, ImportNotAvailableError
+from exactdocs.ingestion.models import IMPORT_JOB, Job
+from exactdocs.ingestion.ports.driven import GitRemote, JobProgress
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
@@ -38,6 +40,12 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
+
+
+async def _import_not_available(job: Job, progress: JobProgress, /) -> None:
+    """Stands in for the importer (E3-05a) so that adding a library can queue its job."""
+    del job, progress
+    raise ImportNotAvailableError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -87,12 +95,14 @@ class Container:
             chunks=SqliteChunkRepository(engine),
             search=SqliteSearchIndex(engine),
         )
-        # No job kinds yet: the import registers its handler and recovery hook (E3-05a).
+        # E3-05a replaces the placeholder handler and adds the import's recovery hook.
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),
             clock=SystemClock(),
             remote=remote,
             library_ids=CatalogLibraryIds(catalog.get_library),
+            libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
+            handlers={IMPORT_JOB: _import_not_available},
         )
         job_worker = JobWorker(
             recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job

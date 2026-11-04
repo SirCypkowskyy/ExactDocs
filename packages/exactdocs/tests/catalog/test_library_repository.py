@@ -11,6 +11,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import InMemoryLibraryRepository
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
+from exactdocs.catalog.errors import LibraryAlreadyExistsError
 from exactdocs.catalog.models import (
     ChunkingConfig,
     HostKind,
@@ -145,3 +146,37 @@ async def test_sqlite_keeps_a_pinned_version_when_the_library_is_saved_again() -
         async with container.engine.connect() as connection:
             pinned = await connection.execute(text("SELECT pinned_version FROM catalog_libraries"))
             assert pinned.scalar_one() == "v1.4.0"
+
+
+async def test_add_refuses_a_taken_id_and_leaves_the_first_library_alone(
+    repository: LibraryRepository,
+) -> None:
+    await repository.add(PAYMENTS)
+
+    with pytest.raises(LibraryAlreadyExistsError):
+        await repository.add(replace(PAYMENTS, title="Other", versions=frozenset()))
+    with pytest.raises(LibraryAlreadyExistsError):
+        await repository.add(replace(PAYMENTS, id=LibraryId("/ACME/payments")))
+
+    assert await repository.get(PAYMENTS.id) == PAYMENTS
+
+
+async def test_add_stores_everything(repository: LibraryRepository) -> None:
+    await repository.add(PAYMENTS)
+    await repository.add(LEDGER)
+
+    assert set(await repository.list_all()) == {PAYMENTS, LEDGER}
+
+
+async def test_delete_removes_the_library_and_its_versions_and_tolerates_absence(
+    repository: LibraryRepository,
+) -> None:
+    await repository.add(PAYMENTS)
+    await repository.add(LEDGER)
+
+    await repository.delete(PAYMENTS.id)
+    await repository.delete(PAYMENTS.id)
+
+    assert await repository.list_all() == (LEDGER,)
+    await repository.add(PAYMENTS)  # the ID is free again, with no leftover versions
+    assert await repository.get(PAYMENTS.id) == PAYMENTS

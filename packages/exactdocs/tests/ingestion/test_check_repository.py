@@ -35,12 +35,21 @@ class FakeLibraryIds:
         return library_id in self.taken
 
 
+class _NoLibraries:
+    async def add(self, library: object) -> str:
+        raise NotImplementedError
+
+    async def discard(self, library_id: str) -> None:
+        raise NotImplementedError
+
+
 def build(remote: GitRemote, taken: frozenset[str] = frozenset()) -> IngestionModule:
     return IngestionModule.build(
         jobs=InMemoryJobRepository(),
         clock=SystemClock(),
         remote=remote,
         library_ids=FakeLibraryIds(taken),
+        libraries=_NoLibraries(),
     )
 
 

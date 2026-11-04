@@ -3,6 +3,8 @@
 from typing import Protocol
 
 from exactdocs.ingestion.dtos import (
+    AddedLibrary,
+    AddLibraryCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     EnqueueJobCommand,
@@ -10,6 +12,8 @@ from exactdocs.ingestion.dtos import (
     JobList,
     JobSummary,
     ListLibraryJobsQuery,
+    ListRepositoryRefsQuery,
+    RepositoryRefs,
 )
 
 
@@ -62,5 +66,25 @@ class CheckRepository(Protocol):
     """
 
     async def __call__(self, command: CheckRepositoryCommand) -> CheckedRepository:
+        """Run the use case."""
+        ...
+
+
+class AddLibrary(Protocol):
+    """Create a library, pin its ref to a commit and queue the import.
+
+    Raises what ``CheckRepository`` raises, plus ``InvalidPathPatternError``, ``UnknownRefError``
+    and ``AmbiguousRefError``. Nothing is stored unless all of it checks out.
+    """
+
+    async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
+        """Run the use case."""
+        ...
+
+
+class ListRepositoryRefs(Protocol):
+    """List a repository's branches and tags; raises what ``CheckRepository`` raises."""
+
+    async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
         """Run the use case."""
         ...
