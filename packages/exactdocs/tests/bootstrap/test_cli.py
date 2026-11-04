@@ -87,3 +87,14 @@ def test_reset_password_refuses_a_short_password_without_echoing_it(
 
     assert "12 to 1024 characters" in str(raised.value.code)
     assert "short\n" not in str(raised.value.code)
+
+
+def test_serve_without_git_fails_fast_with_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PATH", "")
+
+    with pytest.raises(SystemExit) as raised:
+        cli.app(["serve"], exit_on_error=False, result_action="return_value")
+
+    assert "git is not installed" in str(raised.value.code)

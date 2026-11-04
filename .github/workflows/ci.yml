@@ -176,3 +176,86 @@ jobs:
           docker exec exactdocs-ci ssh -V
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
+
+  # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
+  # them the way uvx does, then drives the whole loop in Chromium (e2e/, one test).
+  uvx:
+    name: uvx smoke + browser end-to-end (built wheel)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            e2e/pnpm-lock.yaml
+      - name: Build the web UI into the package, then the wheels
+        run: |
+          (cd web && pnpm install --frozen-lockfile && pnpm build)
+          cp -r web/dist packages/exactdocs/src/exactdocs/_web
+          export UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0
+          uv build --wheel --package exactdocs-kernel --out-dir "$RUNNER_TEMP/dist"
+          uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
+          python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-0*.whl
+      - name: uvx exactdocs serve answers /api/health
+        run: |
+          export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
+          port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 \
+            exactdocs serve --port "$port" &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for _ in $(seq 1 60); do
+            kill -0 "$pid" || { echo "::error::the server exited early"; exit 1; }
+            curl -fsS "http://127.0.0.1:$port/api/health" && break
+            sleep 1
+          done
+          curl -fsS "http://127.0.0.1:$port/api/health"
+          curl -fsS "http://127.0.0.1:$port/" | grep -qi '<div id="root"'
+      - name: Without git on PATH, start fails with a clear message
+        run: |
+          # only what uv and the generated entry point need; git is not linked
+          bin="$RUNNER_TEMP/no-git-bin"; mkdir "$bin"
+          for tool in uvx sh realpath dirname; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
+          if out=$(timeout 120 env PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --offline --prerelease=allow \
+              --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 exactdocs serve 2>&1); then
+            echo "::error::serve started without git"; exit 1
+          fi
+          echo "$out"
+          grep -q "git is not installed" <<<"$out"
+      # The runners may have no browser: cache Playwright's (keyed by its version) and install the
+      # missing part only. System libraries need root; installed when sudo is passwordless.
+      - name: Playwright
+        working-directory: e2e
+        run: pnpm install --frozen-lockfile
+      - id: playwright
+        run: echo "version=$(node -p "require('./e2e/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        working-directory: e2e
+        run: |
+          pnpm exec playwright install chromium
+          if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium
+          else echo "::warning::no passwordless sudo, system libraries for Chromium not installed"; fi
+      - name: Browser end-to-end test (server started with uvx from the wheel)
+        run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e/shots/
+            e2e/test-results/
+          retention-days: 14

@@ -91,6 +91,7 @@ ignore = [
     "import-private-name",
     "implicit-namespace-package",
 ]
+"e2e/**" = ["D", "implicit-namespace-package", "suspicious-subprocess-import"]
 "**/features/**" = ["assert", "D", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]

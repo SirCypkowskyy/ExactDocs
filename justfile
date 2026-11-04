@@ -131,3 +131,9 @@ release version: check
 # Remove build outputs and caches
 clean:
     rm -rf dist site reports {{ web }}/dist packages/exactdocs/src/exactdocs/_web .pytest_cache .ruff_cache
+
+# Browser end-to-end test against `uv run exactdocs serve` (builds the UI into the package first)
+e2e: web-build
+    rm -rf packages/exactdocs/src/exactdocs/_web
+    cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
+    cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install chromium && python3 run.py
