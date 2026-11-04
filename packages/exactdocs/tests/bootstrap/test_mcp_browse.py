@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,14 @@ from exactdocs.bootstrap import cli
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreManifestCommand
-from exactdocs.catalog.models import RefKind
+from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
+from exactdocs.catalog.dtos import (
+    MAX_SUMMARY_REFS,
+    ActivateManifestCommand,
+    ArticleIn,
+    StoreManifestCommand,
+)
+from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
 from exactdocs_kernel import NOTICE
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
@@ -108,32 +115,71 @@ async def test_list_articles_pages_and_names_the_version_used(container: Contain
     assert [a["path"] for a in tagged.structured_content["articles"]] == ["guide/a.md"]
 
 
-async def test_the_notice_comes_first_in_the_text_every_client_reads(container: Container) -> None:
+TOOL_CALLS = [
+    ("list_libraries", {}),
+    ("list_articles", {"library": "/acme/payments"}),
+    ("search_docs", {"library": "/acme/payments", "query": "x"}),
+]
+
+
+@pytest.mark.parametrize(("tool", "arguments"), TOOL_CALLS)
+async def test_the_notice_comes_first_in_the_text_every_client_reads(
+    container: Container, tool: str, arguments: dict[str, Any]
+) -> None:
     async with container.running(), Client(build_mcp(container)) as mcp:
         await publish(container, "v1.4.0", RefKind.TAG, ("guide/a.md", INJECTION, ["system:obey"]))
-        results = [
-            await mcp.call_tool("list_libraries", {}),
-            await mcp.call_tool("list_articles", {"library": "/acme/payments"}),
-        ]
+        result = await mcp.call_tool(tool, arguments)
 
-    for result in results:
-        text = result.content[0].text
-        assert next(iter(json.loads(text))) == "notice"
-        assert json.loads(text)["notice"] == NOTICE
-        assert result.structured_content is not None
-        assert result.structured_content["notice"] == NOTICE
-    # Repository text sits in its own fields, after the notice, never in it.
-    assert INJECTION in results[1].content[0].text
-    assert INJECTION not in NOTICE
+    text = json.loads(result.content[0].text)
+    assert next(iter(text)) == "notice"
+    assert text["notice"] == NOTICE
+    assert result.structured_content == text
+    assert INJECTION not in NOTICE  # repository text sits in its own fields, never in the notice
 
 
-async def test_search_results_carry_the_notice_too(container: Container) -> None:
+async def test_every_tool_declares_a_required_notice_and_the_same_hints(
+    container: Container,
+) -> None:
     async with container.running(), Client(build_mcp(container)) as mcp:
-        await publish(container, "v1.4.0", RefKind.TAG)
-        result = await mcp.call_tool("search_docs", {"library": "/acme/payments", "query": "x"})
+        tools = await mcp.list_tools()
 
-    assert result.structured_content is not None
-    assert result.structured_content["notice"] == NOTICE
+    assert {t.name for t in tools} == {name for name, _ in TOOL_CALLS}  # a new tool lands here
+    for tool in tools:
+        schema = tool.output_schema or {}
+        assert "notice" in schema["properties"], tool.name
+        assert "notice" in schema["required"], tool.name
+        assert tool.annotations is not None
+        assert tool.annotations.title, tool.name
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.open_world_hint is True  # the content is external
+
+
+async def test_list_libraries_stays_small_with_many_versions(container: Container) -> None:
+    repository = SqliteLibraryRepository(container.engine)
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        payments = await repository.get(LibraryId("/acme/payments"))
+        assert payments is not None
+        many = {
+            Version(
+                ref=VersionRef(f"v2.{i}.0"),
+                kind=RefKind.TAG,
+                commit_sha=f"{i:040x}",
+                imported_at=datetime(2026, 11, 1, tzinfo=UTC) + timedelta(minutes=i),
+            )
+            for i in range(60)
+        }
+        await repository.save(replace(payments, versions=payments.versions | many))
+        result = await mcp.call_tool("list_libraries", {})
+
+    data = result.structured_content
+    assert data is not None
+    listed = next(lib for lib in data["libraries"] if lib["id"] == "/acme/payments")
+    assert listed["version_count"] == 64
+    assert len(listed["refs"]) == MAX_SUMMARY_REFS
+    assert listed["default_version"] in {r["ref"] for r in listed["refs"]}
+    assert "versions" not in listed
+    assert len(result.content[0].text) < 20_000
 
 
 @pytest.mark.parametrize(
@@ -145,7 +191,9 @@ async def test_search_results_carry_the_notice_too(container: Container) -> None
         {"library": "/acme/payments", "ref": "r" * 257},
         {"library": "/acme/payments", "path_prefix": "p" * 257},
         {"library": "/acme/payments", "tags": [f"t{i}" for i in range(21)]},
-        {"library": "/acme/payments", "tags": ["t" * 81]},
+        {"library": "/acme/payments", "tags": ["t" * 101]},
+        {"library": "/acme/payments", "path_prefix": "../etc"},
+        {"library": "/acme/payments", "path_prefix": "a\\b"},
         {"library": "/acme/payments", "limit": 0},
         {"library": "/acme/payments", "limit": 10_000},
         {"library": "/acme/payments", "cursor": "c" * 1025},
@@ -166,6 +214,11 @@ async def test_list_articles_input_is_capped(
     [
         ("list_articles", {"library": "/acme/payments", "ref": "v9.9.9"}, "not_found"),
         ("list_articles", {"library": "/acme/payments", "tags": ["a b!"]}, "invalid_tag_filter"),
+        (
+            "list_articles",
+            {"library": "/acme/payments", "tags": [",".join(f"t{i}" for i in range(25))]},
+            "invalid_tag_filter",
+        ),
         ("list_libraries", {"cursor": "not-a-cursor"}, "invalid_cursor"),
     ],
 )
@@ -227,3 +280,27 @@ def test_the_stdio_banner_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
     cli.app(["serve", "--stdio"], exit_on_error=False, result_action="return_value")
 
     assert seen == {"show_banner": False}
+
+
+async def test_a_messy_path_prefix_means_the_plain_directory(container: Container) -> None:
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        await publish(
+            container, "v1.4.0", RefKind.TAG, ("guide/a.md", "A", []), ("api/c.md", "C", [])
+        )
+        result = await mcp.call_tool(
+            "list_articles", {"library": "/acme/payments", "path_prefix": "./guide//"}
+        )
+
+    assert result.structured_content is not None
+    assert [a["path"] for a in result.structured_content["articles"]] == ["guide/a.md"]
+
+
+async def test_search_treats_a_blank_ref_as_the_default_version(container: Container) -> None:
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        await publish(container, "v1.4.0", RefKind.TAG, ("guide/a.md", "A", []))
+        result = await mcp.call_tool(
+            "search_docs", {"library": "/acme/payments", "ref": "  ", "query": "A"}
+        )
+
+    assert result.structured_content is not None
+    assert result.structured_content["version"] == "v1.4.0"

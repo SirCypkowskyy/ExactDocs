@@ -16,17 +16,24 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import SearchDocs
-
-READ_ONLY = ToolAnnotations(read_only_hint=True)
+from exactdocs_kernel import LIBRARY_ID_PATTERN, TOOL_HINTS
 
 
 def register_tools(mcp: FastMCP, *, search_docs: SearchDocs) -> None:
     """Register retrieval's MCP tools on ``mcp``."""
 
-    @mcp.tool(name="search_docs", annotations=READ_ONLY)
+    @mcp.tool(
+        name="search_docs",
+        annotations=ToolAnnotations(title="Search a library version", **TOOL_HINTS),
+    )
     async def search_docs_tool(
         library: Annotated[
-            str, Field(max_length=MAX_NAME, description="Library ID, e.g. '/facebook/react'")
+            str,
+            Field(
+                pattern=LIBRARY_ID_PATTERN,
+                max_length=MAX_NAME,
+                description="Library ID, e.g. '/facebook/react'",
+            ),
         ],
         query: Annotated[
             str,

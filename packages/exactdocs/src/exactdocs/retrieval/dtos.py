@@ -20,7 +20,13 @@ from exactdocs.retrieval.models import (
     TagMatch,
     source_link,
 )
-from exactdocs_kernel import NOTICE, normalize_tag
+from exactdocs_kernel import (
+    LIBRARY_ID_PATTERN,
+    MAX_NAME,
+    MAX_TAG_INPUT,
+    NOTICE,
+    normalize_tag,
+)
 
 
 class _Dto(BaseModel):
@@ -29,8 +35,7 @@ class _Dto(BaseModel):
 
 MAX_QUERY = 1000
 MAX_TAGS = 20
-MAX_TAG = 100
-MAX_NAME = 256  # library and ref
+MAX_TAG = MAX_TAG_INPUT
 
 Tag = Annotated[str, StringConstraints(max_length=MAX_TAG)]
 
@@ -39,7 +44,7 @@ class SearchDocsQuery(_Dto):
     """Search within exactly one library version; no ``ref`` means the default version."""
 
     library: str = Field(
-        pattern=r"^/[^/]+/[^/]+$",
+        pattern=LIBRARY_ID_PATTERN,
         max_length=MAX_NAME,
         description="`/owner/repo`, any letter case; the version goes in `ref`.",
     )
@@ -142,6 +147,8 @@ class CoverageOut(_Dto):
 
 class SearchDocsResult(_Dto):
     """Results of one search, best first, with the version and the way they were found."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     notice: str = Field(
         default=NOTICE, description="Untrusted-content notice; read it before the results."
