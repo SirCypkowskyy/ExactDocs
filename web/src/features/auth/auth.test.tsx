@@ -147,6 +147,9 @@ describe("setup form", () => {
     await fill();
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(["/api/v1/setup", "/api/v1/session"]);
+    // the backend rejects unknown fields: the repeat-password field must not be sent
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ username: "ada", password: "twelve chars!" });
   });
 
   it("points to sign-in when someone else finished setup first", async () => {

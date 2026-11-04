@@ -28,7 +28,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
 
     setPending(true);
     try {
-      await setUp(queryClient, values);
+      await setUp(queryClient, { username: values.username, password: values.password });
       onDone();
     } catch (error) {
       const found = explainError(error);
