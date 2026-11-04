@@ -88,6 +88,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
       --python-platform "$(cat /tmp/python-platform)"
 RUN mkdir /data
 
+# --- Debian package indexes for the runtime. The trixie apt verifies them with sqv, which fails
+# under QEMU ("No good signature"), so this native stage runs `apt-get update` (adding the target
+# architecture) and the runtime stage installs from these lists without updating.
+FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS apt-lists
+ARG TARGETARCH
+# A cached layer keeps the package set of the first build; the release passes a new value (the
+# date) so that it installs the current Debian security updates.
+ARG DEBIAN_REFRESH=none
+RUN : "$DEBIAN_REFRESH" \
+    && dpkg --add-architecture "$TARGETARCH" \
+    && apt-get update
+
 # --- runtime. apt needs RUN, so on the other architecture this stage runs under QEMU (binfmt
 # is installed on the runners, see deploy/runners/create-vms.sh); only apt-get, dpkg, rm and find run
 # there, never Python (which crashes under QEMU).
@@ -98,10 +110,9 @@ FROM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731
 # add -p, ...): purge it. perl-base stays, Debian needs it. (Names are those of trixie: dpkg only
 # warns when one is not installed, so after a Debian bump check the image size in the CI log.)
 # ssh refuses to run for a uid without a passwd entry, hence the exactdocs user (10001).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git openssh-client tini \
+RUN --mount=type=bind,from=apt-lists,source=/var/lib/apt/lists,target=/var/lib/apt/lists,rw \
+    apt-get install -y --no-install-recommends ca-certificates git openssh-client tini \
     && dpkg --purge --force-depends perl perl-modules-5.40 libperl5.40 liberror-perl \
-    && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/python3.14/ensurepip /usr/local/lib/python3.14/site-packages/pip* \
       /usr/local/lib/python3.14/site-packages/setuptools* /usr/local/bin/pip* \
     && find / -xdev -perm /6000 -type f -exec chmod a-s {} + \

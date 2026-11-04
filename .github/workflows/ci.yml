@@ -89,7 +89,9 @@ jobs:
             < deploy/Dockerfile
       - uses: docker/setup-buildx-action@v4
       - id: created
-        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
           context: .
@@ -100,6 +102,7 @@ jobs:
             VERSION=0.0.0.dev0
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
           cache-from: type=gha,scope=exactdocs
           cache-to: type=gha,scope=exactdocs,mode=max
       # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
@@ -117,6 +120,11 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: exactdocs:ci-amd64
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
           cache-from: type=gha,scope=exactdocs
       - run: |
           for tool in "git --version" "ssh -V" "tini --version"; do

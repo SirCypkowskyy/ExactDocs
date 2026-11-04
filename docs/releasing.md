@@ -72,7 +72,9 @@ When it fails:
 
 1. Rebuild with fresh base layers: bump the base images (Dependabot's `docker` PRs for `/deploy`
    move tag and digest together; merging one is usually the fix). Debian packages are not
-   pinned, so a rebuild also picks up a fixed `git` or `openssh-client`.
+   pinned: the Dockerfile's `DEBIAN_REFRESH` build argument (the date in a release, the ISO week
+   in CI) makes a new build fetch fresh package indexes, so it also picks up a fixed `git` or
+   `openssh-client`.
 2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.
 3. Only if the finding does not apply to ExactDocs and cannot be fixed yet, accept it: add the ID
    to `.trivyignore` with a comment above it saying why, the date and who accepted it, in the PR
