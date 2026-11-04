@@ -29,8 +29,23 @@ export class HttpError extends Error {
   }
 }
 
-async function request<T>(path: ApiPath, init: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+/** Query parameters; `undefined`, `null` and empty arrays are left out, an array is comma-joined. */
+export type Query = Record<string, string | number | readonly string[] | null | undefined>;
+
+function queryString(query: Query | undefined): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) {
+      continue;
+    }
+    params.set(key, Array.isArray(value) ? value.join(",") : String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+async function request<T>(path: ApiPath, init: RequestInit, query?: Query): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}${queryString(query)}`, {
     ...init,
     headers: { Accept: "application/json", ...init.headers },
   });
@@ -41,8 +56,9 @@ async function request<T>(path: ApiPath, init: RequestInit): Promise<T> {
 }
 
 /** Typed JSON GET against the ExactDocs API. Validating the payload is the calling slice's job. */
-export function getJson<T>(path: ApiPath, init?: RequestInit): Promise<T> {
-  return request<T>(path, { ...init, credentials: "same-origin" });
+export function getJson<T>(path: ApiPath, init?: RequestInit & { query?: Query }): Promise<T> {
+  const { query, ...rest } = init ?? {};
+  return request<T>(path, { ...rest, credentials: "same-origin" }, query);
 }
 
 /** JSON POST/DELETE against the ExactDocs API (the session cookie rides along, same-origin). */
