@@ -212,6 +212,12 @@ describe("browsing a library version", () => {
     expect(calls.filter((u) => u.searchParams.get("cursor") === "c1")).toHaveLength(1);
   });
 
+  it("says so when the library does not exist", async () => {
+    mount("/libraries/acme/nope");
+    expect(await screen.findByRole("heading", { name: "Library not found" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "All libraries" })).toHaveAttribute("href", "/");
+  });
+
   it("falls back to the default version for an unknown one, with a notice", async () => {
     mount("/libraries/acme/payments?version=v9.9.9");
     expect(await screen.findByRole("status")).toHaveTextContent(
