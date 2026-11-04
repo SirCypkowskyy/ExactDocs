@@ -54,6 +54,7 @@ class LoginForTokenCommand(_Dto):
     username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
     name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)
+    expires_at: AwareDatetime | None = None
 
 
 class ResetPasswordCommand(_Dto):

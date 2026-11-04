@@ -14,8 +14,11 @@ import ipaddress
 import json
 import os
 import socket
+import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
 from urllib.parse import urlsplit
@@ -26,6 +29,7 @@ from platformdirs import user_config_path
 URL_VARIABLE = "EXACTDOCS_URL"
 TOKEN_VARIABLE = "EXACTDOCS_TOKEN"  # ruff: ignore[hardcoded-password-string] (a variable name, not a secret)
 CONFIG_FILE_VARIABLE = "EXACTDOCS_CONFIG_FILE"
+DEFAULT_PORTS = {"http": 80, "https": 443}
 MAX_TOKEN_NAME_LENGTH = 64  # the server's limit, so a long hostname is cut instead of refused
 TIMEOUT_SECONDS = 15.0
 
@@ -47,13 +51,15 @@ def machine_name() -> str:
 
 
 def normalize_url(url: str) -> str:
-    """Return ``url`` without a trailing slash, or raise ``ClientError`` if it is not a server URL.
+    """Return the canonical form of a server URL, or raise ``ClientError`` if it is not one.
 
+    Scheme and host are lowercased, the host is IDNA-encoded, a default port and a trailing slash
+    are dropped, so two spellings of one server compare equal (a stored token is matched by URL).
     Plain ``http`` is accepted for loopback only: the token and the password would cross the
     network in the clear otherwise.
     """
     parts = urlsplit(url.strip())
-    if parts.scheme not in {"http", "https"} or not parts.hostname:
+    if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
         message = (
             f"{url!r} is not a server URL; use http(s)://host[:port], e.g. https://docs.example.com"
         )
@@ -61,13 +67,29 @@ def normalize_url(url: str) -> str:
     if parts.username or parts.password or parts.query or parts.fragment:
         message = "the server URL must not hold credentials, a query or a fragment"
         raise ClientError(message)
-    if parts.scheme == "http" and not _is_loopback(parts.hostname):
+    scheme = parts.scheme.lower()
+    try:
+        host = parts.hostname.encode("idna").decode("ascii")
+        port = parts.port
+    except UnicodeError, ValueError:
+        message = f"{url!r} is not a server URL (bad host or port)"
+        raise ClientError(message) from None
+    if scheme == "http" and not _is_loopback(host):
         message = (
-            f"refusing to send credentials over plain http to {parts.hostname}; "
+            f"refusing to send credentials over plain http to {host}; "
             "use an https:// URL (plain http is only allowed for localhost)"
         )
         raise ClientError(message)
-    return url.strip().rstrip("/")
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and port != DEFAULT_PORTS[scheme]:
+        host = f"{host}:{port}"
+    return f"{scheme}://{host}{parts.path.rstrip('/')}"
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether a (normalized) URL points at this machine."""
+    return _is_loopback(urlsplit(url).hostname or "")
 
 
 def _is_loopback(host: str) -> bool:
@@ -121,6 +143,8 @@ def read_stored(path: Path) -> dict[str, str]:
     """Read the config file; a missing one is empty, an unreadable one is an error."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if os.name == "posix" and path.stat().st_mode & 0o077:
+            sys.stderr.write(f"exactdocs: warning: {path} is readable by others; run chmod 600\n")
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
@@ -135,12 +159,17 @@ def read_stored(path: Path) -> dict[str, str]:
 def store(path: Path, config: ClientConfig) -> None:
     """Write the credentials atomically; the file is created readable by its owner only."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")
+    temporary = Path(name)  # mkstemp creates it 0600 and uniquely
     try:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump({"url": config.url, "token": config.token}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
         temporary.replace(path)
+    except OSError as exc:
+        message = f"cannot write {path} ({exc.__class__.__name__})"
+        raise ClientError(message) from None
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -169,16 +198,21 @@ FRIENDLY: dict[str, str] = {
 }
 
 
+def printable(text: str) -> str:
+    """Drop control characters (a hostile server could send terminal escape sequences)."""
+    return "".join(c for c in text if c.isprintable())
+
+
 class ApiError(ClientError):
     """The server answered with its error shape; ``code`` is the stable machine code."""
 
     def __init__(self, status: int, code: str, detail: str, fields: tuple[str, ...] = ()) -> None:
         self.status = status
         self.code = code
-        self.detail = detail
-        text = FRIENDLY.get(code) or detail or f"the server answered HTTP {status}"
+        self.detail = printable(detail)
+        text = FRIENDLY.get(code) or self.detail or f"the server answered HTTP {status}"
         if fields:
-            text += f" (invalid: {', '.join(fields)})"
+            text += f" (invalid: {printable(', '.join(fields))})"
         super().__init__(text)
 
 
@@ -205,6 +239,9 @@ class ApiClient:
             transport=transport,
             timeout=TIMEOUT_SECONDS,
             follow_redirects=False,
+            # Proxy variables are honoured for remote servers, but never for loopback: a proxy
+            # must not see a plain-http password or token.
+            trust_env=not is_loopback_url(self.url),
         )
 
     async def __aenter__(self) -> Self:
@@ -244,9 +281,13 @@ class ApiClient:
         message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
         raise ClientError(message)
 
-    async def login(self, username: str, password: str, name: str) -> dict[str, Any]:
+    async def login(
+        self, username: str, password: str, name: str, expires_at: datetime | None = None
+    ) -> dict[str, Any]:
         """Exchange credentials for a new named API token (``POST /tokens/login``)."""
         body = {"username": username, "password": password, "name": name}
+        if expires_at is not None:
+            body["expires_at"] = expires_at.isoformat()
         return await self.request("POST", "/tokens/login", json=body)
 
     async def check_token(self) -> None:

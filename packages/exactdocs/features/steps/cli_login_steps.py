@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from contextlib import ExitStack, redirect_stdout
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 
 PRIVATE = 0o600
+TOLERANCE_DAYS = 0.1
 HORSE = "correct horse battery staple"
 
 
@@ -47,8 +49,10 @@ def step_served(context: Context) -> None:
     context.config_file = config_dir / "config.json"
 
 
-def _login(context: Context, *args: str, stdin: str = "") -> None:
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+def _login(
+    context: Context, *args: str, stdin: str = "", extra_env: dict[str, str] | None = None
+) -> None:
+    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file), **(extra_env or {})}
     output = io.StringIO()
     context.exit_message = None
     with (
@@ -67,6 +71,67 @@ def _login(context: Context, *args: str, stdin: str = "") -> None:
 def step_login(context: Context) -> None:
     _login(context, context.server_url, "--username", "ada", "--password-stdin", stdin=HORSE + "\n")
     assert context.exit_message is None, context.exit_message
+
+
+@when('the user runs "exactdocs login" with the admin\'s username and password and "{options}"')
+def step_login_flag(context: Context, options: str) -> None:
+    args = [context.server_url, "--username", "ada", "--password-stdin", *options.split()]
+    _login(context, *args, stdin=HORSE + "\n")
+    assert context.exit_message is None, context.exit_message
+
+
+@when('the user runs "exactdocs login" with that token on stdin')
+def step_login_token_stdin(context: Context) -> None:
+    _login(context, context.server_url, "--token-stdin", stdin=context.token + "\n")
+    assert context.exit_message is None, context.exit_message
+
+
+@when('the user runs "exactdocs login" with that token in EXACTDOCS_TOKEN')
+def step_login_token_env(context: Context) -> None:
+    _login(context, context.server_url, extra_env={"EXACTDOCS_TOKEN": context.token})
+    assert context.exit_message is None, context.exit_message
+
+
+@when('the user runs "exactdocs logout"')
+def step_logout(context: Context) -> None:
+    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+    output = io.StringIO()
+    with patch.dict(os.environ, env), redirect_stdout(output):
+        cli.app(["logout"], exit_on_error=False, result_action="return_value")
+    context.output = output.getvalue()
+
+
+@then("the output says the token is still valid until revoked")
+def step_still_valid(context: Context) -> None:
+    assert "still valid" in context.output
+    assert "revoke" in context.output
+
+
+def _tokens(context: Context) -> list[dict[str, str | None]]:
+    context.client.post("/api/v1/session", json={"username": "ada", "password": HORSE})
+    return context.client.get("/api/v1/tokens").json()["tokens"]
+
+
+def _days_left(token: dict[str, str | None]) -> float:
+    assert token["expires_at"], token
+    return (datetime.fromisoformat(token["expires_at"]) - datetime.now(UTC)).total_seconds() / 86400
+
+
+@then("the admin's token expires in {days:d} days")
+def step_expires(context: Context, days: int) -> None:
+    (token,) = _tokens(context)
+    assert abs(_days_left(token) - days) < TOLERANCE_DAYS, token
+
+
+@then("the admin's newest token expires in {days:d} days")
+def step_newest_expires(context: Context, days: int) -> None:
+    token = _tokens(context)[0]  # newest first
+    assert abs(_days_left(token) - days) < TOLERANCE_DAYS, token
+
+
+@then("the admin's newest token never expires")
+def step_never(context: Context) -> None:
+    assert _tokens(context)[0]["expires_at"] is None
 
 
 @when('the user runs "exactdocs login" with the password "{password}"')

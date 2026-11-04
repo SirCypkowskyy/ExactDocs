@@ -291,7 +291,9 @@ class LoginForTokenUseCase:
         """Mint a token for the account the credentials belong to."""
         query = AuthenticateQuery(username=command.username, password=command.password)
         account = await self.authenticate(query)
-        return await self.create_token(account, CreateTokenCommand(name=command.name))
+        return await self.create_token(
+            account, CreateTokenCommand(name=command.name, expires_at=command.expires_at)
+        )
 
 
 @dataclass(frozen=True, slots=True)

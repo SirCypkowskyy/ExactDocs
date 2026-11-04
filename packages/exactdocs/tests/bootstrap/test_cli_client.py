@@ -1,6 +1,7 @@
 """The CLI as a client of the REST API: stored credentials, URL safety, error mapping."""
 
 import inspect
+import os
 import stat
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -93,7 +94,18 @@ def test_plain_http_is_fine_for_loopback(url: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["http://docs.example.com", "http://10.0.0.5", "ftp://x", "docs", "https://u:p@x.io"]
+    "url",
+    [
+        "http://docs.example.com",
+        "http://10.0.0.5",
+        "ftp://x",
+        "docs",
+        "https://u:p@x.io",
+        "http://localhost.",
+        "http://127.1",
+        "http://0.0.0.0",
+        "https://x.io:notaport",
+    ],
 )
 def test_other_urls_are_refused(url: str) -> None:
     with pytest.raises(ClientError):
@@ -167,7 +179,17 @@ def test_only_the_listed_commands_are_local() -> None:
         if name in cli.LOCAL_COMMANDS:
             continue
         source = inspect.getsource(command)
-        for forbidden in ("Container", "Settings", "_build(", "_run(", "sqlalchemy"):
+        for forbidden in (
+            "Container",
+            "Settings",
+            "_build(",
+            "_run(",
+            "sqlalchemy",
+            "_create_first_admin",
+            "_reset_password",
+            "_serve_stdio",
+            "_check_startup",
+        ):
             assert forbidden not in source, f"{name} must use the REST client only"
 
 
@@ -175,3 +197,83 @@ def test_the_client_module_stays_free_of_the_server() -> None:
     source = Path(client.__file__).read_text(encoding="utf-8")
     for forbidden in ("bootstrap.container", "sqlalchemy", "bootstrap.settings"):
         assert forbidden not in source
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "HTTPS://Docs.Example.com",
+        "https://docs.example.com:443/",
+        "https://docs.example.com//",
+        " https://docs.EXAMPLE.com ",
+    ],
+)
+def test_spellings_of_one_server_normalize_alike(spelling: str) -> None:
+    assert normalize_url(spelling) == "https://docs.example.com"
+
+
+def test_urls_are_normalized_in_every_part() -> None:
+    assert normalize_url("https://bücher.example") == "https://xn--bcher-kva.example"
+    assert normalize_url("HTTP://LocalHost:80") == "http://localhost"
+    assert normalize_url("http://localhost:3000/") == "http://localhost:3000"
+    assert normalize_url("https://x.io:8443/docs/") == "https://x.io:8443/docs"
+    assert normalize_url("http://[::ffff:127.0.0.1]:3000") == "http://[::ffff:127.0.0.1]:3000"
+    assert normalize_url("http://[::1]") == "http://[::1]"
+
+
+def test_a_stored_token_matches_another_spelling_of_its_url(tmp_path: Path) -> None:
+    file = tmp_path / "c.json"
+    store(file, ClientConfig(url=normalize_url("https://Docs.example.com"), token="t"))
+    env = {"EXACTDOCS_CONFIG_FILE": str(file), "EXACTDOCS_URL": "https://docs.example.com:443"}
+
+    assert ClientConfig.resolve(env=env).token == "t"
+
+
+def test_store_survives_a_wide_umask_a_loose_old_file_and_a_stale_temp(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text("{}")
+    path.chmod(0o644)
+    (tmp_path / f"config.json.{os.getpid()}.tmp").write_text("stale")
+    old = os.umask(0)
+    try:
+        store(path, ClientConfig(url=URL, token="exd_secret"))
+    finally:
+        os.umask(old)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert read_stored(path)["token"] == "exd_secret"
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".config.")]
+
+
+def test_a_loose_config_file_is_warned_about(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "config.json"
+    store(path, ClientConfig(url=URL, token="exd_secret"))
+    read_stored(path)
+    assert not capsys.readouterr().err
+
+    path.chmod(0o644)
+    read_stored(path)
+    err = capsys.readouterr().err
+    assert "chmod 600" in err
+    assert "exd_secret" not in err
+
+
+async def test_control_characters_from_a_server_never_reach_the_terminal() -> None:
+    hostile = httpx2.MockTransport(
+        lambda _: httpx2.Response(
+            400, json={"error": "weird", "detail": "\x1b[2Jboom\x07", "fields": []}
+        )
+    )
+    async with ApiClient("http://localhost", transport=hostile) as api:
+        with pytest.raises(ApiError) as raised:
+            await api.check_token()
+
+    assert str(raised.value) == "[2Jboom"
+
+
+def test_proxy_variables_are_ignored_for_loopback_only() -> None:
+    assert ApiClient("http://localhost:3000")._http.trust_env is False  # ruff: ignore[private-member-access]
+    assert ApiClient("http://[::1]:3000")._http.trust_env is False  # ruff: ignore[private-member-access]
+    assert ApiClient("https://docs.example.com")._http.trust_env is True  # ruff: ignore[private-member-access]

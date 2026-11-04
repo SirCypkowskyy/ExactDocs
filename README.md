@@ -56,16 +56,24 @@ curl -X POST http://localhost:3000/api/v1/setup -H 'content-type: application/js
 The other commands are clients of the REST API, so they work against any instance you can reach:
 
 ```bash
-uvx exactdocs login https://docs.example.com   # asks for username and password
-uvx exactdocs login http://localhost:3000 --token exd_...   # or reuse an existing API token
-uvx exactdocs logout                           # forget the stored credentials
+uvx exactdocs login https://docs.example.com    # asks for username and password
+echo "$TOKEN" | uvx exactdocs login https://docs.example.com --token-stdin   # reuse an API token
+EXACTDOCS_TOKEN=exd_... uvx exactdocs login https://docs.example.com         # same, from the env
+uvx exactdocs logout                            # forget the stored credentials
 ```
 
 `login` creates an API token named after your machine and stores the server URL and token in
-`config.json` in your user config directory (mode 0600; the token is never printed). Resolution
-order: flags, then `EXACTDOCS_URL` / `EXACTDOCS_TOKEN`, then that file. A stored token is only used
-for the server it came from. Plain `http://` is accepted for `localhost` only; anything else needs
-`https://`. `serve` and `admin ...` stay local: they open the database directly.
+`config.json` in your user config directory (mode 0600; the token is never printed). The new token
+**expires after 90 days**; change that with `--expires-in DAYS`, or use `--no-expiry` for a token
+that lives until you revoke it in the web UI. Prefer `--token-stdin` or `EXACTDOCS_TOKEN` over
+`--token`, which ends up in your shell history and in `ps`. `logout` only forgets the credentials
+locally: the token stays valid on the server until you revoke it in the web UI (Tokens).
+
+Resolution order: flags, then `EXACTDOCS_URL` / `EXACTDOCS_TOKEN`, then that file. A stored token is
+only used for the server it came from. Plain `http://` is accepted for loopback (`localhost`,
+`127.0.0.1`, `::1`) only; anything else needs `https://`. Proxy variables (`HTTPS_PROXY`, ...) are
+honoured for remote servers (the proxy sees where you connect, not your https traffic) and ignored
+for loopback. `serve` and `admin ...` stay local: they open the database directly.
 
 ### From `docker run` to a searchable library
 

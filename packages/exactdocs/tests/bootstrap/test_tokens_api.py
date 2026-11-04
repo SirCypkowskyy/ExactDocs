@@ -18,6 +18,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import CreateFirstAdminCommand
+from exactdocs.identity.use_cases import MAX_TOKENS_PER_ACCOUNT
 
 HORSE = "correct horse battery staple"
 LOGIN = {"username": "ada", "password": HORSE}
@@ -310,3 +311,55 @@ async def test_logging_in_for_a_token_refuses_bad_credentials_alike(
         assert (response.status_code, response.json()["error"]) == (401, "invalid_credentials")
     response = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": " "})
     assert (response.status_code, response.json()["error"]) == (422, "invalid_token_name")
+
+
+FOREIGN_ORIGIN = {"origin": "https://evil.example"}
+
+
+async def test_a_login_token_can_expire(anonymous: httpx.AsyncClient) -> None:
+    soon = (datetime.now(UTC) + timedelta(days=90)).isoformat()
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+
+    ok = await anonymous.post(
+        "/api/v1/tokens/login", json={**LOGIN, "name": "a", "expires_at": soon}
+    )
+    refused = await anonymous.post(
+        "/api/v1/tokens/login", json={**LOGIN, "name": "b", "expires_at": past}
+    )
+
+    assert ok.json()["expires_at"] is not None
+    assert (refused.status_code, refused.json()["error"]) == (422, "invalid_token_expiry")
+
+
+async def test_the_login_route_counts_against_the_token_cap(
+    anonymous: httpx.AsyncClient,
+) -> None:
+    for i in range(MAX_TOKENS_PER_ACCOUNT):
+        made = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": f"t{i}"})
+        assert made.status_code == 201
+    over = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": "one-more"})
+
+    assert (over.status_code, over.json()["error"]) == (409, "too_many_tokens")
+
+
+async def test_the_password_never_comes_back_or_reaches_the_log(
+    anonymous: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("DEBUG")
+    wrong = {"username": "ada", "password": "wrong horse battery staple", "name": "x"}
+    invalid = {"username": "ada", "password": "wrong horse battery staple", "name": "x" * 400}
+
+    for body in (wrong, invalid, {**wrong, "extra": 1}):
+        response = await anonymous.post("/api/v1/tokens/login", json=body)
+        assert response.status_code in {401, 422}
+        assert "horse battery" not in response.text
+    assert "horse battery" not in caplog.text
+
+
+async def test_a_foreign_origin_cannot_use_the_login_route(anonymous: httpx.AsyncClient) -> None:
+    response = await anonymous.post(
+        "/api/v1/tokens/login", json={**LOGIN, "name": "x"}, headers=FOREIGN_ORIGIN
+    )
+
+    assert response.status_code == 403
+    assert "exd_" not in response.text

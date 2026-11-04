@@ -4649,6 +4649,18 @@
             "type": "string",
             "maxLength": 256,
             "title": "Name"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
           }
         },
         "additionalProperties": false,

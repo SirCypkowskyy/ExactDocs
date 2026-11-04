@@ -5,10 +5,12 @@ import getpass
 import os
 import sys
 from collections.abc import Coroutine
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import uvicorn
 from cyclopts import App, Parameter
+from cyclopts.validators import Number
 from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
@@ -36,6 +38,8 @@ from exactdocs.identity.dtos import (
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs_kernel import DomainError
+
+DEFAULT_TOKEN_DAYS = 90
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
 
@@ -112,8 +116,15 @@ def login(
     url: str | None = None,
     *,
     token: Annotated[
-        str | None, Parameter(help="Use this existing API token instead of creating one.")
+        str | None,
+        Parameter(
+            help="Use this existing API token instead of creating one. It lands in your shell "
+            "history and `ps`: prefer EXACTDOCS_TOKEN or --token-stdin."
+        ),
     ] = None,
+    token_stdin: Annotated[
+        bool, Parameter(help="Read an existing API token from one line of stdin.")
+    ] = False,
     username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
     password_stdin: Annotated[
         bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
@@ -121,14 +132,29 @@ def login(
     name: Annotated[
         str | None, Parameter(help="Name of the new token (default: this machine's name).")
     ] = None,
+    expires_in: Annotated[
+        int, Parameter(help="Days until the new token expires.", validator=Number(gte=1))
+    ] = DEFAULT_TOKEN_DAYS,
+    no_expiry: Annotated[bool, Parameter(help="Create a token that never expires.")] = False,
 ) -> None:
-    """Sign in to an instance and store the server URL and an API token for the other commands."""
+    """Sign in to an instance and store the server URL and an API token for the other commands.
+
+    With a token (--token, --token-stdin or EXACTDOCS_TOKEN) no new token is created and the
+    expiry options do not apply. Otherwise the new token expires after 90 days unless told not to.
+    """
     try:
         server = normalize_url(url or os.environ.get("EXACTDOCS_URL") or "")
     except ClientError as exc:
         message = f"exactdocs: {exc}"
         raise SystemExit(message) from None
     path = config_path()
+    if token_stdin:
+        token = sys.stdin.readline().strip()
+        if not token:
+            message = "exactdocs: no token on stdin"
+            raise SystemExit(message)
+    token = token or os.environ.get("EXACTDOCS_TOKEN") or None
+    expires_at = None if no_expiry else datetime.now(UTC) + timedelta(days=expires_in)
 
     async def work() -> str:
         async with ApiClient(server, token) as api:
@@ -138,10 +164,11 @@ def login(
                 except EOFError, KeyboardInterrupt:
                     message = "no username or password to read"
                     raise ClientError(message) from None
-                grant = await api.login(user, password, name or machine_name())
+                grant = await api.login(user, password, name or machine_name(), expires_at)
                 secret, label = (
                     grant["token"],
-                    f"new token {grant['name']!r} ({grant['prefix']}...)",
+                    f"new token {grant['name']!r} ({grant['prefix']}...), "
+                    + (f"expires {expires_at:%Y-%m-%d}" if expires_at else "no expiry"),
                 )
             else:
                 await api.check_token()
@@ -169,7 +196,12 @@ def _read_login(username: str | None, *, password_stdin: bool) -> tuple[str, str
 def logout() -> None:
     """Forget the stored credentials (the token stays valid until revoked in the web UI)."""
     removed = forget(config_path())
-    sys.stdout.write("Logged out.\n" if removed else "Not logged in.\n")
+    sys.stdout.write(
+        "Logged out. The token is still valid on the server until you revoke it in the web UI "
+        "(Tokens).\n"
+        if removed
+        else "Not logged in.\n"
+    )
 
 
 @admin.command
