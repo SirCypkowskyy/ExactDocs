@@ -11,7 +11,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import InMemoryLibraryRepository
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
-from exactdocs.catalog.errors import LibraryAlreadyExistsError
+from exactdocs.catalog.errors import InvalidSettingsError, LibraryAlreadyExistsError
 from exactdocs.catalog.models import (
     ChunkingConfig,
     HostKind,
@@ -180,3 +180,25 @@ async def test_delete_removes_the_library_and_its_versions_and_tolerates_absence
     assert await repository.list_all() == (LEDGER,)
     await repository.add(PAYMENTS)  # the ID is free again, with no leftover versions
     assert await repository.get(PAYMENTS.id) == PAYMENTS
+
+
+async def test_a_rule_stored_under_an_older_normal_form_still_loads(
+    repository: LibraryRepository,
+) -> None:
+    # "Ä" and "ß" are not what the current normalizer would store; the catalog checks shape only.
+    legacy = replace(
+        LEDGER,
+        settings=LibrarySettings(
+            tag_rules=(TagRule(pattern="docs/**", tag="Ä-ß"), TagRule(pattern="a/**", tag="x"))
+        ),
+    )
+    await repository.save(legacy)
+
+    assert await repository.get(legacy.id) == legacy
+    assert await repository.list_all() == (legacy,)
+
+
+@pytest.mark.parametrize("tag", ["", "a,b", "a b", "t" * 41])
+def test_a_rule_whose_tag_cannot_be_one_is_refused(tag: str) -> None:
+    with pytest.raises(InvalidSettingsError):
+        TagRule(pattern="docs/**", tag=tag)

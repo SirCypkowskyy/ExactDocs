@@ -30,6 +30,7 @@ from exactdocs.ingestion.models import (
     ProposedId,
     RefKind,
     RepositoryUrl,
+    TagRule,
     ref_tips,
     resolve_ref,
 )
@@ -252,6 +253,7 @@ class AddLibraryUseCase:
         """
         repository = RepositoryUrl.parse(command.url)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
+        tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
         library_id = ProposedId(command.library_id or repository.library_id)
         if await self.library_ids.is_taken(library_id):
             raise LibraryIdTakenError(library_id)
@@ -265,6 +267,7 @@ class AddLibraryUseCase:
                 host=repository.host_kind,
                 default_branch=refs.default_branch,
                 selection=selection,
+                tag_rules=tag_rules,
             )
         )
         try:

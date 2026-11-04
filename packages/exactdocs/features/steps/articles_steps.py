@@ -40,6 +40,7 @@ def _store(context: Context, library: str, ref: str, commit: str) -> str:
             blob_sha=_git_blob_sha(row["content"]),
             content_version=1,
             title=row["title"],
+            tags=[t for t in (row.get("tags") or "").split(",") if t],
             content=row["content"],
         )
         for row in context.table or []
@@ -104,6 +105,22 @@ def step_list_prefix(context: Context, prefix: str, library: str, ref: str) -> N
 def step_list_limit(context: Context, limit: int, library: str, ref: str) -> None:
     context.response = context.client.get(
         f"/api/v1/libraries{library}/articles", params={"ref": ref, "limit": limit}
+    )
+
+
+@when('I filter the articles of "{library}" version "{ref}" by {match} of tags "{tags}"')
+def step_filter_tags(context: Context, library: str, ref: str, match: str, tags: str) -> None:
+    context.response = context.client.get(
+        f"/api/v1/libraries{library}/articles",
+        params={"ref": ref, "tags": tags, "tags_match": match},
+    )
+
+
+@when('I filter {limit:d} articles of "{library}" version "{ref}" by any of tags "{tags}"')
+def step_list_limit_tags(context: Context, limit: int, library: str, ref: str, tags: str) -> None:
+    context.response = context.client.get(
+        f"/api/v1/libraries{library}/articles",
+        params={"ref": ref, "limit": limit, "tags": tags},
     )
 
 

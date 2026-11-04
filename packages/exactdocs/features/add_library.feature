@@ -34,6 +34,14 @@ Feature: Adding a library with its doc selection
     When a user adds the fixture repository with paths "docs/**" and exclusion "docs/archive/**"
     Then the library keeps the inclusion "docs/**" and the exclusion "docs/archive/**"
 
+  Scenario: Tag rules are kept with the library, normalized
+    When a user adds the fixture repository with paths "docs/**" and the tag rule "docs/api/** -> API"
+    Then the library keeps the tag rule "docs/api/** -> api"
+
+  Scenario: A tag rule that cannot work is refused
+    When a user adds the fixture repository with paths "docs/**" and the tag rule "docs/api/** -> not a tag!"
+    Then the request fails with "invalid_tag"
+
   Scenario: A pattern that cannot work is refused
     When a user adds the fixture repository with paths "../secrets" and no ref
     Then the request fails with "invalid_path_pattern"

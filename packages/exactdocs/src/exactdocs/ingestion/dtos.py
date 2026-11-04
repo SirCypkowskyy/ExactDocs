@@ -6,6 +6,7 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from exactdocs.ingestion.models import (
+    MAX_TAG_RULES,
     FileProblem,
     Job,
     JobState,
@@ -129,6 +130,13 @@ class CheckedRepository(_Dto):
     )
 
 
+class TagRuleIn(_Dto):
+    """Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`."""
+
+    pattern: str = Field(min_length=1, max_length=256)
+    tag: str = Field(min_length=1, max_length=200)
+
+
 class AddLibraryCommand(_Dto):
     """Create a library from a git repository, with its doc selection, and queue its import."""
 
@@ -155,6 +163,11 @@ class AddLibraryCommand(_Dto):
     )
     exclude_paths: list[str] = Field(
         default_factory=list, description="Folders, files or globs to leave out; they win."
+    )
+    tag_rules: list[TagRuleIn] = Field(
+        default_factory=list,
+        max_length=MAX_TAG_RULES,
+        description="Tags for articles by path; they are added to the front-matter tags.",
     )
 
 

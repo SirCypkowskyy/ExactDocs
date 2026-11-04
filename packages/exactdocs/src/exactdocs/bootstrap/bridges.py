@@ -15,6 +15,7 @@ from exactdocs.catalog.dtos import (
     GetManifestStatesQuery,
     HostKind,
     ResolveVersionQuery,
+    TagRuleIn,
 )
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
@@ -149,6 +150,7 @@ class CatalogNewLibraries:
                 default_branch=library.default_branch,
                 include_paths=list(library.selection.include),
                 exclude_paths=list(library.selection.exclude),
+                tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in library.tag_rules],
             )
         )
         return created.id

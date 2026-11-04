@@ -149,6 +149,25 @@ class InvalidPathPatternError(ValidationError):
         super().__init__(f"invalid path pattern: {problem.value}")
 
 
+class TagProblem(StrEnum):
+    """Why a tag or a tag rule is refused."""
+
+    INVALID = (
+        "a tag is lower-case letters, digits, '.', '+', '-' and '_' (not first), "
+        "at most 40 characters"
+    )
+    TOO_MANY = "too many tag rules"
+
+
+class InvalidTagError(ValidationError):
+    """A tag of a tag rule cannot be used."""
+
+    code = "invalid_tag"
+
+    def __init__(self, problem: TagProblem) -> None:
+        super().__init__(f"invalid tag: {problem.value}")
+
+
 class UnknownRefError(ValidationError):
     """The repository has no tag, branch or commit like the requested ref."""
 

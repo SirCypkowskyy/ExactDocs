@@ -22,11 +22,13 @@ from sqlalchemy import (
     insert,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy.sql.elements import TextClause
 
 from exactdocs.catalog.errors import (
     LibraryAlreadyExistsError,
@@ -47,6 +49,8 @@ from exactdocs.catalog.models import (
     ManifestState,
     RefKind,
     StoredArticle,
+    TagMatch,
+    TagSelection,
     Version,
     VersionRef,
 )
@@ -230,6 +234,24 @@ def _entry(row: Row) -> ManifestEntry:
     )
 
 
+# ponytail: a correlated json_each per row of the manifest, so a sparse tag on a huge manifest
+# scans it all; upgrade to a catalog_manifest_entry_tags(manifest_id, tag, path) side table.
+_HAS_ANY_TAG = text(
+    "EXISTS (SELECT 1 FROM json_each(catalog_manifest_entries.tags)"
+    " WHERE value IN (SELECT value FROM json_each(:tags)))"
+)
+_HAS_ALL_TAGS = text(
+    "NOT EXISTS (SELECT 1 FROM json_each(:tags)"
+    " WHERE value NOT IN (SELECT value FROM json_each(catalog_manifest_entries.tags)))"
+)
+
+
+def _tag_condition(selection: TagSelection) -> TextClause:
+    """Match the tags JSON list of the entry against the filter's, inside SQLite."""
+    condition = _HAS_ALL_TAGS if selection.match is TagMatch.ALL else _HAS_ANY_TAG
+    return condition.bindparams(tags=json.dumps(sorted(selection.tags)))
+
+
 @dataclass(frozen=True, slots=True)
 class SqliteManifestRepository:
     """Implements ``ports.driven.ManifestRepository`` with SQLAlchemy Core on SQLite."""
@@ -305,7 +327,13 @@ class SqliteManifestRepository:
         )
 
     async def list_entries(
-        self, manifest_id: ManifestId, *, prefix: str, after: str | None, limit: int
+        self,
+        manifest_id: ManifestId,
+        *,
+        prefix: str,
+        tags: TagSelection,
+        after: str | None,
+        limit: int,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path."""
         query = select(manifest_entries).where(manifest_entries.c.manifest_id == manifest_id)
@@ -315,6 +343,8 @@ class SqliteManifestRepository:
             query = query.where(
                 or_(path == prefix, and_(path >= f"{prefix}/", path < f"{prefix}0"))
             )
+        if tags.tags:
+            query = query.where(_tag_condition(tags))
         if after is not None:
             query = query.where(path > after)
         async with self.engine.connect() as connection:

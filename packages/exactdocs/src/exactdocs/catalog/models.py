@@ -1,6 +1,7 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -16,8 +17,10 @@ from exactdocs.catalog.errors import (
     InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
+    InvalidTagFilterError,
     InvalidVersionRefError,
 )
+from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
 
 # A segment is `[a-z0-9._-]+` once lower-cased, but never only dots (`.`, `..`).
 _ID_PARTS = 3  # "", owner, repo
@@ -126,6 +129,49 @@ class TagRule:
 
     pattern: str
     tag: str
+
+    def __post_init__(self) -> None:
+        # Shape only: rules stored under an older normal form must still load.
+        if (
+            not self.tag
+            or len(self.tag) > MAX_TAG_LENGTH
+            or "," in self.tag
+            or any(c.isspace() for c in self.tag)
+        ):
+            message = f"{self.tag!r} is not a usable tag"
+            raise InvalidSettingsError(message)
+
+
+class TagMatch(StrEnum):
+    """Whether an article needs any or all of the filter's tags."""
+
+    ANY = "any"
+    ALL = "all"
+
+
+@dataclass(frozen=True, slots=True)
+class TagSelection:
+    """Which articles a tag filter keeps. No tags keeps every article."""
+
+    tags: frozenset[str] = frozenset()
+    match: TagMatch = TagMatch.ANY
+
+    @classmethod
+    def of(cls, tags: Iterable[str], match: TagMatch = TagMatch.ANY) -> Self:
+        """Normalize what a caller typed; refuse a value that is no tag, or too many."""
+        raw = list(tags)
+        found = [normalize_tag(tag) for tag in raw] if len(raw) <= MAX_TAGS else [None]
+        if None in found:
+            message = f"tags must be valid tags, at most {MAX_TAGS} of them"
+            raise InvalidTagFilterError(message)
+        return cls(frozenset(t for t in found if t), match)
+
+    def keeps(self, article_tags: Iterable[str]) -> bool:
+        """Tell whether an article with these tags passes."""
+        if not self.tags:
+            return True
+        have = self.tags & set(article_tags)
+        return have == self.tags if self.match is TagMatch.ALL else bool(have)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

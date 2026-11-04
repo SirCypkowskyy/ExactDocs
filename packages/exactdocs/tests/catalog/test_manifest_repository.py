@@ -35,6 +35,8 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestState,
     RefKind,
+    TagMatch,
+    TagSelection,
     VersionRef,
 )
 from exactdocs.catalog.ports import LibraryRepository, ManifestRepository
@@ -150,8 +152,11 @@ async def paths(
     prefix: str = "",
     after: str | None = None,
     limit: int = 100,
+    tags: TagSelection | None = None,
 ) -> list[str]:
-    entries = await manifests.list_entries(ManifestId(id_), prefix=prefix, after=after, limit=limit)
+    entries = await manifests.list_entries(
+        ManifestId(id_), prefix=prefix, tags=tags or TagSelection(), after=after, limit=limit
+    )
     return [e.path for e in entries]
 
 
@@ -188,9 +193,9 @@ async def test_a_stored_manifest_comes_back_pending_with_everything_in_it(stores
     header = await fetch(stores.manifests, stored.id)
     assert header == replace(stored, entries=())  # reads do not carry the entries
     assert header.state is ManifestState.PENDING
-    assert await stores.manifests.list_entries(stored.id, prefix="", after=None, limit=9) == (
-        stored.entries
-    )
+    assert await stores.manifests.list_entries(
+        stored.id, prefix="", tags=TagSelection(), after=None, limit=9
+    ) == (stored.entries)
     assert await stores.manifests.get(ManifestId("nope")) is None
 
 
@@ -631,3 +636,30 @@ async def test_sqlite_refuses_a_second_active_manifest_for_one_version(sqlite: C
             await connection.execute(
                 text("UPDATE catalog_manifests SET state = 'active' WHERE id = 'm2'")
             )
+
+
+async def test_listing_filters_by_tags_before_it_pages(stores: Stores) -> None:
+    await store(
+        stores,
+        manifest(
+            "m1",
+            "main",
+            "aaa111",
+            entry("a.md", "b1"),
+            entry("b.md", "b2", tags=("api", "auth")),
+            entry("c.md", "b3", tags=("api",)),
+            entry("d.md", "b4", tags=("adr",)),
+            entry("e.md", "b5", tags=("api",)),
+        ),
+    )
+    any_of = TagSelection(frozenset({"api", "adr"}))
+    all_of = TagSelection(frozenset({"api", "auth"}), TagMatch.ALL)
+
+    assert await paths(stores.manifests, "m1", tags=any_of) == ["b.md", "c.md", "d.md", "e.md"]
+    assert await paths(stores.manifests, "m1", tags=any_of, limit=2, after="b.md") == [
+        "c.md",
+        "d.md",
+    ]
+    assert await paths(stores.manifests, "m1", tags=all_of) == ["b.md"]
+    assert await paths(stores.manifests, "m1", tags=TagSelection(frozenset({"nope"}))) == []
+    assert await paths(stores.manifests, "m1", prefix="a.md", tags=any_of) == []

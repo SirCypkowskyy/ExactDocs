@@ -16,7 +16,9 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ResolvedVersion,
     ResolveVersionQuery,
+    TagFilter,
 )
+from exactdocs.catalog.models import TagMatch
 from exactdocs.catalog.ports.driving import (
     GetArticle,
     GetLibrary,
@@ -24,7 +26,7 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ResolveVersion,
 )
-from exactdocs_kernel import DEFAULT_LIMIT
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_TAG_LENGTH, MAX_TAGS
 
 
 def build_router(
@@ -70,6 +72,19 @@ def build_router(
                 )
             ),
         ] = "",
+        tags: Annotated[
+            list[Annotated[str, Query(max_length=MAX_TAGS * (MAX_TAG_LENGTH + 1))]] | None,
+            Query(
+                max_length=MAX_TAGS,
+                description=(
+                    "Only articles with these tags: comma-separated, or repeat the parameter. "
+                    "Case does not matter."
+                ),
+            ),
+        ] = None,
+        tags_match: Annotated[
+            TagMatch, Query(description="`any` (default): one of the tags; `all`: every tag.")
+        ] = TagMatch.ANY,
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> ArticleList:
@@ -77,6 +92,10 @@ def build_router(
             library=f"/{owner}/{repo}",
             ref=ref,
             path_prefix=path_prefix,
+            tag_filter=TagFilter(
+                tags=[t for value in tags or [] for t in value.split(",") if t.strip()],
+                match=tags_match,
+            ),
             limit=limit,
             cursor=cursor,
         )

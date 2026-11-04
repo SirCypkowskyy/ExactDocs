@@ -1115,6 +1115,40 @@
             "description": "Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything."
           },
           {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 820
+                  },
+                  "maxItems": 20
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter.",
+              "title": "Tags"
+            },
+            "description": "Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/exactdocs__catalog__models__TagMatch",
+              "description": "`any` (default): one of the tags; `all`: every tag.",
+              "default": "any"
+            },
+            "description": "`any` (default): one of the tags; `all`: every tag."
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -1444,7 +1478,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/TagMatch",
+              "$ref": "#/components/schemas/exactdocs__retrieval__models__TagMatch",
               "default": "any"
             }
           },
@@ -2055,6 +2089,15 @@
             "type": "array",
             "title": "Exclude Paths",
             "description": "Folders, files or globs to leave out; they win."
+          },
+          "tag_rules": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleIn"
+            },
+            "type": "array",
+            "maxItems": 64,
+            "title": "Tag Rules",
+            "description": "Tags for articles by path; they are added to the front-matter tags."
           }
         },
         "additionalProperties": false,
@@ -3221,14 +3264,29 @@
         "title": "Span",
         "description": "A `[start, end)` range of characters."
       },
-      "TagMatch": {
-        "type": "string",
-        "enum": [
-          "any",
-          "all"
+      "TagRuleIn": {
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Pattern"
+          },
+          "tag": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tag"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pattern",
+          "tag"
         ],
-        "title": "TagMatch",
-        "description": "How a tag filter combines its tags."
+        "title": "TagRuleIn",
+        "description": "Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`."
       },
       "TagRuleOut": {
         "properties": {
@@ -3433,6 +3491,15 @@
         "title": "RefKind",
         "description": "What a version was imported from."
       },
+      "exactdocs__catalog__models__TagMatch": {
+        "type": "string",
+        "enum": [
+          "any",
+          "all"
+        ],
+        "title": "TagMatch",
+        "description": "Whether an article needs any or all of the filter's tags."
+      },
       "exactdocs__ingestion__models__RefKind": {
         "type": "string",
         "enum": [
@@ -3442,6 +3509,15 @@
         ],
         "title": "RefKind",
         "description": "What a requested ref turned out to be."
+      },
+      "exactdocs__retrieval__models__TagMatch": {
+        "type": "string",
+        "enum": [
+          "any",
+          "all"
+        ],
+        "title": "TagMatch",
+        "description": "How a tag filter combines its tags."
       }
     },
     "securitySchemes": {

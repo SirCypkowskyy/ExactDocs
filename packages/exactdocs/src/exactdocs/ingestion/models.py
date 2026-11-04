@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
-from itertools import pairwise
+from itertools import pairwise, starmap
 from pathlib import PurePosixPath
 from typing import Any, NewType, Self
 from urllib.parse import unquote, urlsplit
@@ -29,14 +29,17 @@ from exactdocs.ingestion.errors import (
     InvalidPathPatternError,
     InvalidProgressError,
     InvalidRepositoryUrlError,
+    InvalidTagError,
     PatternProblem,
+    TagProblem,
     UnknownRefError,
     UrlProblem,
 )
+from exactdocs_kernel import MAX_TAGS, normalize_tag
 
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 
 # Bump on any change to how a chunker cuts articles. Like PARSER_VERSION it feeds the config hash.
 CHUNKER_VERSION = 1
@@ -126,6 +129,10 @@ def strip_invisible(text: str) -> str:
     return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub(lambda m: m["flag"] or "", text))
 
 
+MAX_TAG_RULES = 64
+_MAX_RAW_TAGS = 100
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ParsedArticle:
     """An article ready to store: clean Markdown body plus what the front matter said."""
@@ -173,14 +180,18 @@ def parse_article(path: str, source: str) -> ParsedArticle:
     tags = tags or []
     if not all(isinstance(tag, str) for tag in tags):
         problems.append("front matter tags must be text; other items were ignored")
+    named = [tag for tag in tags if isinstance(tag, str) and tag.strip()]
+    skipped = max(0, len(named) - _MAX_RAW_TAGS)  # not even normalized: bounded work
+    normalized = [normalize_tag(tag) for tag in named[:_MAX_RAW_TAGS]]
+    if (invalid := normalized.count(None) + skipped) or len(set(normalized)) > MAX_TAGS:
+        problems.append(f"front matter tags: {invalid} invalid ignored, at most {MAX_TAGS} kept")
+    declared_tags = tuple(dict.fromkeys(t for t in normalized if t))[:MAX_TAGS]
     description = front_matter.get("description")
     return ParsedArticle(
         path=path,
         title=_title(declared, body, path),
         body=body,
-        tags=tuple(
-            dict.fromkeys(t for tag in tags if isinstance(tag, str) and (t := tag.strip().lower()))
-        ),
+        tags=declared_tags,
         description=description if isinstance(description, str) else None,
         front_matter=front_matter,
         problems=tuple(problems),
@@ -789,6 +800,46 @@ class PathSelection:
         return not self.include or any(_matches(_glob(p), path) for p in self.include)
 
 
+@dataclass(frozen=True, slots=True)
+class TagRule:
+    """Articles whose path matches the glob get the tag (``docs/api/** -> api``).
+
+    The glob follows the rules of ``PathSelection`` (and so only ``.md``/``.mdx`` files match).
+    """
+
+    selection: PathSelection
+    tag: str
+
+    @classmethod
+    def of(cls, pattern: str, tag: str) -> Self:
+        """Validate the glob and normalize the tag; a tag that cannot be one is refused."""
+        if (normalized := normalize_tag(tag)) is None:
+            raise InvalidTagError(TagProblem.INVALID)
+        return cls(PathSelection.of([pattern]), normalized)
+
+    @classmethod
+    def many(cls, pairs: Sequence[tuple[str, str]]) -> tuple[Self, ...]:
+        """Build the rules of a library: bounded and duplicate-free."""
+        if len(pairs) > MAX_TAG_RULES:
+            raise InvalidTagError(TagProblem.TOO_MANY)
+        return tuple(dict.fromkeys(starmap(cls.of, pairs)))
+
+    @property
+    def pattern(self) -> str:
+        """The glob, as cleaned."""
+        return self.selection.include[0]
+
+
+def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -> tuple[str, ...]:
+    """Combine the tags of the rules matching ``path`` with the front-matter ones.
+
+    Rule tags come first (they are the library owner's), then ``declared`` (already normalized by
+    ``parse_article``); duplicates go; at most ``MAX_TAGS`` are kept.
+    """
+    ruled = (rule.tag for rule in rules if rule.selection.selects(path))
+    return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewLibrary:
     """What a library is created from: its repository, default branch and doc selection."""
@@ -799,3 +850,4 @@ class NewLibrary:
     host: RepositoryHost
     default_branch: str | None
     selection: PathSelection
+    tag_rules: tuple[TagRule, ...] = ()

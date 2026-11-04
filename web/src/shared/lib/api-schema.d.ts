@@ -303,6 +303,11 @@ export interface components {
              * @description Folders, files or globs to leave out; they win.
              */
             readonly exclude_paths?: readonly string[];
+            /**
+             * Tag Rules
+             * @description Tags for articles by path; they are added to the front-matter tags.
+             */
+            readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][];
         };
         /**
          * AddedLibrary
@@ -806,11 +811,15 @@ export interface components {
             readonly end: number;
         };
         /**
-         * TagMatch
-         * @description How a tag filter combines its tags.
-         * @enum {string}
+         * TagRuleIn
+         * @description Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`.
          */
-        readonly TagMatch: "any" | "all";
+        readonly TagRuleIn: {
+            /** Pattern */
+            readonly pattern: string;
+            /** Tag */
+            readonly tag: string;
+        };
         /**
          * TagRuleOut
          * @description Articles whose path matches `pattern` get `tag`.
@@ -901,11 +910,23 @@ export interface components {
          */
         readonly exactdocs__catalog__models__RefKind: "tag" | "branch" | "commit";
         /**
+         * TagMatch
+         * @description Whether an article needs any or all of the filter's tags.
+         * @enum {string}
+         */
+        readonly exactdocs__catalog__models__TagMatch: "any" | "all";
+        /**
          * RefKind
          * @description What a requested ref turned out to be.
          * @enum {string}
          */
         readonly exactdocs__ingestion__models__RefKind: "tag" | "branch" | "commit";
+        /**
+         * TagMatch
+         * @description How a tag filter combines its tags.
+         * @enum {string}
+         */
+        readonly exactdocs__retrieval__models__TagMatch: "any" | "all";
     };
     responses: never;
     parameters: never;
@@ -1759,6 +1780,10 @@ export interface operations {
                 readonly ref?: string | null;
                 /** @description Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything. */
                 readonly path_prefix?: string;
+                /** @description Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter. */
+                readonly tags?: readonly string[] | null;
+                /** @description `any` (default): one of the tags; `all`: every tag. */
+                readonly tags_match?: components["schemas"]["exactdocs__catalog__models__TagMatch"];
                 readonly limit?: number;
                 readonly cursor?: string | null;
             };
@@ -1924,7 +1949,7 @@ export interface operations {
                 readonly ref?: string | null;
                 /** @description Repeat or comma-separate. */
                 readonly tags?: readonly string[] | null;
-                readonly tags_match?: components["schemas"]["TagMatch"];
+                readonly tags_match?: components["schemas"]["exactdocs__retrieval__models__TagMatch"];
                 readonly limit?: number;
             };
             readonly header?: never;
