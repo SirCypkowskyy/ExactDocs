@@ -45,3 +45,14 @@ by 32 dashes. A chunk too large for the budget is a block with no text, saying t
 (`EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET`, at least 500) covers the whole payload, notice included, and
 counts a token as 4 characters; that undercounts CJK text and dense code. `language` reorders the
 best 50 matches; it does not filter.
+
+## REST: `rest/openapi-excerpt.json`
+
+Types and required-ness excerpted from <https://context7.com/openapi.json> (Context7 Public API
+2.0.0, fetched 2026-11-04): `GET /v2/libs/search` and `GET /v2/context`.
+`tests/bootstrap/test_c7_rest.py` checks that `/api/v1/c7/search` and `/api/v1/c7/docs` accept
+its parameters (`fast` is ignored: no LLM reranking) and answer with fields of the pinned types.
+Deliberately different: the URL prefix, the error body (`{error, detail, message}`: `message` is
+context7's name for `detail`), the extra `notice` field (JSON) and the notice that leads the text body
+(also in the `X-ExactDocs-Notice` header), and `codeSnippets` always empty (chunks are not split into
+code and prose). Update it like the MCP files above.

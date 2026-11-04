@@ -139,6 +139,8 @@ def create_app(container: Container) -> FastAPI:
         retrieval_http.build_router(
             search_docs=container.retrieval.search_docs,
             read_chunk=container.retrieval.read_chunk,
+            resolve_library_id=container.retrieval.resolve_library_id,
+            query_docs=container.retrieval.query_docs,
         )
     )
     protected.include_router(

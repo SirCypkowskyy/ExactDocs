@@ -144,6 +144,7 @@ class CatalogLibraries:
                     default_version=lib.default_version,
                     versions=tuple(r.ref for r in lib.refs),
                     version_count=lib.version_count,
+                    last_imported_at=lib.last_imported_at,
                 )
                 for lib in page.libraries
                 if lib.default_version is not None
