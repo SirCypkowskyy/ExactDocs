@@ -8,7 +8,7 @@ import stat
 import tempfile
 import threading
 import time
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -53,17 +53,18 @@ def _login(
     context: Context, *args: str, stdin: str = "", extra_env: dict[str, str] | None = None
 ) -> None:
     env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file), **(extra_env or {})}
-    output = io.StringIO()
+    output, errors = io.StringIO(), io.StringIO()
     context.exit_message = None
     with (
         patch.dict(os.environ, env),
         patch("sys.stdin", io.StringIO(stdin)),
         redirect_stdout(output),
+        redirect_stderr(errors),
     ):
         try:
             cli.app(["login", *args], exit_on_error=False, result_action="return_value")
         except SystemExit as exc:
-            context.exit_message = str(exc.code)
+            context.exit_message = errors.getvalue() or str(exc.code)
     context.output = output.getvalue()
 
 
