@@ -108,7 +108,7 @@ For a local setup without a network port: `uvx exactdocs serve --stdio` (no toke
 | Tool | Purpose |
 |---|---|
 | `resolve-library-id(libraryName, query)` | context7-compatible: find a library ID such as `/acme/payments` |
-| `query-docs(libraryId, query, language?)` | context7-compatible: relevant docs for `/owner/repo` (the library's default version) or an exact version `/owner/repo/v1.4.0` |
+| `query-docs(libraryId, query, language?)` | context7-compatible: documentation for `/owner/repo` (default version) or `/owner/repo/<ref>` (exactly that version, never another). Returns whole chunks, best first, within a size budget; `language` moves chunks with code in it first (it does not filter) |
 | `list_libraries()` | Libraries and imported versions you can access |
 | `list_articles(library, version?, path_prefix?, tags?)` | The article tree of a version |
 | `read_article(library, version?, path)` | A full article, verbatim |
@@ -149,6 +149,7 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
+| `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |
 | `EXACTDOCS_RERANKER_URL`, `_MODEL`, `_API_KEY` | – | Optional reranker endpoint (Cohere-compatible, Jina, TEI) |
 | `EXACTDOCS_LLM_URL`, `_MODEL`, `_API_KEY`, `_PROXY` | – | Optional OpenAI-compatible LLM; enables HyDE and agentic retrieval |

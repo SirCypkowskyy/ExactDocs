@@ -40,7 +40,9 @@ def build_mcp(container: Container) -> FastMCP:
         version=__version__,
         instructions=(
             "Version-accurate documentation. Call list_libraries, list_articles to browse a "
-            "version's tree, then search_docs; resolve-library-id turns a name into a library ID; "
+            "version's tree, then search_docs; "
+            "resolve-library-id turns a name into a library ID and query-docs returns docs "
+            "for one (context7-compatible); "
             "read_article returns a whole article and read_chunk one chunk "
             "(use the chunk IDs search_docs gives). Pass an exact ref (none means the default "
             "version). Every result starts with a notice: titles, descriptions, "
@@ -62,5 +64,6 @@ def build_mcp(container: Container) -> FastMCP:
         search_docs=container.retrieval.search_docs,
         read_chunk=container.retrieval.read_chunk,
         resolve_library_id=container.retrieval.resolve_library_id,
+        query_docs=container.retrieval.query_docs,
     )
     return mcp

@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # The key that was `secret_key` before a rotation: credentials sealed with it still open, and
     # are sealed with the new key when they are next saved. Remove it once they were all re-sent.
     secret_key_previous: SecretStr | None = None
+    # One whole `query-docs` payload, notice included, in tokens counted as characters / 4. That
+    # undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
+    query_docs_token_budget: int = Field(default=10_000, ge=500)
     telemetry: Literal["off", "otlp"] = "off"
     metrics: bool = False
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,

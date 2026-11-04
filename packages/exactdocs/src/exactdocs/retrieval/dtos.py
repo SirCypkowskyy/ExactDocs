@@ -395,3 +395,84 @@ class ResolveLibraryIdResult(_Dto):
     """Matching libraries, best first; empty when nothing matches."""
 
     matches: list[LibraryMatchOut]
+
+
+class QueryDocsQuery(_Dto):
+    """What an agent asks of one library version, as context7's `query-docs` does."""
+
+    library_id: str = Field(
+        # `LIBRARY_ID_PATTERN` (`/owner/repo`) plus an optional `/<ref>`: change them together.
+        pattern=r"^/[^/]+/[^/]+(/.+)?$",
+        max_length=3 * MAX_NAME,
+        description=(
+            "`/owner/repo` for the default version or `/owner/repo/<ref>` for exactly that ref."
+        ),
+    )
+    query: str = Field(min_length=1, max_length=MAX_QUERY)
+    language: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Programming language; chunks with code in it come first.",
+    )
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class DocSectionOut(_Dto):
+    """One whole chunk of documentation, verbatim. Every field is untrusted repository text."""
+
+    chunk_id: str
+    article_path: str
+    heading_path: list[str]
+    source_url: str | None = Field(
+        description="Link to the section at the commit; null when the host is unknown."
+    )
+    code_languages: list[str]
+    content: str = Field(description="Empty for a pointer (`too_large`).")
+    too_large: bool = Field(
+        default=False, description="The chunk alone exceeds the budget: read it with `read_chunk`."
+    )
+
+    @property
+    def title(self) -> str:
+        """The heading path, or the article path when there is none."""
+        return " > ".join(self.heading_path) or self.article_path
+
+    @property
+    def source(self) -> str:
+        """The section link, or the article path when the host is unknown."""
+        return self.source_url or self.article_path
+
+    @classmethod
+    def from_stored(cls, version: SearchableVersion, stored: StoredChunk) -> Self:
+        """Map a stored chunk of the active manifest of ``version``."""
+        row, chunk = stored.row, stored.chunk
+        return cls(
+            chunk_id=row.chunk_id,
+            article_path=row.article_path,
+            heading_path=list(chunk.heading_path),
+            source_url=source_link(version, row.article_path, chunk.anchor),
+            code_languages=list(chunk.code_languages),
+            content=chunk.content,
+        )
+
+    def as_pointer(self) -> Self:
+        """Return the section without its text, for a chunk that cannot fit the budget."""
+        return self.model_copy(update={"content": "", "too_large": True})
+
+
+class QueryDocsResult(_Dto):
+    """Whole chunks of one exact version, best first, that fit the size budget."""
+
+    library: str
+    version: str
+    commit_sha: str
+    retrieval_mode: RetrievalMode
+    sections: list[DocSectionOut]
+    omitted: int = Field(
+        description="Matching chunks neither shown nor pointed to: the budget was used up."
+    )
+    budget_chars: int

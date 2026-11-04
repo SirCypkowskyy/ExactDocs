@@ -150,12 +150,13 @@ TOOL_CALLS = [
     ("read_article", {"library": "/acme/payments", "path": "guide/a.md"}),
     ("read_chunk", {"chunk_id": CHUNK_ID}),
     ("resolve-library-id", {"libraryName": "payments", "query": "x"}),
+    ("query-docs", {"libraryId": "/acme/payments/v1.4.0", "query": "H"}),
 ]
 # The verbatim tools put the notice in a block of its own, before the untouched text.
 NOTICE_AND_TEXT = 2
-NOTICE_BLOCK_TOOLS = {"read_article", "read_chunk", "resolve-library-id"}
+NOTICE_BLOCK_TOOLS = {"read_article", "read_chunk", "resolve-library-id", "query-docs"}
 # context7-shaped: no output schema, so no `notice` field; the notice is the first text block.
-CONTEXT7_TOOLS = {"resolve-library-id"}
+CONTEXT7_TOOLS = {"resolve-library-id", "query-docs"}
 
 
 @pytest.mark.parametrize(("tool", "arguments"), TOOL_CALLS)
@@ -172,7 +173,7 @@ async def test_the_notice_comes_first_in_the_text_every_client_reads(
         assert len(result.content) == NOTICE_AND_TEXT
         if tool in CONTEXT7_TOOLS:
             assert result.structured_content is None
-            assert result.content[1].text.startswith("Available Libraries:")
+            assert result.content[1].text.startswith(("Available Libraries:", "### "))
             return
         assert result.structured_content is not None
         assert result.structured_content["notice"] == NOTICE

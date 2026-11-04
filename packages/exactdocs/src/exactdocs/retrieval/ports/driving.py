@@ -10,6 +10,8 @@ from exactdocs.retrieval.dtos import (
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    QueryDocsQuery,
+    QueryDocsResult,
     ReadChunkQuery,
     RemoveChunksCommand,
     RemovedChunks,
@@ -105,5 +107,20 @@ class ResolveLibraryId(Protocol):
     """
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
+        """Run the use case."""
+        ...
+
+
+class QueryDocs(Protocol):
+    """Return documentation for a context7-style library ID, within a size budget.
+
+    `/owner/repo` is the default version, `/owner/repo/<ref>` exactly that ref; raises
+    ``VersionNotIndexedError`` for a version that is not imported and never answers from another.
+    Only whole chunks are returned, best first, within the configured budget; one too large to fit
+    is listed as a pointer for ``read_chunk``. ``language`` only reorders the best matches (chunks
+    with code in it first); it never filters, and a chunk ranked beyond the candidates is not seen.
+    """
+
+    async def __call__(self, query: QueryDocsQuery) -> QueryDocsResult:
         """Run the use case."""
         ...

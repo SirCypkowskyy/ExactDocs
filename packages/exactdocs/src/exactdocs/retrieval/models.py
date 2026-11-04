@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum, StrEnum
@@ -451,3 +451,62 @@ def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
         )
 
     return sorted(candidates, key=key)
+
+
+# Spellings of a fence language that mean the same as another; anything else compares by lowercase.
+_LANGUAGE_ALIASES = {
+    "py": "python",
+    "js": "javascript",
+    "ts": "typescript",
+    "tsx": "typescript",
+    "jsx": "javascript",
+    "sh": "bash",
+    "shell": "bash",
+    "zsh": "bash",
+    "golang": "go",
+    "c#": "csharp",
+    "cs": "csharp",
+    "yml": "yaml",
+    "rb": "ruby",
+    "rs": "rust",
+    "cpp": "c++",
+    "cc": "c++",
+    "hpp": "c++",
+    "cxx": "c++",
+    "kt": "kotlin",
+    "py3": "python",
+    "python3": "python",
+    "ps1": "powershell",
+    "node": "javascript",
+    "nodejs": "javascript",
+    "mjs": "javascript",
+    "cjs": "javascript",
+    "objc": "objective-c",
+    "dockerfile": "docker",
+}
+
+
+def canonical_language(name: str) -> str:
+    """Return a code language in one spelling, so `TypeScript`, `ts` and `typescript` agree."""
+    lowered = name.strip().lower()
+    return _LANGUAGE_ALIASES.get(lowered, lowered)
+
+
+def language_first[T](
+    items: Sequence[T], languages: Callable[[T], Sequence[str]], wanted: str
+) -> list[T]:
+    """Put the items with code in ``wanted`` first; each group keeps its order (sort is stable)."""
+    want = canonical_language(wanted)
+    return sorted(items, key=lambda i: want not in {canonical_language(x) for x in languages(i)})
+
+
+# What the `query-docs` payload adds around its parts, counted against the budget by the use case
+# and produced by the driving adapter (a test holds the adapter to these numbers).
+# A section is `### title\n\nSource: src\n\nChunk: id\n\ncontent`, sections are separated by 36
+# characters; 4 + 10 + 9 + 2 + 36 = 61 <= 64. Title, source, ID and content are counted on top.
+SECTION_FRAMING_CHARS = 64
+# The closing line "N more matching chunks did not fit the size budget; narrow the query." and its
+# separator, reserved whenever the answer could be partial.
+FOOTER_CHARS = 140
+CHARS_PER_TOKEN = 4  # undercounts for CJK text and dense code, which cost more tokens per character
+POINTER_TEXT = "Too large for the size budget; fetch it with read_chunk."
