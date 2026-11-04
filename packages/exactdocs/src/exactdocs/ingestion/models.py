@@ -851,3 +851,48 @@ class NewLibrary:
     default_branch: str | None
     selection: PathSelection
     tag_rules: tuple[TagRule, ...] = ()
+
+
+# ---------------------------------------------------------------- import
+
+DEFAULT_MAX_ARTICLE_BYTES = 2 * 2**20
+"""Files above this many bytes are skipped without being read."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportSource:
+    """Where a library's articles come from and which of them are taken."""
+
+    url: RepositoryUrl
+    selection: PathSelection
+    tag_rules: tuple[TagRule, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedArticle:
+    """An article ready to publish: its text, metadata and chunks."""
+
+    path: str
+    blob_sha: str
+    title: str
+    tags: tuple[str, ...]
+    front_matter: dict[str, Any]
+    content: str
+    chunks: tuple[ArticleChunk, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedVersion:
+    """Every article of one library version at one commit, chunked with ``config_hash``."""
+
+    library: str
+    ref: str
+    kind: RefKind
+    commit_sha: str
+    config_hash: str
+    articles: tuple[ImportedArticle, ...]
+
+
+def git_blob_sha(data: bytes) -> str:
+    """Return the SHA-1 git gives a file with exactly these bytes."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()

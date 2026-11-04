@@ -1,6 +1,6 @@
 """Driven (secondary) ports of ingestion: what it needs from git, storage and other domains."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +8,8 @@ from typing import Protocol
 
 from exactdocs.ingestion.models import (
     ArticleChunk,
+    ImportedVersion,
+    ImportSource,
     Job,
     JobId,
     NewLibrary,
@@ -157,4 +159,49 @@ class NewLibraries(Protocol):
 
     async def discard(self, library_id: str) -> None:
         """Remove a library that was just added and has no versions (the undo of ``add``)."""
+        ...
+
+
+class LibrarySources(Protocol):
+    """Where a library's articles come from (the catalog, in ingestion's words)."""
+
+    async def get(self, library: str) -> ImportSource:
+        """Return the repository and path selection of a library; raises when it is unknown."""
+        ...
+
+
+class VersionPublisher(Protocol):
+    """Publishes a version into the catalog in two steps: store (invisible), then activate."""
+
+    async def store(self, version: ImportedVersion) -> str:
+        """Store the version's articles as a pending manifest; return its ID. Nothing is served."""
+        ...
+
+    async def activate(self, manifest_id: str) -> None:
+        """Make the pending manifest what its version serves, all at once."""
+        ...
+
+    async def discard(self, *, manifest_id: str | None, library: str) -> None:
+        """Delete the library's pending manifests (only ``manifest_id``'s when given)."""
+        ...
+
+
+class ChunkIndex(Protocol):
+    """Where chunks are stored and searched (retrieval, in ingestion's words)."""
+
+    async def known(
+        self, config_hash: str, blob_shas: Sequence[str]
+    ) -> Mapping[str, tuple[ArticleChunk, ...]]:
+        """Return the stored chunks of blobs chunked under ``config_hash``; others are left out."""
+        ...
+
+    async def index(self, manifest_id: str, version: ImportedVersion) -> None:
+        """Store and index the version's chunks of a pending manifest (before it is activated)."""
+        ...
+
+    async def discard(self, *, manifest_id: str | None, library: str) -> None:
+        """Delete the library's pending chunks (only ``manifest_id``'s when given).
+
+        Call it before the catalog's discard: it needs the catalog to still say "pending".
+        """
         ...

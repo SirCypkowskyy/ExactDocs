@@ -1,7 +1,7 @@
 """Wiring of the ingestion domain: driven adapters in, driving ports out.
 
 It does not pick adapters itself; the composition root (``exactdocs.bootstrap``) passes them in,
-together with the job kinds it supports. The import itself arrives with E3-05a.
+together with the job kinds it supports. ``import_job`` builds the import's handler and hook.
 """
 
 from collections.abc import Mapping
@@ -9,14 +9,19 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.ingestion.models import JobKind
+from exactdocs.ingestion.models import DEFAULT_MAX_ARTICLE_BYTES, IMPORT_JOB, JobKind
 from exactdocs.ingestion.ports.driven import (
+    Chunker,
+    ChunkIndex,
+    GitGateway,
     GitRemote,
     JobHandler,
     JobRepository,
     LibraryIds,
+    LibrarySources,
     NewLibraries,
     RecoveryHook,
+    VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
@@ -32,9 +37,11 @@ from exactdocs.ingestion.ports.driving import (
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
     CheckRepositoryUseCase,
+    DiscardInterruptedImportUseCase,
     EnqueueJobUseCase,
     GetJobUseCase,
     ListLatestJobsUseCase,
+    ImportVersionUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     RecoverJobsUseCase,
@@ -86,3 +93,20 @@ class IngestionModule:
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),
             run_next_job=RunNextJobUseCase(jobs, clock, handlers),
         )
+
+
+def import_job(
+    *,
+    gateway: GitGateway,
+    remote: GitRemote,
+    chunker: Chunker,
+    sources: LibrarySources,
+    versions: VersionPublisher,
+    index: ChunkIndex,
+    max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES,
+) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
+    """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions."""
+    importer = ImportVersionUseCase(
+        gateway, remote, chunker, sources, versions, index, max_article_bytes
+    )
+    return {IMPORT_JOB: importer}, {IMPORT_JOB: DiscardInterruptedImportUseCase(versions, index)}

@@ -189,10 +189,19 @@ class AmbiguousRefError(ValidationError):
         super().__init__(f"commit {prefix!r} is ambiguous: use more characters of the SHA")
 
 
-class ImportNotAvailableError(DomainError):
-    """Placeholder until the importer exists (E3-05a): the job is queued but cannot run."""
+class ImportNotPinnedError(ValidationError):
+    """The import job names no version or no commit, so there is nothing exact to import."""
 
-    code = "import_not_available"
+    code = "import_not_pinned"
 
     def __init__(self) -> None:
-        super().__init__("importing articles is not available in this version yet")
+        super().__init__("the import job has no version or commit to import")
+
+
+class NoArticlesError(ValidationError):
+    """Nothing in the commit matched the library's paths; an empty version is not published."""
+
+    code = "no_articles"
+
+    def __init__(self) -> None:
+        super().__init__("no .md or .mdx file of this commit matches the library's paths")

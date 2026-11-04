@@ -1,9 +1,13 @@
 """Ingestion use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
+import asyncio
 import logging
+import os
+import stat
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
@@ -21,28 +25,50 @@ from exactdocs.ingestion.dtos import (
     RefOut,
     RepositoryRefs,
 )
-from exactdocs.ingestion.errors import JobNotFoundError, LibraryIdTakenError, UnknownJobKindError
+from exactdocs.ingestion.errors import (
+    ImportNotPinnedError,
+    JobNotFoundError,
+    LibraryIdTakenError,
+    NoArticlesError,
+    UnknownJobKindError,
+    UnknownRefError,
+)
 from exactdocs.ingestion.models import (
+    DEFAULT_MAX_ARTICLE_BYTES,
     IMPORT_JOB,
+    ArticleChunk,
+    ImportedArticle,
+    ImportedVersion,
+    ImportSource,
     Job,
     JobId,
     JobKind,
     NewLibrary,
+    ParsedArticle,
     PathSelection,
     ProposedId,
     RefKind,
     RepositoryUrl,
     TagRule,
+    article_tags,
+    git_blob_sha,
+    parse_article,
     ref_tips,
     resolve_ref,
 )
 from exactdocs.ingestion.ports.driven import (
+    Chunker,
+    ChunkIndex,
+    GitGateway,
     GitRemote,
     JobHandler,
+    JobProgress,
     JobRepository,
     LibraryIds,
+    LibrarySources,
     NewLibraries,
     RecoveryHook,
+    VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob
 from exactdocs_kernel import Clock, DomainError, paginate
@@ -302,3 +328,161 @@ class AddLibraryUseCase:
                 )
             raise
         return AddedLibrary.of(created, resolved, job)
+
+
+@dataclass(frozen=True, slots=True)
+class ImportVersionUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
+
+    Fetch the pinned commit, read and parse every selected file, chunk the blobs no earlier
+    import chunked, store everything as a pending manifest, index its chunks, then activate it.
+    Readers see the previous state until the last step; any failure (also a cancellation)
+    discards what was stored, so a version never shows half of its articles.
+    """
+
+    gateway: GitGateway
+    remote: GitRemote
+    chunker: Chunker
+    sources: LibrarySources
+    versions: VersionPublisher
+    index: ChunkIndex
+    max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Run the import from the beginning; raising fails the job."""
+        if job.version is None or job.commit_sha is None:
+            raise ImportNotPinnedError
+        source = await self.sources.get(job.library)
+        kind = await self._kind(source.url, job.version, job.commit_sha)
+        full_ref = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
+        refs = [] if full_ref is None else [full_ref + job.version]
+        config_hash = self.chunker.config_hash
+        async with self.gateway.fetch(
+            source.url, job.commit_sha, source.selection, refs=refs
+        ) as folder:
+            articles = await self._articles(folder, source, config_hash, progress)
+        if not articles:
+            raise NoArticlesError
+        version = ImportedVersion(
+            library=job.library,
+            ref=job.version,
+            kind=kind,
+            commit_sha=job.commit_sha,
+            config_hash=config_hash,
+            articles=tuple(articles),
+        )
+        manifest_id: str | None = None
+        try:
+            manifest_id = await self.versions.store(version)
+            await self.index.index(manifest_id, version)
+            await self.versions.activate(manifest_id)
+        except BaseException:
+            # Shielded, so that the cancellation that got us here cannot cut the clean-up short.
+            await asyncio.shield(self._discard(job.library, manifest_id))
+            raise
+
+    async def _kind(self, url: RepositoryUrl, version: str, commit_sha: str) -> RefKind:
+        """Tell what ``version`` is: AddLibrary pins a bare commit by its full SHA."""
+        if version == commit_sha:
+            return RefKind.COMMIT
+        named = {t.kind: t for t in ref_tips(await self.remote.list_refs(url)) if t.name == version}
+        found = named.get(RefKind.TAG) or named.get(RefKind.BRANCH)
+        if found is None:
+            raise UnknownRefError(version)
+        return found.kind
+
+    async def _articles(
+        self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress
+    ) -> list[ImportedArticle]:
+        paths = await asyncio.to_thread(_selected_files, folder, source.selection)
+        await progress.report(done=0, total=len(paths))
+        # ponytail: every article of the version is held in memory until it is stored; the fetch
+        # caps bound it. Store in batches (the catalog needs a "append to pending" step) if needed.
+        chunks: dict[str, tuple[ArticleChunk, ...]] = {}  # by blob: one blob, one chunk set
+        articles = []
+        for done, path in enumerate(paths, 1):
+            loaded = await asyncio.to_thread(_load, folder, path, self.max_article_bytes)
+            if isinstance(loaded, str):  # why the file was skipped; E3-05b grades these
+                await progress.problem(path, loaded)
+            else:
+                blob_sha, parsed = loaded
+                if blob_sha not in chunks:
+                    chunks |= await self.index.known(config_hash, [blob_sha])
+                if blob_sha not in chunks:
+                    chunks[blob_sha] = tuple(await asyncio.to_thread(self.chunker.chunk, parsed))
+                articles.append(
+                    ImportedArticle(
+                        path=path,
+                        blob_sha=blob_sha,
+                        title=parsed.title,
+                        tags=article_tags(path, parsed.tags, source.tag_rules),
+                        front_matter=parsed.front_matter,
+                        content=parsed.body,
+                        chunks=chunks[blob_sha],
+                    )
+                )
+            await progress.report(done=done, total=len(paths))
+        return articles
+
+    async def _discard(self, library: str, manifest_id: str | None) -> None:
+        try:
+            await _discard_pending(self.versions, self.index, library, manifest_id)
+        except Exception:
+            log.exception("could not discard the pending import of %s", library)
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardInterruptedImportUseCase:
+    """Implements ``ports.driven.RecoveryHook`` for ``IMPORT_JOB``."""
+
+    versions: VersionPublisher
+    index: ChunkIndex
+
+    async def __call__(self, job: Job, /) -> None:
+        """Drop what the interrupted run stored; a library has one running import at a time."""
+        await _discard_pending(self.versions, self.index, job.library, None)
+
+
+async def _discard_pending(
+    versions: VersionPublisher, index: ChunkIndex, library: str, manifest_id: str | None
+) -> None:
+    """Delete the pending chunks, then the pending manifests (the order matters, see the port)."""
+    await index.discard(manifest_id=manifest_id, library=library)
+    await versions.discard(manifest_id=manifest_id, library=library)
+
+
+def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
+    """List the checked-out files the library takes, repository-relative, sorted."""
+    found = []
+    for root, dirs, files in os.walk(folder):  # symlinked folders are listed in `dirs`, not entered
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in files:
+            path = (Path(root) / name).relative_to(folder).as_posix()
+            if selection.selects(path):
+                found.append(path)
+    return sorted(found)
+
+
+def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle] | str:
+    """Read and parse one file, or say why it is skipped (never echoing its content).
+
+    A file over ``limit`` bytes is not read at all. Anything that is not a plain file (a symlink
+    could point outside the checkout) or not UTF-8 is skipped; decoding other charsets is E3-05b.
+    ponytail: the blob SHA is hashed from the checked-out bytes, which equals git's unless the
+    repository's attributes convert line endings; it is only ever a content key.
+    """
+    file = folder / path
+    info = file.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        return "not a regular file"
+    if info.st_size > limit:
+        return f"larger than {limit} bytes"
+    with os.fdopen(os.open(file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        return f"larger than {limit} bytes"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "not valid UTF-8"
+    return git_blob_sha(data), parse_article(path, text)

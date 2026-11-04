@@ -4,11 +4,11 @@ from typing import Protocol
 
 from exactdocs.retrieval.dtos import (
     ChunkOut,
-    CollectChunksCommand,
     ChunkSetsOut,
+    CollectChunksCommand,
     DiscardPendingChunksCommand,
-    GetChunkSetsQuery,
     GetChunkQuery,
+    GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     RemovedChunks,

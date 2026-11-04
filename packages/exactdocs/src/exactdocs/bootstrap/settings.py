@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=_default_data_dir)
     # Overrides the SQLite file in the data directory, e.g. `sqlite:////srv/exactdocs.db`.
     database_url: str | None = None
+    # Article files above this many bytes are skipped by an import, unread.
+    max_article_bytes: int = Field(default=2 * 2**20, ge=1)
     telemetry: Literal["off", "otlp"] = "off"
     metrics: bool = False
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,

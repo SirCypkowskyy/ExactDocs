@@ -4,30 +4,58 @@ This is how domains talk to each other without importing each other: the consume
 port in its own language, and a bridge here translates to the provider's public use case.
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from exactdocs.catalog.dtos import (
+    ActivateManifestCommand,
+    ArticleIn,
     CreateLibraryCommand,
     DiscardLibraryCommand,
+    DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     HostKind,
     ResolveVersionQuery,
+    StoreManifestCommand,
     TagRuleIn,
+)
+from exactdocs.catalog.dtos import (
+    RefKind as CatalogRefKind,
 )
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
+    ActivateManifest,
     CreateLibrary,
     DiscardLibrary,
+    DiscardPendingManifests,
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
     ResolveVersion,
+    StoreManifest,
 )
-from exactdocs.ingestion.models import NewLibrary, ProposedId
+from exactdocs.ingestion.models import (
+    PARSER_VERSION,
+    ArticleChunk,
+    ImportedVersion,
+    ImportSource,
+    NewLibrary,
+    PathSelection,
+    ProposedId,
+    RepositoryUrl,
+    TagRule,
+)
+from exactdocs.retrieval.dtos import (
+    ArticleChunksIn,
+    ChunkIn,
+    DiscardPendingChunksCommand,
+    GetChunkSetsQuery,
+    IndexManifestCommand,
+)
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion, SourceHost
+from exactdocs.retrieval.ports.driving import DiscardPendingChunks, GetChunkSets, IndexManifest
 from exactdocs_kernel import NotFoundError, ValidationError
 
 
@@ -158,3 +186,135 @@ class CatalogNewLibraries:
     async def discard(self, library_id: str) -> None:
         """Remove the library from the catalog again."""
         await self.discard_library(DiscardLibraryCommand(id=library_id))
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogLibrarySources:
+    """Implements ``ingestion.ports.driven.LibrarySources`` using the catalog."""
+
+    get_library: GetLibrary
+
+    async def get(self, library: str) -> ImportSource:
+        """Read the library's repository and path selection; raises ``NotFoundError`` if unknown."""
+        detail = await self.get_library(GetLibraryQuery(id=library))
+        settings = detail.settings
+        return ImportSource(
+            url=RepositoryUrl.parse(detail.source_url),
+            selection=PathSelection.of(settings.include_paths, settings.exclude_paths),
+            tag_rules=TagRule.many([(r.pattern, r.tag) for r in settings.tag_rules]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogVersionPublisher:
+    """Implements ``ingestion.ports.driven.VersionPublisher`` using the catalog."""
+
+    store_manifest: StoreManifest
+    activate_manifest: ActivateManifest
+    discard_pending_manifests: DiscardPendingManifests
+
+    async def store(self, version: ImportedVersion) -> str:
+        """Store the articles as a pending manifest."""
+        stored = await self.store_manifest(
+            StoreManifestCommand(
+                library=version.library,
+                ref=version.ref,
+                kind=CatalogRefKind(version.kind.value),
+                commit_sha=version.commit_sha,
+                articles=[
+                    ArticleIn(
+                        path=a.path,
+                        blob_sha=a.blob_sha,
+                        content_version=PARSER_VERSION,
+                        title=a.title,
+                        tags=list(a.tags),
+                        front_matter=a.front_matter,
+                        content=a.content,
+                    )
+                    for a in version.articles
+                ],
+            )
+        )
+        return stored.manifest_id
+
+    async def activate(self, manifest_id: str) -> None:
+        """Make the manifest what its version serves."""
+        await self.activate_manifest(ActivateManifestCommand(manifest_id=manifest_id))
+
+    async def discard(self, *, manifest_id: str | None, library: str) -> None:
+        """Delete one pending manifest, or the library's pending manifests."""
+        await self.discard_pending_manifests(
+            DiscardPendingManifestsCommand(
+                manifest_id=manifest_id, library=None if manifest_id else library
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalChunkIndex:
+    """Implements ``ingestion.ports.driven.ChunkIndex`` using retrieval."""
+
+    index_manifest: IndexManifest
+    get_chunk_sets: GetChunkSets
+    discard_pending_chunks: DiscardPendingChunks
+
+    async def known(
+        self, config_hash: str, blob_shas: Sequence[str]
+    ) -> Mapping[str, tuple[ArticleChunk, ...]]:
+        """Read back the chunks stored for these blobs."""
+        found = await self.get_chunk_sets(
+            GetChunkSetsQuery(config_hash=config_hash, blob_shas=list(blob_shas))
+        )
+        return {
+            sha: tuple(
+                ArticleChunk(
+                    heading_path=tuple(c.heading_path),
+                    occurrence_index=c.occurrence_index,
+                    position=position,
+                    content=c.content,
+                    content_hash=c.content_hash,
+                    anchor=c.anchor,
+                    code_languages=tuple(c.code_languages),
+                )
+                for position, c in enumerate(chunks)
+            )
+            for sha, chunks in found.chunks.items()
+        }
+
+    async def index(self, manifest_id: str, version: ImportedVersion) -> None:
+        """Store and index the chunks of the pending manifest."""
+        await self.index_manifest(
+            IndexManifestCommand(
+                manifest_id=manifest_id,
+                library=version.library,
+                ref=version.ref,
+                config_hash=version.config_hash,
+                articles=[
+                    ArticleChunksIn(
+                        path=a.path,
+                        blob_sha=a.blob_sha,
+                        tags=list(a.tags),
+                        chunks=[
+                            ChunkIn(
+                                heading_path=list(c.heading_path),
+                                occurrence_index=c.occurrence_index,
+                                content=c.content,
+                                content_hash=c.content_hash,
+                                anchor=c.anchor,
+                                code_languages=list(c.code_languages),
+                            )
+                            for c in a.chunks
+                        ],
+                    )
+                    for a in version.articles
+                ],
+            )
+        )
+
+    async def discard(self, *, manifest_id: str | None, library: str) -> None:
+        """Delete one pending manifest's chunks, or the library's pending chunks."""
+        await self.discard_pending_chunks(
+            DiscardPendingChunksCommand(
+                manifest_id=manifest_id, library=None if manifest_id else library
+            )
+        )
