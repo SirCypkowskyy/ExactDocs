@@ -1,17 +1,19 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Info } from "lucide-react";
+import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { libraryQueryOptions } from "../api/browse-queries";
 import {
   type BrowseSearch,
   type LibraryDetail,
+  repoWebUrl,
   resolveVersion,
+  shortSha,
   type Version,
 } from "../model/browse";
 import { ArticleView, CommitLinks } from "./article-view";
 import { FilesAside } from "./files-aside";
-import { VersionPicker } from "./version-picker";
 
 interface BrowsePageProps {
   owner: string;
@@ -21,14 +23,14 @@ interface BrowsePageProps {
 
 function Overview({ library, version }: { library: LibraryDetail; version: Version }) {
   return (
-    <div className="fade-in max-w-2xl">
+    <div className="fade-in max-w-3xl">
       <h2 className="font-serif text-2xl font-semibold tracking-tight">
         Browsing <span className="font-mono text-[0.9em]">{version.ref}</span>
       </h2>
       {library.description && <p className="mt-2 text-muted-foreground">{library.description}</p>}
       <p className="mt-4 text-muted-foreground">
         This is the text exactly as imported from commit{" "}
-        <code className="font-mono text-foreground">{version.commit_sha.slice(0, 7)}</code>. Pick a
+        <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>. Pick a
         file from the tree to read it.
       </p>
       <div className="mt-2">
@@ -51,7 +53,8 @@ function VersionBrowser({
       <FilesAside
         owner={owner}
         repo={repo}
-        version={version.ref}
+        versions={library.versions}
+        version={version}
         path={search.path}
         tags={search.tags}
       />
@@ -74,13 +77,31 @@ function VersionBrowser({
   );
 }
 
+function UnknownVersion({ missing, shown }: { missing: string; shown: string }) {
+  return (
+    <div className="expand-in mt-4 grid max-w-2xl">
+      <p
+        role="status"
+        className="flex items-start gap-2 overflow-hidden rounded-md bg-accent px-3 py-2.5 text-sm"
+      >
+        <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+        <span>
+          <span className="font-mono">{missing}</span> is not an imported version of this library.
+          Showing <span className="font-mono">{shown}</span> instead.
+        </span>
+      </p>
+    </div>
+  );
+}
+
 export function BrowsePage({ owner, repo, search }: BrowsePageProps) {
   const { data: library } = useSuspenseQuery(libraryQueryOptions(owner, repo));
   const { version, missing } = resolveVersion(library, search.version);
   const heading = usePageTitle(library.title || library.id);
+  const web = repoWebUrl(library.source_url);
 
   return (
-    <main className="mx-auto max-w-[88rem] px-4 py-6 sm:px-6 sm:py-8">
+    <main className="px-4 py-6 sm:px-6 sm:py-8 2xl:mx-auto 2xl:max-w-[96rem]">
       <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
         <Link
           to="/"
@@ -90,64 +111,42 @@ export function BrowsePage({ owner, repo, search }: BrowsePageProps) {
         </Link>
         <span aria-hidden="true"> / </span>
         <span aria-current="page" className="font-mono">
-          {library.id.slice(1)}
+          {library.id}
         </span>
       </nav>
-      <header className="mt-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1
-            ref={heading}
-            tabIndex={-1}
-            className="font-serif text-3xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
-          >
-            {library.title || library.id}
-          </h1>
+      <h1
+        ref={heading}
+        tabIndex={-1}
+        className="mt-1 font-serif text-3xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
+      >
+        {library.title || library.id}
+      </h1>
+      <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
+        {web && (
           <a
-            href={library.source_url}
+            href={web}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-0.5 inline-flex max-w-full min-h-8 items-center gap-1 rounded text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex min-h-8 max-w-full items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="truncate">
-              {library.source_url.replace(/^[a-z+]+:\/\//i, "").replace(/\.git$/, "")}
-            </span>
+            <span className="truncate">{web.replace(/^https?:\/\//, "")}</span>
             <ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
             <span className="sr-only">(opens the repository)</span>
           </a>
-        </div>
-        {version && (
-          <div className="flex flex-col gap-1 sm:items-end">
-            <VersionPicker
-              owner={owner}
-              repo={repo}
-              versions={library.versions}
-              current={version.ref}
-              keep={{ path: search.path, tags: search.tags }}
-            />
-            <p className="text-sm text-muted-foreground">
-              {version.kind}
-              {" · imported "}
-              <time dateTime={version.imported_at}>
-                {new Date(version.imported_at).toLocaleDateString(undefined, {
-                  dateStyle: "medium",
-                })}
-              </time>
-            </p>
-          </div>
         )}
-      </header>
-      {missing && version && (
-        <p
-          role="status"
-          className="fade-in mt-4 max-w-2xl rounded-md bg-accent px-3 py-2.5 text-sm"
-        >
-          <span className="font-mono">{missing}</span> is not an imported version of this library.
-          Showing <span className="font-mono">{version.ref}</span> instead.
-        </p>
-      )}
+        {version && (
+          <span>
+            {version.kind === "tag" ? "Imported" : `${capitalize(version.kind)} · imported`}{" "}
+            <time dateTime={version.imported_at} title={absoluteTimeWithZone(version.imported_at)}>
+              {relativeTime(version.imported_at, Date.now())}
+            </time>
+          </span>
+        )}
+      </p>
+      {missing && version && <UnknownVersion missing={missing} shown={version.ref} />}
       {version ? (
         <VersionBrowser
-          key={version.ref}
+          key={`${version.ref}@${version.commit_sha}`}
           owner={owner}
           repo={repo}
           search={search}
@@ -165,3 +164,5 @@ export function BrowsePage({ owner, repo, search }: BrowsePageProps) {
     </main>
   );
 }
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);

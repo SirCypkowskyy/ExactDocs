@@ -9,7 +9,7 @@ interface VersionPickerProps {
   owner: string;
   repo: string;
   versions: readonly Version[];
-  current: string | undefined;
+  current: Version;
   /** What stays when the version changes: the open article and the tag filter. */
   keep: Pick<BrowseSearch, "path" | "tags">;
 }
@@ -23,7 +23,6 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
   const list = useRef<HTMLUListElement>(null);
   const ordered = orderVersions(versions);
   const shown = ordered.filter((v) => v.ref.toLowerCase().includes(filter.trim().toLowerCase()));
-  const now = ordered.find((v) => v.ref === current);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -45,13 +44,19 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
       }}
     >
       <Popover.Trigger
-        aria-label={`Version: ${current ?? "none"}. Change version`}
-        className="group inline-flex h-11 max-w-full cursor-pointer items-center gap-2 rounded-md bg-secondary px-3 font-mono text-sm outline-none ring-1 ring-inset ring-border transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[state=open]:ring-ring [@media(hover:hover)]:hover:bg-accent"
+        aria-label={`Version: ${current.ref}. Change version`}
+        className="flex h-11 w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md bg-secondary px-3 text-sm outline-none ring-1 ring-inset ring-border transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[state=open]:ring-ring [@media(hover:hover)]:hover:bg-accent"
       >
-        <span className="font-sans text-muted-foreground">Version</span>
-        <span className="truncate font-semibold">{current ?? "none"}</span>
-        {now?.is_default && <span className="font-sans text-xs text-mark">default</span>}
-        <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate font-mono font-semibold">{current.ref}</span>
+          {current.is_default && <span className="text-xs text-mark max-sm:hidden">default</span>}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="font-mono text-xs text-muted-foreground max-lg:hidden">
+            {shortSha(current.commit_sha)}
+          </span>
+          <ChevronsUpDown aria-hidden="true" className="size-4 text-muted-foreground" />
+        </span>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
@@ -81,7 +86,7 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
             className="max-h-[min(22rem,60dvh)] overflow-y-auto p-1"
           >
             {shown.map((v) => {
-              const isCurrent = v.ref === current;
+              const isCurrent = v.ref === current.ref;
               return (
                 <li key={v.ref}>
                   <Link
@@ -91,22 +96,20 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
                     aria-current={isCurrent ? "true" : undefined}
                     onClick={() => setOpen(false)}
                     className={cn(
-                      "flex min-h-11 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      isCurrent ? "bg-mark/10" : "[@media(hover:hover)]:hover:bg-accent",
+                      "flex min-h-11 items-center gap-2 rounded-md px-2.5 py-1 text-sm lg:min-h-9 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      isCurrent ? "bg-mark/[0.16]" : "[@media(hover:hover)]:hover:bg-accent",
                     )}
                   >
                     <Check
                       aria-hidden="true"
                       className={cn("size-4 shrink-0 text-mark", !isCurrent && "invisible")}
                     />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-mono font-medium [overflow-wrap:anywhere]">
-                        {v.ref}
-                      </span>
-                      <span className="block text-xs text-muted-foreground">
-                        {v.is_default ? "Default " : ""}
-                        {v.kind}
-                      </span>
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                      <span className="truncate font-mono font-medium">{v.ref}</span>
+                      {v.is_default && <span className="text-xs text-mark">default</span>}
+                      {v.kind !== "tag" && (
+                        <span className="text-xs text-muted-foreground">{v.kind}</span>
+                      )}
                     </span>
                     <span className="font-mono text-xs text-muted-foreground tabular-nums">
                       {shortSha(v.commit_sha)}

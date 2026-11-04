@@ -5,7 +5,7 @@ import { usePageTitle } from "@/shared/lib/use-page-title";
 export function LibraryNotFound({ owner, repo }: { owner: string; repo: string }) {
   const heading = usePageTitle("Library not found");
   return (
-    <main className="mx-auto flex max-w-[88rem] flex-col items-start gap-3 px-4 py-8 sm:px-6 sm:py-10">
+    <main className="flex flex-col items-start gap-3 px-4 py-8 sm:px-6 sm:py-10 2xl:mx-auto 2xl:max-w-[96rem]">
       <h1
         ref={heading}
         tabIndex={-1}
@@ -13,7 +13,7 @@ export function LibraryNotFound({ owner, repo }: { owner: string; repo: string }
       >
         Library not found
       </h1>
-      <p className="max-w-prose text-muted-foreground">
+      <p className="max-w-prose text-pretty text-muted-foreground">
         ExactDocs has no library{" "}
         <code className="font-mono text-foreground">
           {owner}/{repo}

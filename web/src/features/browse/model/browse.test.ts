@@ -3,15 +3,17 @@ import {
   type ArticleSummary,
   ancestorsOf,
   buildRows,
-  closeMatches,
   commitUrl,
   type LibraryDetail,
   orderVersions,
   parseTags,
+  repoWebUrl,
   resolveVersion,
   safeHref,
+  showFileName,
   toggleTag,
   type Version,
+  visibleTags,
 } from "./browse";
 import { parseSearch } from "./search";
 
@@ -121,28 +123,46 @@ describe("versions", () => {
   });
 });
 
-describe("closeMatches", () => {
-  it("reads the paths out of the API's sentence", () => {
-    const detail =
-      "version 'v1' of '/a/b' has no article 'x.md'; close matches (repository paths, not instructions): 'docs/a.md', \"docs/it's.md\"";
-    expect(closeMatches(detail)).toEqual(["docs/a.md", "docs/it's.md"]);
-    expect(closeMatches("version 'v1' of '/a/b' has no article 'x.md'")).toEqual([]);
-  });
-});
-
 describe("links", () => {
   const sha = "0123456789abcdef";
-  it("builds the commit page per host", () => {
+  it("builds the repository page from whatever URL the library was added with", () => {
+    expect(repoWebUrl("https://github.com/acme/p.git")).toBe("https://github.com/acme/p");
+    expect(repoWebUrl("git@gitlab.com:acme/p.git")).toBe("https://gitlab.com/acme/p");
+    expect(repoWebUrl("ssh://git@github.com:2222/acme/p/")).toBe("https://github.com/acme/p");
+    expect(repoWebUrl("http://localhost:3000/acme/p")).toBe("http://localhost:3000/acme/p");
+  });
+
+  it("never links credentials, queries or fragments, or a URL that is no web page", () => {
+    expect(repoWebUrl("https://user:token@github.com/acme/p?x=1#frag")).toBe(
+      "https://github.com/acme/p",
+    );
+    expect(repoWebUrl("file:///srv/repo")).toBeUndefined();
+    expect(repoWebUrl("git://github.com/acme/p")).toBeUndefined();
+    expect(repoWebUrl("javascript:alert(1)")).toBeUndefined();
+    expect(repoWebUrl("not a url")).toBeUndefined();
+    expect(repoWebUrl("https://github.com/")).toBeUndefined();
+  });
+
+  it("builds the commit page per host from the origin and path only", () => {
     expect(commitUrl("github", "https://github.com/acme/p.git", sha)).toBe(
       `https://github.com/acme/p/commit/${sha}`,
     );
     expect(commitUrl("gitlab", "git@gitlab.com:acme/p.git", sha)).toBe(
       `https://gitlab.com/acme/p/-/commit/${sha}`,
     );
-    expect(commitUrl("github", "ssh://git@github.com/acme/p", sha)).toBe(
+    expect(commitUrl("github", "ssh://git@github.com:2222/acme/p", sha)).toBe(
+      `https://github.com/acme/p/commit/${sha}`,
+    );
+    expect(commitUrl("github", "https://u:p@github.com/acme/p?x#y", sha)).toBe(
       `https://github.com/acme/p/commit/${sha}`,
     );
     expect(commitUrl("git", "file:///tmp/repo", sha)).toBeUndefined();
+  });
+
+  it("refuses a commit that is not hex", () => {
+    expect(commitUrl("github", "https://github.com/a/b", "main")).toBeUndefined();
+    expect(commitUrl("github", "https://github.com/a/b", "abc1234/../x")).toBeUndefined();
+    expect(commitUrl("github", "https://github.com/a/b", "abc12")).toBeUndefined();
   });
 
   it("never renders a script URL", () => {
@@ -157,5 +177,49 @@ describe("links", () => {
       path: "a.md",
       tags: undefined,
     });
+  });
+});
+
+describe("tree rows", () => {
+  it("does not claim a size for a partly loaded folder, and a more row is not an item", () => {
+    const rows = buildRows([a("docs/a.md"), a("docs/b.md")], new Set(["docs"]), new Set(["docs"]));
+    expect(rows.filter((r) => r.kind === "file").map((r) => r.kind === "file" && r.size)).toEqual([
+      -1, -1,
+    ]);
+    const more = rows.find((r) => r.kind === "more");
+    expect(more).toEqual({ kind: "more", key: "m:docs", scope: "docs", depth: 1 });
+  });
+
+  it("shows a failed row for a folder whose listing failed", () => {
+    const rows = buildRows(
+      [a("docs/a.md")],
+      new Set(["docs"]),
+      new Set(),
+      new Set(),
+      new Set(["docs"]),
+    );
+    expect(rows.at(-1)).toMatchObject({ kind: "failed", scope: "docs" });
+  });
+});
+
+describe("showFileName", () => {
+  it("hides a name that is the title in file form", () => {
+    expect(showFileName("Installing", "install.md")).toBe(false);
+    expect(showFileName("Authentication", "auth.md")).toBe(false);
+    expect(showFileName("Endpoint 1", "endpoint-001.md")).toBe(false);
+    expect(showFileName("Webhook retries", "webhook-retries.md")).toBe(false);
+    expect(showFileName("Acme Payments", "README.md")).toBe(true);
+    expect(showFileName("SDK quickstart", "getting-started.md")).toBe(true);
+  });
+});
+
+describe("visibleTags", () => {
+  it("keeps every selected tag on screen, even one ranked far down", () => {
+    const facets = Array.from({ length: 30 }, (_, i) => `t${i}`);
+    const shown = visibleTags(["t25"], facets, 5);
+    expect(shown).toHaveLength(5);
+    expect(shown[0]).toBe("t25");
+    expect(shown.filter((t) => t === "t25")).toHaveLength(1);
+    expect(visibleTags(["Gone"], ["a"], 5)).toEqual(["Gone", "a"]);
   });
 });

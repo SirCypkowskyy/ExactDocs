@@ -1,8 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronRight, Loader } from "lucide-react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, CircleAlert, Loader } from "lucide-react";
+import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
-import type { Row } from "../model/browse";
+import { type Row, showFileName } from "../model/browse";
+
+type ScopeState = "idle" | "paging" | "error";
 
 interface FileTreeProps {
   owner: string;
@@ -12,23 +14,194 @@ interface FileTreeProps {
   /** The open article's path. */
   selected: string | undefined;
   rows: readonly Row[];
-  /** Folders whose listing failed. */
-  failed: ReadonlySet<string>;
+  /** Whether a listing is fetching its next page, or failed. */
+  scopeState: (scope: string) => ScopeState;
   label: string;
   onToggle: (folder: string, open?: boolean) => void;
   onMore: (scope: string) => void;
   onOpen: () => void;
 }
 
-const INDENT = 14;
+const INDENT = 12;
+const MAX_INDENT_LEVELS = 6;
 const rowBase =
-  "group flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-[15px] outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-9 lg:text-sm";
+  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-[15px] outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-sm";
 const hoverable = "[@media(hover:hover)]:hover:bg-accent/70";
+
+const indent = (depth: number) => ({
+  paddingLeft: `${Math.min(depth, MAX_INDENT_LEVELS) * INDENT + 8}px`,
+});
+
+/** Rows are plain data of primitives: equal fields mean an equal row. */
+function sameRow(a: Row, b: Row): boolean {
+  const x = a as unknown as Record<string, unknown>;
+  const y = b as unknown as Record<string, unknown>;
+  const keys = Object.keys(x);
+  return keys.length === Object.keys(y).length && keys.every((k) => x[k] === y[k]);
+}
+
+interface TreeRowProps {
+  row: Row;
+  stop: boolean;
+  selected: boolean;
+  state: ScopeState;
+  owner: string;
+  repo: string;
+  version: string;
+  tags: string | undefined;
+  onToggle: (folder: string, open?: boolean) => void;
+  onMore: (scope: string) => void;
+  onOpen: () => void;
+  onFocusRow: (key: string) => void;
+}
+
+const TreeRow = memo(
+  function TreeRow(props: TreeRowProps) {
+    const { row, stop, selected, state, owner, repo, version, tags } = props;
+    const { onToggle, onMore, onOpen, onFocusRow } = props;
+    const pad = indent(row.depth);
+    if (row.kind === "loading") {
+      return (
+        <div
+          role="treeitem"
+          tabIndex={-1}
+          aria-selected="false"
+          aria-disabled="true"
+          aria-level={row.depth + 1}
+          style={pad}
+          className="flex min-h-9 items-center gap-2 text-sm text-muted-foreground"
+        >
+          <Loader aria-hidden="true" className="spin ml-[18px] size-3.5" />
+          Loading
+        </div>
+      );
+    }
+    const common = {
+      "data-key": row.key,
+      "aria-level": row.depth + 1,
+      onFocus: () => onFocusRow(row.key),
+      style: pad,
+    } as const;
+    if (row.kind === "folder") {
+      return (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
+        <div
+          {...common}
+          role="treeitem"
+          tabIndex={stop ? 0 : -1}
+          aria-posinset={row.pos}
+          aria-setsize={row.size}
+          aria-expanded={row.open}
+          aria-selected="false"
+          onClick={() => onToggle(row.path)}
+          className={cn(rowBase, hoverable)}
+          title={row.path}
+        >
+          <ChevronRight
+            aria-hidden="true"
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none",
+              row.open && "rotate-90",
+            )}
+          />
+          <span className="truncate font-medium">{row.name}</span>
+        </div>
+      );
+    }
+    if (row.kind === "more" || row.kind === "failed") {
+      const bad = row.kind === "failed" || state === "error";
+      const where = row.scope ? row.scope.split("/").pop() : "";
+      return (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
+        <div
+          {...common}
+          role="treeitem"
+          tabIndex={stop ? 0 : -1}
+          aria-selected="false"
+          aria-busy={state === "paging"}
+          onClick={() => onMore(row.scope)}
+          className={cn(
+            rowBase,
+            hoverable,
+            "underline-offset-4 hover:underline focus-visible:underline",
+            bad ? "text-destructive" : "text-foreground",
+          )}
+        >
+          {bad ? (
+            <CircleAlert aria-hidden="true" className="size-4 shrink-0" />
+          ) : state === "paging" ? (
+            <Loader aria-hidden="true" className="spin size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-mark" />
+          )}
+          <span className="truncate">
+            {bad
+              ? `Couldn't load ${where || "more files"}. Try again`
+              : state === "paging"
+                ? "Loading more"
+                : where
+                  ? `Show more in ${where}`
+                  : "Show more files"}
+          </span>
+        </div>
+      );
+    }
+    return (
+      <Link
+        {...common}
+        role="treeitem"
+        aria-posinset={row.pos}
+        aria-setsize={row.size}
+        to="/libraries/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ version, path: row.path, tags }}
+        aria-selected={selected}
+        aria-current={selected ? "page" : undefined}
+        onClick={onOpen}
+        title={`${row.title}\n${row.path}`}
+        className={cn(rowBase, "py-1", selected ? "bg-mark/[0.16] ring-1 ring-mark/40" : hoverable)}
+      >
+        <span aria-hidden="true" className="size-4 shrink-0" />
+        <span className="min-w-0">
+          <span className="block truncate leading-snug">{row.title}</span>
+          {showFileName(row.title, row.name) && (
+            <span className="block truncate text-xs leading-snug text-muted-foreground">
+              <span className="sr-only">File </span>
+              {row.name}
+            </span>
+          )}
+        </span>
+      </Link>
+    );
+  },
+  (a, b) =>
+    sameRow(a.row, b.row) &&
+    a.stop === b.stop &&
+    a.selected === b.selected &&
+    a.state === b.state &&
+    a.version === b.version &&
+    a.tags === b.tags &&
+    a.onToggle === b.onToggle &&
+    a.onMore === b.onMore &&
+    a.onOpen === b.onOpen,
+);
+
+const treeItems = (tree: HTMLElement | null) => [
+  ...(tree?.querySelectorAll<HTMLElement>("[role=treeitem][data-key]") ?? []),
+];
+const focusRow = (tree: HTMLElement | null, key: string | undefined) =>
+  treeItems(tree)
+    .find((e) => e.dataset.key === key)
+    ?.focus();
+
+const labelOf = (row: Row) =>
+  row.kind === "folder" ? row.name : row.kind === "file" ? row.title : "";
 
 /**
  * A file tree with the WAI-ARIA tree pattern: one tab stop, arrows move and open/close, Home and
- * End jump, Enter or Space opens. Rows are a flat list with `aria-level`, so closed folders cost
- * no DOM and large versions stay cheap.
+ * End jump, Enter or Space opens, letters jump to the next name, `*` opens the siblings. Rows are a
+ * flat list with `aria-level`, so closed folders cost no DOM and large versions stay cheap; they
+ * only re-render when their own data changes.
  */
 export function FileTree({
   owner,
@@ -37,7 +210,7 @@ export function FileTree({
   tags,
   selected,
   rows,
-  failed,
+  scopeState,
   label,
   onToggle,
   onMore,
@@ -52,13 +225,58 @@ export function FileTree({
     focusable.find((r) => r.kind === "file" && r.path === selected)?.key ??
     focusable[0]?.key;
 
-  const items = () => [
-    ...(tree.current?.querySelectorAll<HTMLElement>("[role=treeitem][data-key]") ?? []),
-  ];
-  const focusKey = (key: string | undefined) => {
-    const el = items().find((e) => e.dataset.key === key);
-    el?.focus();
-  };
+  const items = () => treeItems(tree.current);
+  const focusKey = (key: string | undefined) => focusRow(tree.current, key);
+
+  // After "Show more" the row that was activated is gone: keep the reader's place by moving
+  // focus to the first row the new page added.
+  const pending = useRef<{
+    keys: ReadonlySet<string>;
+    more: string;
+    anchor: string | undefined;
+  } | null>(null);
+  const latest = useRef(rows);
+  useEffect(() => {
+    latest.current = rows;
+  }, [rows]);
+  const more = useCallback(
+    (scope: string) => {
+      const all = latest.current;
+      const at = all.findIndex((r) => r.kind !== "loading" && "scope" in r && r.scope === scope);
+      pending.current = {
+        keys: new Set(all.map((r) => r.key)),
+        more: all[at]?.key ?? "",
+        anchor: all[at - 1]?.key,
+      };
+      onMore(scope);
+    },
+    [onMore],
+  );
+  useEffect(() => {
+    const wait = pending.current;
+    if (!wait) return;
+    const fresh = rows.find(
+      (r) => (r.kind === "file" || r.kind === "folder") && !wait.keys.has(r.key),
+    );
+    const gone = !rows.some((r) => r.key === wait.more);
+    // New rows get focus; when the page only added rows inside closed folders, the row above.
+    if (fresh) focusRow(tree.current, fresh.key);
+    else if (gone) focusRow(tree.current, wait.anchor);
+    else return;
+    pending.current = null;
+  }, [rows]);
+
+  // The open article scrolls into view once, when its row first exists.
+  const scrolled = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!selected || scrolled.current === selected) return;
+    const row = rows.find((r) => r.kind === "file" && r.path === selected);
+    if (!row) return;
+    scrolled.current = selected;
+    treeItems(tree.current)
+      .find((e) => e.dataset.key === row.key)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [rows, selected]);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const current = (event.target as HTMLElement).closest<HTMLElement>("[role=treeitem]");
@@ -80,14 +298,25 @@ export function FileTree({
       case "End":
         go(list.length - 1);
         break;
-      case "ArrowRight":
+      case "ArrowRight": {
         if (row?.kind !== "folder") return;
         if (!row.open) onToggle(row.path, true);
-        else go(index + 1);
+        else {
+          // Only into the folder's own rows; an empty or still loading folder has none yet.
+          const next = focusable[focusable.findIndex((r) => r.key === row.key) + 1];
+          if (next && next.depth === row.depth + 1) go(index + 1);
+        }
         break;
+      }
       case "ArrowLeft":
         if (row?.kind === "folder" && row.open) onToggle(row.path, false);
         else if (row && "parent" in row && row.parent) focusKey(`d:${row.parent}`);
+        break;
+      case "*":
+        if (row?.kind !== "folder" && row?.kind !== "file") return;
+        for (const r of rows) {
+          if (r.kind === "folder" && r.parent === row.parent && !r.open) onToggle(r.path, true);
+        }
         break;
       case " ":
       case "Enter":
@@ -95,8 +324,18 @@ export function FileTree({
         if (row?.kind === "file" && event.key === "Enter") return;
         current.click();
         break;
-      default:
-        return;
+      default: {
+        // Type-ahead: a letter jumps to the next name that starts with it.
+        if (event.key.length !== 1 || !/[\p{L}\p{N}]/u.test(event.key)) return;
+        const letter = event.key.toLowerCase();
+        const named = focusable.filter((r) => labelOf(r) !== "");
+        const from = named.findIndex((r) => r.key === current.dataset.key);
+        const hit = [...named.slice(from + 1), ...named.slice(0, from + 1)].find((r) =>
+          labelOf(r).toLowerCase().startsWith(letter),
+        );
+        if (!hit) return;
+        focusKey(hit.key);
+      }
     }
     event.preventDefault();
   }
@@ -109,125 +348,23 @@ export function FileTree({
       onKeyDown={onKeyDown}
       className="select-none py-1 [&_[role=treeitem]]:[content-visibility:auto] [&_[role=treeitem]]:[contain-intrinsic-size:auto_2.25rem]"
     >
-      {rows.map((row) => {
-        const pad = { paddingLeft: `${row.depth * INDENT + 8}px` };
-        if (row.kind === "loading") {
-          return (
-            <div
-              key={row.key}
-              role="treeitem"
-              tabIndex={-1}
-              aria-selected="false"
-              aria-disabled="true"
-              aria-level={row.depth + 1}
-              style={pad}
-              className="flex min-h-9 items-center gap-2 text-sm text-muted-foreground"
-            >
-              <Loader aria-hidden="true" className="spin ml-[18px] size-3.5" />
-              Loading
-            </div>
-          );
-        }
-        const common = {
-          "data-key": row.key,
-          "aria-level": row.depth + 1,
-          "aria-posinset": row.pos,
-          "aria-setsize": row.size,
-          onFocus: () => setActive(row.key),
-          style: pad,
-        } as const;
-        if (row.kind === "folder") {
-          return (
-            // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
-            <div
-              key={row.key}
-              {...common}
-              role="treeitem"
-              tabIndex={row.key === stop ? 0 : -1}
-              aria-expanded={row.open}
-              aria-selected="false"
-              onClick={() => onToggle(row.path)}
-              className={cn(rowBase, hoverable)}
-              title={row.path}
-            >
-              <ChevronRight
-                aria-hidden="true"
-                className={cn(
-                  "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none",
-                  row.open && "rotate-90",
-                )}
-              />
-              <span className="truncate font-medium">{row.name}</span>
-            </div>
-          );
-        }
-        if (row.kind === "more") {
-          const bad = failed.has(row.scope);
-          return (
-            // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
-            <div
-              key={row.key}
-              {...common}
-              role="treeitem"
-              tabIndex={row.key === stop ? 0 : -1}
-              aria-selected="false"
-              onClick={() => onMore(row.scope)}
-              className={cn(
-                rowBase,
-                hoverable,
-                "text-muted-foreground underline-offset-4 hover:text-foreground",
-              )}
-            >
-              <span aria-hidden="true" className="size-4 shrink-0" />
-              <span className={cn("truncate", bad && "text-destructive")}>
-                {bad
-                  ? "Couldn't load more. Try again"
-                  : row.scope
-                    ? `Show more in ${row.scope.split("/").pop()}`
-                    : "Show more files"}
-              </span>
-            </div>
-          );
-        }
-        const open = row.path === selected;
-        return (
-          <Link
-            key={row.key}
-            {...common}
-            role="treeitem"
-            tabIndex={row.key === stop ? 0 : -1}
-            to="/libraries/$owner/$repo"
-            params={{ owner, repo }}
-            search={{ version, path: row.path, tags }}
-            aria-selected={open}
-            onClick={onOpen}
-            title={`${row.title}\n${row.path}`}
-            className={cn(
-              rowBase,
-              "py-1",
-              open ? "bg-mark/10 text-foreground ring-1 ring-mark/25" : hoverable,
-            )}
-          >
-            <span aria-hidden="true" className="size-4 shrink-0" />
-            <span className="min-w-0">
-              <span className={cn("block truncate leading-snug", open && "font-medium")}>
-                {row.title}
-              </span>
-              <span className="block truncate text-xs leading-snug text-muted-foreground">
-                <span className="sr-only">File </span>
-                {row.name}
-                {row.tags.length > 0 && (
-                  <>
-                    <span aria-hidden="true"> · </span>
-                    <span className="sr-only">, tags </span>
-                    {row.tags.join(", ")}
-                  </>
-                )}
-              </span>
-            </span>
-          </Link>
-        );
-      })}
+      {rows.map((row) => (
+        <TreeRow
+          key={row.key}
+          row={row}
+          stop={row.key === stop}
+          selected={row.kind === "file" && row.path === selected}
+          state={row.kind === "more" || row.kind === "failed" ? scopeState(row.scope) : "idle"}
+          owner={owner}
+          repo={repo}
+          version={version}
+          tags={tags}
+          onToggle={onToggle}
+          onMore={more}
+          onOpen={onOpen}
+          onFocusRow={setActive}
+        />
+      ))}
     </div>
   );
 }

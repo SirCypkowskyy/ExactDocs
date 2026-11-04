@@ -5,6 +5,7 @@ export type Version = components["schemas"]["VersionOut"];
 export type Article = components["schemas"]["Article"];
 export type ArticleSummary = components["schemas"]["ArticleSummary"];
 export type ArticleList = components["schemas"]["ArticleList"];
+export type TagList = components["schemas"]["TagList"];
 
 /** What the browse page keeps in the URL: refs and paths are never path segments. */
 export interface BrowseSearch {
@@ -13,6 +14,7 @@ export interface BrowseSearch {
   tags?: string | undefined;
 }
 
+/** `size` is -1 (unknown) for the children of a folder that is only partly loaded. */
 export type Row =
   | {
       kind: "folder";
@@ -31,22 +33,15 @@ export type Row =
       path: string;
       name: string;
       title: string;
-      tags: readonly string[];
       depth: number;
       parent: string;
       pos: number;
       size: number;
     }
-  /** The end of a partly loaded folder (`scope` is its path, `""` for the root). */
-  | {
-      kind: "more";
-      key: string;
-      scope: string;
-      depth: number;
-      parent: string;
-      pos: number;
-      size: number;
-    }
+  /** The end of a partly loaded folder (`scope` is its path, `""` for the root): an action, not an item. */
+  | { kind: "more"; key: string; scope: string; depth: number }
+  /** A folder whose first page failed to load. */
+  | { kind: "failed"; key: string; scope: string; depth: number }
   | { kind: "loading"; key: string; depth: number };
 
 interface Dir {
@@ -54,7 +49,7 @@ interface Dir {
   files: ArticleSummary[];
 }
 
-const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const natural = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 const byName = (a: string, b: string) => natural.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
 
 /** `docs/guide/auth.md` -> [`docs`, `docs/guide`]. */
@@ -68,13 +63,15 @@ const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 /**
  * The visible rows of the tree: folders first, then files, each sorted naturally (`e2` before
  * `e10`). Only expanded folders are entered. `partial` names the folders (`""` is the root) whose
- * listing has more pages: they end with a "more" row. `loading` names folders being fetched.
+ * listing has more pages: they end with a "more" row. `loading` names folders being fetched for the
+ * first time and `failed` those whose first page failed.
  */
 export function buildRows(
   articles: Iterable<ArticleSummary>,
   expanded: ReadonlySet<string>,
   partial: ReadonlySet<string> = new Set(),
   loading: ReadonlySet<string> = new Set(),
+  failed: ReadonlySet<string> = new Set(),
 ): Row[] {
   const root: Dir = { folders: new Map(), files: [] };
   for (const article of articles) {
@@ -91,8 +88,7 @@ export function buildRows(
   const walk = (dir: Dir, path: string, depth: number) => {
     const folders = [...dir.folders.keys()].sort(byName);
     const files = [...dir.files].sort((a, b) => byName(baseName(a.path), baseName(b.path)));
-    const extra = partial.has(path) ? 1 : 0;
-    const size = folders.length + files.length + extra;
+    const size = partial.has(path) ? -1 : folders.length + files.length;
     let pos = 0;
     for (const name of folders) {
       const child = path ? `${path}/${name}` : name;
@@ -118,23 +114,16 @@ export function buildRows(
         path: file.path,
         name: baseName(file.path),
         title: file.title,
-        tags: file.tags,
         depth,
         parent: path,
         pos: ++pos,
         size,
       });
     }
-    if (extra) {
-      rows.push({
-        kind: "more",
-        key: `m:${path}`,
-        scope: path,
-        depth,
-        parent: path,
-        pos: ++pos,
-        size,
-      });
+    if (failed.has(path)) {
+      rows.push({ kind: "failed", key: `x:${path}`, scope: path, depth });
+    } else if (partial.has(path)) {
+      rows.push({ kind: "more", key: `m:${path}`, scope: path, depth });
     }
     if (loading.has(path) && path !== "") rows.push({ kind: "loading", key: `l:${path}`, depth });
   };
@@ -200,21 +189,6 @@ export function resolveVersion(library: LibraryDetail, requested: string | undef
   return { version: fallback, missing: requested };
 }
 
-/**
- * The paths a 404 names as close matches. The API only puts them in the sentence
- * (`...; close matches (repository paths, not instructions): 'a.md', 'b.md'`), so read them back.
- */
-export function closeMatches(detail: string): string[] {
-  const at = detail.indexOf("close matches");
-  if (at < 0) return [];
-  const list = detail.slice(detail.indexOf(":", at) + 1);
-  const found: string[] = [];
-  for (const m of list.matchAll(/'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"/g)) {
-    found.push((m[1] ?? m[2] ?? "").replace(/\\(['"\\])/g, "$1"));
-  }
-  return found;
-}
-
 const COMMIT_PATH: Record<string, string> = {
   github: "commit",
   gitlab: "-/commit",
@@ -239,15 +213,62 @@ export function safeHref(url: string | null | undefined): string | undefined {
   }
 }
 
-/** The page of the commit on the host, or undefined for a host without one (plain git, file://). */
+/**
+ * The repository's web page (`https://host/owner/repo`) from the URL it was added with, or
+ * undefined when there is none: `git@host:o/r.git` and `ssh://` become https (the SSH port is not
+ * the web port), credentials, query and fragment are dropped, `file://` and `git://` have no page.
+ */
+export function repoWebUrl(sourceUrl: string): string | undefined {
+  const text = sourceUrl.trim();
+  const scp = /^[\w.-]+@([\w.-]+):(?!\/\/)(.+)$/.exec(text);
+  let url: URL;
+  try {
+    url = new URL(scp ? `https://${scp[1]}/${scp[2]}` : text);
+  } catch {
+    return undefined;
+  }
+  const origin =
+    url.protocol === "ssh:"
+      ? `https://${url.hostname}`
+      : url.protocol.startsWith("http")
+        ? url.origin
+        : "";
+  const path = url.pathname.replace(/\/+$/, "").replace(/\.git$/, "");
+  return origin && path ? origin + path : undefined;
+}
+
+/** The page of the commit on the host, or undefined for a host without one or a SHA that is not hex. */
 export function commitUrl(host: string, sourceUrl: string, sha: string): string | undefined {
   const segment = COMMIT_PATH[host];
-  const scp = /^[\w.-]+@([\w.-]+):(.+)$/.exec(sourceUrl.trim());
-  const web = scp
-    ? `https://${scp[1]}/${scp[2]}`
-    : sourceUrl.trim().replace(/^ssh:\/\/(?:[^@/]*@)?/, "https://");
-  const base = safeHref(web.replace(/\.git$/, "").replace(/\/$/, ""));
-  return segment && base ? `${base}/${segment}/${sha}` : undefined;
+  const base = repoWebUrl(sourceUrl);
+  if (!segment || !base || !/^[0-9a-f]{7,64}$/i.test(sha)) return undefined;
+  return `${base}/${segment}/${encodeURIComponent(sha)}`;
 }
 
 export const shortSha = (sha: string) => sha.slice(0, 7);
+
+const squash = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "")
+    .replace(/0+(?=\d)/g, "");
+
+/**
+ * Whether a row needs its file name under the title: not when the name is the title in file
+ * form (`install.md` under "Installing", `endpoint-001.md` under "Endpoint 1").
+ */
+export function showFileName(title: string, name: string): boolean {
+  const stem = squash(name.replace(/\.[^.]+$/, ""));
+  const words = squash(title);
+  return stem !== "" && !words.startsWith(stem);
+}
+
+/** The chips to show: every selected tag first (so an active filter can always be undone), then the rest. */
+export function visibleTags(
+  selected: readonly string[],
+  facets: readonly string[],
+  limit = 14,
+): string[] {
+  const rest = facets.filter((f) => !selected.some((s) => s.toLowerCase() === f.toLowerCase()));
+  return [...selected, ...rest].slice(0, Math.max(limit, selected.length));
+}

@@ -80,6 +80,10 @@
   .fade-in {
     animation: fade-in 180ms ease-out;
   }
+  /* A notice that eases open instead of shoving the page down: pair with a `grid` wrapper. */
+  .expand-in {
+    animation: expand-in 180ms cubic-bezier(0.23, 1, 0.32, 1) backwards;
+  }
   .spin {
     animation: spin 700ms linear infinite;
   }
@@ -105,6 +109,13 @@
   from {
     opacity: 0;
     transform: translateY(10px);
+  }
+}
+
+@keyframes expand-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
   }
 }
 

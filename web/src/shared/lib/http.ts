@@ -18,6 +18,8 @@ export class HttpError extends Error {
   /** The API's error code (`invalid_credentials`, `setup_required`...), when the body had one. */
   readonly code: string | undefined;
   readonly fields: ErrorBody["fields"];
+  /** On a missing article: paths of the same version it may have meant (repository data). */
+  readonly closeMatches: readonly string[];
 
   constructor(status: number, path: string, body?: Partial<ErrorBody>) {
     super(body?.detail ?? `Request to ${path} failed with status ${status}`);
@@ -26,10 +28,19 @@ export class HttpError extends Error {
     this.path = path;
     this.code = body?.error;
     this.fields = body?.fields ?? [];
+    this.closeMatches = body?.close_matches ?? [];
   }
 }
 
-/** Query parameters; `undefined`, `null` and empty arrays are left out, an array is comma-joined. */
+/** The query parameters the schema declares for `GET` on a route (`/api/v1/...`): check an object against it. */
+export type QueryOf<P extends keyof paths> = NonNullable<
+  paths[P] extends { get: { parameters: { query?: infer Q } } } ? Q : never
+>;
+
+/**
+ * Query parameters; `undefined`, `null` and empty arrays are left out. An array is comma-joined,
+ * which the API reads as separate values, so a value containing a comma would be split in two.
+ */
 export type Query = Record<string, string | number | readonly string[] | null | undefined>;
 
 function queryString(query: Query | undefined): string {
