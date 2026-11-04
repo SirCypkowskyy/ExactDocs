@@ -60,14 +60,13 @@ def register_tools(mcp: FastMCP, *, search_docs: SearchDocs) -> None:
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Retrieval mode, e.g. 'bm25'; empty means the best one configured",
+                description="Retrieval mode. Only 'bm25' today; any other value is an error. Omit for the default.",
             ),
         ] = None,
     ) -> SearchDocsResult:
         """Search one library version. Returns verbatim chunks with location and source link.
 
-        An empty result with coverage.complete true means the version holds no match; it never
-        falls back to another version. Pass ``ref`` to pin a version.
+        An empty result with coverage.complete true means the version holds no match; it never falls back to another version. Pass `ref` to pin a version.
         """
         return await search_docs(
             SearchDocsQuery(

@@ -6,7 +6,7 @@ Feature: Searching one version over MCP
   Background:
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"
 
-  Scenario: Searching a version with nothing configured
+  Scenario: Searching a version without a match
     When an agent calls "search_docs" for "/fixture/docs-repo" version "v1.3.0" and "retry_policy"
     Then the result is explicitly empty for "v1.3.0" with retrieval mode "bm25"
 

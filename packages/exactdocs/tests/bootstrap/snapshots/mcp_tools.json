@@ -338,7 +338,7 @@
       "read_only_hint": true,
       "title": "Search a library version"
     },
-    "description": "Search one library version. Returns verbatim chunks with location and source link.\n\nAn empty result with coverage.complete true means the version holds no match; it never\nfalls back to another version. Pass ``ref`` to pin a version.",
+    "description": "Search one library version. Returns verbatim chunks with location and source link.\n\nAn empty result with coverage.complete true means the version holds no match; it never falls back to another version. Pass `ref` to pin a version.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -365,7 +365,7 @@
             }
           ],
           "default": null,
-          "description": "Retrieval mode, e.g. 'bm25'; empty means the best one configured"
+          "description": "Retrieval mode. Only 'bm25' today; any other value is an error. Omit for the default."
         },
         "query": {
           "description": "Identifier, error message or question",

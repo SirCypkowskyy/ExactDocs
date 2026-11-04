@@ -13,7 +13,8 @@ class UnavailableModeError(ValidationError):
 
     def __init__(self, mode: str, available: list[str]) -> None:
         super().__init__(
-            f"retrieval mode {mode!r} is not available; available modes: {', '.join(available)}"
+            f"retrieval mode {mode!r} is not available; available modes: {', '.join(available)}. "
+            "Omit mode to use the default."
         )
         self.mode = mode
 

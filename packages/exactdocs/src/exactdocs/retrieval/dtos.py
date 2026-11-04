@@ -71,7 +71,7 @@ class SearchDocsQuery(_Dto):
 
     @field_validator("ref", "mode", mode="before")
     @classmethod
-    def _blank_ref_is_none(cls, value: object) -> object:
+    def _blank_is_none(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("tags", mode="before")
