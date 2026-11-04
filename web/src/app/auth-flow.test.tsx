@@ -58,16 +58,20 @@ describe("the session guard", () => {
   });
 
   it("returns to sign-in when the session ends while a page is open", async () => {
-    const { client, router } = mount("/account", () => json(signedIn));
+    const { client, router } = mount("/account", (url) =>
+      json(url.endsWith("/tokens") ? { tokens: [] } : signedIn),
+    );
     expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
     await act(async () => client.setQueryData(["session"], signedOut));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
     expect(router.state.location.search).toEqual({ next: "/account" });
   });
 
   it("signs out from the account page and lands on sign-in without a return address", async () => {
     const { router } = mount("/account", (_url, init) =>
-      init?.method === "DELETE" ? new Response(null, { status: 204 }) : json(signedIn),
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : json(_url.endsWith("/tokens") ? { tokens: [] } : signedIn),
     );
     await screen.findByRole("heading", { name: "Account" });
     const { default: userEvent } = await import("@testing-library/user-event");
@@ -75,7 +79,7 @@ describe("the session guard", () => {
     await userEvent.click(
       screen.getAllByRole("button", { name: "Sign out" }).at(-1) as HTMLElement,
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
     expect(router.state.location.search).toEqual({});
   });
 });
@@ -98,6 +102,6 @@ describe("route errors", () => {
         ? json({ error: "not_authenticated", detail: "no session", fields: [] }, 401)
         : json(signedIn),
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
   });
 });

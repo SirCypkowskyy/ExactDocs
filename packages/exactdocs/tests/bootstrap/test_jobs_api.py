@@ -115,3 +115,39 @@ async def test_a_process_started_without_jobs_neither_recovers_nor_runs_them() -
         job = await second.ingestion.get_job(GetJobQuery(job_id="j1"))
 
     assert job.state is JobState.RUNNING
+
+
+async def test_the_latest_jobs_are_one_per_version_and_say_how_many_files_were_skipped(
+    container: Container, client: httpx.AsyncClient
+) -> None:
+    repository = SqliteJobRepository(container.engine)
+    await repository.add(a_job("job-1").started(NOW).failed("old failure", NOW))
+    await repository.add(
+        a_job("job-2")
+        .started(NOW)
+        .with_problem("docs/a.md", "invalid front matter")
+        .with_problem("docs/b.md", "undecodable")
+        .succeeded(NOW)
+    )
+    await repository.add(a_job("job-3", library="/acme/ledger").started(NOW).failed("boom", NOW))
+
+    response = await client.get("/api/v1/jobs/latest")
+
+    assert response.status_code == 200
+    jobs = response.json()["jobs"]
+    assert [(j["library"], j["state"], j["skipped"], j["error"]) for j in jobs] == [
+        ("/acme/ledger", "failed", 0, "boom"),
+        ("/acme/payments", "succeeded", 2, None),
+    ]
+    assert all("problems" not in j for j in jobs)
+
+
+async def test_the_latest_jobs_need_a_session(container: Container) -> None:
+    transport = httpx.ASGITransport(app=create_app(container))
+    async with (
+        container.running(),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as anonymous,
+    ):
+        response = await anonymous.get("/api/v1/jobs/latest")
+
+    assert response.status_code == 401

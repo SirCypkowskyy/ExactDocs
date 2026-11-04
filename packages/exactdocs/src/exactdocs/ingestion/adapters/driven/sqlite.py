@@ -4,7 +4,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Column, Index, Integer, MetaData, Row, Table, Text, insert, select, update
+from sqlalchemy import (
+    Column,
+    Index,
+    Integer,
+    MetaData,
+    Row,
+    Table,
+    Text,
+    func,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.ingestion.models import FileProblem, Job, JobId, JobKind, JobState
@@ -61,6 +73,19 @@ class SqliteJobRepository:
     async def list_for_library(self, library: str) -> Sequence[Job]:
         """Return the library's jobs, newest first (job IDs are time-ordered)."""
         query = select(jobs).where(jobs.c.library == library).order_by(jobs.c.id.desc())
+        async with self.engine.connect() as connection:
+            return [_job(row) for row in await connection.execute(query)]
+
+    async def list_latest(self) -> Sequence[Job]:
+        """Return the newest job of every (library, version), ordered by library and version."""
+        # One grouped query (job IDs are time-ordered, so max(id) is the newest); NULL versions
+        # group together.
+        newest = select(func.max(jobs.c.id)).group_by(jobs.c.library, jobs.c.version)
+        query = (
+            select(jobs)
+            .where(jobs.c.id.in_(newest))
+            .order_by(jobs.c.library, func.coalesce(jobs.c.version, ""))
+        )
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 

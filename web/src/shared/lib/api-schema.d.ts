@@ -223,6 +223,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/jobs/latest": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Latest Jobs
+         * @description List the newest job of every library version, in one call (no per-library requests).
+         */
+        readonly get: operations["ingestion-list_latest_jobs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/jobs/{job_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -588,6 +608,49 @@ export interface components {
             readonly finished_at: string | null;
         };
         /**
+         * LatestJob
+         * @description The newest job of one version of a library, light enough to list for every library.
+         */
+        readonly LatestJob: {
+            /** Id */
+            readonly id: string;
+            /** Kind */
+            readonly kind: string;
+            /** Library */
+            readonly library: string;
+            /** Version */
+            readonly version: string | null;
+            readonly state: components["schemas"]["JobState"];
+            /** Done */
+            readonly done: number;
+            /** Total */
+            readonly total: number;
+            /**
+             * Skipped
+             * @description How many files the job skipped; see `/jobs/{id}`.
+             */
+            readonly skipped: number;
+            /** Error */
+            readonly error: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Started At */
+            readonly started_at: string | null;
+            /** Finished At */
+            readonly finished_at: string | null;
+        };
+        /**
+         * LatestJobs
+         * @description The newest job of every (library, version), ordered by library and version.
+         */
+        readonly LatestJobs: {
+            /** Jobs */
+            readonly jobs: readonly components["schemas"]["LatestJob"][];
+        };
+        /**
          * LibraryDetail
          * @description Everything known about one library.
          */
@@ -650,6 +713,23 @@ export interface components {
             readonly versions: readonly string[];
             /** Default Version */
             readonly default_version: string | null;
+            /** Source Url */
+            readonly source_url: string;
+            /**
+             * Refs
+             * @description The imported versions, with their commits.
+             */
+            readonly refs: readonly components["schemas"]["VersionOut"][];
+            /**
+             * Tags
+             * @description The tags the library's tag rules give its articles.
+             */
+            readonly tags: readonly string[];
+            /**
+             * Last Imported At
+             * @description When any version was last imported; null while none is.
+             */
+            readonly last_imported_at: string | null;
         };
         /**
          * RefOut
@@ -2122,6 +2202,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RepositoryRefs"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-list_latest_jobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LatestJobs"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

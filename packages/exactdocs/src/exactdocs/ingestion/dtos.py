@@ -86,6 +86,47 @@ class JobList(_Dto):
         )
 
 
+class LatestJob(_Dto):
+    """The newest job of one version of a library, light enough to list for every library."""
+
+    id: str
+    kind: str
+    library: str
+    version: str | None
+    state: JobState
+    done: int
+    total: int
+    skipped: int = Field(description="How many files the job skipped; see `/jobs/{id}`.")
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    @classmethod
+    def from_model(cls, job: Job) -> Self:
+        """Map a domain entity, keeping the count of skipped files, not the files."""
+        return cls(
+            id=job.id,
+            kind=job.kind,
+            library=job.library,
+            version=job.version,
+            state=job.state,
+            done=job.done,
+            total=job.total,
+            skipped=len(job.problems),
+            error=job.error,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+        )
+
+
+class LatestJobs(_Dto):
+    """The newest job of every (library, version), ordered by library and version."""
+
+    jobs: list[LatestJob]
+
+
 class EnqueueJobCommand(_Dto):
     """Queue a job of ``kind`` for a library (and optionally one version of it)."""
 

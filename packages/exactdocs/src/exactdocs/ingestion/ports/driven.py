@@ -38,6 +38,10 @@ class JobRepository(Protocol):
         """Return the library's jobs, newest first (job IDs are time-ordered)."""
         ...
 
+    async def list_latest(self) -> Sequence[Job]:
+        """Return the newest job of every (library, version), ordered by library and version."""
+        ...
+
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""
         ...

@@ -7,7 +7,16 @@ import { Button } from "@/shared/ui/button";
  * Error screen for every route. A request refused for want of a session (it expired after the
  * guard let the page through) goes to sign-in and comes back; anything else gets a retry.
  */
-export function RouteError({ error, reset }: { error: unknown; reset: () => void }) {
+export function RouteError({
+  error,
+  reset,
+  wide = false,
+}: {
+  error: unknown;
+  reset: () => void;
+  /** Sit at the left edge of an app page instead of centred like the auth screens. */
+  wide?: boolean;
+}) {
   const href = useLocation({ select: (l) => l.href });
   // 4xx details are written for people by the API; everything else gets the fixed sentence.
   const answered = error instanceof HttpError && error.status < 500 && Boolean(error.code);
@@ -24,7 +33,13 @@ export function RouteError({ error, reset }: { error: unknown; reset: () => void
       ? error.message
       : "ExactDocs didn't answer. Check that it is running, then try again.";
   return (
-    <main className="mx-auto flex max-w-md flex-col items-start gap-4 px-6 py-20">
+    <main
+      className={
+        wide
+          ? "mx-auto flex max-w-5xl flex-col items-start gap-4 px-4 py-8 sm:px-6 sm:py-10"
+          : "mx-auto flex max-w-md flex-col items-start gap-4 px-6 py-20"
+      }
+    >
       <h1
         ref={heading}
         tabIndex={-1}
