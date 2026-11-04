@@ -18,7 +18,7 @@ export function fetchSession(queryClient: QueryClient) {
 }
 
 /** Nothing fetched for one account may outlive it: sign-in, sign-out and expiry all clear it. */
-export function forgetAccountData(queryClient: QueryClient) {
+function forgetAccountData(queryClient: QueryClient) {
   queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== sessionKey[0] });
 }
 
