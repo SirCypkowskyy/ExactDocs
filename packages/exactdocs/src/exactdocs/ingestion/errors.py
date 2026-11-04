@@ -1,5 +1,6 @@
 """Ingestion errors. Messages never contain the URL a user typed: it may hold a credential."""
 
+from collections.abc import Sequence
 from enum import StrEnum
 
 from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
@@ -269,3 +270,13 @@ class CheckoutUnreadableError(DomainError):
 
     def __init__(self) -> None:
         super().__init__("a folder of the fetched files could not be read")
+
+
+class SyncFailedError(ValidationError):
+    """The remote could not be read during a sync: the cause's code, plus the jobs that say so."""
+
+    def __init__(self, cause: DomainError, job_ids: Sequence[str]) -> None:
+        jobs = f" (failed jobs recorded: {', '.join(job_ids)})" if job_ids else ""
+        super().__init__(f"{cause}{jobs}")
+        self.code = cause.code
+        self.job_ids = tuple(job_ids)

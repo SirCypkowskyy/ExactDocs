@@ -14,6 +14,7 @@ from exactdocs.ingestion.models import (
     RefKind,
     RepositoryHost,
     ResolvedRef,
+    SyncStatus,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
 
@@ -53,6 +54,12 @@ class JobSummary(_Dto):
     done: int
     total: int
     problems: list[FileProblemSummary]
+    chunked: int = Field(
+        description="Chunk sets cut by an import: one per distinct new file content."
+    )
+    reused: int = Field(
+        description="Articles whose chunk set an earlier import had stored (files, not blobs)."
+    )
     error: str | None
     created_at: datetime
     started_at: datetime | None
@@ -71,6 +78,8 @@ class JobSummary(_Dto):
             done=job.done,
             total=job.total,
             problems=[FileProblemSummary.from_model(p) for p in job.problems],
+            chunked=job.chunked,
+            reused=job.reused,
             error=job.error,
             created_at=job.created_at,
             started_at=job.started_at,
@@ -308,3 +317,35 @@ class RemovalResult(_Dto):
     collection_job_id: str | None = Field(
         description="The job that frees the content (`/jobs/{id}`); null if it was not queued."
     )
+
+
+class SyncLibraryCommand(_Dto):
+    """Re-sync the branch versions of a library."""
+
+    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+
+
+class SyncedVersion(_Dto):
+    """What the re-sync did with one version of the library."""
+
+    ref: str
+    ref_kind: RefKind
+    status: SyncStatus
+    previous_commit_sha: str = Field(description="The commit the version served before.")
+    commit_sha: str = Field(
+        description="The branch tip now; for a tag or a commit, the commit it is pinned to."
+    )
+    job_id: str | None = Field(
+        description=(
+            "The queued import; the import already in progress (`importing`); the failed job "
+            "that records why the branch is gone (`failed`); or the no-op job that cleared an "
+            "earlier failure."
+        )
+    )
+
+
+class SyncedLibrary(_Dto):
+    """The outcome per version; ``queued`` ones have an import to poll by ``job_id``."""
+
+    library_id: str
+    versions: list[SyncedVersion]

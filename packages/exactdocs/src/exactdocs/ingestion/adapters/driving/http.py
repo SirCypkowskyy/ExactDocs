@@ -22,7 +22,10 @@ from exactdocs.ingestion.dtos import (
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RepositoryRefs,
+    SyncedLibrary,
+    SyncLibraryCommand,
 )
+from exactdocs.ingestion.models import SyncStatus
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
@@ -33,6 +36,7 @@ from exactdocs.ingestion.ports.driving import (
     ListRepositoryRefs,
     RemoveLibrary,
     RemoveVersion,
+    SyncLibrary,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT
 
@@ -48,6 +52,7 @@ def build_router(
     add_version: AddVersion,
     remove_version: RemoveVersion,
     remove_library: RemoveLibrary,
+    sync_library: SyncLibrary,
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side."""
     router = APIRouter(tags=["ingestion"])
@@ -102,6 +107,46 @@ def build_router(
         return added
 
     router.include_router(_removal_router(remove_version, remove_library))
+
+    @router.post(
+        "/libraries/{owner}/{repo}/sync",
+        responses={
+            status.HTTP_200_OK: {"description": "Nothing was queued: every version is up to date."},
+            status.HTTP_202_ACCEPTED: {
+                "description": "Imports of the moved branches are queued.",
+                "headers": {
+                    "Location": {
+                        "description": (
+                            "The import job (`/api/v1/jobs/{job_id}`) when one was queued, else "
+                            "the library's jobs (`/api/v1/libraries/{owner}/{repo}/jobs`)."
+                        ),
+                        "schema": {"type": "string"},
+                    }
+                },
+            },
+        },
+    )
+    async def sync(owner: str, repo: str, request: Request, response: Response) -> SyncedLibrary:
+        """Re-sync the library's branch versions: import the ones whose tip moved.
+
+        Only changed articles are re-chunked. Tags and commits are never moved (`pinned`). Read
+        each version's `status`, not the HTTP status, for what happened to it: `up_to_date`,
+        `queued`, `importing` (an import of it is already queued or running), `failed` (the
+        branch is gone upstream, or its import could not be queued). Queued imports answer 202,
+        anything else 200. 409 `version_importing` when a running import left nothing queued;
+        422 with the remote's error code when the remote cannot be read (deliberate, E9-02 owns
+        distinct codes): the failed jobs recorded for it are named in the message.
+        """
+        synced = await sync_library(SyncLibraryCommand(library=f"/{owner}/{repo}".lower()))
+        queued = [v.job_id for v in synced.versions if v.status is SyncStatus.QUEUED]
+        if queued:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Location"] = (
+                request.url_for("get_job", job_id=queued[0]).path
+                if len(queued) == 1
+                else request.url_for("list_library_jobs", owner=owner, repo=repo).path
+            )
+        return synced
 
     @router.get("/jobs/latest", name="list_latest_jobs")
     async def latest() -> LatestJobs:

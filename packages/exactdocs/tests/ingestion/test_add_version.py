@@ -16,6 +16,7 @@ from exactdocs.ingestion.errors import (
 )
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
+    ImportedRef,
     ImportSource,
     JobId,
     PathSelection,
@@ -46,7 +47,7 @@ SOURCE = ImportSource(
     selection=PathSelection(include=("docs/**",), exclude=("docs/archive/**",)),
     tag_rules=TagRule.many([("docs/api/**", "api")]),
 )
-EXISTING = {"v1.4.0": NEW}
+EXISTING = [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=NEW)]
 
 
 class FakeRemote:

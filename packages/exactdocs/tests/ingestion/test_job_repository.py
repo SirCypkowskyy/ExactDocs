@@ -11,18 +11,21 @@ from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
+from exactdocs.ingestion.errors import VersionImportingError
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 
-def queued(job_id: str, library: str = "/acme/payments", minute: int = 0) -> Job:
+def queued(
+    job_id: str, library: str = "/acme/payments", minute: int = 0, version: str = "1.4"
+) -> Job:
     return Job.queued(
         job_id=JobId(job_id),
         kind=JobKind("import"),
         library=library,
-        version="1.4",
+        version=version,
         commit_sha="c" * 40,  # the commit the version was pinned to must survive too
         ref_kind=RefKind.TAG,  # and what the version is
         now=T0 + timedelta(minutes=minute),
@@ -81,7 +84,11 @@ async def test_save_replaces_the_job(repository: JobRepository) -> None:
 
 async def test_a_library_lists_its_own_jobs_newest_first(repository: JobRepository) -> None:
     # IDs are time-ordered (uuid7), so "newest" is the highest ID
-    for job in (queued("job-2"), queued("job-1"), queued("job-3")):
+    for job in (
+        queued("job-2", version="v2"),
+        queued("job-1", version="v1"),
+        queued("job-3", version="v3"),
+    ):
         await repository.add(job)
     await repository.add(queued("job-4", library="/acme/ledger"))
 
@@ -99,7 +106,7 @@ async def test_the_latest_job_of_each_library_and_version_is_listed(
         )
 
     for added in (
-        job("1", "/acme/payments", "v1"),
+        job("1", "/acme/payments", "v1").succeeded(T0),  # superseded below
         job("2", "/acme/payments", "v1"),  # supersedes 1
         job("3", "/acme/payments", "v2"),
         job("4", "/acme/ledger", None),
@@ -138,7 +145,7 @@ async def test_claim_skips_a_library_that_already_has_a_running_job(
     repository: JobRepository,
 ) -> None:
     await repository.add(queued("running", minute=1).started(T0))
-    await repository.add(queued("same-library", minute=2))
+    await repository.add(queued("same-library", minute=2, version="v2"))
     await repository.add(queued("other-library", library="/acme/ledger", minute=3))
 
     first = await repository.claim_next(T0)
@@ -164,7 +171,9 @@ async def test_claimers_on_separate_connections_get_one_job_per_library_and_no_d
     await migrate(engines[0])
     repositories = [SqliteJobRepository(engine) for engine in engines]
     for number in range(30):
-        await repositories[0].add(queued(f"job-{number:02}", library=f"/acme/lib-{number % 5}"))
+        await repositories[0].add(
+            queued(f"job-{number:02}", library=f"/acme/lib-{number % 5}", version=f"v{number}")
+        )
 
     async def claim_all(repository: SqliteJobRepository) -> list[Job]:
         claimed = [await repository.claim_next(T0) for _ in range(10)]
@@ -207,3 +216,16 @@ async def test_problems_saved_by_another_version_are_read_without_failing() -> N
         ProblemCode.UNREADABLE,
     ]
     await engine.dispose()
+
+
+async def test_a_second_unfinished_import_of_a_ref_is_refused_but_a_finished_one_is_not(
+    repository: JobRepository,
+) -> None:
+    await repository.add(queued("j1"))
+    with pytest.raises(VersionImportingError):
+        await repository.add(queued("j2"))
+    await repository.add(queued("j3", library="/acme/orders"))  # another library
+    await repository.save(queued("j1").failed("boom", T0))  # finished jobs do not count
+
+    await repository.add(queued("j2"))
+    await repository.add(queued("j4").failed("boom", T0))  # nor are they refused

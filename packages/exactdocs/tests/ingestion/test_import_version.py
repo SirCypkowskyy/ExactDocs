@@ -25,6 +25,7 @@ from exactdocs.ingestion.models import (
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
     ArticleChunk,
+    ImportedRef,
     ImportedVersion,
     ImportSource,
     Job,
@@ -96,9 +97,9 @@ class Sources:
         del library
         return self.source
 
-    async def imported_versions(self, library: str) -> Mapping[str, str]:
+    async def imported_versions(self, library: str) -> list[ImportedRef]:
         del library
-        return {}
+        return []
 
 
 @dataclass(slots=True)
@@ -173,6 +174,10 @@ class CountingChunker:
 class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
     problems: list[tuple[str, str, str]] = field(default_factory=list)
+    counts: list[tuple[int, int]] = field(default_factory=list)
+
+    async def chunking(self, *, chunked: int, reused: int) -> None:
+        self.counts.append((chunked, reused))
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
@@ -354,6 +359,7 @@ async def test_a_blob_that_was_chunked_before_is_not_chunked_again(tmp_path: Pat
 
     assert world.chunker.chunked == ["docs/b.md"]  # only the blob nobody chunked
     assert world.catalog.stored[0].articles[0].chunks == known
+    assert world.progress.counts == [(1, 1)]  # b.md chunked now, a.md reused
 
 
 async def test_known_chunk_sets_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
@@ -724,3 +730,11 @@ async def test_a_library_removed_before_the_import_runs_fails_the_job_cleanly(
     assert "/a/b" in job.error
     assert world.log == []  # nothing stored
     assert world.gateway.fetched == []
+
+
+async def test_two_new_files_with_the_same_content_are_one_chunk_set(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "docs/b.md": INSTALL.encode()})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.progress.counts == [(1, 0)]  # one chunk set cut, none reused

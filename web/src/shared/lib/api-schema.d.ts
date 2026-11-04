@@ -286,6 +286,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Sync
+         * @description Re-sync the library's branch versions: import the ones whose tip moved.
+         *
+         *     Only changed articles are re-chunked. Tags and commits are never moved (`pinned`). Read
+         *     each version's `status`, not the HTTP status, for what happened to it: `up_to_date`,
+         *     `queued`, `importing` (an import of it is already queued or running), `failed` (the
+         *     branch is gone upstream, or its import could not be queued). Queued imports answer 202,
+         *     anything else 200. 409 `version_importing` when a running import left nothing queued;
+         *     422 with the remote's error code when the remote cannot be read (deliberate, E9-02 owns
+         *     distinct codes): the failed jobs recorded for it are named in the message.
+         */
+        readonly post: operations["ingestion-sync"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/jobs/latest": {
         readonly parameters: {
             readonly query?: never;
@@ -758,6 +786,16 @@ export interface components {
             readonly total: number;
             /** Problems */
             readonly problems: readonly components["schemas"]["FileProblemSummary"][];
+            /**
+             * Chunked
+             * @description Chunk sets cut by an import: one per distinct new file content.
+             */
+            readonly chunked: number;
+            /**
+             * Reused
+             * @description Articles whose chunk set an earlier import had stored (files, not blobs).
+             */
+            readonly reused: number;
             /** Error */
             readonly error: string | null;
             /**
@@ -1112,6 +1150,47 @@ export interface components {
             readonly start: number;
             /** End */
             readonly end: number;
+        };
+        /**
+         * SyncStatus
+         * @description What a re-sync did with one version.
+         * @enum {string}
+         */
+        readonly SyncStatus: "queued" | "up_to_date" | "importing" | "pinned" | "failed";
+        /**
+         * SyncedLibrary
+         * @description The outcome per version; ``queued`` ones have an import to poll by ``job_id``.
+         */
+        readonly SyncedLibrary: {
+            /** Library Id */
+            readonly library_id: string;
+            /** Versions */
+            readonly versions: readonly components["schemas"]["SyncedVersion"][];
+        };
+        /**
+         * SyncedVersion
+         * @description What the re-sync did with one version of the library.
+         */
+        readonly SyncedVersion: {
+            /** Ref */
+            readonly ref: string;
+            readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
+            readonly status: components["schemas"]["SyncStatus"];
+            /**
+             * Previous Commit Sha
+             * @description The commit the version served before.
+             */
+            readonly previous_commit_sha: string;
+            /**
+             * Commit Sha
+             * @description The branch tip now; for a tag or a commit, the commit it is pinned to.
+             */
+            readonly commit_sha: string;
+            /**
+             * Job Id
+             * @description The queued import; the import already in progress (`importing`); the failed job that records why the branch is gone (`failed`); or the no-op job that cleared an earlier failure.
+             */
+            readonly job_id: string | null;
         };
         /**
          * TagRuleIn
@@ -2821,6 +2900,92 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["AddedVersion"];
                 };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Nothing was queued: every version is up to date. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SyncedLibrary"];
+                };
+            };
+            /** @description Imports of the moved branches are queued. */
+            readonly 202: {
+                headers: {
+                    /** @description The import job (`/api/v1/jobs/{job_id}`) when one was queued, else the library's jobs (`/api/v1/libraries/{owner}/{repo}/jobs`). */
+                    readonly Location?: string;
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {

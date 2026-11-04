@@ -74,6 +74,8 @@ class Progress:
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None: ...
 
+    async def chunking(self, *, chunked: int, reused: int) -> None: ...
+
 
 class CrashError(Exception):
     pass
