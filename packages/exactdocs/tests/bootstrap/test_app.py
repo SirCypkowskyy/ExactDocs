@@ -230,6 +230,7 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
         "read_article",
         "read_chunk",
         "resolve-library-id",
+        "query-docs",
     }
     assert all(tool.annotations and tool.annotations.read_only_hint for tool in tools.values())
     assert result.structured_content is not None

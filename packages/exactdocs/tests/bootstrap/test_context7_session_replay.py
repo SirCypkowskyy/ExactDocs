@@ -38,7 +38,7 @@ async def import_next(container: Container) -> None:
             default_branch=VersionRef("canary"),
         )
     )
-    blob = hashlib.sha1(PATH.encode(), usedforsecurity=False).hexdigest()  # noqa: S324
+    blob = hashlib.sha1(PATH.encode(), usedforsecurity=False).hexdigest()
     stored = await container.catalog.store_manifest(
         StoreManifestCommand(
             library=LIBRARY,

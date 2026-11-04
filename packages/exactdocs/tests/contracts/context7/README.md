@@ -8,6 +8,11 @@ from context7 to ExactDocs is a URL change.
 - `resolve-library-id.json`: tool name and input schema (`query` and `libraryName`, both required
   strings). Descriptions are left out on purpose; only names, types and required-ness are the
   contract.
+- `query-docs.json`: `libraryId` and `query` required strings, `language` optional string.
+  context7 returns the text of its `/v2/context` API as one text block, `isError` on failure;
+  ExactDocs puts the notice first and mirrors the `### title` / `Source:` / text blocks.
+- `session.json`: a recorded session using both tools; `tests/bootstrap/test_context7_session_replay.py`
+  replays it and requires no errors.
 - `tests/bootstrap/test_context7_contract.py` checks that ExactDocs' tool has this name and that
   its input schema matches: every property here exists with the same type and the set of required
   arguments is the same (a client sending only context7's arguments is accepted, and ExactDocs
@@ -21,7 +26,7 @@ from context7 to ExactDocs is a URL change.
    means ExactDocs must change before the pin moves; do not loosen the test to get green.
 4. Mention the version bump in the PR.
 
-Deliberately **not mirrored**: context7's argument aliases (`GLOBAL_ALIASES` in `index.ts`, e.g.
+Deliberately **not mirrored**: `QUERY_DOCS_ALIASES` (`libraryID`, `libraryName`, ... for `libraryId`) and context7's argument aliases (`GLOBAL_ALIASES` in `index.ts`, e.g.
 `userQuery` and `question` for `query`). They are a workaround for sloppy model output, not part of
 the schema; accepting them would make `query` optional and break the equal-required-set check
 below. ExactDocs refuses unknown arguments (tested). Length caps: `libraryName` 256 and `query`
