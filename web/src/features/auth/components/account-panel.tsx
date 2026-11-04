@@ -1,8 +1,16 @@
+import type { ReactNode } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { useSession } from "../hooks/use-session";
 import { SignOutButton } from "./sign-out-button";
 
-export function AccountPanel({ onSignedOut }: { onSignedOut: () => void }) {
+export function AccountPanel({
+  onSignedOut,
+  children,
+}: {
+  onSignedOut: () => void;
+  /** Sections composed by the route (the auth slice cannot import other features). */
+  children?: ReactNode;
+}) {
   const account = useSession()?.account;
   const heading = usePageTitle("Account");
   return (
@@ -20,6 +28,7 @@ export function AccountPanel({ onSignedOut }: { onSignedOut: () => void }) {
         <dt className="text-muted-foreground">Role</dt>
         <dd className="font-medium">{account?.role}</dd>
       </dl>
+      {children}
       <div className="mt-10">
         <SignOutButton onSignedOut={onSignedOut} />
       </div>

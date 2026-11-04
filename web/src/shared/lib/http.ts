@@ -5,8 +5,10 @@ import type { components, paths } from "./api-schema";
 export type ErrorBody = components["schemas"]["ErrorResponse"];
 
 type StripBase<P> = P extends `${typeof API_BASE_URL}${infer Rest}` ? Rest : never;
+/** `/v1/tokens/{token_id}` accepts any concrete segment: `/v1/tokens/abc`. */
+type Fill<P> = P extends `${infer A}{${string}}${infer B}` ? `${A}${string}${Fill<B>}` : P;
 /** A route that exists in the generated schema, relative to the API base (`/v1/session`). */
-export type ApiPath = StripBase<keyof paths>;
+export type ApiPath = Fill<StripBase<keyof paths>>;
 
 export class HttpError extends Error {
   readonly status: number;
