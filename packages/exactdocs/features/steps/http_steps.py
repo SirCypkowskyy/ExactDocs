@@ -29,7 +29,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
 from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
-from exactdocs.ingestion.models import RemoteRefs, RepositoryUrl
+from exactdocs.ingestion.models import Credential, RemoteRefs, RepositoryUrl
 from exactdocs.ingestion.ports import GitRemote
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -107,9 +107,15 @@ class OfflineGit:
     def __init__(self, local: GitRemote) -> None:
         self.local = local
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        del repository
+        return None
+
+    async def list_refs(
+        self, repository: RepositoryUrl, *patterns: str, credential: Credential | None = None
+    ) -> RemoteRefs:
         if repository.url.startswith(("file:", "http://127.0.0.1")):
-            return await self.local.list_refs(repository, *patterns)
+            return await self.local.list_refs(repository, *patterns, credential=credential)
         return RemoteRefs(default_branch="main")
 
 

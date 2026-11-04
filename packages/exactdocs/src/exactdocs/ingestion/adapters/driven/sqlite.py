@@ -19,13 +19,19 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.ingestion.errors import VersionImportingError
+from exactdocs.ingestion.errors import (
+    CredentialsRequiredError,
+    InvalidCredentialError,
+    VersionImportingError,
+)
 from exactdocs.ingestion.models import (
     ACTIVE_JOB_STATES,
     IMPORT_KINDS,
+    Credential,
     FileProblem,
     Job,
     JobId,
@@ -33,7 +39,10 @@ from exactdocs.ingestion.models import (
     JobState,
     ProblemCode,
     RefKind,
+    dump_credential,
+    load_credential,
 )
+from exactdocs.ingestion.ports.driven import SecretBox
 
 # The ingestion's tables, prefixed `ingestion_`. The schema itself is created by an Alembic
 # revision in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -242,3 +251,50 @@ def _job(row: Row) -> Job:
         started_at=_moment(row.started_at),
         finished_at=_moment(row.finished_at),
     )
+
+
+credentials = Table(
+    "ingestion_library_credentials",
+    metadata,
+    Column("library", Text, primary_key=True),
+    # Fernet token of `dump_credential`'s JSON; the only place a secret is ever stored.
+    Column("sealed", Text, nullable=False),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteCredentialVault:
+    """Implements ``ports.driven.CredentialVault``: rows of encrypted credentials."""
+
+    engine: AsyncEngine
+    box: SecretBox
+
+    async def save(self, library: str, scope: str, credential: Credential) -> None:
+        """Store the library's credential, replacing the one it had."""
+        sealed = self.box.seal(dump_credential(library, scope, credential))
+        statement = sqlite_insert(credentials).values(library=library, sealed=sealed)
+        statement = statement.on_conflict_do_update(
+            index_elements=[credentials.c.library], set_={"sealed": sealed}
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
+    async def load(self, library: str, scope: str) -> Credential | None:
+        """Return the credential, ``None`` if there is none; unreadable ones raise."""
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(credentials).where(credentials.c.library == library)
+                )
+            ).first()
+        if row is None:
+            return None
+        try:
+            return load_credential(library, scope, self.box.open(row.sealed))
+        except ValueError, KeyError, TypeError, InvalidCredentialError:
+            raise CredentialsRequiredError from None
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's credential."""
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(credentials).where(credentials.c.library == library))

@@ -20,7 +20,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
-from exactdocs.bootstrap.database import migrate, open_database
+from exactdocs.bootstrap.database import StartupError, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
@@ -36,8 +36,10 @@ from exactdocs.identity.adapters.driven.sqlite import (
 )
 from exactdocs.ingestion import IngestionModule, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
+from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
+from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault, SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import GitGateway, GitRemote
@@ -48,6 +50,7 @@ from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
 WORK_DIR = "work"  # under the data dir: one folder per running git fetch
+KNOWN_HOSTS_FILE = "known_hosts"  # under the data dir: SSH host keys, the big three pre-seeded
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -78,15 +81,35 @@ class Container:
         (tests). A missing ``git`` is logged here and
         reported as ``git_not_installed`` by everything that needs it, so the rest still runs.
         """
+        engine = open_database(settings)  # creates the data dir first (or says why not)
         if remote is None or gateway is None:
             try:
-                git: GitCli | MissingGit = GitCli.locate(work_root=settings.data_dir / WORK_DIR)
+                known_hosts = settings.data_dir / KNOWN_HOSTS_FILE
+                seed_known_hosts(known_hosts)
+                git: GitCli | MissingGit = GitCli.locate(
+                    work_root=settings.data_dir / WORK_DIR, known_hosts=known_hosts
+                )
             except GitNotInstalledError as exc:
                 logger.warning("%s", exc)
                 git = MissingGit()
             remote = remote or git
             gateway = gateway or git
-        engine = open_database(settings)
+        try:
+            secret_box = (
+                FernetSecretBox.from_secrets(
+                    settings.secret_key.get_secret_value(),
+                    *(
+                        [settings.secret_key_previous.get_secret_value()]
+                        if settings.secret_key_previous
+                        else []
+                    ),
+                )
+                if settings.secret_key
+                else FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
+            )
+        except ValueError as error:  # fixed texts: they never repeat a key
+            raise StartupError(str(error)) from None
+        vault = SqliteCredentialVault(engine, secret_box)
         catalog = CatalogModule.build(
             repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
         )
@@ -123,6 +146,7 @@ class Container:
                 catalog.apply_readme,
             ),
             index=index,
+            vault=vault,
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
         )
@@ -135,8 +159,8 @@ class Container:
             sources=CatalogLibrarySources(catalog.get_library),
             removals=CatalogRemovals(catalog.remove_version, catalog.remove_library),
             index=index,
+            vault=vault,
             # The catalog first: retrieval keeps every manifest the catalog still knows.
-            # #35: a credentials collector goes here once library credentials exist.
             handlers={
                 **handlers,
                 **collect_job(

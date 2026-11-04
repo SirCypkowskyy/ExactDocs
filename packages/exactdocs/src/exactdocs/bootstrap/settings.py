@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from platformdirs import user_data_path
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
@@ -17,7 +17,9 @@ def _default_data_dir() -> Path:
 class Settings(BaseSettings):
     """Runtime configuration, read from ``EXACTDOCS_*`` environment variables (and a ``.env``)."""
 
-    model_config = SettingsConfigDict(env_prefix="EXACTDOCS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="EXACTDOCS_", env_file=".env", extra="ignore", hide_input_in_errors=True
+    )
 
     host: str = "127.0.0.1"
     port: int = 3000
@@ -30,6 +32,14 @@ class Settings(BaseSettings):
     # An import fails when its selected articles add up to more bytes than this (they are held in
     # memory, several times over, until stored).
     max_import_bytes: int = Field(default=256 * 2**20, ge=1)
+    # Encrypts the stored tokens and deploy keys of private repositories. It must be random and
+    # at least 32 characters (`openssl rand -base64 32`). Unset: a random key is generated into
+    # `<data dir>/secret.key` (mode 0600) on first run. Without the key the credentials cannot be
+    # read: libraries keep serving their docs and ask for the token again (`credentials_required`).
+    secret_key: SecretStr | None = None
+    # The key that was `secret_key` before a rotation: credentials sealed with it still open, and
+    # are sealed with the new key when they are next saved. Remove it once they were all re-sent.
+    secret_key_previous: SecretStr | None = None
     telemetry: Literal["off", "otlp"] = "off"
     metrics: bool = False
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,
@@ -42,6 +52,11 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     # Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`).
     forwarded_allow_ips: str = "127.0.0.1,::1"
+
+    @field_validator("secret_key", "secret_key_previous", mode="before")
+    @classmethod
+    def _blank_secret_key_is_unset(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("allowed_hosts", "allowed_origins", mode="before")
     @classmethod

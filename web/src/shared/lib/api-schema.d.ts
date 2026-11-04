@@ -236,6 +236,8 @@ export interface paths {
         /**
          * Check
          * @description Check a git URL (nothing is saved); the URL is never echoed back.
+         *
+         *     A `credential` needs a signed-in session, not an API token.
          */
         readonly post: operations["ingestion-check"];
         readonly delete?: never;
@@ -373,6 +375,27 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccessTokenIn
+         * @description An HTTPS access token for a private repository. Write-only: no response repeats it.
+         */
+        readonly AccessTokenIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "token";
+            /**
+             * Token
+             * Format: password
+             */
+            readonly token: string;
+            /**
+             * Username
+             * @description What the host expects next to the token; default `x-access-token` (GitHub, GitLab). Bitbucket repository tokens use `x-token-auth`.
+             */
+            readonly username?: string | null;
+        };
+        /**
          * AccountSummary
          * @description An account as the outside world sees it (never the password hash).
          */
@@ -419,6 +442,11 @@ export interface components {
              * @description Tags for articles by path; they are added to the front-matter tags.
              */
             readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][];
+            /**
+             * Credential
+             * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
+             */
+            readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
         };
         /**
          * AddVersionBody
@@ -430,6 +458,11 @@ export interface components {
              * @description A tag, a branch or a full or short commit SHA.
              */
             readonly ref: string;
+            /**
+             * Credential
+             * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned. Replaces the library's stored credential; needed again when it answers `credentials_required`.
+             */
+            readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
         };
         /**
          * AddedLibrary
@@ -570,6 +603,11 @@ export interface components {
              * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
+            /**
+             * Credential
+             * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
+             */
+            readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
         };
         /**
          * CheckedRepository
@@ -588,6 +626,11 @@ export interface components {
              * @description The branch `HEAD` points at; null for an empty repository.
              */
             readonly default_branch: string | null;
+            /**
+             * Host Key Fingerprint
+             * @description For an SSH URL, the `SHA256:...` fingerprint of the server's host key (first seen now, or pinned): compare it with the host's published one.
+             */
+            readonly host_key_fingerprint?: string | null;
         };
         /**
          * ChunkOut
@@ -689,6 +732,22 @@ export interface components {
             readonly name: string;
             /** Expires At */
             readonly expires_at?: string | null;
+        };
+        /**
+         * DeployKeyIn
+         * @description An SSH deploy key (private part, no passphrase). Write-only: no response repeats it.
+         */
+        readonly DeployKeyIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "ssh_key";
+            /**
+             * Private Key
+             * Format: password
+             */
+            readonly private_key: string;
         };
         /**
          * ErrorResponse

@@ -14,6 +14,7 @@ from exactdocs.ingestion.errors import (
 )
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
+    Credential,
     JobId,
     NewLibrary,
     PathSelection,
@@ -42,9 +43,17 @@ URL = "https://github.com/Acme/Orders"
 class FakeRemote:
     refs: RemoteRefs = REFS
     asked: int = 0
+    credentials: list[Credential | None] = field(default_factory=list)
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        del repository
+        return None
+
+    async def list_refs(
+        self, repository: RepositoryUrl, *patterns: str, credential: Credential | None = None
+    ) -> RemoteRefs:
         del repository, patterns
+        self.credentials.append(credential)
         self.asked += 1
         return self.refs
 

@@ -48,6 +48,7 @@ async def test_the_fixture_repository_is_accepted(
         "host": "git",
         "library_id": "/fixture/docs-repo",
         "default_branch": "main",
+        "host_key_fingerprint": None,
     }
 
 

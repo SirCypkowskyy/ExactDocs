@@ -2,6 +2,7 @@ from exactdocs.ingestion.ports.driven import (
     Chunker,
     ChunkIndex,
     Collector,
+    CredentialVault,
     GitGateway,
     GitRemote,
     JobHandler,
@@ -12,6 +13,7 @@ from exactdocs.ingestion.ports.driven import (
     NewLibraries,
     RecoveryHook,
     Removals,
+    SecretBox,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -37,6 +39,7 @@ __all__ = [
     "ChunkIndex",
     "Chunker",
     "Collector",
+    "CredentialVault",
     "EnqueueJob",
     "GetJob",
     "GitGateway",
@@ -57,5 +60,6 @@ __all__ = [
     "RemoveVersion",
     "RunNextJob",
     "SyncLibrary",
+    "SecretBox",
     "VersionPublisher",
 ]

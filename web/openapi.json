@@ -2023,7 +2023,7 @@
           "ingestion"
         ],
         "summary": "Check",
-        "description": "Check a git URL (nothing is saved); the URL is never echoed back.",
+        "description": "Check a git URL (nothing is saved); the URL is never echoed back.\n\nA `credential` needs a signed-in session, not an API token.",
         "operationId": "ingestion-check",
         "requestBody": {
           "content": {
@@ -2799,6 +2799,43 @@
   },
   "components": {
     "schemas": {
+      "AccessTokenIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "token",
+            "title": "Kind"
+          },
+          "token": {
+            "type": "string",
+            "maxLength": 8192,
+            "format": "password",
+            "title": "Token",
+            "writeOnly": true
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "What the host expects next to the token; default `x-access-token` (GitHub, GitLab). Bitbucket repository tokens use `x-token-auth`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "token"
+        ],
+        "title": "AccessTokenIn",
+        "description": "An HTTPS access token for a private repository. Write-only: no response repeats it."
+      },
       "AccountSummary": {
         "properties": {
           "id": {
@@ -2885,6 +2922,32 @@
             "maxItems": 64,
             "title": "Tag Rules",
             "description": "Tags for articles by path; they are added to the front-matter tags."
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AccessTokenIn"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeployKeyIn"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "ssh_key": "#/components/schemas/DeployKeyIn",
+                    "token": "#/components/schemas/AccessTokenIn"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned."
           }
         },
         "additionalProperties": false,
@@ -2903,6 +2966,32 @@
             "minLength": 1,
             "title": "Ref",
             "description": "A tag, a branch or a full or short commit SHA."
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AccessTokenIn"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeployKeyIn"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "ssh_key": "#/components/schemas/DeployKeyIn",
+                    "token": "#/components/schemas/AccessTokenIn"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned. Replaces the library's stored credential; needed again when it answers `credentials_required`."
           }
         },
         "additionalProperties": false,
@@ -3190,6 +3279,32 @@
             "minLength": 1,
             "title": "Url",
             "description": "https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AccessTokenIn"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeployKeyIn"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "ssh_key": "#/components/schemas/DeployKeyIn",
+                    "token": "#/components/schemas/AccessTokenIn"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned."
           }
         },
         "additionalProperties": false,
@@ -3222,6 +3337,18 @@
             ],
             "title": "Default Branch",
             "description": "The branch `HEAD` points at; null for an empty repository."
+          },
+          "host_key_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Key Fingerprint",
+            "description": "For an SSH URL, the `SHA256:...` fingerprint of the server's host key (first seen now, or pinned): compare it with the host's published one."
           }
         },
         "additionalProperties": false,
@@ -3468,6 +3595,30 @@
         ],
         "title": "CreateTokenCommand",
         "description": "A new API token for the caller. ``expires_at`` (timezone-aware) is optional."
+      },
+      "DeployKeyIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "ssh_key",
+            "title": "Kind"
+          },
+          "private_key": {
+            "type": "string",
+            "maxLength": 32768,
+            "format": "password",
+            "title": "Private Key",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "private_key"
+        ],
+        "title": "DeployKeyIn",
+        "description": "An SSH deploy key (private part, no passphrase). Write-only: no response repeats it."
       },
       "ErrorResponse": {
         "properties": {

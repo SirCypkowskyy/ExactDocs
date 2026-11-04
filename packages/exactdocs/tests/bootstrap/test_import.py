@@ -31,6 +31,7 @@ from exactdocs.catalog.dtos import RefKind as CatalogRefKind
 from exactdocs.catalog.errors import VersionNotFoundError
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
+from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.dtos import RemoveLibraryCommand, RemoveVersionCommand
 from exactdocs.ingestion.models import (
@@ -132,6 +133,7 @@ class World:
                 c.retrieval.remove_chunks,
             ),
             refresh=refresh,
+            vault=InMemoryCredentialVault(),
         )
 
     async def import_ref(

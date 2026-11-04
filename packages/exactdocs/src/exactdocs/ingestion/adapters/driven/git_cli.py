@@ -13,6 +13,15 @@ The URL comes from a user, so git is treated as a process that must not surprise
 - at most ``MAX_PROCESSES`` git processes run at once;
 - git's stderr is only classified, never passed on: it may contain the URL.
 
+Credentials (``credential=``) never travel in the URL or the argument list. A token reaches git
+through ``GIT_ASKPASS``, a small script in the call's private temporary directory that answers
+only prompts for the repository's own ``host[:port]`` (git asks again for any other host a
+redirect leads to, and the script then refuses, so the redirect fails and the token is not
+sent). A deploy key is written to a 0600 file in the same directory and named in
+``GIT_SSH_COMMAND``; the directory, and with it the key, is deleted when the call ends. ssh
+checks host keys against ``known_hosts`` (``accept-new``: unknown hosts are remembered, a
+changed key is a hard ``HostKeyChangedError``) and never against a system file.
+
 ``fetch`` (the ``GitGateway`` port) builds on the same ``_run``. Into a folder of its own it
 fetches one commit by SHA, ``--depth 1`` and ``--filter=blob:none`` (a server without filters just
 sends more), and checks out only the sparse patterns made from the selection plus the root
@@ -34,6 +43,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import sys
@@ -45,10 +55,12 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppres
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlsplit
 
 from exactdocs.ingestion.errors import (
     CommitUnavailableError,
     GitNotInstalledError,
+    HostKeyChangedError,
     InvalidRepositoryUrlError,
     NotAGitRepositoryError,
     RepositoryAuthRequiredError,
@@ -57,6 +69,8 @@ from exactdocs.ingestion.errors import (
     UrlProblem,
 )
 from exactdocs.ingestion.models import (
+    AccessToken,
+    Credential,
     PathSelection,
     RemoteRef,
     RemoteRefs,
@@ -122,17 +136,43 @@ _PASSTHROUGH = frozenset(
     }
 )  # fmt: skip
 # ssh reads keys from the passwd-entry home (not $HOME) and from any agent, so every
-# authentication method is switched off: a check must not borrow the server user's identity.
-_SSH = " ".join(
-    [
-        "ssh -F", os.devnull, "-o BatchMode=yes -o ConnectTimeout=10",
-        "-o PubkeyAuthentication=no -o GSSAPIAuthentication=no -o HostbasedAuthentication=no",
-        "-o KbdInteractiveAuthentication=no -o PasswordAuthentication=no",
-        "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + os.devnull,
-    ]
+# authentication method is off unless a deploy key is given: a check must not borrow the server
+# user's identity. Host keys: remembered on first sight (`accept-new`), a changed one is refused;
+# only our own file is consulted, and the server cannot add keys to it (`UpdateHostKeys=no`).
+_SSH_BASE = (
+    "ssh", "-F", os.devnull, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+    "-o", "GSSAPIAuthentication=no", "-o", "HostbasedAuthentication=no",
+    "-o", "KbdInteractiveAuthentication=no", "-o", "PasswordAuthentication=no",
+    "-o", "StrictHostKeyChecking=accept-new", "-o", "GlobalKnownHostsFile=" + os.devnull,
+    "-o", "UpdateHostKeys=no", "-o", "HashKnownHosts=no", "-o", "VerifyHostKeyDNS=no",
 )  # fmt: skip
+# git prints the prompt as `Username for 'scheme://host[:port]': ` and then
+# `Password for 'scheme://user@host[:port]': `, with the host as typed in the URL. Only those
+# two prompts, for the library's own scheme and host (compared in lower case), are answered; a
+# redirect to any other host makes git ask for that host, which gets nothing. The values are
+# read from files of the call's private directory, so they are in no environment.
+_ASKPASS = """\
+#!/bin/sh
+d=$(dirname "$0")
+base=$(cat "$d/askpass.base")
+user=$(cat "$d/askpass.user" | tr '[:upper:]' '[:lower:]')
+prompt=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+case "$prompt" in
+  "username for '$base': ") cat "$d/askpass.user" ;;
+  "password for '$base': ") cat "$d/askpass.secret" ;;
+  "password for '${base%%://*}://$user@${base#*://}': ") cat "$d/askpass.secret" ;;
+  *) exit 1 ;;
+esac
+"""
+_KEY_FILE = "deploy_key"
+_ASKPASS_FILE = "askpass.sh"
+_RUN_PREFIX = "exactdocs-git-"
 # Wording of `git` (LC_ALL=C) and of the transports behind it. Narrow on purpose: a local error
 # ("Permission denied" on a directory, a shell "not found") must not read as a remote verdict.
+_HOST_KEY_CHANGED = re.compile(
+    r"remote host identification has changed|host key verification failed"
+    r"|offending (?:\w+ )?key in"
+)
 _AUTH = re.compile(
     r"terminal prompts disabled|could not read (?:username|password)|authentication failed"
     r"|permission denied \(|error: 40[13]\b"
@@ -157,6 +197,7 @@ class GitCli:
     timeout: float = TIMEOUT_SECONDS
     max_output: int = MAX_STDOUT
     work_root: Path | None = None  # where fetches get their folders; the temp dir when None
+    known_hosts: Path | None = None  # remembered SSH host keys; none are kept when None
     fetch_timeout: float = FETCH_TIMEOUT_SECONDS  # for a whole fetch, not per git call
     max_fetch_bytes: int = MAX_FETCH_BYTES  # of the fetched repository plus its work tree
     max_fetch_files: int = MAX_FETCH_FILES
@@ -172,14 +213,25 @@ class GitCli:
     )
 
     @classmethod
-    def locate(cls, *, timeout: float = TIMEOUT_SECONDS, work_root: Path | None = None) -> Self:
+    def locate(
+        cls,
+        *,
+        timeout: float = TIMEOUT_SECONDS,
+        work_root: Path | None = None,
+        known_hosts: Path | None = None,
+    ) -> Self:
         """Find ``git`` on ``PATH``; raises ``GitNotInstalledError`` when it is missing."""
         git = shutil.which("git")
         if git is None:
             raise GitNotInstalledError
-        return cls(git=git, timeout=timeout, work_root=work_root)
+        return cls(git=git, timeout=timeout, work_root=work_root, known_hosts=known_hosts)
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def list_refs(
+        self,
+        repository: RepositoryUrl,
+        *patterns: str,
+        credential: Credential | None = None,
+    ) -> RemoteRefs:
         """Run ``git ls-remote --symref`` and parse it."""
         if repository.url.startswith("-") or any(p.startswith("-") for p in patterns):
             raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
@@ -191,10 +243,36 @@ class GitCli:
             ["ls-remote", "--symref", "--", repository.url, *patterns],
             cap=self.max_output,
             trust_local=local,
+            auth=_Auth.of(repository, credential),
         )
         if output.code:
-            raise _failure(output.stderr)
+            raise _failure(output.stderr, ssh=repository.transport == "ssh")
         return _parse(output.stdout.decode(errors="replace"))
+
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        """Return the ``SHA256:`` fingerprint ssh remembered for the host (ed25519 first)."""
+        keygen = shutil.which("ssh-keygen")
+        if repository.transport != "ssh" or self.known_hosts is None or keygen is None:
+            return None
+        port = urlsplit(repository.url).port if "://" in repository.url else None
+        name = f"[{repository.hostname}]:{port}" if port else repository.hostname
+        try:
+            process = await asyncio.create_subprocess_exec(
+                keygen, "-l", "-F", name, "-f", str(self.known_hosts),
+                stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL,
+            )  # fmt: skip
+            async with asyncio.timeout(5):
+                out, _ = await process.communicate()
+        except OSError, TimeoutError:
+            return None
+        found = [
+            line.split()
+            for line in out.decode(errors="replace").splitlines()
+            if line and not line.startswith("#")
+        ]
+        prints = [(parts[1], parts[-1]) for parts in found if len(parts) >= 3]  # ruff: ignore[magic-value-comparison]
+        prints.sort(key=lambda p: p[1] != "(ED25519)")
+        return prints[0][0] if prints and prints[0][0].startswith("SHA256:") else None
 
     @asynccontextmanager
     async def fetch(
@@ -204,6 +282,7 @@ class GitCli:
         selection: PathSelection,
         *,
         refs: Sequence[str] = (),
+        credential: Credential | None = None,
     ) -> AsyncGenerator[Path]:
         """Implement ``GitGateway.fetch`` (see the module docstring).
 
@@ -224,7 +303,10 @@ class GitCli:
             folder = Path(await asyncio.to_thread(_make_folder, self.work_root))
             try:
                 deadline = asyncio.get_running_loop().time() + self.fetch_timeout
-                await self._populate(folder, repository.url, commit_sha, selection, refs, deadline)
+                auth = _Auth.of(repository, credential)
+                await self._populate(
+                    folder, repository.url, commit_sha, selection, refs, deadline, auth
+                )
                 yield folder
             finally:
                 shutil.rmtree(folder, ignore_errors=True)
@@ -237,21 +319,25 @@ class GitCli:
         selection: PathSelection,
         refs: Sequence[str],
         deadline: float,
+        auth: _Auth | None = None,
     ) -> None:
         local = url.lower().startswith("file:")
 
         async def git(*args: str) -> _Output:
+            # every step may authenticate: checkout fetches the blobs it needs lazily
             return await self._run(
                 ["-C", str(folder), *args],
                 cap=_MAX_STEP_OUTPUT,
                 deadline=deadline,
                 trust_local=local,
                 watch=folder,
+                auth=auth,
             )
 
+        ssh = repository_url_is_ssh(url)
         init = await git("init", "-q", "--template=")
         if init.code:
-            raise _failure(init.stderr)
+            raise _failure(init.stderr, ssh=ssh)
         sparse = "\n".join(sparse_patterns(selection)) + "\n"
         await asyncio.to_thread(_write_config, folder, url, sparse)
         for target in (sha, *refs):
@@ -260,7 +346,7 @@ class GitCli:
                 "--no-recurse-submodules", "origin", target,
             )  # fmt: skip
             if out.code and not _GONE.search(out.stderr):
-                raise _failure(out.stderr)
+                raise _failure(out.stderr, ssh=ssh)
             if not out.code:
                 head = await git("rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}")
                 if head.stdout.decode().strip() == sha:
@@ -269,7 +355,7 @@ class GitCli:
             raise CommitUnavailableError
         out = await git("checkout", "-q", "--detach", "--no-recurse-submodules", sha)
         if out.code:
-            raise _failure(out.stderr)
+            raise _failure(out.stderr, ssh=ssh)
         size, count = await asyncio.to_thread(_measure, folder)
         if size > self.max_fetch_bytes or count > self.max_fetch_files:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
@@ -283,12 +369,14 @@ class GitCli:
         deadline: float | None = None,
         trust_local: bool = False,
         watch: Path | None = None,
+        auth: _Auth | None = None,
     ) -> _Output:
         """Run ``git <args>`` isolated (see the module docstring); the shared base for fetches.
 
         ``trust_local`` lets git read local repositories owned by another user. ``deadline`` (a
         loop time) replaces ``limit`` and is read once the slot is held. ``watch`` is a folder
-        whose size is limited while git runs (``RepositoryTooLargeError``).
+        whose size is limited while git runs (``RepositoryTooLargeError``). ``auth`` is made
+        available to this one process, in its private directory, and gone when it ends.
 
         Raises ``RepositoryUnreachableError`` when it runs out of time or prints more than
         ``cap`` bytes (the process group is killed at once). stderr is truncated and lower-cased
@@ -301,9 +389,17 @@ class GitCli:
                 if seconds <= 0:
                     reason = "it took too long"
                     raise RepositoryUnreachableError(reason)
-            with tempfile.TemporaryDirectory(prefix="exactdocs-git-") as home:
+            if self.work_root is not None:  # not the system temp dir: it may be mounted noexec
+                await asyncio.to_thread(self.work_root.mkdir, parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=_RUN_PREFIX, dir=self.work_root) as home:
                 return await self._execute(
-                    args, cap=cap, limit=seconds, home=home, trust_local=trust_local, watch=watch
+                    args,
+                    cap=cap,
+                    limit=seconds,
+                    home=home,
+                    trust_local=trust_local,
+                    watch=watch,
+                    auth=auth,
                 )
 
     async def _execute(
@@ -315,8 +411,11 @@ class GitCli:
         home: str,
         trust_local: bool,
         watch: Path | None = None,
+        auth: _Auth | None = None,
     ) -> _Output:
-        environment = _environment(home)
+        environment = _environment(home, self.known_hosts)
+        if auth is not None:
+            await asyncio.to_thread(_offer, environment, home, auth, self.known_hosts)
         if trust_local:
             config = Path(home, "gitconfig")
             await asyncio.to_thread(config.write_text, "[safe]\n\tdirectory = *\n", "utf-8")
@@ -365,9 +464,19 @@ class GitCli:
 class MissingGit:
     """Stands in for ``GitCli`` when there is no ``git``: every use says what to install."""
 
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+    async def list_refs(
+        self,
+        repository: RepositoryUrl,
+        *patterns: str,
+        credential: Credential | None = None,
+    ) -> RemoteRefs:
         """Refuse with ``GitNotInstalledError``."""
-        del repository, patterns
+        del repository, patterns, credential
+        raise GitNotInstalledError
+
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository
         raise GitNotInstalledError
 
     def fetch(
@@ -377,9 +486,10 @@ class MissingGit:
         selection: PathSelection,
         *,
         refs: Sequence[str] = (),
+        credential: Credential | None = None,
     ) -> AbstractAsyncContextManager[Path]:
         """Refuse with ``GitNotInstalledError``."""
-        del repository, commit_sha, selection, refs
+        del repository, commit_sha, selection, refs, credential
         return _no_git()
 
 
@@ -427,9 +537,10 @@ def sweep_stale_fetches(
     if work_root.is_symlink() or not work_root.is_dir():
         return
     limit = time.time() - older_than
-    for child in work_root.glob(_PREFIX + "*"):
-        if not child.is_symlink() and child.is_dir() and child.stat().st_mtime < limit:
-            shutil.rmtree(child, ignore_errors=True)
+    for prefix in (_PREFIX, _RUN_PREFIX):  # a crash can leave a call's credential files too
+        for child in work_root.glob(prefix + "*"):
+            if not child.is_symlink() and child.is_dir() and child.stat().st_mtime < limit:
+                shutil.rmtree(child, ignore_errors=True)
 
 
 def _measure(folder: Path) -> tuple[int, int]:
@@ -482,7 +593,53 @@ def _anchored(pattern: str) -> list[str] | None:
     return expanded if len(expanded) <= _MAX_BRACE_EXPANSIONS else None
 
 
-def _environment(home: str) -> dict[str, str]:
+@dataclass(frozen=True, slots=True)
+class _Auth:
+    """A credential and the only host it may be offered to."""
+
+    credential: Credential = field(repr=False)
+    scope: str  # `scheme://host[:port]`, lower-case
+
+    @classmethod
+    def of(cls, repository: RepositoryUrl, credential: Credential | None) -> Self | None:
+        return None if credential is None else cls(credential, repository.credential_scope)
+
+
+def _ssh_command(known_hosts: Path | None, key: str | None = None) -> str:
+    kept = ["-o", "UserKnownHostsFile=" + str(known_hosts or os.devnull)]
+    if key is None:
+        kept += ["-o", "PubkeyAuthentication=no"]
+    else:
+        kept += ["-i", key, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none"]
+    return shlex.join([*_SSH_BASE, *kept])
+
+
+def _write_private(path: Path, text: str, mode: int) -> None:
+    """Create ``path`` (it must not exist) with ``mode`` from the start, never wider."""
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _offer(environment: dict[str, str], home: str, auth: _Auth, known_hosts: Path | None) -> None:
+    """Make the credential available to one git process through its environment and ``home``."""
+    credential = auth.credential
+    if isinstance(credential, AccessToken):
+        script = Path(home, _ASKPASS_FILE)
+        _write_private(script, _ASKPASS, 0o700)
+        _write_private(Path(home, "askpass.base"), auth.scope + "\n", 0o600)
+        _write_private(Path(home, "askpass.user"), credential.username + "\n", 0o600)
+        _write_private(Path(home, "askpass.secret"), credential.token + "\n", 0o600)
+        environment["GIT_ASKPASS"] = str(script)
+    else:
+        key = Path(home, _KEY_FILE)
+        _write_private(key, credential.private_key, 0o600)
+        environment["GIT_SSH_COMMAND"] = _ssh_command(known_hosts, str(key))
+
+
+def _environment(home: str, known_hosts: Path | None = None) -> dict[str, str]:
     kept = {k: v for k, v in os.environ.items() if k.lower() in _PASSTHROUGH}
     return {
         **kept,
@@ -494,7 +651,7 @@ def _environment(home: str) -> dict[str, str]:
         "GIT_ATTR_NOSYSTEM": "1",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ALLOW_PROTOCOL": ALLOWED_PROTOCOLS,
-        "GIT_SSH_COMMAND": _SSH,
+        "GIT_SSH_COMMAND": _ssh_command(known_hosts),
         "LC_ALL": "C",
     }
 
@@ -522,9 +679,24 @@ def _kill_group(process: Process) -> None:
             os.killpg(process.pid, signal.SIGKILL)
 
 
+def repository_url_is_ssh(url: str) -> bool:
+    """Tell whether git reaches this URL over ssh (``ssh://`` or scp-like ``user@host:path``)."""
+    return "://" not in url or url.lower().startswith("ssh://")
+
+
 def _failure(
     stderr: str,
-) -> RepositoryUnreachableError | NotAGitRepositoryError | RepositoryAuthRequiredError:
+    *,
+    ssh: bool = False,
+) -> (
+    RepositoryUnreachableError
+    | NotAGitRepositoryError
+    | RepositoryAuthRequiredError
+    | HostKeyChangedError
+):
+    # Only ssh's own words count: an HTTP server could print them in a "remote:" message.
+    if ssh and _HOST_KEY_CHANGED.search(stderr):
+        return HostKeyChangedError()
     if _AUTH.search(stderr):
         return RepositoryAuthRequiredError()
     if _NOT_A_REPO.search(stderr):

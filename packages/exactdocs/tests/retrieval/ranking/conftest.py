@@ -20,6 +20,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
+from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.models import IMPORT_JOB, Job, JobId, RefKind
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs.retrieval.ports.driving import SearchDocs
@@ -74,6 +75,7 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
                 container.retrieval.discard_pending_chunks,
                 container.retrieval.remove_chunks,
             ),
+            vault=InMemoryCredentialVault(),
         )
         for ref, kind in VERSIONS.items():
             job = Job.queued(

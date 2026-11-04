@@ -86,6 +86,8 @@ ignore = [
     "ANN",
     "magic-value-comparison",
     "FBT",
+    "hardcoded-password-string",  # fake secrets in tests
+    "hardcoded-password-func-arg",
     "import-private-name",
     "implicit-namespace-package",
 ]

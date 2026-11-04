@@ -1,5 +1,6 @@
 """REST adapter for ingestion (consumed by the web UI)."""
 
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -41,6 +42,14 @@ from exactdocs.ingestion.ports.driving import (
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT
 
 
+async def _session_for(
+    require_session: Callable[[Request], Awaitable[object]], credential: object, request: Request
+) -> None:
+    """Demand a signed-in session when the request carries a credential."""
+    if credential is not None:
+        await require_session(request)
+
+
 def build_router(
     *,
     get_job: GetJob,
@@ -53,13 +62,23 @@ def build_router(
     remove_version: RemoveVersion,
     remove_library: RemoveLibrary,
     sync_library: SyncLibrary,
+    require_session: Callable[[Request], Awaitable[object]],
 ) -> APIRouter:
-    """Expose adding a library, the repository checks and the job read side."""
+    """Expose adding a library, the repository checks and the job read side.
+
+    ``require_session`` refuses (401) a request that is not signed in with a session cookie. A
+    request that carries a ``credential`` needs one: an API token (an MCP client's, say) may
+    read and add public docs, but must not set or replace what is used to read a private repo.
+    """
     router = APIRouter(tags=["ingestion"])
 
     @router.post("/repositories/check")
-    async def check(command: CheckRepositoryCommand) -> CheckedRepository:
-        """Check a git URL (nothing is saved); the URL is never echoed back."""
+    async def check(command: CheckRepositoryCommand, request: Request) -> CheckedRepository:
+        """Check a git URL (nothing is saved); the URL is never echoed back.
+
+        A `credential` needs a signed-in session, not an API token.
+        """
+        await _session_for(require_session, command.credential, request)
         return await check_repository(command)
 
     @router.get("/repositories/refs")
@@ -75,6 +94,7 @@ def build_router(
 
         `Location` is the new library.
         """
+        await _session_for(require_session, command.credential, request)
         added = await add_library(command)
         response.headers["Location"] = f"{request.url.path.rstrip('/')}{added.library_id}"
         return added
@@ -100,8 +120,11 @@ def build_router(
 
         The import is queued: `Location` is its job. A ref the library already has is a 409.
         """
+        await _session_for(require_session, body.credential, request)
         added = await add_version(
-            AddVersionCommand(library=f"/{owner}/{repo}".lower(), ref=body.ref)
+            AddVersionCommand(
+                library=f"/{owner}/{repo}".lower(), ref=body.ref, credential=body.credential
+            )
         )
         response.headers["Location"] = request.url_for("get_job", job_id=added.job_id).path
         return added

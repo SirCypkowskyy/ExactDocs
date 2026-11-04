@@ -34,6 +34,7 @@ dependencies = [
     "exactdocs-kernel=={{ version }}",
     "aiosqlite>=0.21",
     "argon2-cffi>=25",
+    "cryptography>=46",
     "alembic>=1.16",
     "cyclopts>=4",
     "fastapi>=0.120",

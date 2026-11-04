@@ -26,7 +26,9 @@ from markdown_it.token import Token
 
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
+    CredentialProblem,
     InvalidChunkingConfigError,
+    InvalidCredentialError,
     InvalidPathPatternError,
     InvalidProgressError,
     InvalidRepositoryUrlError,
@@ -544,6 +546,31 @@ class RepositoryUrl:
     host_kind: RepositoryHost
     library_id: ProposedId
 
+    @property
+    def transport(self) -> str:
+        """``https``, ``http``, ``ssh`` (also ``user@host:path``) or ``file``."""
+        return urlsplit(self.url).scheme.lower() if "://" in self.url else "ssh"
+
+    @property
+    def hostname(self) -> str:
+        """The lower-case host name (no user, no port); empty for ``file:``."""
+        if "://" in self.url:
+            return (urlsplit(self.url).hostname or "").lower()
+        match = _SCP_LIKE.fullmatch(self.url)
+        return match["host"].lower() if match else ""
+
+    @property
+    def authority(self) -> str:
+        """``host[:port]`` as git prints it in credential prompts; empty for scp-like URLs."""
+        if "://" not in self.url:
+            return ""
+        return urlsplit(self.url).netloc.rpartition("@")[2].lower()
+
+    @property
+    def credential_scope(self) -> str:
+        """``scheme://host[:port]``, lower-case: the only place a credential may be offered."""
+        return f"{self.transport}://{self.authority or self.hostname}"
+
     @classmethod
     def parse(cls, text: str) -> Self:
         """Validate ``text`` and propose a library ID (``/owner/repo``, lower-case)."""
@@ -625,6 +652,100 @@ def _id_segment(raw: str) -> str:
     if not segment or set(segment) == {"."}:
         raise InvalidRepositoryUrlError(UrlProblem.NO_ID)
     return segment
+
+
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AccessToken:
+    """An HTTPS token (a personal or project access token); ``username`` is what the host expects.
+
+    GitHub and GitLab accept any user name next to a token; Bitbucket repository tokens want
+    ``x-token-auth``. ``repr`` never shows the token.
+    """
+
+    token: str = field(repr=False)
+    username: str = "x-access-token"
+
+    def __post_init__(self) -> None:
+        if not self.token:
+            raise InvalidCredentialError(CredentialProblem.EMPTY)
+        if (
+            len(self.token) > _MAX_TOKEN
+            or not self.token.isprintable()
+            or self.token != self.token.strip()
+        ):
+            raise InvalidCredentialError(CredentialProblem.ONE_LINE)
+        if not _TOKEN_USER.fullmatch(self.username):
+            raise InvalidCredentialError(CredentialProblem.USERNAME)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeployKey:
+    """An SSH private key without a passphrase, kept in the OpenSSH or PEM text format."""
+
+    private_key: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        key = self.private_key.replace("\r\n", "\n").strip()
+        if not key:
+            raise InvalidCredentialError(CredentialProblem.EMPTY)
+        if len(key) > _MAX_KEY:
+            raise InvalidCredentialError(CredentialProblem.TOO_LONG)
+        lines = key.split("\n")
+        if (
+            not (lines[0].startswith("-----BEGIN ") and lines[0].endswith("PRIVATE KEY-----"))
+            or not lines[-1].startswith("-----END ")
+            or "ENCRYPTED" in lines[0]
+            or any(not line.isprintable() for line in lines)
+        ):
+            raise InvalidCredentialError(CredentialProblem.KEY)
+        object.__setattr__(self, "private_key", key + "\n")  # ssh wants the final newline
+
+
+Credential = AccessToken | DeployKey
+_MAX_TOKEN = 4096
+_MAX_KEY = 16 * 1024
+_TOKEN_USER = re.compile(r"[A-Za-z0-9._-]{1,100}")
+
+
+def check_credential_fits(repository: RepositoryUrl, credential: Credential) -> None:
+    """Refuse a credential the repository's transport cannot carry safely.
+
+    A token over plain ``http://`` would cross the network in the clear, so only localhost (a
+    local mirror, the test servers) may use it. A deploy key needs an SSH URL.
+    """
+    transport = repository.transport
+    if isinstance(credential, AccessToken):
+        if transport == "https" or (transport == "http" and repository.hostname in _LOOPBACK):
+            return
+        raise InvalidCredentialError(CredentialProblem.HTTPS_ONLY)
+    if transport != "ssh":
+        raise InvalidCredentialError(CredentialProblem.SSH_ONLY)
+
+
+def dump_credential(library: str, scope: str, credential: Credential) -> str:
+    """Serialize a credential for storage (always encrypted before it is written).
+
+    The library and the ``credential_scope`` it was given for are part of the text, so it opens
+    for that library and that host only.
+    """
+    if isinstance(credential, AccessToken):
+        body = {"kind": "token", "token": credential.token, "username": credential.username}
+    else:
+        body = {"kind": "ssh_key", "private_key": credential.private_key}
+    return json.dumps({"library": library, "scope": scope, **body})
+
+
+def load_credential(library: str, scope: str, text: str) -> Credential:
+    """Inverse of ``dump_credential``; ``ValueError`` when it is for another library or host."""
+    body = json.loads(text)
+    if body["library"] != library or body["scope"] != scope:
+        raise ValueError(library)  # a copied row, or the library now lives on another host
+    if body["kind"] == "token":
+        return AccessToken(token=body["token"], username=body["username"])
+    return DeployKey(private_key=body["private_key"])
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -5,6 +5,7 @@ and by the behave hooks in ``features/environment.py``. Run it as a script to bu
 repository by hand: ``python fixture_repo.py <destination>``.
 """
 
+import base64
 import contextlib
 import http.server
 import os
@@ -13,7 +14,7 @@ import subprocess
 import sys
 import threading
 import tomllib
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from io import BufferedIOBase
 from pathlib import Path
@@ -103,11 +104,24 @@ def build(dest: Path) -> Path:
     return dest
 
 
+TOKEN = "s3cr3t-fixture-token-4f1d9a"
+USER = "x-access-token"
+
+
 @dataclass(frozen=True, slots=True)
 class DocsRepo:
     path: Path
     file_url: str
     http_url: str  # smart HTTP on 127.0.0.1, served by `git http-backend`
+    private_url: str = ""  # the same repository, but only for HTTP Basic `x-access-token:TOKEN`
+    token: str = TOKEN
+    # (Host header, Authorization header) of every request the private server received
+    private_seen: list[tuple[str, str | None]] | None = None
+    # Answers every request with a redirect to the private server under another host name
+    # ("localhost" instead of "127.0.0.1"): a token must not follow it.
+    redirect_url: str = ""
+    # Asks for the token, then (once given) redirects to that other host name as well.
+    bounce_url: str = ""
 
 
 def _chunked(stream: BufferedIOBase) -> bytes:
@@ -120,7 +134,16 @@ def _chunked(stream: BufferedIOBase) -> bytes:
     return body
 
 
-def _handler(root: Path) -> type[http.server.BaseHTTPRequestHandler]:
+def _handler(  # ruff: ignore[complex-structure]
+    root: Path,
+    *,
+    token: str | None = None,
+    seen: list[tuple[str, str | None]] | None = None,
+    redirect_base: Callable[[], str] | None = None,
+    redirect_only_with_token: bool = False,
+) -> type[http.server.BaseHTTPRequestHandler]:
+    wanted = "Basic " + base64.b64encode(f"{USER}:{token}".encode()).decode() if token else None
+
     class GitHandler(http.server.BaseHTTPRequestHandler):
         """Speaks CGI to ``git http-backend`` (python's own CGI handler is being removed)."""
 
@@ -133,7 +156,23 @@ def _handler(root: Path) -> type[http.server.BaseHTTPRequestHandler]:
             else:
                 self._cgi(self.rfile.read(int(self.headers.get("Content-Length", 0))))
 
+        def _answer(self, code: int, *headers: tuple[str, str]) -> None:
+            self.send_response(code)
+            for key, value in headers:
+                self.send_header(key, value)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def _cgi(self, body: bytes) -> None:
+            if seen is not None:
+                seen.append((self.headers.get("Host", ""), self.headers.get("Authorization")))
+            allowed = wanted is None or self.headers.get("Authorization") == wanted
+            if redirect_base is not None and (allowed or not redirect_only_with_token):
+                self._answer(302, ("Location", redirect_base() + self.path))
+                return
+            if not allowed:
+                self._answer(401, ("WWW-Authenticate", 'Basic realm="git"'))
+                return
             url = urlsplit(self.path)
             env = _env(
                 GIT_PROJECT_ROOT=str(root),
@@ -185,16 +224,35 @@ def served(base: Path) -> Generator[DocsRepo]:
         Where the repository is and the two URLs to clone it from.
     """
     repo = build(base / REPO_PATH)
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _handler(base))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    seen: list[tuple[str, str | None]] = []
+    ports: dict[str, int] = {}
+
+    def start(**options: object) -> http.server.ThreadingHTTPServer:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _handler(base, **options))  # ty: ignore[invalid-argument-type]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server
+
+    def other_host() -> str:
+        return f"http://localhost:{ports['private']}"
+
+    servers = [
+        start(),
+        start(token=TOKEN, seen=seen),
+        start(redirect_base=other_host),
+        start(token=TOKEN, redirect_base=other_host, redirect_only_with_token=True),
+    ]
     try:
-        port = server.server_address[1]
-        yield DocsRepo(repo, repo.as_uri(), f"http://127.0.0.1:{port}/{REPO_PATH.as_posix()}.git")
+        ports["private"] = servers[1].server_address[1]
+        path = f"{REPO_PATH.as_posix()}.git"
+        urls = [f"http://127.0.0.1:{server.server_address[1]}/{path}" for server in servers]
+        yield DocsRepo(
+            repo, repo.as_uri(), urls[0],
+            private_url=urls[1], private_seen=seen, redirect_url=urls[2], bounce_url=urls[3],
+        )  # fmt: skip
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
+        for server in servers:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

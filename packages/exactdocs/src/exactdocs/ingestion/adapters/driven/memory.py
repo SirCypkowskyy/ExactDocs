@@ -3,12 +3,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self
 
-from exactdocs.ingestion.errors import VersionImportingError
+from exactdocs.ingestion.errors import CredentialsRequiredError, VersionImportingError
 from exactdocs.ingestion.models import (
     ACTIVE_JOB_STATES,
     IMPORT_KINDS,
     ArticleChunk,
     ImportedRef,
+    Credential,
     ImportedVersion,
     ImportSource,
     Job,
@@ -137,3 +138,27 @@ class NoIndex:
     async def remove(self, manifest_ids: Sequence[str]) -> None:
         """Not expected to be called."""
         raise NotImplementedError
+
+
+@dataclass(slots=True)
+class InMemoryCredentialVault:
+    """Implements ``ports.driven.CredentialVault``. For tests; nothing is encrypted."""
+
+    credentials: dict[str, Credential] = field(default_factory=dict)
+    scopes: dict[str, str] = field(default_factory=dict)  # of the credentials saved through here
+
+    async def save(self, library: str, scope: str, credential: Credential) -> None:
+        """Store the library's credential."""
+        self.credentials[library] = credential
+        self.scopes[library] = scope
+
+    async def load(self, library: str, scope: str) -> Credential | None:
+        """Return the library's credential, or ``None``; one saved for another scope is refused."""
+        if self.scopes.get(library, scope) != scope:
+            raise CredentialsRequiredError
+        return self.credentials.get(library)
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's credential."""
+        self.credentials.pop(library, None)
+        self.scopes.pop(library, None)
