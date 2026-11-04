@@ -106,6 +106,11 @@ manifest_chunks = Table(
     ),
     Index("ix_retrieval_manifest_chunks_article", "manifest_id", "article_path", "position"),
     Index("ix_retrieval_manifest_chunks_chunk_id", "chunk_id"),
+    # The search joins an FTS hit to its manifests by this key: covering, so one probe per
+    # (hit, manifest) however many manifests are searched.
+    Index(
+        "ix_retrieval_manifest_chunks_join", "blob_sha", "config_hash", "position", "manifest_id"
+    ),
 )
 
 
@@ -261,7 +266,8 @@ class SqliteChunkRepository:
         if not wanted:
             return {}
         # Chunk IDs hash their version, so the cross product of the two lists holds little more
-        # than the wanted pairs; the rest is dropped below.
+        # than the wanted pairs (at most 51 manifests x 51 IDs: a page of results); the rest is
+        # dropped below.
         every_id = list({i for ids in wanted.values() for i in ids})
         query = (
             _stored_chunks()

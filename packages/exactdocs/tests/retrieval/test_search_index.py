@@ -21,7 +21,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.adapters.driven.sqlite_fts import _SEARCHES, SqliteSearchIndex
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -344,6 +344,26 @@ async def test_counts_per_manifest_are_not_capped_and_leave_out_zeros(world: Wor
     assert await world.search.count_many(ask, "()*", TagFilter()) == {}
 
 
+async def test_the_all_tag_filter_across_manifests_keeps_chunks_with_every_tag(
+    world: World,
+) -> None:
+    both = {"a.md": ("blob-a", [section("A", "token")])}
+    one = {"b.md": ("blob-b", [section("B", "token")])}
+    await world.index("m1", "v1", both, tags=["api", "auth"])
+    await world.index("m2", "v1", one, tags=["api"])
+
+    for tags, match, wanted in [
+        (("api", "auth"), TagMatch.ALL, {"m1": 1}),
+        (("api",), TagMatch.ALL, {"m1": 1, "m2": 1}),
+        (("auth", "billing"), TagMatch.ALL, {}),
+        (("auth", "billing"), TagMatch.ANY, {"m1": 1}),
+    ]:
+        tag_filter = TagFilter(tags=tags, match=match)
+        found = await world.search.search_many(["m1", "m2"], "token", tag_filter, 10)
+        assert {f.manifest_id: 1 for f in found} == wanted
+        assert await world.search.count_many(["m1", "m2"], "token", tag_filter) == wanted
+
+
 async def test_collecting_a_manifest_takes_its_index_entries_with_it(world: World) -> None:
     await world.index("m13", "v1.3.0", V13)
     await world.index("m14", "v1.4.0", V14)
@@ -447,3 +467,36 @@ async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -
     first, _ = await world.find("m1", "timeout")
 
     assert first.snippet.startswith("timeout is")
+
+
+async def test_the_search_plan_materializes_the_ranking_and_joins_through_the_covering_index() -> (
+    None
+):
+    """The join order is what keeps a search at milliseconds (a bad plan took seconds).
+
+    Plan shape on SQLite 3.35+: rank first (MATERIALIZE), probe the manifest rows by the covering
+    index, and only then fetch snippets for the survivors.
+    """
+    container = Container.build(Settings())
+    async with container.running():
+        statement = _SEARCHES[None]
+        params = {
+            "heading_weight": 1.0,
+            "path_weight": 1.0,
+            "text_weight": 1.0,
+            "identifiers_weight": 1.0,
+            "match": '"x"',
+            "manifests": ["a", "b"],
+            "limit": 5,
+        }
+        async with container.engine.connect() as connection:
+            plan = (
+                await connection.execute(text("EXPLAIN QUERY PLAN " + str(statement)), params)
+            ).all()
+    steps = [row.detail for row in plan]
+    assert any(step.startswith("MATERIALIZE ranked") for step in steps), steps
+    probe = [s for s in steps if s.startswith("SEARCH mc USING")]
+    assert probe
+    assert "ix_retrieval_manifest_chunks_join" in probe[0], steps
+    assert "manifest_id=?" in probe[0], steps
+    assert not any(s.startswith("SCAN r") for s in steps), steps

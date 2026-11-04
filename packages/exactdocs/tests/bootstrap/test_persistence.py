@@ -3,6 +3,7 @@
 import asyncio
 import os
 import shutil
+import sqlite3
 import stat
 import textwrap
 from pathlib import Path
@@ -23,6 +24,7 @@ from exactdocs.bootstrap.database import (
     alembic_config,
     current_revision,
     migrate,
+    open_database,
 )
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
@@ -247,3 +249,13 @@ async def test_processes_starting_together_all_migrate_an_empty_database(
                 return await current_revision(container.engine)
 
         assert await asyncio.gather(*(start(c) for c in containers)) == [head()] * 8
+
+
+def test_an_sqlite_older_than_the_floor_stops_startup_with_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+    monkeypatch.setattr(sqlite3, "sqlite_version", "3.34.1")
+
+    with pytest.raises(StartupError, match=r"SQLite 3\.34\.1 is too old.*3\.35"):
+        open_database(Settings())

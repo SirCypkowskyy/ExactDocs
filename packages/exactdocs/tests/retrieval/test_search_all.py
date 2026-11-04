@@ -223,3 +223,18 @@ async def test_blank_text_and_bad_input_are_refused(world: Fixture) -> None:
     with pytest.raises(ValidationError):
         SearchAllQuery(query="x", library="not an id")
     assert SearchAllQuery(query="x", library=" ").library is None
+
+
+async def test_a_library_beyond_the_cap_is_searched_and_no_longer_counted_as_omitted(
+    world: Fixture,
+) -> None:
+    last = f"/o/l{MAX_SEARCHED_LIBRARIES + 2:04d}"
+    world.libraries.extend(lib(f"/o/l{i:04d}") for i in range(1, MAX_SEARCHED_LIBRARIES + 2))
+    for library in ("/o/l0000", last):
+        await world.add(library, "v1", {"a.md": [chunk("T", "token")]})
+
+    found = await world.retrieval.search_all_libraries(SearchAllQuery(query="token", library=last))
+
+    assert [r.library for r in found.results] == [last]
+    assert {f.library for f in found.libraries} == {"/o/l0000", last}
+    assert (found.libraries_searched, found.libraries_omitted) == (2, 2)

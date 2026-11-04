@@ -36,7 +36,8 @@ uvx exactdocs serve
 ```
 
 `uvx exactdocs serve` needs `git` on your `PATH` and refuses to start without it (the import runs
-`git`). Python 3.14 is fetched by `uv` when it is missing. Then open <http://localhost:3000>. For an
+`git`). Python 3.14 is fetched by `uv` when it is missing; SQLite 3.35 or newer is required (uv's
+Python and the Docker image have it, otherwise ExactDocs refuses to start). Then open <http://localhost:3000>. For an
 agent that only reads an existing database, `uvx exactdocs serve --stdio` needs no `git` and no port.
 
 A fresh instance offers nothing but its setup: until the first admin account exists, every

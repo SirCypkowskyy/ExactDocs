@@ -166,7 +166,7 @@ class InMemorySearchIndex:
     async def count_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
     ) -> Mapping[str, int]:
-        """Return how many chunks of each manifest match."""
+        """Return how many chunks of each manifest match (reference only: it scores every chunk)."""
         counts = {
             m: len(await self.search(m, query, tag_filter, sys.maxsize))
             for m in dict.fromkeys(manifest_ids)

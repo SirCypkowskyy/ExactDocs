@@ -168,7 +168,11 @@ class SearchAllLibrariesUseCase:
     chunks: ChunkRepository
 
     async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
-        """Rank the chunks of all default versions together; count the matches per library."""
+        """Rank the chunks of all default versions together; count the matches per library.
+
+        There is no ``mode`` (BM25 only until E11), unlike ``search_docs``. With ``library`` set
+        every library is still resolved: the counts stay global, which a facet needs.
+        """
         text = SearchText(value=query.query)
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         searched, omitted = await self._default_versions()
@@ -177,7 +181,9 @@ class SearchAllLibrariesUseCase:
             only = await self.versions.find(query.library, None)
             if only is None:
                 raise VersionNotIndexedError(query.library, "(default version)")
-            searched[only.manifest_id] = only
+            if only.manifest_id not in searched:  # beyond the cap: searched, so no longer omitted
+                searched[only.manifest_id] = only
+                omitted -= 1
             scope = {only.manifest_id: only}
         # One more than asked for tells whether the answer was cut short.
         found_hits, counts = await asyncio.gather(
