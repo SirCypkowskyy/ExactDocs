@@ -14,9 +14,9 @@ const library = (over: Record<string, unknown> = {}) => {
     id: "/acme/payments",
     title: "Payments",
     description: "",
-    versions,
     default_version: "v1.4.0",
     source_url: "https://github.com/acme/payments.git",
+    version_count: versions.length,
     refs: versions.map((ref) => ({
       ref,
       kind: ref === "main" ? "branch" : "tag",

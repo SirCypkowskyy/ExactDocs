@@ -163,7 +163,7 @@ def step_libraries(context: Context) -> None:
         for row in context.table or []
     ]
     actual = [
-        (lib["id"], lib["versions"], lib["default_version"])
+        (lib["id"], [v["ref"] for v in lib["refs"]], lib["default_version"])
         for lib in context.response.json()["libraries"]
     ]
     assert actual == expected, actual

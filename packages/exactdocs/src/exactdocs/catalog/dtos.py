@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from exactdocs.catalog.models import (
     GarbageCollected,
@@ -19,7 +19,14 @@ from exactdocs.catalog.models import (
     TagSelection,
     Version,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_TAG_LENGTH, Page
+from exactdocs_kernel import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    MAX_NAME,
+    MAX_TAG_LENGTH,
+    NOTICE,
+    Page,
+)
 
 
 class _Dto(BaseModel):
@@ -94,16 +101,25 @@ class ResolvedVersion(VersionOut):
         return cls(library=str(library.id), **found.model_dump())
 
 
+MAX_SUMMARY_REFS = 50
+
+
 class LibrarySummary(_Dto):
-    """A library and its version refs, sorted."""
+    """A library and its imported versions."""
 
     id: str
     title: str
     description: str
-    versions: list[str]
     default_version: str | None
     source_url: str
-    refs: list[VersionOut] = Field(description="The imported versions, with their commits.")
+    refs: list[VersionOut] = Field(
+        description=(
+            "The imported versions with kind, commit SHA and default flag: the default one, then "
+            f"the most recently imported, at most {MAX_SUMMARY_REFS}, sorted by ref. "
+            "Pass any ref as `ref` to `list_articles` or `search_docs`."
+        )
+    )
+    version_count: int = Field(description="How many versions are imported; `refs` may hold fewer.")
     tags: list[str] = Field(description="The tags the library's tag rules give its articles.")
     last_imported_at: datetime | None = Field(
         description="When any version was last imported; null while none is."
@@ -113,17 +129,19 @@ class LibrarySummary(_Dto):
     def from_model(cls, library: Library) -> Self:
         """Map a domain entity to its boundary representation."""
         default = library.default_version()
+        newest = sorted(library.versions, key=lambda v: v.imported_at, reverse=True)
+        shown = ([default] if default else []) + [v for v in newest if v != default]
         return cls(
             id=str(library.id),
             title=library.title,
             description=library.description,
-            versions=sorted(str(v.ref) for v in library.versions),
             default_version=str(default.ref) if default else None,
             source_url=library.source_url,
             refs=[
                 VersionOut.from_model(v, is_default=v == default)
-                for v in sorted(library.versions, key=lambda v: v.ref.value)
+                for v in sorted(shown[:MAX_SUMMARY_REFS], key=lambda v: v.ref.value)
             ],
+            version_count=len(library.versions),
             tags=sorted({rule.tag for rule in library.settings.tag_rules}),
             last_imported_at=max((v.imported_at for v in library.versions), default=None),
         )
@@ -174,6 +192,12 @@ class ListLibrariesQuery(_Dto):
 
 class LibraryList(_Dto):
     """A page of the libraries visible to the caller, sorted by ID."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
 
     libraries: list[LibrarySummary]
     next_cursor: str | None = Field(
@@ -332,14 +356,30 @@ class ListArticlesQuery(_Dto):
     ref: str | None = None
     path_prefix: str = Field(
         default="",
+        max_length=MAX_NAME,
         description=(
             "Only paths inside this directory: `guide` matches `guide/install.md`, "
-            "not `guide-old/x.md`. Empty lists everything."
+            "not `guide-old/x.md`. Matched literally against stored paths; empty lists everything."
         ),
     )
     tag_filter: TagFilter = Field(default_factory=TagFilter, description="Applied before paging.")
     limit: Limit = DEFAULT_LIMIT
-    cursor: str | None = None
+    cursor: str | None = Field(default=None, description="Opaque: only ever a `next_cursor`.")
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("path_prefix")
+    @classmethod
+    def _clean_path_prefix(cls, value: str) -> str:
+        """Drop `.` and empty segments (`./guide//x`); refuse `..` and backslashes."""
+        segments = [s for s in value.split("/") if s not in {"", "."}]
+        if ".." in segments or "\\" in value:
+            message = "path_prefix must be a plain `/`-separated directory"
+            raise ValueError(message)
+        return "/".join(segments)
 
 
 class ArticleSummary(_Dto):
@@ -358,6 +398,12 @@ class ArticleSummary(_Dto):
 
 class ArticleList(_Dto):
     """A page of articles of one manifest, sorted by path."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
 
     library: str
     ref: str

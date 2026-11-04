@@ -86,7 +86,9 @@ async def test_lists_libraries_sorted_by_id_with_sorted_refs_and_the_default(
         ("/acme/ledger", "main"),
         ("/acme/payments", "v1.4.0"),
     ]
-    assert result.libraries[2].versions == sorted(result.libraries[2].versions)
+    refs = [v.ref for v in result.libraries[2].refs]
+    assert refs == sorted(refs)
+    assert result.libraries[2].version_count == len(refs)
 
 
 async def test_get_library_matches_the_id_case_insensitively(catalog: CatalogModule) -> None:

@@ -34,6 +34,13 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   `test_domain_has_the_standard_module_set` is green.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 
+## MCP tool snapshot
+
+`packages/exactdocs/tests/bootstrap/snapshots/mcp_tools.json` is the public contract of the MCP
+tools (descriptions, annotations, input and output schemas). A failing diff is a contract change:
+review it, then refresh with `UPDATE_SNAPSHOTS=1 uv run pytest packages/exactdocs/tests/bootstrap/test_mcp_browse.py`.
+A dependency bump can also change it; check that the diff is only generated noise.
+
 ## Commands
 
 ```bash

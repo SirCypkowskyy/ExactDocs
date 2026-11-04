@@ -53,7 +53,7 @@ function byVersionDesc(a: string, b: string): number {
 /** The default version first, then tags by semver descending, then branches and commits. */
 export function orderedVersions(library: Library): string[] {
   const kinds = new Map(library.refs.map((r) => [r.ref, r.kind]));
-  const rest = library.versions.filter((v) => v !== library.default_version);
+  const rest = library.refs.map((r) => r.ref).filter((v) => v !== library.default_version);
   const tags = rest.filter((v) => (kinds.get(v) ?? "tag") === "tag").sort(byVersionDesc);
   const others = rest.filter((v) => (kinds.get(v) ?? "tag") !== "tag").sort();
   return [...(library.default_version ? [library.default_version] : []), ...tags, ...others];
