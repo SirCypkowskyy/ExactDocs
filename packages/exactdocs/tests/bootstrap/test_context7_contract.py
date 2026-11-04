@@ -13,9 +13,12 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.dtos import MAX_QUERY
 from exactdocs_kernel import MAX_NAME
 
+CONTRACT_DIR = Path(__file__).parents[1] / "contracts" / "context7"
+# Every tool file; `session.json` is the recorded session, replayed in its own test.
 CONTRACTS = {
     path.stem: json.loads(path.read_text(encoding="utf-8"))
-    for path in sorted((Path(__file__).parents[1] / "contracts" / "context7").glob("*.json"))
+    for path in sorted(CONTRACT_DIR.glob("*.json"))
+    if path.stem != "session"
 }
 
 
@@ -30,7 +33,13 @@ async def test_the_tool_name_and_arguments_are_a_superset_of_context7s(
     assert tool is not None, f"ExactDocs has no tool {pinned['name']}"
     ours, theirs = tool.input_schema, pinned["inputSchema"]
     for name, spec in theirs["properties"].items():
-        assert ours["properties"][name]["type"] == spec["type"], name
+        ours_spec = ours["properties"][name]
+        # An optional argument is `string | null` on our side (anyOf); a client sending the
+        # string must still be accepted.
+        types = (
+            {ours_spec["type"]} if "type" in ours_spec else {a["type"] for a in ours_spec["anyOf"]}
+        )
+        assert spec["type"] in types, name
     # Same required arguments: a client that sends only context7's arguments must be accepted.
     assert set(ours.get("required", [])) == set(theirs["required"])
 

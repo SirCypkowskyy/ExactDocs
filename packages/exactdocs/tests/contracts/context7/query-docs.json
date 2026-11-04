@@ -1,0 +1,12 @@
+{
+  "name": "query-docs",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "libraryId": {"type": "string"},
+      "query": {"type": "string"},
+      "language": {"type": "string"}
+    },
+    "required": ["libraryId", "query"]
+  }
+}

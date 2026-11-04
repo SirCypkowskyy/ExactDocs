@@ -1,0 +1,27 @@
+{
+  "recorded_with": "@upstash/context7-mcp 4.5.0, a Claude Code session answering 'protect routes in Next.js with middleware'",
+  "calls": [
+    {
+      "tool": "resolve-library-id",
+      "arguments": {
+        "libraryName": "Next.js",
+        "query": "How do I protect routes with authentication middleware in Next.js 15?"
+      }
+    },
+    {
+      "tool": "query-docs",
+      "arguments": {
+        "libraryId": "/vercel/next.js/v15.1.8",
+        "query": "How to protect routes with authentication middleware and a matcher config",
+        "language": "TypeScript"
+      }
+    },
+    {
+      "tool": "query-docs",
+      "arguments": {
+        "libraryId": "/vercel/next.js",
+        "query": "middleware matcher config"
+      }
+    }
+  ]
+}
