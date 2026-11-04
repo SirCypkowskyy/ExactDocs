@@ -1,8 +1,21 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Self
 
-from exactdocs.retrieval.models import DocTarget, Excerpt, SearchText
+from exactdocs.retrieval.errors import ChunkSetMismatchError
+from exactdocs.retrieval.models import (
+    ChunkId,
+    ChunkSet,
+    ChunkSetKey,
+    DocTarget,
+    Excerpt,
+    IndexedManifest,
+    ManifestChunk,
+    Removed,
+    SearchText,
+    StoredChunk,
+)
 
 
 @dataclass(slots=True)
@@ -24,3 +37,63 @@ class InMemoryExcerptIndex:
         needle = text.value.casefold()
         hits = (e for e in self.excerpts if e.target == target and needle in e.text.casefold())
         return [hit for _, hit in zip(range(limit), hits, strict=False)]
+
+
+@dataclass(slots=True)
+class InMemoryChunkRepository:
+    """Implements ``ports.driven.ChunkRepository`` with dictionaries."""
+
+    chunk_sets: dict[ChunkSetKey, ChunkSet] = field(default_factory=dict)
+    manifests: dict[str, IndexedManifest] = field(default_factory=dict)
+    rows: dict[str, dict[ChunkId, ManifestChunk]] = field(default_factory=dict)
+
+    async def add(
+        self,
+        manifest: IndexedManifest,
+        chunk_sets: Mapping[ChunkSetKey, ChunkSet],
+        rows: Sequence[ManifestChunk],
+    ) -> int | None:
+        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed."""
+        if manifest.manifest_id in self.manifests:
+            return None
+        for key, value in chunk_sets.items():
+            if key in self.chunk_sets and self.chunk_sets[key].digest != value.digest:
+                raise ChunkSetMismatchError(*key)
+        new = {key: value for key, value in chunk_sets.items() if key not in self.chunk_sets}
+        self.chunk_sets |= new
+        self.manifests[manifest.manifest_id] = manifest
+        self.rows[manifest.manifest_id] = {row.chunk_id: row for row in rows}
+        return len(new)
+
+    async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
+        """Return one chunk of the manifest with its content, or ``None``."""
+        row = self.rows.get(manifest_id, {}).get(chunk_id)
+        if row is None:
+            return None
+        chunk = self.chunk_sets[row.chunk_set].chunks[row.position]
+        version_id = self.manifests[manifest_id].version_id
+        return StoredChunk(manifest_id=manifest_id, version_id=version_id, row=row, chunk=chunk)
+
+    async def find_manifests(
+        self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
+    ) -> Sequence[IndexedManifest]:
+        """Return the indexed manifests that match every given filter."""
+        return [
+            m
+            for m in self.manifests.values()
+            if manifest_id in {None, m.manifest_id}
+            and library in {None, m.library}
+            and (indexed_before is None or m.indexed_at < indexed_before)
+        ]
+
+    async def remove(self, manifest_ids: Collection[str]) -> Removed:
+        """Delete these manifests' rows, then every chunk set no row points at."""
+        # O(all rows) per call: a test double, not a place to optimise.
+        gone = [i for i in manifest_ids if self.manifests.pop(i, None) is not None]
+        for manifest_id in gone:
+            del self.rows[manifest_id]
+        used = {row.chunk_set for rows in self.rows.values() for row in rows.values()}
+        unused = [key for key in self.chunk_sets if key not in used]
+        for key in unused:
+            del self.chunk_sets[key]
+        return Removed(manifests=len(gone), chunk_sets=len(unused))

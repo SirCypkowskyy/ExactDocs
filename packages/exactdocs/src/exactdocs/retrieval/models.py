@@ -1,10 +1,16 @@
 """Retrieval value objects. Pure Python: no frameworks, no I/O."""
 
+import hashlib
+import json
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
 from itertools import groupby
+from typing import NewType
 
-from exactdocs.retrieval.errors import EmptySearchTextError
+from exactdocs.retrieval.errors import DuplicateChunkError, EmptySearchTextError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -99,3 +105,147 @@ def _split_case(segment: str) -> list[str]:
             start = i
     parts.append(segment[start:])
     return parts
+
+
+ChunkId = NewType("ChunkId", str)
+type ChunkSetKey = tuple[str, str]  # (git blob SHA, chunking-config hash)
+
+
+def chunk_id(
+    version_id: str,
+    article_path: str,
+    heading_path: Sequence[str],
+    occurrence_index: int,
+    content_hash: str,
+) -> ChunkId:
+    """Return the ID of a chunk inside one version, a pure function of where and what it is.
+
+    ``version_id`` is ``<library>/<ref>`` (`/acme/payments/main`). The same section of an
+    unchanged article keeps its ID when the version moves to a new commit, and the same blob in
+    another version gets another ID, so ``read_chunk`` names exactly one chunk. The fields are
+    JSON-encoded so no separator can make two different inputs collide.
+    """
+    payload = json.dumps(
+        [version_id, article_path, list(heading_path), occurrence_index, content_hash],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return ChunkId(hashlib.sha256(payload.encode()).hexdigest()[:32])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Chunk:
+    """One section of an article, as the chunker cut it."""
+
+    heading_path: tuple[str, ...]
+    occurrence_index: int  # 0 for the first heading with this text, 1 for the next one, ...
+    content: str
+    content_hash: str
+    anchor: str
+    code_languages: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChunkSet:
+    """The ordered chunks of one blob under one chunking config; shared by every version."""
+
+    blob_sha: str
+    config_hash: str
+    chunks: tuple[Chunk, ...]
+
+    @property
+    def key(self) -> ChunkSetKey:
+        """Where the set is stored."""
+        return (self.blob_sha, self.config_hash)
+
+    @property
+    def digest(self) -> str:
+        """Fingerprint of the chunks, to notice a set stored under the same key but cut differently.
+
+        A key is (blob, ``config_hash``); the caller must change ``config_hash`` whenever the
+        chunker changes. The repository compares digests so a forgotten bump fails loudly.
+        """
+        parts = [
+            [list(c.heading_path), c.occurrence_index, c.content_hash, c.anchor]
+            for c in self.chunks
+        ]
+        return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestChunk:
+    """A chunk as one manifest sees it: its ID, its place in the article and the article's tags."""
+
+    chunk_id: ChunkId
+    article_path: str
+    position: int  # 0-based index in the article
+    total: int
+    prev_chunk_id: ChunkId | None
+    next_chunk_id: ChunkId | None
+    tags: tuple[str, ...]
+    chunk_set: ChunkSetKey
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IndexedManifest:
+    """A catalog manifest that has chunk rows. Its ID is held by value."""
+
+    manifest_id: str
+    version_id: str  # `<library>/<ref>`, as in `chunk_id`
+    library: str
+    indexed_at: datetime
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoredChunk:
+    """A chunk with its content, as ``read_chunk`` returns it."""
+
+    manifest_id: str
+    version_id: str  # `<library>/<ref>` the manifest was indexed under
+    row: ManifestChunk
+    chunk: Chunk
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Removed:
+    """What a discard or collection deleted."""
+
+    manifests: int
+    chunk_sets: int
+
+
+class ManifestStatus(StrEnum):
+    """What the catalog says about a manifest ID; an unknown ID is absent from its answer."""
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    OTHER = "other"  # a state this domain does not know; never remove such a manifest
+
+
+def article_chunk_rows(
+    version_id: str,
+    article_path: str,
+    chunk_set: ChunkSet,
+    tags: tuple[str, ...],
+) -> list[ManifestChunk]:
+    """Return the rows one article contributes to a manifest, linked to their neighbours."""
+    ids = [
+        chunk_id(version_id, article_path, c.heading_path, c.occurrence_index, c.content_hash)
+        for c in chunk_set.chunks
+    ]
+    if len(set(ids)) != len(ids):
+        raise DuplicateChunkError(article_path)
+    return [
+        ManifestChunk(
+            chunk_id=id_,
+            article_path=article_path,
+            position=i,
+            total=len(ids),
+            prev_chunk_id=ids[i - 1] if i else None,
+            next_chunk_id=ids[i + 1] if i + 1 < len(ids) else None,
+            tags=tags,
+            chunk_set=chunk_set.key,
+        )
+        for i, id_ in enumerate(ids)
+    ]

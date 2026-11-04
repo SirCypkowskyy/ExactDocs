@@ -194,6 +194,31 @@ async def test_a_stored_manifest_comes_back_pending_with_everything_in_it(stores
     assert await stores.manifests.get(ManifestId("nope")) is None
 
 
+async def test_get_many_returns_the_known_manifests_and_leaves_unknown_ids_out(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b2")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    found = await stores.manifests.get_many([ManifestId(i) for i in ("m1", "m2", "nope")])
+
+    assert {i: m.state for i, m in found.items()} == {
+        ManifestId("m1"): ManifestState.ACTIVE,
+        ManifestId("m2"): ManifestState.PENDING,
+    }
+    assert all(m.entries == () for m in found.values())
+    assert await stores.manifests.get_many([]) == {}
+
+
+async def test_get_many_copes_with_more_ids_than_a_query_can_bind(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+
+    ids = [ManifestId("m1"), *(ManifestId(f"ghost{i}") for i in range(1200))]
+
+    assert set(await stores.manifests.get_many(ids)) == {ManifestId("m1")}
+
+
 async def test_a_pending_manifest_is_invisible_until_it_is_activated(stores: Stores) -> None:
     await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
     await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b2")))

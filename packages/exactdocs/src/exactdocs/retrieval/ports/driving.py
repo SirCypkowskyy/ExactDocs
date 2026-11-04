@@ -2,12 +2,62 @@
 
 from typing import Protocol
 
-from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
+from exactdocs.retrieval.dtos import (
+    ChunkOut,
+    CollectChunksCommand,
+    DiscardPendingChunksCommand,
+    GetChunkQuery,
+    IndexedManifestOut,
+    IndexManifestCommand,
+    RemovedChunks,
+    SearchDocsQuery,
+    SearchDocsResult,
+)
 
 
 class SearchDocs(Protocol):
     """Hybrid search within one library version; raises ``VersionNotIndexedError``."""
 
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
+        """Run the use case."""
+        ...
+
+
+class IndexManifest(Protocol):
+    """Store the chunks of a catalog manifest, invisible until the catalog activates it.
+
+    Idempotent: a manifest ID that is already indexed changes nothing and returns the same IDs.
+    Raises ``DuplicateChunkError`` when two chunks of an article would share an ID.
+    """
+
+    async def __call__(self, command: IndexManifestCommand) -> IndexedManifestOut:
+        """Run the use case."""
+        ...
+
+
+class GetChunk(Protocol):
+    """Read one chunk of a version's active manifest.
+
+    Raises ``VersionNotIndexedError`` or ``ChunkNotFoundError``; chunks of pending or superseded
+    manifests are never returned.
+    """
+
+    async def __call__(self, query: GetChunkQuery) -> ChunkOut:
+        """Run the use case."""
+        ...
+
+
+class DiscardPendingChunks(Protocol):
+    """Delete the chunk rows of manifests that never became active (never "all")."""
+
+    async def __call__(self, command: DiscardPendingChunksCommand) -> RemovedChunks:
+        """Run the use case."""
+        ...
+
+
+class CollectChunks(Protocol):
+    """Delete chunk rows of manifests the catalog collected, then unused chunk sets."""
+
+    async def __call__(self, command: CollectChunksCommand) -> RemovedChunks:
         """Run the use case."""
         ...

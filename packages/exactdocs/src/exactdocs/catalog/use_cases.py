@@ -7,6 +7,7 @@ from uuid import uuid4
 from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
+    ActiveManifest,
     Article,
     ArticleList,
     ArticleSummary,
@@ -14,12 +15,15 @@ from exactdocs.catalog.dtos import (
     CollectionResult,
     DiscardedManifests,
     DiscardPendingManifestsCommand,
+    GetActiveManifestQuery,
     GetArticleQuery,
     GetLibraryQuery,
+    GetManifestStatesQuery,
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ManifestStates,
     ResolvedVersion,
     ResolveVersionQuery,
     StoredManifest,
@@ -255,3 +259,37 @@ class CollectGarbageUseCase:
         cutoff = self.clock.now() - timedelta(seconds=command.grace_seconds)
         collected = await self.manifests.collect_garbage(superseded_before=cutoff)
         return CollectionResult.from_model(collected)
+
+
+@dataclass(frozen=True, slots=True)
+class GetManifestStatesUseCase:
+    """Implements ``ports.driving.GetManifestStates``."""
+
+    manifests: ManifestRepository
+
+    async def __call__(self, query: GetManifestStatesQuery) -> ManifestStates:
+        """Look each ID up; unknown ones are left out."""
+        found = await self.manifests.get_many(
+            [ManifestId(i) for i in dict.fromkeys(query.manifest_ids)]
+        )
+        return ManifestStates(states={i: m.state for i, m in found.items()})
+        return ManifestStates(states={m.id: m.state for m in found if m is not None})
+
+
+@dataclass(frozen=True, slots=True)
+class GetActiveManifestUseCase:
+    """Implements ``ports.driving.GetActiveManifest``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: GetActiveManifestQuery) -> ActiveManifest:
+        """Name the version's active manifest; unknown library or version raise not-found."""
+        ref = VersionRef(query.ref) if query.ref else None
+        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        manifest = await self.manifests.get_active(library.id, version.ref)
+        return ActiveManifest(
+            library=str(library.id),
+            ref=str(version.ref),
+            manifest_id=None if manifest is None else manifest.id,
+        )

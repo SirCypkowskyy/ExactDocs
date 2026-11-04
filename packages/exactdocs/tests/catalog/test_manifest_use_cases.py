@@ -16,6 +16,7 @@ from exactdocs.catalog.dtos import (
     ArticleIn,
     CollectGarbageCommand,
     DiscardPendingManifestsCommand,
+    GetActiveManifestQuery,
     GetArticleQuery,
     ListArticlesQuery,
     ResolveVersionQuery,
@@ -172,6 +173,21 @@ async def test_activating_swaps_content_listing_and_commit_together(world: World
         GetArticleQuery(library="/acme/payments", ref="main", path="guide/install.md")
     )
     assert read.content == "new"
+
+
+async def test_the_active_manifest_of_a_version_is_named_even_when_it_has_no_articles(
+    world: World,
+) -> None:
+    query = GetActiveManifestQuery(library="/acme/payments", ref="main")
+    assert (await world.catalog.get_active_manifest(query)).manifest_id is None  # imported, not yet
+
+    empty = await world.active("main", "aaa111")
+
+    assert (await world.catalog.get_active_manifest(query)).manifest_id == empty
+    with pytest.raises(VersionNotFoundError):
+        await world.catalog.get_active_manifest(
+            GetActiveManifestQuery(library="/acme/payments", ref="nope")
+        )
 
 
 async def test_activating_a_new_ref_makes_it_a_version(world: World) -> None:

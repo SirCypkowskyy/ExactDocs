@@ -1,6 +1,6 @@
 """Driven (secondary) ports: what the catalog needs from infrastructure."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -46,6 +46,13 @@ class ManifestRepository(Protocol):
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
         """Return the manifest without its entries (see ``list_entries``), or ``None``."""
+        ...
+
+    async def get_many(self, manifest_ids: Collection[ManifestId]) -> Mapping[ManifestId, Manifest]:
+        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out.
+
+        Batched, so a caller may pass thousands of IDs.
+        """
         ...
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:

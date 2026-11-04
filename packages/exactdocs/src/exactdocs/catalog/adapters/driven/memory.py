@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Self
@@ -71,6 +71,12 @@ class InMemoryManifestRepository:
         """Return the manifest without its entries, or ``None``."""
         found = self.manifests.get(manifest_id)
         return replace(found, entries=()) if found else None
+
+    async def get_many(self, manifest_ids: Collection[ManifestId]) -> Mapping[ManifestId, Manifest]:
+        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out."""
+        return {
+            i: replace(self.manifests[i], entries=()) for i in manifest_ids if i in self.manifests
+        }
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
         """Return the version's active manifest without its entries, or ``None``."""

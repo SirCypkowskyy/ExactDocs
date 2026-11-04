@@ -369,3 +369,30 @@ class Article(ArticleSummary):
             content=stored.content,
             **ArticleSummary.from_model(stored.entry).model_dump(),
         )
+
+
+class GetManifestStatesQuery(_Dto):
+    """Ask for the state of manifests by ID."""
+
+    manifest_ids: list[str]
+
+
+class GetActiveManifestQuery(_Dto):
+    """Ask which manifest serves a version (the library's default one without a ref)."""
+
+    library: str = Field(min_length=1)
+    ref: str | None = None
+
+
+class ActiveManifest(_Dto):
+    """The manifest serving a version, or ``None`` while it has none."""
+
+    library: str
+    ref: str
+    manifest_id: str | None
+
+
+class ManifestStates(_Dto):
+    """Manifest state by ID; IDs the catalog does not know are left out."""
+
+    states: dict[str, ManifestState]

@@ -1,6 +1,6 @@
 import json
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -289,6 +289,17 @@ class SqliteManifestRepository:
         """Return the manifest without its entries, or ``None``."""
         return await self._load(manifests.c.id == manifest_id)
 
+    async def get_many(self, manifest_ids: Collection[ManifestId]) -> Mapping[ManifestId, Manifest]:
+        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out."""
+        ids = list(manifest_ids)
+        found: dict[ManifestId, Manifest] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(ids), 500):  # stay under SQLite's bound-variable limit
+                query = select(manifests).where(manifests.c.id.in_(ids[start : start + 500]))
+                for row in await connection.execute(query):
+                    found[ManifestId(row.id)] = _manifest(row)
+        return found
+
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
         """Return the version's active manifest without its entries, or ``None``."""
         return await self._load(
@@ -442,18 +453,20 @@ class SqliteManifestRepository:
             row = (await connection.execute(select(manifests).where(*where))).first()
         if row is None:
             return None
-        return Manifest(
-            id=ManifestId(row.id),
-            library=LibraryId(row.library_id),
-            ref=VersionRef(row.ref),
-            kind=RefKind(row.kind),
-            commit_sha=row.commit_sha,
-            created_at=datetime.fromisoformat(row.created_at),
-            state=ManifestState(row.state),
-            superseded_at=(
-                datetime.fromisoformat(row.superseded_at) if row.superseded_at else None
-            ),
-        )
+        return _manifest(row)
+
+
+def _manifest(row: Row) -> Manifest:
+    return Manifest(
+        id=ManifestId(row.id),
+        library=LibraryId(row.library_id),
+        ref=VersionRef(row.ref),
+        kind=RefKind(row.kind),
+        commit_sha=row.commit_sha,
+        created_at=datetime.fromisoformat(row.created_at),
+        state=ManifestState(row.state),
+        superseded_at=(datetime.fromisoformat(row.superseded_at) if row.superseded_at else None),
+    )
 
 
 async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version:
