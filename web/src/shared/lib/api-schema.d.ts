@@ -543,7 +543,7 @@ export interface components {
         };
         /**
          * FileProblemSummary
-         * @description A problem with a file: skipped (`skipped`) or imported with a note. `code` is stable.
+         * @description A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable.
          */
         readonly FileProblemSummary: {
             /** Path */
@@ -555,10 +555,10 @@ export interface components {
              */
             readonly reason: string;
             /**
-             * Skipped
+             * Is Skip
              * @description False when the file was imported despite the problem.
              */
-            readonly skipped: boolean;
+            readonly is_skip: boolean;
         };
         /**
          * HostKind

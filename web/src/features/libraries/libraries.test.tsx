@@ -57,8 +57,8 @@ function serve(libraries: unknown[], jobs: unknown[] | (() => unknown[]) = []) {
       return Response.json({
         ...job(),
         problems: [
-          { path: "docs/broken.md", code: "undecodable", reason: "not text", skipped: true },
-          { path: "docs/odd.md", code: "front_matter", reason: "bad tags", skipped: false },
+          { path: "docs/broken.md", code: "undecodable", reason: "not text", is_skip: true },
+          { path: "docs/odd.md", code: "front_matter", reason: "bad tags", is_skip: false },
         ],
       });
     }

@@ -2652,9 +2652,9 @@
             "title": "Reason",
             "description": "A sentence for people; may change, branch on `code`."
           },
-          "skipped": {
+          "is_skip": {
             "type": "boolean",
-            "title": "Skipped",
+            "title": "Is Skip",
             "description": "False when the file was imported despite the problem."
           }
         },
@@ -2664,10 +2664,10 @@
           "path",
           "code",
           "reason",
-          "skipped"
+          "is_skip"
         ],
         "title": "FileProblemSummary",
-        "description": "A problem with a file: skipped (`skipped`) or imported with a note. `code` is stable."
+        "description": "A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable."
       },
       "HostKind": {
         "type": "string",

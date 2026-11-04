@@ -1,6 +1,7 @@
 """``ImportVersionUseCase`` over fake ports: what is stored, in which order, and what is undone."""
 
 import asyncio
+import codecs
 import os
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
+    MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
     ArticleChunk,
     ImportedVersion,
@@ -37,7 +39,7 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import import_job
-from exactdocs.ingestion.use_cases import ImportVersionUseCase, _Progress
+from exactdocs.ingestion.use_cases import ImportVersionUseCase, Skip, _decode, _Progress
 
 SHA = "a" * 40
 URL = RepositoryUrl(
@@ -522,6 +524,21 @@ def test_a_job_lists_a_bounded_number_of_skipped_files() -> None:
     assert len(job.problems) == MAX_JOB_PROBLEMS + 1
     assert not job.problems[-1].path
     assert job.problems[-1].code == ProblemCode.TRUNCATED
+    assert job.problems[-1].reason.startswith("50 more")
+    assert job.skipped_count == MAX_JOB_PROBLEMS + 50
+
+
+def test_front_matter_notes_are_capped_apart_and_never_crowd_out_skips() -> None:
+    job = make_job()
+    for i in range(MAX_JOB_NOTES + 30):
+        job = job.with_problem(f"n/{i}.md", ProblemCode.FRONT_MATTER, "note")
+    for i in range(MAX_JOB_PROBLEMS + 5):
+        job = job.with_problem(f"docs/{i}.md", ProblemCode.BINARY, "skipped")
+    job = job.with_problem("late.md", ProblemCode.FRONT_MATTER, "ignored")  # notes are full
+
+    assert job.notes == MAX_JOB_NOTES
+    assert job.skipped_count == MAX_JOB_PROBLEMS + 5
+    assert len(job.problems) == MAX_JOB_NOTES + MAX_JOB_PROBLEMS + 1
 
 
 async def test_front_matter_problems_are_listed_per_file_and_the_article_is_imported(
@@ -538,3 +555,29 @@ async def test_front_matter_problems_are_listed_per_file_and_the_article_is_impo
     ((path, code, reason),) = world.progress.problems
     assert (path, code) == ("docs/broken.md", ProblemCode.FRONT_MATTER)
     assert reason.startswith("malformed front matter")
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        (b"plain", "plain"),
+        (b"\xef\xbb\xbfhi", "hi"),  # UTF-8 BOM stripped
+        (b"caf\xe9", "caf\xe9"),  # Latin-1 via Windows-1252
+        ("h\xe9".encode("utf-16"), "h\xe9"),
+        (codecs.BOM_UTF16_BE + "h\xe9".encode("utf-16-be"), "h\xe9"),
+        ("h\xe9".encode("utf-32"), "h\xe9"),
+        (b"a\0b", ProblemCode.BINARY),
+        (b"\xef\xbb\xbfa\0b", ProblemCode.BINARY),  # a UTF-8 BOM does not excuse NULs
+        (b"caf\x81", ProblemCode.UNDECODABLE),  # undefined in Windows-1252
+        (b"\xff\xfeh", ProblemCode.UNDECODABLE),  # BOM, odd length: no mojibake fallback
+        (b"\xff\xfe\x00\xd8", ProblemCode.UNDECODABLE),  # lone surrogate
+        (b"\x01\x02\x03\x04\x05abc\xe9", ProblemCode.UNDECODABLE),  # control characters
+    ],
+)
+def test_decode(data: bytes, expected: str | ProblemCode) -> None:
+    result = _decode(data)
+    if isinstance(expected, ProblemCode):
+        assert isinstance(result, Skip)
+        assert result.code == expected
+    else:
+        assert result == expected

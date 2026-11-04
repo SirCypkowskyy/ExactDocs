@@ -64,7 +64,7 @@ async def test_skipped_files_are_listed_with_their_reason(build_module) -> None:
     await module.run_next_job()
 
     problems = (await module.get_job(GetJobQuery(job_id=waiting.id))).problems
-    assert [(p.path, p.code, p.skipped) for p in problems] == [
+    assert [(p.path, p.code, p.is_skip) for p in problems] == [
         ("assets/logo.png", ProblemCode.BINARY, True)
     ]
 

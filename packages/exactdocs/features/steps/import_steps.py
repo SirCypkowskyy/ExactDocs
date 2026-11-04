@@ -231,7 +231,7 @@ def step_skipped(context: Context) -> None:
     listed = [(p["path"], p["code"], p["reason"]) for p in context.job["problems"]]
     expected = [(r["path"], r["code"], r["reason"]) for r in context.table or []]
     assert listed == expected, listed
-    assert all(p["skipped"] for p in context.job["problems"])
+    assert all(p["is_skip"] for p in context.job["problems"])
 
 
 @then('the article "{path}" of "{target}" keeps its accented characters')

@@ -1,6 +1,7 @@
 """Adapter contract: every ``JobRepository`` behaves the same, whatever stores the data."""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -9,7 +10,7 @@ import pytest
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
-from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
@@ -176,3 +177,33 @@ async def test_claimers_on_separate_connections_get_one_job_per_library_and_no_d
     claimed = [job for jobs in results for job in jobs]
     assert sorted(job.library for job in claimed) == [f"/acme/lib-{n}" for n in range(5)]
     assert len({job.id for job in claimed}) == 5
+
+
+async def test_problems_saved_by_another_version_are_read_without_failing() -> None:
+    engine = open_database(Settings())
+    await migrate(engine)
+    repository = SqliteJobRepository(engine)
+    await repository.add(queued("j1"))
+    old_and_new = [
+        {"path": "a.md", "reason": "not valid UTF-8"},
+        {"path": "b.md", "reason": "larger than 50 bytes"},
+        {"path": "c.md", "reason": "something else"},
+        {"path": "", "reason": "more files were skipped; they are not listed"},
+        {"path": "d.md", "code": "from_the_future", "reason": "x"},
+    ]
+    async with engine.begin() as connection:
+        await connection.execute(
+            jobs.update().values(problems=json.dumps(old_and_new)).where(jobs.c.id == "j1")
+        )
+
+    job = await repository.get(JobId("j1"))
+
+    assert job is not None
+    assert [p.code for p in job.problems] == [
+        ProblemCode.UNDECODABLE,
+        ProblemCode.TOO_LARGE,
+        ProblemCode.UNREADABLE,
+        ProblemCode.TRUNCATED,
+        ProblemCode.UNREADABLE,
+    ]
+    await engine.dispose()

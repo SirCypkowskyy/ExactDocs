@@ -550,6 +550,9 @@ def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int]
     readable is skipped, as is text that no supported encoding decodes.
     The blob SHA is hashed from the checked-out bytes, which equals git's because the
     ``GitGateway`` must check files out verbatim (no eol or filter conversion).
+    Chunk sets are reused by blob SHA, so changing ``_decode`` leaves already-imported blobs
+    with their old text until they change; a UTF-8 BOM is stripped now (``utf-8-sig``), so
+    blobs imported before that may still carry U+FEFF in their chunks.
     """
     try:
         path.encode()
@@ -567,30 +570,45 @@ def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int]
     return git_blob_sha(data), parse_article(path, text), len(data)
 
 
+# FF FE 00 00 is also a UTF-16-LE file starting with U+0000; UTF-32 is tried first, and a file
+# that then fails to decode is reported undecodable, which is right for such a file anyway.
 _BOMS = (
     (codecs.BOM_UTF32_LE, "utf-32"),
     (codecs.BOM_UTF32_BE, "utf-32"),
     (codecs.BOM_UTF16_LE, "utf-16"),
     (codecs.BOM_UTF16_BE, "utf-16"),
 )
+MAX_CONTROL_RATIO = 0.02
 
 
 def _decode(data: bytes) -> str | Skip:
     """UTF-8, else UTF-16/32 announced by a BOM, else Windows-1252; NUL bytes mean binary.
 
     Windows-1252 stands in for Latin-1 (it is a superset where text lives); bytes it leaves
-    undefined make the file undecodable. A real charset detector is not worth a dependency.
+    undefined, or more than 2% control characters, make the file undecodable. Not detected:
+    UTF-16/32 without a BOM (reported as binary, or imported as mojibake when it has no NULs),
+    and other legacy charsets (CJK, Cyrillic) that happen to pass as Windows-1252. A real
+    charset detector is not worth a dependency.
     """
     for bom, codec in _BOMS:
         if data.startswith(bom):
-            with suppress(UnicodeDecodeError):
+            try:
                 return data.decode(codec)
+            except UnicodeDecodeError:
+                return Skip(ProblemCode.UNDECODABLE, _NOT_TEXT)
     if b"\0" in data:
         return Skip(ProblemCode.BINARY, "binary file")
-    for codec in ("utf-8-sig", "cp1252"):
-        with suppress(UnicodeDecodeError):
-            return data.decode(codec)
-    return Skip(ProblemCode.UNDECODABLE, "not text in any supported encoding")
+    with suppress(UnicodeDecodeError):
+        return data.decode("utf-8-sig")
+    with suppress(UnicodeDecodeError):
+        text = data.decode("cp1252")
+        controls = sum(c < " " and c not in "\t\n\r\f" for c in text)
+        if controls <= len(text) * MAX_CONTROL_RATIO:
+            return text
+    return Skip(ProblemCode.UNDECODABLE, _NOT_TEXT)
+
+
+_NOT_TEXT = "not text in any supported encoding"
 
 
 def _read(file: Path, limit: int) -> bytes | Skip:

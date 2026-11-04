@@ -163,11 +163,35 @@ def _values(job: Job) -> Mapping[str, Any]:
     }
 
 
+# Rows saved before problems had codes carry only the reason text.
+_LEGACY_CODES = {
+    "not valid UTF-8": ProblemCode.UNDECODABLE,
+    "not a regular file": ProblemCode.NOT_A_FILE,
+    "file name is not valid UTF-8": ProblemCode.BAD_FILE_NAME,
+}
+
+
+def _problem(raw: Mapping[str, str]) -> FileProblem:
+    """Read a stored problem; a missing or unknown code (older or newer version) never fails."""
+    path, reason = raw["path"], raw["reason"]
+    try:
+        code = ProblemCode(raw["code"])
+    except KeyError, ValueError:
+        if reason.startswith("larger than"):
+            code = ProblemCode.TOO_LARGE
+        elif not path:
+            code = ProblemCode.TRUNCATED
+        else:
+            code = _LEGACY_CODES.get(reason, ProblemCode.UNREADABLE)
+    return FileProblem(path, code, reason)
+
+
 def _job(row: Row) -> Job:
     created_at = _moment(row.created_at)
     if created_at is None:
         message = "created_at is NOT NULL"
         raise AssertionError(message)
+    problems = tuple(_problem(p) for p in json.loads(row.problems))
     return Job(
         id=JobId(row.id),
         kind=JobKind(row.kind),
@@ -178,10 +202,8 @@ def _job(row: Row) -> Job:
         state=JobState(row.state),
         done=row.done,
         total=row.total,
-        problems=tuple(
-            FileProblem(problem["path"], ProblemCode(problem["code"]), problem["reason"])
-            for problem in json.loads(row.problems)
-        ),
+        problems=problems,
+        notes=sum(p.code is ProblemCode.FRONT_MATTER for p in problems),
         error=row.error,
         created_at=created_at,
         started_at=_moment(row.started_at),

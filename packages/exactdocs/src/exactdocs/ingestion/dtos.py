@@ -23,12 +23,12 @@ class _Dto(BaseModel):
 
 
 class FileProblemSummary(_Dto):
-    """A problem with a file: skipped (`skipped`) or imported with a note. `code` is stable."""
+    """A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable."""
 
     path: str
     code: ProblemCode
     reason: str = Field(description="A sentence for people; may change, branch on `code`.")
-    skipped: bool = Field(description="False when the file was imported despite the problem.")
+    is_skip: bool = Field(description="False when the file was imported despite the problem.")
 
     @classmethod
     def from_model(cls, problem: FileProblem) -> Self:
@@ -37,7 +37,7 @@ class FileProblemSummary(_Dto):
             path=problem.path,
             code=problem.code,
             reason=problem.reason,
-            skipped=problem.code.skipped,
+            is_skip=problem.code.is_skip,
         )
 
 
@@ -121,7 +121,7 @@ class LatestJob(_Dto):
             state=job.state,
             done=job.done,
             total=job.total,
-            skipped=sum(p.code.skipped for p in job.problems),
+            skipped=job.skipped_count,
             error=job.error,
             created_at=job.created_at,
             started_at=job.started_at,
