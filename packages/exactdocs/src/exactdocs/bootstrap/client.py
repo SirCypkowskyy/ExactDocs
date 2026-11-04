@@ -212,6 +212,11 @@ def printable(text: str) -> str:
     return "".join(c for c in text if c.isprintable())
 
 
+def printable_text(text: str) -> str:
+    """Like ``printable`` for a multi-line text: newlines and tabs stay (docs are read as text)."""
+    return "".join(c for c in text if c in "\n\t" or c.isprintable())
+
+
 class ApiError(ClientError):
     """The server answered with its error shape; ``code`` is the stable machine code."""
 
@@ -259,8 +264,7 @@ class ApiClient:
     async def __aexit__(self, *_: object) -> None:
         await self._http.aclose()
 
-    async def request(self, method: str, path: str, **kwargs: Any) -> Any:  # ruff: ignore[any-type]
-        """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204)."""
+    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx2.Response:  # ruff: ignore[any-type]
         try:
             response = await self._http.request(method, f"/api/v1{path}", **kwargs)
         except httpx2.TimeoutException:
@@ -272,6 +276,24 @@ class ApiClient:
         if response.is_redirect:
             message = f"{self.url} redirected the request; use the URL it redirects to"
             raise ClientError(message)
+        return response
+
+    def _error(self, response: httpx2.Response, body: object) -> ClientError:
+        if isinstance(body, dict) and isinstance(body.get("error"), str):
+            fields = tuple(
+                ".".join(str(part) for part in item["loc"][1:] or item["loc"])
+                for item in body.get("fields", [])
+                if isinstance(item, dict) and isinstance(item.get("loc"), list)
+            )
+            return ApiError(
+                response.status_code, body["error"], str(body.get("detail", "")), fields
+            )
+        message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
+        return ClientError(message)
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> Any:  # ruff: ignore[any-type]
+        """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204)."""
+        response = await self._send(method, path, **kwargs)
         if response.status_code == httpx2.codes.NO_CONTENT:
             return None
         try:
@@ -280,15 +302,18 @@ class ApiClient:
             body = None
         if response.is_success and body is not None:
             return body
-        if isinstance(body, dict) and isinstance(body.get("error"), str):
-            fields = tuple(
-                ".".join(str(part) for part in item["loc"][1:] or item["loc"])
-                for item in body.get("fields", [])
-                if isinstance(item, dict) and isinstance(item.get("loc"), list)
-            )
-            raise ApiError(response.status_code, body["error"], str(body.get("detail", "")), fields)
-        message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
-        raise ClientError(message)
+        raise self._error(response, body)
+
+    async def request_text(self, method: str, path: str, **kwargs: Any) -> str:  # ruff: ignore[any-type]
+        """Call ``/api/v1<path>``; return a ``text/*`` success body (errors are JSON as usual)."""
+        response = await self._send(method, path, **kwargs)
+        if response.is_success and response.headers.get("content-type", "").startswith("text/"):
+            return response.text
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        raise self._error(response, body)
 
     async def login(
         self, username: str, password: str, name: str, expires_at: datetime | None = None

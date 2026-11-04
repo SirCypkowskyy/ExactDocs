@@ -359,6 +359,49 @@ def libraries(
     _call(work())
 
 
+@app.command
+def library(
+    name: str,
+    *query: str,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Find the ID of a library by name (like `ctx7 library`); QUERY ranks the matches."""
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.find_library(api, name, " ".join(query) or None, as_json=json_output)
+
+    _call(work())
+
+
+@app.command
+def docs(
+    library_id: str,
+    *query: str,
+    language: Annotated[
+        str | None,
+        Parameter(help="Language you write in; chunks with code in it come first (no filter)."),
+    ] = None,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Show what an agent gets for a question about a library (like `ctx7 docs`)."""
+    if not query:
+        sys.stderr.write("exactdocs: docs needs a question after the library ID\n")
+        raise SystemExit(lib.EXIT_USAGE)
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.query_docs(
+                api, library_id, " ".join(query), language=language, as_json=json_output
+            )
+
+    _call(work())
+
+
 version = App(name="version", help="Versions of a library.")
 app.command(version)
 

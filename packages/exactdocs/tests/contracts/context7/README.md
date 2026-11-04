@@ -56,3 +56,18 @@ Deliberately different: the URL prefix, the error body (`{error, detail, message
 context7's name for `detail`), the extra `notice` field (JSON) and the notice that leads the text body
 (also in the `X-ExactDocs-Notice` header), and `codeSnippets` always empty (chunks are not split into
 code and prose). Update it like the MCP files above.
+
+## CLI: `cli/ctx7-cli.json`
+
+The command line `ctx7` 0.9.0 (npm `ctx7`, `packages/cli` of the context7 repo): `library <name>
+[query]`, `docs <libraryId> <query> [--language] [--json]` and `search`. The pin holds names,
+arguments, flags, the requests they make and the output shape. `tests/bootstrap/test_context7_cli_contract.py`
+checks that `exactdocs library` and `exactdocs docs` have every pinned flag; `features/cli_docs.feature`
+compares their output with the MCP tools'.
+Deliberately different: errors on stderr with ExactDocs' exit codes (ctx7 prints errors on stdout and
+exits 1); the notice leads the output; `library --json` prints the bare list like ctx7 but the notice goes
+to stderr; the query is optional for ctx7's `library` and defaults to the name here (the REST route
+requires one); the query may be several words; control characters are stripped from all output;
+`library` shows default version, articles, chunks and source instead of stars and trust score;
+`search` (`/api/v3/search`) is not implemented, ExactDocs has no matching REST route, and `--base-url`
+is `--url` here.
