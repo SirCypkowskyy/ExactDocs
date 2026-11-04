@@ -180,6 +180,13 @@ differ; there is no `/api/v2` alias:
 | `GET /api/v2/libs/search?libraryName=&query=` | `GET /api/v1/c7/search?libraryName=&query=` | `resolve-library-id` |
 | `GET /api/v2/context?libraryId=&query=&language=&type=` | `GET /api/v1/c7/docs?libraryId=&query=&language=&type=` | `query-docs` |
 
+```bash
+curl -H "Authorization: Bearer $EXACTDOCS_TOKEN" \
+  "http://localhost:3000/api/v1/c7/search?libraryName=react&query=hooks"
+curl -H "Authorization: Bearer $EXACTDOCS_TOKEN" \
+  "http://localhost:3000/api/v1/c7/docs?libraryId=/facebook/react&query=useEffect&type=json"
+```
+
 - Search returns JSON `{results: [{id, title, description, branch, versions, ...}],
   searchFilterApplied}`.
 - Docs with `type=txt` (default) returns the notice, a blank line, then the tool's text byte for

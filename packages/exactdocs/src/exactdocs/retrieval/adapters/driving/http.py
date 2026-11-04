@@ -1,7 +1,8 @@
 """REST adapter for retrieval."""
 
 import re
-from typing import Annotated, Literal
+from datetime import datetime
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Path, Query
 from fastapi.exceptions import RequestValidationError
@@ -24,7 +25,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     SearchDocsResult,
 )
-from exactdocs.retrieval.models import POINTER_TEXT, TagMatch
+from exactdocs.retrieval.models import CHARS_PER_TOKEN, POINTER_TEXT, TagMatch
 from exactdocs.retrieval.ports.driving import (
     QueryDocs,
     ReadChunk,
@@ -34,7 +35,7 @@ from exactdocs.retrieval.ports.driving import (
 from exactdocs_kernel import NOTICE
 
 NOTICE_HEADER = "X-ExactDocs-Notice"
-CHARS_PER_TOKEN = 4  # the same estimate as the `query-docs` budget
+MAX_LIBRARY_ID = 500  # context7's cap on `libraryId`
 
 
 # context7 also writes a pinned version as `/owner/repo@ref`; ours is `/owner/repo/ref`.
@@ -61,6 +62,9 @@ class C7Library(_Camel):
     state: Literal["finalized"] = "finalized"
     total_snippets: int = Field(description="Chunks of the default version.")
     versions: list[str]
+    last_update_date: datetime | None = Field(
+        default=None, description="When any version was last imported."
+    )
     source_url: str
     default_version: str
     articles: int
@@ -73,6 +77,7 @@ class C7Library(_Camel):
             title=match.title,
             description=match.description,
             branch=match.default_version,
+            last_update_date=match.last_imported_at,
             total_snippets=match.chunks,
             versions=match.versions,
             source_url=match.source_url,
@@ -108,27 +113,29 @@ class C7ContextResponse(_Camel):
     notice: str = Field(
         default=NOTICE, description="Untrusted-content notice; read it before the results."
     )
-    code_snippets: list[None] = []
+    code_snippets: list[dict[str, Any]] = Field(
+        default=[], description="Always empty: chunks are not split into code and prose."
+    )
     info_snippets: list[C7InfoSnippet]
     omitted: int = Field(description="Matching chunks that did not fit the size budget.")
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:
         """Map the sections, best first."""
-        return cls(
-            info_snippets=[
+        snippets = []
+        for rank, s in enumerate(result.sections, 1):
+            sent = POINTER_TEXT if s.too_large else s.content  # what the text response sends too
+            snippets.append(
                 C7InfoSnippet(
                     page_id=s.source,
                     breadcrumb=s.title,
-                    content=POINTER_TEXT if s.too_large else s.content,
-                    content_tokens=len(s.content) // CHARS_PER_TOKEN,
+                    content=sent,
+                    content_tokens=len(sent) // CHARS_PER_TOKEN,
                     rank=rank,
                     chunk_id=s.chunk_id,
                 )
-                for rank, s in enumerate(result.sections, 1)
-            ],
-            omitted=result.omitted,
-        )
+            )
+        return cls(info_snippets=snippets, omitted=result.omitted)
 
 
 def build_router(
@@ -229,7 +236,7 @@ def build_router(
             Query(
                 alias="libraryId",
                 min_length=1,
-                max_length=3 * MAX_NAME,
+                max_length=MAX_LIBRARY_ID,
                 description="`/owner/repo`, `/owner/repo/<ref>` or `/owner/repo@<ref>`.",
             ),
         ],

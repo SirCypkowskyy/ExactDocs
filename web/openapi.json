@@ -2284,7 +2284,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 768,
+              "maxLength": 500,
               "description": "`/owner/repo`, `/owner/repo/<ref>` or `/owner/repo@<ref>`.",
               "title": "Libraryid"
             },
@@ -3790,10 +3790,12 @@
           },
           "codeSnippets": {
             "items": {
-              "type": "null"
+              "additionalProperties": true,
+              "type": "object"
             },
             "type": "array",
             "title": "Codesnippets",
+            "description": "Always empty: chunks are not split into code and prose.",
             "default": []
           },
           "infoSnippets": {
@@ -3895,6 +3897,19 @@
             "type": "array",
             "title": "Versions"
           },
+          "lastUpdateDate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastupdatedate",
+            "description": "When any version was last imported."
+          },
           "sourceUrl": {
             "type": "string",
             "title": "Sourceurl"
@@ -3917,6 +3932,7 @@
           "state",
           "totalSnippets",
           "versions",
+          "lastUpdateDate",
           "sourceUrl",
           "defaultVersion",
           "articles"

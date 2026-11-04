@@ -351,6 +351,7 @@ class CatalogLibrary:
     default_version: str | None
     versions: tuple[str, ...]
     version_count: int
+    last_imported_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

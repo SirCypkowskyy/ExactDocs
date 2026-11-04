@@ -1,5 +1,6 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
+from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import (
@@ -367,6 +368,9 @@ class LibraryMatchOut(_Dto):
     default_version: str
     versions: list[str] = Field(description="At most 50 refs; see `version_count`.")
     version_count: int
+    last_imported_at: datetime | None = Field(
+        default=None, description="When any version was last imported."
+    )
     articles: int = Field(description="Articles of the default version.")
     chunks: int = Field(description="Chunks of the default version.")
     query_hits: int = Field(
@@ -385,6 +389,7 @@ class LibraryMatchOut(_Dto):
             default_version=lib.default_version or "",
             versions=list(lib.versions),
             version_count=lib.version_count,
+            last_imported_at=lib.last_imported_at,
             articles=articles,
             chunks=chunks,
             query_hits=candidate.hits,

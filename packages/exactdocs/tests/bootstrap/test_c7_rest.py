@@ -15,6 +15,7 @@ from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.rest import v1_openapi
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import CreateFirstAdminCommand
+from exactdocs.retrieval.models import CHARS_PER_TOKEN
 from exactdocs_kernel import NOTICE
 from next_library import LIBRARY, REF, import_next
 
@@ -93,6 +94,7 @@ async def test_search_lists_the_same_libraries_as_resolve_library_id(
     assert f"- Context7-compatible library ID: {LIBRARY}\n" in mcp_text
     (found,) = body["results"]
     assert (found["title"], found["versions"], found["branch"]) == ("Next.js", [REF], REF)
+    assert found["lastUpdateDate"]
 
 
 async def test_json_docs_hold_the_same_chunks_as_the_text(client: httpx.AsyncClient) -> None:
@@ -171,3 +173,14 @@ async def test_errors_use_the_api_envelope(client: httpx.AsyncClient) -> None:
         "/api/v1/c7/docs", params={"libraryId": LIBRARY, "query": "x", "type": "xml"}
     )
     assert kind.status_code == 422
+
+
+async def test_content_tokens_count_the_text_that_is_sent(client: httpx.AsyncClient) -> None:
+    body = (
+        await client.get(
+            "/api/v1/c7/docs", params={"libraryId": LIBRARY, "query": "routes", "type": "json"}
+        )
+    ).json()
+
+    for snippet in body["infoSnippets"]:
+        assert snippet["contentTokens"] == len(snippet["content"]) // CHARS_PER_TOKEN

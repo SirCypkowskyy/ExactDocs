@@ -689,9 +689,12 @@ export interface components {
             readonly notice: string;
             /**
              * Codesnippets
+             * @description Always empty: chunks are not split into code and prose.
              * @default []
              */
-            readonly codeSnippets: readonly null[];
+            readonly codeSnippets: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /** Infosnippets */
             readonly infoSnippets: readonly components["schemas"]["C7InfoSnippet"][];
             /**
@@ -747,6 +750,11 @@ export interface components {
             readonly totalSnippets: number;
             /** Versions */
             readonly versions: readonly string[];
+            /**
+             * Lastupdatedate
+             * @description When any version was last imported.
+             */
+            readonly lastUpdateDate: string | null;
             /** Sourceurl */
             readonly sourceUrl: string;
             /** Defaultversion */
