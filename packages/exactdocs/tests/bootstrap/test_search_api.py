@@ -203,3 +203,22 @@ async def test_rest_article_read_needs_a_cookie_or_a_bearer(
     )
 
     assert response.status_code == status
+
+
+async def test_rest_search_all_needs_a_cookie_or_a_bearer_and_checks_its_input(
+    anonymous: httpx.AsyncClient, signed_in: httpx.AsyncClient, token: str
+) -> None:
+    url = "/api/v1/search"
+    assert (await anonymous.get(url, params=ASKING)).status_code == 401
+
+    found = await signed_in.get(url, params=ASKING)
+    assert found.status_code == 200
+    assert found.json()["results"] == []
+    assert found.json()["libraries"] == []
+    bearer = {"authorization": f"Bearer {token}"}
+    assert (await anonymous.get(url, params=ASKING, headers=bearer)).status_code == 200
+
+    assert (await signed_in.get(url, params={"q": ""})).status_code == 422
+    assert (await signed_in.get(url, params={"q": "x", "limit": 51})).status_code == 422
+    assert (await signed_in.get(url, params={"q": "x", "library": "react"})).status_code == 422
+    assert (await signed_in.get(url, params={"q": "x", "library": "/no/body"})).status_code == 404

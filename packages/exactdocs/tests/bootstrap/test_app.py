@@ -227,6 +227,7 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
         "list_libraries",
         "list_articles",
         "search_docs",
+        "search_all_docs",
         "read_article",
         "read_chunk",
         "resolve-library-id",
@@ -384,3 +385,22 @@ async def test_mcp_search_accepts_a_blank_ref_as_the_default_version(container: 
         )
 
     assert "not_found" in str(result.content)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"query": ""},
+        {"query": "x" * 1001},
+        {"query": "x", "limit": 51},
+        {"query": "x", "library": "react"},
+    ],
+)
+async def test_mcp_search_all_input_is_capped_and_the_library_shape_checked(
+    container: Container, arguments: dict[str, Any]
+) -> None:
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        result = await mcp.call_tool("search_all_docs", arguments, raise_on_error=False)
+
+    assert result.is_error
+    assert "not_found" not in str(result.content)

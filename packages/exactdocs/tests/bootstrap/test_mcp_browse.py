@@ -147,6 +147,7 @@ TOOL_CALLS = [
     ("list_libraries", {}),
     ("list_articles", {"library": "/acme/payments"}),
     ("search_docs", {"library": "/acme/payments", "query": "x"}),
+    ("search_all_docs", {"query": "x"}),
     ("read_article", {"library": "/acme/payments", "path": "guide/a.md"}),
     ("read_chunk", {"chunk_id": CHUNK_ID}),
     ("resolve-library-id", {"libraryName": "payments", "query": "x"}),
