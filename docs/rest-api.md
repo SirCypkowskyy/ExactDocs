@@ -115,10 +115,18 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   the message; a tag and a branch at the same commit stay two versions).
 - **Removing**: `DELETE /libraries/{owner}/{repo}/versions/{ref}` and `DELETE /libraries/{owner}/{repo}`
   answer 200 with `library`, `ref` (null for a library), `default_version` (what `/owner/repo`
-  means now; null when no version is left) and `collection_job_id`. The version or library is gone
-  from browse, search and `list_libraries` (REST and MCP) when the call returns; a `collect` job
-  (see `/jobs/{id}`) then frees the article texts and chunk sets no remaining version shares.
-  Removing the last version keeps the library, without versions. An unknown library or version is
-  404. While an import of that version (of any version, for a library) is queued or running the
-  call is refused with 409 `import_in_progress`: removal never cancels a job, wait and retry.
-  Chunk IDs of a removed version answer `not_found`; they are not kept as tombstones yet (E9-03 follow-up: the strict xfail in `test_chunk_store.py`). A library title derived from the default version (#33) is not re-derived by a removal.
+  means now; null when no version is left) and `collection_job_id` (null if it could not be
+  queued). The version or library is gone from browse, search and `list_libraries` (REST and
+  MCP) when the call returns; a `collect` job (see `/jobs/{id}`) then frees the article texts and
+  chunk sets no remaining version or library shares. A collection that is still queued for the
+  library is reused. Removing the last version keeps the library, without versions.
+- **Removal and imports**: an unknown library or version is 404. While an import of that version
+  (of any version, for a library) is queued or running the call is refused with 409
+  `import_in_progress`; removal never cancels a job. The removed version's (or library's) job
+  history is deleted, so `/jobs/latest` shows no state for it. A re-sync of an existing version
+  (E9-01) must be queued as a `refresh` job: it fails with 404 `not_found` at store time if the
+  version was removed meanwhile, so a removal is never undone by a late sync. A first import is an
+  `import` job.
+- **Known limits**: chunk IDs of a removed version answer `not_found`; they are not kept as
+  tombstones yet (E9-03 follow-up, the strict xfail in `test_chunk_store.py`). A library title
+  derived from the default version's README (#33) is not re-derived by a removal.

@@ -304,9 +304,24 @@ class SqliteManifestRepository:
         # front instead of failing with "database is locked" when it upgrades later.
         return self.engine.execution_options(begin_immediate=True).begin()
 
-    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+    async def add(
+        self,
+        manifest: Manifest,
+        contents: Mapping[ContentKey, str],
+        *,
+        version_must_exist: bool = False,
+    ) -> None:
         """Store a pending manifest and the texts it needs; stored texts stay as they are."""
         async with self._write() as connection:
+            if version_must_exist:
+                found = await connection.execute(
+                    select(library_versions.c.ref).where(
+                        library_versions.c.library_id == manifest.library.value,
+                        library_versions.c.ref == manifest.ref.value,
+                    )
+                )
+                if found.first() is None:
+                    raise VersionNotFoundError(str(manifest.library), str(manifest.ref))
             if contents:
                 await connection.execute(
                     sqlite_insert(article_contents).on_conflict_do_nothing(),

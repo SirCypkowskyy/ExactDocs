@@ -50,6 +50,16 @@ class InMemoryJobRepository:
             newest[job.library, job.version] = job
         return sorted(newest.values(), key=lambda job: (job.library, job.version or ""))
 
+    async def delete_for(self, library: str, version: str | None = None) -> None:
+        """Delete the library's jobs (only those of ``version`` when given), never a running one."""
+        for job in list(self.jobs.values()):
+            if (
+                job.library == library
+                and job.state is not JobState.RUNNING
+                and (version is None or job.version == version)
+            ):
+                del self.jobs[job.id]
+
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""
         return [job for job in self.jobs.values() if job.state is JobState.RUNNING]

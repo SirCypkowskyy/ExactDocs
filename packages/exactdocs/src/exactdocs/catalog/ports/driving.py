@@ -186,6 +186,8 @@ class RemoveVersion(Protocol):
     """
 
     async def __call__(self, command: RemoveVersionCommand) -> Removal:
+        """Run the use case."""
+        ...
 
 
 class ApplyReadme(Protocol):
@@ -208,3 +210,5 @@ class RemoveLibrary(Protocol):
     """
 
     async def __call__(self, command: RemoveLibraryCommand) -> Removal:
+        """Run the use case."""
+        ...

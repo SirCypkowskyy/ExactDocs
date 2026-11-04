@@ -341,8 +341,15 @@ class RetrievalCollector:
     collect_chunks: CollectChunks
 
     async def collect(self, *, grace_seconds: int) -> Collected:
-        """Delete chunk rows of manifests the catalog collected, and unused chunk sets."""
-        done = await self.collect_chunks(CollectChunksCommand(grace_seconds=grace_seconds))
+        """Delete chunk rows of manifests the catalog no longer knows, and unused chunk sets.
+
+        The job's grace period keeps superseded *catalog* manifests; the catalog is already
+        done with them, so retrieval asks for none beyond its own five minutes of doubt about
+        a manifest the catalog has not answered for yet. That also sweeps the rows of a removal
+        whose ``RemoveChunks`` failed.
+        """
+        del grace_seconds
+        done = await self.collect_chunks(CollectChunksCommand(grace_seconds=0))
         return Collected(deleted=done.manifests + done.chunk_sets)
 
 
@@ -353,6 +360,7 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
         ref=version.ref,
         kind=CatalogRefKind(version.kind.value),
         commit_sha=version.commit_sha,
+        must_exist=version.refresh,
         articles=[
             ArticleIn(
                 path=a.path,

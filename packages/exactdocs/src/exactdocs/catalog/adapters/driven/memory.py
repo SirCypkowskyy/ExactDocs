@@ -95,10 +95,19 @@ class InMemoryManifestRepository:
     manifests: dict[ManifestId, Manifest] = field(default_factory=dict)
     contents: dict[ContentKey, str] = field(default_factory=dict)
 
-    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+    async def add(
+        self,
+        manifest: Manifest,
+        contents: Mapping[ContentKey, str],
+        *,
+        version_must_exist: bool = False,
+    ) -> None:
         """Store a pending manifest and the texts it needs; stored texts stay as they are."""
-        if manifest.library not in self.libraries.libraries:
+        library = self.libraries.libraries.get(manifest.library)
+        if library is None:
             raise LibraryNotFoundError(str(manifest.library))
+        if version_must_exist and all(v.ref != manifest.ref for v in library.versions):
+            raise VersionNotFoundError(str(manifest.library), str(manifest.ref))
         for key, text in contents.items():
             self.contents.setdefault(key, text)
         self.manifests[manifest.id] = manifest

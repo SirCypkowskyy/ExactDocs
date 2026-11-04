@@ -601,3 +601,14 @@ async def test_removing_chunks_never_removes_a_manifest_the_catalog_still_knows(
 
     assert (removed.manifests, removed.chunk_sets) == (0, 0)
     assert await world.count_chunk_sets() == 1
+
+
+async def test_chunk_sets_shared_by_two_libraries_stay_when_one_is_removed(world: World) -> None:
+    await world.index("m1", "v1", {"a.md": "shared", "b.md": "mine"})
+    await world.index("m2", "v1", {"a.md": "shared"}, status=ManifestStatus.ACTIVE)
+    world.catalog.refs["m2"] = "v1"  # m2 is another library's manifest over the same blob
+
+    removed = await world.retrieval.remove_chunks(RemoveChunksCommand(manifest_ids=["m1"]))
+
+    assert (removed.manifests, removed.chunk_sets) == (1, 1)
+    assert await world.count_chunk_sets() == 1

@@ -226,7 +226,7 @@ class StoreManifestUseCase:
         if await self.repository.get(library_id) is None:
             raise LibraryNotFoundError(command.library)
         manifest, contents = await asyncio.to_thread(self._build, command, library_id)
-        await self.manifests.add(manifest, contents)
+        await self.manifests.add(manifest, contents, version_must_exist=command.must_exist)
         return StoredManifest.from_model(manifest)
 
     def _build(

@@ -140,6 +140,7 @@ class ImportInProgressError(ConflictError):
         what = f"library {library!r}" if version is None else f"version {version!r} of {library!r}"
         super().__init__(f"an import of {what} is queued or running: wait for it to finish")
         self.library = library
+        self.version = version
 
 
 class GitNotInstalledError(DomainError):

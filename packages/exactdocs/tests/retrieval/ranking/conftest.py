@@ -70,6 +70,7 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
                 container.retrieval.index_manifest,
                 container.retrieval.get_chunk_sets,
                 container.retrieval.discard_pending_chunks,
+                container.retrieval.remove_chunks,
             ),
         )
         for ref, kind in VERSIONS.items():

@@ -66,10 +66,20 @@ class LibraryRepository(Protocol):
 class ManifestRepository(Protocol):
     """Persistence for manifests and the article texts they share, keyed by content key."""
 
-    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+    async def add(
+        self,
+        manifest: Manifest,
+        contents: Mapping[ContentKey, str],
+        *,
+        version_must_exist: bool = False,
+    ) -> None:
         """Store a pending manifest with its entries and the texts it needs.
 
         One transaction. A text whose key is already stored is left as it is (idempotent).
+        With ``version_must_exist`` the version row is checked in the same transaction and
+        ``VersionNotFoundError`` raised when it is missing: a removal either comes first (this
+        fails) or later (it deletes this pending manifest, so activating it fails). Either way a
+        re-sync cannot bring back a removed version.
         """
         ...
 

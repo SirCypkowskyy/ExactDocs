@@ -1,6 +1,7 @@
 """DELETE routes: what they answer, what they refuse, and the collection job they queue."""
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
@@ -9,6 +10,8 @@ import pytest
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
+from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
 
@@ -56,6 +59,26 @@ async def test_removing_the_default_version_recomputes_the_default(
     assert "v1.4.0" not in [v["ref"] for v in detail["versions"]]
     job = (await client.get(f"/api/v1/jobs/{body['collection_job_id']}")).json()
     assert (job["kind"], job["library"], job["state"]) == ("collect", "/acme/payments", "queued")
+
+
+async def test_removing_an_existing_version_whose_ref_has_slashes_is_a_200(
+    container: Container, client: httpx.AsyncClient
+) -> None:
+    payments = await SqliteLibraryRepository(container.engine).get(LibraryId("/acme/payments"))
+    assert payments is not None
+    slashed = Version(
+        ref=VersionRef("release/1.4"), kind=RefKind.BRANCH, commit_sha="c" * 40, imported_at=NOW
+    )
+    await SqliteLibraryRepository(container.engine).save(
+        replace(payments, versions=payments.versions | {slashed})
+    )
+
+    response = await client.delete(f"{PAYMENTS}/versions/release/1.4")
+
+    assert response.status_code == 200
+    assert response.json()["ref"] == "release/1.4"
+    detail = (await client.get(PAYMENTS)).json()
+    assert "release/1.4" not in [v["ref"] for v in detail["versions"]]
 
 
 async def test_a_ref_with_slashes_and_a_missing_version_are_handled(
@@ -114,6 +137,7 @@ async def test_removal_needs_a_signed_in_caller(container: Container) -> None:
         container.running(jobs=False),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as anonymous,
     ):
-        response = await anonymous.delete(PAYMENTS)
+        library = await anonymous.delete(PAYMENTS)
+        version = await anonymous.delete(f"{PAYMENTS}/versions/v1.4.0")
 
-    assert response.status_code == 401
+    assert (library.status_code, version.status_code) == (401, 401)

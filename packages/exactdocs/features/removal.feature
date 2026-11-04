@@ -11,6 +11,7 @@ Feature: Removing a version or a library
     Then it does not appear in browse, search, list_libraries or search_docs
     And content used only by "v1.3.0" is garbage-collected
     And content shared with "v1.4.0" is kept
+    And the search index holds exactly the rows of the stored chunks
 
   Scenario: Removing the default version picks the next default
     When the user removes version "v1.4.0" of "/fixture/docs-repo"
@@ -32,3 +33,10 @@ Feature: Removing a version or a library
     When the user removes the library "/fixture/docs-repo"
     Then the library "/fixture/docs-repo" does not appear in browse, search, list_libraries or search_docs
     And all content of "/fixture/docs-repo" is garbage-collected
+
+  Scenario: Content shared with another library is kept when one library is removed
+    Given the fixture docs repository is also imported as "/mirror/docs-repo" at "v1.3.0"
+    When the user removes the library "/fixture/docs-repo"
+    Then the library "/fixture/docs-repo" does not appear in browse, search, list_libraries or search_docs
+    And all content of "v1.3.0" is still kept for "/mirror/docs-repo"
+    And the search index holds exactly the rows of the stored chunks

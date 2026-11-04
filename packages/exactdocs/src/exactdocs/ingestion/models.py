@@ -320,6 +320,10 @@ JobId = NewType("JobId", str)
 JobKind = NewType("JobKind", str)
 IMPORT_JOB = JobKind("import")
 """The kind of job that imports one version of a library."""
+REFRESH_JOB = JobKind("refresh")
+"""Imports a version the catalog has; fails if it was removed meanwhile (no resurrection)."""
+IMPORT_KINDS = frozenset({IMPORT_JOB, REFRESH_JOB})
+"""Kinds of job that import; removal waits for them and the sync state counts them."""
 COLLECT_JOB = JobKind("collect")
 """The kind of job that frees what removed or replaced versions left on disk."""
 DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
@@ -1035,6 +1039,8 @@ class ImportedVersion:
     commit_sha: str
     config_hash: str
     articles: tuple[ImportedArticle, ...]
+    refresh: bool = False
+    """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
 
 
 def git_blob_sha(data: bytes) -> str:

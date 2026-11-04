@@ -241,7 +241,7 @@ def build_world(
         max_article_bytes=max_bytes,
         max_import_bytes=max_import_bytes,
     )
-    (run,) = handlers.values()
+    run = handlers[IMPORT_JOB]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
 
 

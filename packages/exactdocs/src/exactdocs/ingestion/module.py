@@ -5,7 +5,7 @@ together with the job kinds it supports. ``import_job`` builds the import's hand
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Self
 
@@ -15,6 +15,7 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
+    REFRESH_JOB,
     ImportSource,
     JobKind,
 )
@@ -149,7 +150,9 @@ def import_job(
     importer = ImportVersionUseCase(
         gateway, chunker, sources, versions, index, max_article_bytes, max_import_bytes
     )
-    return {IMPORT_JOB: importer}, {IMPORT_JOB: DiscardInterruptedImportUseCase(versions, index)}
+    refresher = replace(importer, refresh=True)
+    hook = DiscardInterruptedImportUseCase(versions, index)
+    return {IMPORT_JOB: importer, REFRESH_JOB: refresher}, {IMPORT_JOB: hook, REFRESH_JOB: hook}
 
 
 def collect_job(

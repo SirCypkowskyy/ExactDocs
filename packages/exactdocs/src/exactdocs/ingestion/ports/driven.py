@@ -47,6 +47,10 @@ class JobRepository(Protocol):
         """Return the newest job of every (library, version), ordered by library and version."""
         ...
 
+    async def delete_for(self, library: str, version: str | None = None) -> None:
+        """Delete the library's jobs (only those of ``version`` when given). Not running ones."""
+        ...
+
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""
         ...

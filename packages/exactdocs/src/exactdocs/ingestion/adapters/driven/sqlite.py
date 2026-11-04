@@ -12,6 +12,7 @@ from sqlalchemy import (
     Row,
     Table,
     Text,
+    delete,
     func,
     insert,
     select,
@@ -97,6 +98,14 @@ class SqliteJobRepository:
         )
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
+
+    async def delete_for(self, library: str, version: str | None = None) -> None:
+        """Delete the library's jobs (only those of ``version`` when given), never a running one."""
+        doomed = delete(jobs).where(jobs.c.library == library, jobs.c.state != JobState.RUNNING)
+        if version is not None:
+            doomed = doomed.where(jobs.c.version == version)
+        async with self.engine.begin() as connection:
+            await connection.execute(doomed)
 
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""

@@ -16,7 +16,14 @@ from exactdocs.ingestion.dtos import (
     RemoveVersionCommand,
 )
 from exactdocs.ingestion.errors import ImportInProgressError
-from exactdocs.ingestion.models import COLLECT_JOB, IMPORT_JOB, Collected, JobKind, Removed
+from exactdocs.ingestion.models import (
+    COLLECT_JOB,
+    IMPORT_JOB,
+    REFRESH_JOB,
+    Collected,
+    JobKind,
+    Removed,
+)
 from exactdocs_kernel import NotFoundError, SystemClock
 
 LIBRARY = "/acme/payments"
@@ -76,9 +83,11 @@ class World:
     index: Index
     calls: list[str]
 
-    async def import_job(self, version: str, *, running: bool = False) -> None:
+    async def import_job(
+        self, version: str, *, running: bool = False, kind: JobKind = IMPORT_JOB
+    ) -> None:
         job = await self.module.enqueue_job(
-            EnqueueJobCommand(kind=IMPORT_JOB, library=LIBRARY, version=version)
+            EnqueueJobCommand(kind=kind, library=LIBRARY, version=version)
         )
         assert job.state.value == "queued"
         if running:
@@ -87,7 +96,7 @@ class World:
 
 def build(*, with_collect: bool = True, broken_index: bool = False) -> World:
     jobs, catalog, index, calls = InMemoryJobRepository(), Catalog(), Index(broken=broken_index), []
-    handlers: dict[JobKind, object] = {IMPORT_JOB: nothing}
+    handlers: dict[JobKind, object] = {IMPORT_JOB: nothing, REFRESH_JOB: nothing}
     if with_collect:
         handlers |= collect_job(
             collectors=[Collector("catalog", calls), Collector("retrieval", calls)]
@@ -249,3 +258,54 @@ async def test_collection_jobs_are_not_a_library_s_sync_state() -> None:
     latest = await world.module.list_latest_jobs()
 
     assert [(j.kind, j.version) for j in latest.jobs] == [("import", "v2")]
+
+
+async def test_a_refresh_job_blocks_removal_like_an_import() -> None:
+    world = build()
+    await world.import_job("v2", kind=REFRESH_JOB)
+
+    with pytest.raises(ImportInProgressError):
+        await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v2"))
+
+
+async def test_removing_a_version_deletes_its_job_history_and_hides_it_from_the_sync_state() -> (
+    None
+):
+    world = build()
+    await world.import_job("v1")
+    await world.import_job("v2")
+    assert await world.module.run_next_job() is True
+    assert await world.module.run_next_job() is True
+
+    await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v1"))
+
+    kept = await world.jobs.list_for_library(LIBRARY)
+    assert sorted((j.kind, j.version) for j in kept) == [("collect", None), ("import", "v2")]
+    latest = await world.module.list_latest_jobs()
+    assert [(j.library, j.version) for j in latest.jobs] == [(LIBRARY, "v2")]
+
+
+async def test_removing_a_library_deletes_its_job_history_but_not_another_librarys() -> None:
+    world = build()
+    await world.import_job("v1")
+    await world.module.enqueue_job(EnqueueJobCommand(kind=IMPORT_JOB, library="/acme/ledger"))
+    assert await world.module.run_next_job() is True
+    assert await world.module.run_next_job() is True
+
+    await world.module.remove_library(RemoveLibraryCommand(library=LIBRARY))
+
+    assert [j.kind for j in await world.jobs.list_for_library(LIBRARY)] == ["collect"]
+    assert len(await world.jobs.list_for_library("/acme/ledger")) == 1
+
+
+async def test_a_second_removal_reuses_the_collection_that_is_still_waiting() -> None:
+    world = build()
+
+    first = await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v1"))
+    second = await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v2"))
+
+    assert first.collection_job_id == second.collection_job_id
+    assert len(await world.jobs.list_for_library(LIBRARY)) == 1
+    await world.module.run_next_job()
+    third = await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v3"))
+    assert third.collection_job_id != first.collection_job_id  # the first one has run

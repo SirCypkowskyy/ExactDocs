@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
 from steps.mcp_steps import call_tool
-from steps.search_steps import git_blob_sha, read_version
+from steps.search_steps import git_blob_sha, import_versions, read_version
 
 LIBRARY = "/fixture/docs-repo"
 API = "/api/v1/libraries/fixture/docs-repo"
@@ -157,3 +157,36 @@ def step_no_versions(context: Context, library: str) -> None:
 def step_nothing_to_search(context: Context, library: str) -> None:
     response = context.client.get(f"/api/v1/libraries{library}/search", params={"q": "token"})
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+
+
+@given('the fixture docs repository is also imported as "{library}" at "{ref}"')
+def step_also_imported(context: Context, library: str, ref: str) -> None:
+    asyncio.run(import_versions(context, [ref], library))
+
+
+@then('all content of "{ref}" is still kept for "{library}"')
+def step_kept_for_other(context: Context, ref: str, library: str) -> None:
+    _wait_for_collection(context)
+    blobs = _blobs(context, ref)
+    assert _stored(context, blobs) == {"texts": len(blobs), "chunk sets": len(blobs)}
+    owner, repo = library.removeprefix("/").split("/")
+    found = context.client.get(
+        f"/api/v1/libraries/{owner}/{repo}/search", params={"q": "token", "ref": ref}
+    )
+    assert found.status_code == HTTPStatus.OK, found.text
+    assert found.json()["results"], found.json()
+
+
+@then("the search index holds exactly the rows of the stored chunks")
+def step_index_matches(context: Context) -> None:
+    _wait_for_collection(context)
+
+    async def counts() -> tuple[int, int]:
+        container = Container.build(context.settings)
+        async with container.running(jobs=False), container.engine.connect() as connection:
+            fts = await connection.execute(text("SELECT count(*) FROM retrieval_search"))
+            stored = await connection.execute(text("SELECT count(*) FROM retrieval_chunks"))
+            return fts.scalar_one(), stored.scalar_one()
+
+    fts, stored = asyncio.run(counts())
+    assert fts == stored, (fts, stored)

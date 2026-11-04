@@ -109,7 +109,13 @@ export interface paths {
         readonly get: operations["catalog-get_one"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Remove Library
+         * @description Remove a library and all its versions at once; a job frees the content.
+         *
+         *     Refused with 409 `import_in_progress` while an import of the library is queued or running.
+         */
+        readonly delete: operations["ingestion-remove_library"];
         readonly options?: never;
         readonly head?: never;
         /**
@@ -130,7 +136,15 @@ export interface paths {
         readonly get: operations["catalog-get_version"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Remove Version
+         * @description Remove one version everywhere at once; a job frees the content nothing else uses.
+         *
+         *     Refused with 409 `import_in_progress` while an import of that version is queued or
+         *     running. Removing the default version moves the default; removing the last leaves the
+         *     library without versions.
+         */
+        readonly delete: operations["ingestion-remove_version"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -920,6 +934,29 @@ export interface components {
             readonly name: string;
             /** Commit Sha */
             readonly commit_sha: string;
+        };
+        /**
+         * RemovalResult
+         * @description A removal is done for readers when this is returned; the disk is freed by a job.
+         */
+        readonly RemovalResult: {
+            /** Library */
+            readonly library: string;
+            /**
+             * Ref
+             * @description The removed version; null when a library was removed.
+             */
+            readonly ref: string | null;
+            /**
+             * Default Version
+             * @description What `/owner/repo` means now; null when no version is left.
+             */
+            readonly default_version: string | null;
+            /**
+             * Collection Job Id
+             * @description The job that frees the content (`/jobs/{id}`); null if it was not queued.
+             */
+            readonly collection_job_id: string | null;
         };
         /**
          * RepositoryHost
@@ -1962,6 +1999,83 @@ export interface operations {
             };
         };
     };
+    readonly "ingestion-remove_library": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RemovalResult"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "catalog-update_one": {
         readonly parameters: {
             readonly query?: never;
@@ -2063,6 +2177,84 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResolvedVersion"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-remove_version": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RemovalResult"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

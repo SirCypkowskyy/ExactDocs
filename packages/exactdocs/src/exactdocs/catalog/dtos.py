@@ -260,6 +260,10 @@ class StoreManifestCommand(_Dto):
     kind: RefKind
     commit_sha: str
     articles: list[ArticleIn]
+    must_exist: bool = Field(
+        default=False,
+        description="Refuse (VersionNotFoundError) unless the library already has this version.",
+    )
 
 
 class StoredManifest(_Dto):
