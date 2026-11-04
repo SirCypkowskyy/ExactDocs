@@ -16,7 +16,10 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListTagsQuery,
+    RenameAnswer,
+    RenameDirection,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     TagFilter,
     TagList,
@@ -29,6 +32,7 @@ from exactdocs.catalog.ports.driving import (
     ListArticles,
     ListLibraries,
     ListTags,
+    ResolveRenamedPath,
     ResolveVersion,
     UpdateLibrary,
 )
@@ -43,6 +47,7 @@ def build_router(
     list_articles: ListArticles,
     list_tags: ListTags,
     get_article: GetArticle,
+    resolve_renamed_path: ResolveRenamedPath,
     update_library: UpdateLibrary,
 ) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``."""
@@ -128,5 +133,38 @@ def build_router(
         ref: str | None = None,
     ) -> Article:
         return await get_article(GetArticleQuery(library=f"/{owner}/{repo}", ref=ref, path=path))
+
+    @router.get("/{owner}/{repo}/renamed-path")
+    async def get_renamed_path(
+        owner: str,
+        repo: str,
+        path: Annotated[
+            str,
+            Query(
+                min_length=1,
+                max_length=MAX_PATH,
+                description=(
+                    "`forward`: the article's path in the version imported before `ref`. "
+                    "`back`: its path in `ref`."
+                ),
+            ),
+        ],
+        ref: str | None = None,
+        direction: Annotated[
+            RenameDirection,
+            Query(description="`forward` (default): old to new path; `back`: new to old."),
+        ] = RenameDirection.FORWARD,
+    ) -> RenameAnswer:
+        """Follow `path` one hop across the renames git saw when `ref` was imported.
+
+        `renamed` is `null` when it was not moved (or no renames are known). An unknown library
+        or version, or a version without an active manifest, is a 404 instead.
+        """
+        found = await resolve_renamed_path(
+            ResolveRenamedPathQuery(
+                library=f"/{owner}/{repo}", ref=ref, path=path, direction=direction
+            )
+        )
+        return RenameAnswer(renamed=found)
 
     return router

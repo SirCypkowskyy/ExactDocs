@@ -35,6 +35,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestRename,
     ManifestState,
     RefKind,
     TagMatch,
@@ -790,3 +791,48 @@ async def test_tags_are_counted_per_manifest_most_used_first_and_capped(stores: 
         ("auth", 1),
     ]
     assert not await stores.manifests.count_tags(ManifestId("none"), limit=10)
+
+
+def rename(old: str, new: str, *, similarity: int = 84, from_ref: str = "v1.3.0") -> ManifestRename:
+    return ManifestRename(
+        from_ref=VersionRef(from_ref), old_path=old, new_path=new, similarity=similarity
+    )
+
+
+async def test_renames_are_stored_with_their_manifest_and_found_by_old_path(stores: Stores) -> None:
+    moved = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry("guide/install.md", "b1"), kind=RefKind.TAG),
+        renames=(rename("guide/setup.md", INSTALL), rename("old.md", "new.md", similarity=100)),
+    )
+    await store(stores, moved)
+
+    found = await stores.manifests.find_rename(ManifestId("m1"), "guide/setup.md")
+
+    assert found == rename("guide/setup.md", INSTALL)
+    assert await stores.manifests.find_rename(ManifestId("m1"), INSTALL) is None  # not an old path
+    assert await stores.manifests.find_rename_to(ManifestId("m1"), INSTALL) == found
+    assert await stores.manifests.find_rename_to(ManifestId("m1"), "guide/setup.md") is None
+    assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == (
+        rename("guide/setup.md", INSTALL),
+        rename("old.md", "new.md", similarity=100),
+    )
+    assert len(await stores.manifests.list_renames(ManifestId("m1"), limit=1)) == 1
+    assert await stores.manifests.find_rename(ManifestId("nope"), "guide/setup.md") is None
+    assert await fetch(stores.manifests, "m1") == replace(moved, entries=(), renames=())
+
+
+async def test_renames_go_with_their_manifest(stores: Stores) -> None:
+    pending = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry("a.md", "b1"), kind=RefKind.TAG),
+        renames=(rename("b.md", "a.md"),),
+    )
+    await store(stores, pending)
+    await discard(stores, manifest_id="m1")
+
+    assert await stores.manifests.find_rename(ManifestId("m1"), "b.md") is None
+
+    await store(stores, replace(pending, id=ManifestId("m2")))
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("v1.4.0"))
+
+    assert await stores.manifests.find_rename(ManifestId("m2"), "b.md") is None

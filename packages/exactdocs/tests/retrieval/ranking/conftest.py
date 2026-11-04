@@ -62,7 +62,9 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
         importer = ImportVersionUseCase(
             gateway=GitCli.locate(),
             chunker=MarkdownChunker(),
-            sources=CatalogLibrarySources(container.catalog.get_library),
+            sources=CatalogLibrarySources(
+                container.catalog.get_library, container.catalog.list_renames
+            ),
             versions=CatalogVersionPublisher(
                 container.catalog.store_manifest,
                 container.catalog.activate_manifest,

@@ -7,11 +7,14 @@ import pytest
 
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
+    DuplicateRenameError,
     DuplicateVersionRefError,
+    InvalidArticlePathError,
     InvalidCommitShaError,
     InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
+    InvalidSimilarityError,
     InvalidVersionRefError,
 )
 from exactdocs.catalog.models import (
@@ -20,6 +23,9 @@ from exactdocs.catalog.models import (
     HostKind,
     Library,
     LibraryId,
+    Manifest,
+    ManifestId,
+    ManifestRename,
     ParsedId,
     RefKind,
     Version,
@@ -291,3 +297,36 @@ def test_close_paths_on_a_large_tree_stay_fast_and_bounded() -> None:
 
     assert len(found) <= MAX_CLOSE_MATCHES
     assert time.perf_counter() - started < 1.0  # ~0.3 s for 50k unfiltered; a miss must stay cheap
+
+
+def move(old: str = "a.md", new: str = "b.md", similarity: int = 100) -> ManifestRename:
+    return ManifestRename(
+        from_ref=VersionRef("v1"), old_path=old, new_path=new, similarity=similarity
+    )
+
+
+@pytest.mark.parametrize("similarity", [0, 101, -5])
+def test_a_rename_keeps_a_percentage_of_the_content(similarity: int) -> None:
+    with pytest.raises(InvalidSimilarityError):
+        move(similarity=similarity)
+
+
+@pytest.mark.parametrize("path", ["", "../a.md", "a//b.md", "./a.md"])
+def test_a_rename_needs_two_article_paths(path: str) -> None:
+    with pytest.raises(InvalidArticlePathError):
+        move(old=path)
+    with pytest.raises(InvalidArticlePathError):
+        move(new=path)
+
+
+def test_a_manifest_renames_a_path_once() -> None:
+    with pytest.raises(DuplicateRenameError):
+        Manifest(
+            id=ManifestId("m"),
+            library=LibraryId("/acme/payments"),
+            ref=VersionRef("v2"),
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            created_at=NOW,
+            renames=(move(), move(new="c.md")),
+        )

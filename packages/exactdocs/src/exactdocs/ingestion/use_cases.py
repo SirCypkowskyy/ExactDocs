@@ -7,7 +7,7 @@ import os
 import stat
 import time
 import uuid
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -67,6 +67,7 @@ from exactdocs.ingestion.models import (
     REFRESH_JOB,
     ArticleChunk,
     Credential,
+    GitRename,
     ImportedArticle,
     ImportedRef,
     ImportedVersion,
@@ -89,8 +90,11 @@ from exactdocs.ingestion.models import (
     TagRule,
     article_tags,
     check_credential_fits,
+    compose_renames,
     git_blob_sha,
+    is_unordered,
     parse_article,
+    previous_version,
     readme_summary,
     ref_tips,
     resolve_ref,
@@ -110,6 +114,7 @@ from exactdocs.ingestion.ports.driven import (
     NewLibraries,
     RecoveryHook,
     Removals,
+    RenameSource,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob
@@ -684,6 +689,8 @@ class ImportVersionUseCase:
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
     refresh: bool = False
+    renames: RenameSource | None = None
+    """Where renames come from; without it none are detected. Never a reason to fail."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import from the beginning; raising fails the job."""
@@ -694,8 +701,7 @@ class ImportVersionUseCase:
         credential = await self.vault.load(job.library, source.url.credential_scope)
         # A job queued without a kind is imported as a bare commit: the SHA is what is fetched.
         kind = job.ref_kind or RefKind.COMMIT
-        full_ref = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
-        refs = [] if full_ref is None else [full_ref + job.version]
+        refs = _full_refs(kind, job.version)
         config_hash = self.chunker.config_hash
         async with self.gateway.fetch(
             source.url, job.commit_sha, source.selection, refs=refs, credential=credential
@@ -704,6 +710,9 @@ class ImportVersionUseCase:
             readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
         if not articles:
             raise NoArticlesError
+        # After the fetch above has given its slot back: a second slot held while waiting for one
+        # could deadlock two imports.
+        renamed_from, renames = await self._renames(job, source, credential, refs, articles)
         version = ImportedVersion(
             library=job.library,
             ref=job.version,
@@ -712,6 +721,8 @@ class ImportVersionUseCase:
             config_hash=config_hash,
             articles=tuple(articles),
             refresh=self.refresh,
+            renamed_from=renamed_from,
+            renames=renames,
         )
         manifest_id: str | None = None
         try:
@@ -736,6 +747,71 @@ class ImportVersionUseCase:
             )
         except Exception:
             log.exception("could not apply the README of %s %s", job.library, job.version)
+
+    async def _renames(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        refs: Sequence[str],
+        articles: Sequence[ImportedArticle],
+    ) -> tuple[str | None, tuple[GitRename, ...]]:
+        """Find the renames to store with the version: ``(None, ())`` whatever goes wrong.
+
+        A numeric tag gets what changed since the previous tag. A branch (or commit) builds its
+        map up: the renames its earlier syncs found are chained with this sync's
+        (``compose_renames``). Old paths are filtered by the library's *current* selection,
+        which may differ from the one the previous version was imported with.
+        """
+        if self.renames is None or job.version is None or job.commit_sha is None:
+            return None, ()
+        imported = await self._quietly(job, self.sources.imported_versions(job.library), [])
+        before = previous_version(job.version, imported)
+        if before is None:
+            return None, ()
+        unordered = is_unordered(job.version)
+        earlier = (
+            await self._quietly(job, self.sources.renames_of(job.library, job.version), [])
+            if unordered
+            else []
+        )
+        found = (
+            []
+            if before.commit_sha == job.commit_sha
+            else await self._quietly(
+                job,
+                self.renames.renames(
+                    source.url,
+                    before.commit_sha,
+                    job.commit_sha,
+                    refs=[*refs, *_full_refs(before.kind, before.ref)],
+                    credential=credential,
+                ),
+                [],
+            )
+        )
+        paths = {article.path for article in articles}
+        kept = [
+            rename
+            for rename in found
+            if rename.new_path in paths
+            and rename.old_path != rename.new_path
+            and rename.old_path.isprintable()  # not a stray byte (a surrogate) or a control
+            and source.selection.selects(rename.old_path)
+        ]
+        result = compose_renames(earlier, kept, paths) if unordered else tuple(kept)
+        return (before.ref, result) if result else (None, ())
+
+    @staticmethod
+    async def _quietly[T](job: Job, call: Awaitable[T], fallback: T) -> T:
+        """Await ``call``; a failure (never a cancellation) is logged and ``fallback`` returned."""
+        try:
+            return await call
+        except DomainError as error:  # expected: unreachable, auth, too large, ...
+            log.warning("no renames known for %s %s: %s", job.library, job.version, type(error))
+        except Exception:  # a missing rename map must never fail an import
+            log.exception("no renames known for %s %s", job.library, job.version)
+        return fallback
 
     async def _articles(
         self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress
@@ -794,6 +870,11 @@ class ImportVersionUseCase:
             await _discard_pending(self.versions, self.index, library, manifest_id)
         except Exception:
             log.exception("could not discard the pending import of %s", library)
+
+
+def _full_refs(kind: RefKind, name: str) -> list[str]:
+    prefix = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
+    return [] if prefix is None else [prefix + name]
 
 
 KNOWN_BATCH = 500

@@ -135,6 +135,30 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   period, then `CollectGarbage` deletes them and the contents no manifest uses. `RemoveVersion` and
   `RemoveLibrary` delete a version's manifests at once (no grace: nothing serves them), and
   ingestion's `collect` job then runs each domain's collector, catalog first.
+- **Renames between versions (E3-12):** on import, `RenameSource.renames` (the system-`git`
+  adapter) asks git which Markdown files (any letter case) moved between two commits. Which two
+  (`previous_version`): a numeric tag (`v1.4.0`, `2.1`; `1.4` equals `1.4.0`) is compared with the
+  highest lower numeric tag, never with itself, so a re-sync gives the same map. A branch or
+  commit is compared with the commit the ref served before; its map **builds up** over syncs
+  (`compose_renames`): earlier renames are kept, chained (A to B, then B to C gives A to C, the
+  lower similarity) and dropped when their target is no longer an article. Pre-releases and other
+  names have no order and get none. Old paths are filtered by the library's current selection.
+  The map (`from_ref`, old path, new path, similarity) is stored with the new version's manifest
+  (`catalog_manifest_renames`, indexed both ways), so it is replaced, collected and removed with
+  it. It is read through the `ResolveRenamedPath` port (forward: old to new; back: new to old),
+  `ListRenames`, and REST `GET /libraries/{owner}/{repo}/renamed-path`. **One hop only:** a file
+  moved over several versions is followed by asking once per version and chaining the answers (a
+  version that was never imported breaks the chain). Detection never fails an import: any error
+  means "no renames known" (a branch keeps its earlier map). Cost, measured on `fastapi/fastapi`
+  0.100.0 to 0.115.0 (about 1,400 Markdown files, 12 renames, 4 of them exact): fetching the two
+  trees (`--depth=1 --filter=blob:none`, no checkout) takes about 1 s and 250 KB, and
+  `git diff-tree -M --diff-filter=R` over a case-insensitive `*.md`/`*.mdx` pathspec then fetches
+  only the added and deleted Markdown files' blobs (about 1 MB, 1 s) to score renames with edits;
+  exact renames need no blobs. Bounds: one fetch slot (the import has released its own first), a
+  60 s deadline, the fetch size watchdog (which, with the deadline, bounds the download of a
+  hostile repository), git's rename limit (400: above 400 x 400 added x deleted files the scoring
+  is skipped and only exact renames are kept; it bounds CPU, not downloads), a 16 MiB cap on git's
+  list and 10,000 renames kept.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.

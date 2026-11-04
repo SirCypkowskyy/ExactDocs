@@ -11,6 +11,7 @@ from typing import Any, NewType, Self
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
     DuplicateArticlePathError,
+    DuplicateRenameError,
     DuplicateVersionRefError,
     InvalidArticlePathError,
     InvalidBlobShaError,
@@ -18,8 +19,10 @@ from exactdocs.catalog.errors import (
     InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
+    InvalidSimilarityError,
     InvalidTagFilterError,
     InvalidVersionRefError,
+    SelfRenameError,
 )
 from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
 
@@ -302,8 +305,7 @@ class ManifestEntry:
     size: int = 0  # bytes of the content
 
     def __post_init__(self) -> None:
-        if not self.path or any(part in {"", ".", ".."} for part in self.path.split("/")):
-            raise InvalidArticlePathError(self.path)
+        _check_path(self.path)
         if not _OBJECT_ID.fullmatch(self.blob_sha):
             raise InvalidBlobShaError(self.blob_sha)
 
@@ -311,6 +313,36 @@ class ManifestEntry:
     def content_key(self) -> ContentKey:
         """Where the article's text is stored."""
         return (self.blob_sha, self.content_version)
+
+
+def _check_path(path: str) -> None:
+    if not path or any(part in {"", ".", ".."} for part in path.split("/")):
+        raise InvalidArticlePathError(path)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestRename:
+    """A file git saw moved: in version ``from_ref``, ``old_path`` became ``new_path`` here.
+
+    Belongs to the manifest of the *newer* version (the one ``new_path`` is an article of), so it
+    is replaced, collected and deleted together with it. A tag's renames come from the previous
+    tag; a branch's build up over its syncs, and ``from_ref`` is the branch itself.
+    """
+
+    from_ref: VersionRef
+    old_path: str
+    new_path: str
+    similarity: int  # percent of the content kept; 1..100
+
+    def __post_init__(self) -> None:
+        _check_path(self.old_path)
+        _check_path(self.new_path)
+        if not 0 < self.similarity <= MAX_SIMILARITY:
+            raise InvalidSimilarityError(self.similarity)
+
+
+MAX_SIMILARITY = 100
+MAX_RENAMES = 10_000
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -330,6 +362,8 @@ class Manifest:
     entries: tuple[ManifestEntry, ...] = ()
     state: ManifestState = ManifestState.PENDING
     superseded_at: datetime | None = None
+    renames: tuple[ManifestRename, ...] = ()
+    """Files moved since an earlier version; not loaded with the manifest (``find_rename``)."""
 
     def __post_init__(self) -> None:
         if not _OBJECT_ID.fullmatch(self.commit_sha):
@@ -337,6 +371,11 @@ class Manifest:
         paths = [entry.path for entry in self.entries]
         if len(set(paths)) != len(paths):
             raise DuplicateArticlePathError(next(p for p in paths if paths.count(p) > 1))
+        olds = [rename.old_path for rename in self.renames]
+        if len(set(olds)) != len(olds):
+            raise DuplicateRenameError(next(p for p in olds if olds.count(p) > 1))
+        if self.kind is RefKind.TAG and any(r.from_ref == self.ref for r in self.renames):
+            raise SelfRenameError(str(self.ref))  # a branch's map builds up over its syncs
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

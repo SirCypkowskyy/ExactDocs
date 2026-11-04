@@ -21,8 +21,10 @@ from exactdocs.catalog.dtos import (
     GetManifestStatesQuery,
     HostKind,
     ListLibrariesQuery,
+    ListRenamesQuery,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenameIn,
     StoreManifestCommand,
     TagRuleIn,
 )
@@ -44,6 +46,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     GetManifestStates,
     ListLibraries,
+    ListRenames,
     RemoveLibrary,
     RemoveVersion,
     StoreManifest,
@@ -52,6 +55,7 @@ from exactdocs.ingestion.models import (
     PARSER_VERSION,
     ArticleChunk,
     Collected,
+    GitRename,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -235,6 +239,18 @@ class CatalogLibrarySources:
     """Implements ``ingestion.ports.driven.LibrarySources`` using the catalog."""
 
     get_library: GetLibrary
+    list_renames: ListRenames
+
+    async def renames_of(self, library: str, ref: str) -> list[GitRename]:
+        """Return the rename map the version serves; empty when it has none or is unknown."""
+        try:
+            found = await self.list_renames(ListRenamesQuery(library=library, ref=ref))
+        except NotFoundError:
+            return []
+        return [
+            GitRename(old_path=r.old_path, new_path=r.new_path, similarity=r.similarity)
+            for r in found.renames
+        ]
 
     async def get(self, library: str) -> ImportSource:
         """Read the library's repository, selection and tag rules; ``NotFoundError`` if unknown."""
@@ -405,6 +421,16 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
         kind=CatalogRefKind(version.kind.value),
         commit_sha=version.commit_sha,
         must_exist=version.refresh,
+        renames=[
+            RenameIn(
+                from_ref=version.renamed_from,
+                old_path=r.old_path,
+                new_path=r.new_path,
+                similarity=r.similarity,
+            )
+            for r in version.renames
+            if version.renamed_from is not None
+        ],
         articles=[
             ArticleIn(
                 path=a.path,

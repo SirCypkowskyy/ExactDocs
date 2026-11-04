@@ -133,6 +133,7 @@ def create_app(container: Container) -> FastAPI:
             list_articles=container.catalog.list_articles,
             list_tags=container.catalog.list_tags,
             get_article=container.catalog.get_article,
+            resolve_renamed_path=container.catalog.resolve_renamed_path,
             update_library=container.catalog.update_library,
         )
     )

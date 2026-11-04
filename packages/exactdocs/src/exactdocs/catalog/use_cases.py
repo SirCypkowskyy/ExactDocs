@@ -28,12 +28,17 @@ from exactdocs.catalog.dtos import (
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ListRenamesQuery,
     ListTagsQuery,
     ManifestStates,
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenameDirection,
+    RenamedPath,
+    RenameList,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
@@ -50,6 +55,7 @@ from exactdocs.catalog.errors import (
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
+    MAX_RENAMES,
     ContentKey,
     HostKind,
     Library,
@@ -58,6 +64,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestRename,
     ParsedId,
     TagRule,
     Version,
@@ -243,6 +250,15 @@ class StoreManifestUseCase:
             kind=command.kind,
             commit_sha=command.commit_sha,
             created_at=self.clock.now(),
+            renames=tuple(
+                ManifestRename(
+                    from_ref=VersionRef(r.from_ref),
+                    old_path=r.old_path,
+                    new_path=r.new_path,
+                    similarity=r.similarity,
+                )
+                for r in command.renames
+            ),
             entries=tuple(
                 sorted(
                     (
@@ -327,6 +343,56 @@ class ListArticlesUseCase:
             articles=[ArticleSummary.from_model(e) for e in page],
             next_cursor=encode_cursor(page[-1].path) if len(entries) > query.limit else None,
         )
+
+
+async def _renames_manifest(
+    repository: LibraryRepository, manifests: ManifestRepository, library: str, ref: str | None
+) -> tuple[str, str, ManifestId]:
+    """Return ``(library, ref, manifest ID)`` of the version whose renames are asked for."""
+    found, version = await _find_version(
+        repository, LibraryId(library), VersionRef(ref) if ref else None
+    )
+    manifest = await manifests.get_active(found.id, version.ref)
+    if manifest is None:
+        raise ArticleNotFoundError(str(found.id), str(version.ref), None)
+    return str(found.id), str(version.ref), manifest.id
+
+
+@dataclass(frozen=True, slots=True)
+class ResolveRenamedPathUseCase:
+    """Implements ``ports.driving.ResolveRenamedPath``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
+        """Look the path up in the renames stored with the version's active manifest."""
+        library, ref, manifest = await _renames_manifest(
+            self.repository, self.manifests, query.library, query.ref
+        )
+        find = (
+            self.manifests.find_rename_to
+            if query.direction is RenameDirection.BACK
+            else self.manifests.find_rename
+        )
+        rename = await find(manifest, query.path)
+        return None if rename is None else RenamedPath.from_model(library, ref, rename)
+
+
+@dataclass(frozen=True, slots=True)
+class ListRenamesUseCase:
+    """Implements ``ports.driving.ListRenames``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: ListRenamesQuery) -> RenameList:
+        """List the renames stored with the version's active manifest."""
+        library, ref, manifest = await _renames_manifest(
+            self.repository, self.manifests, query.library, query.ref
+        )
+        renames = await self.manifests.list_renames(manifest, limit=MAX_RENAMES)
+        return RenameList(renames=[RenamedPath.from_model(library, ref, r) for r in renames])
 
 
 @dataclass(frozen=True, slots=True)

@@ -396,7 +396,7 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
     importer = ImportVersionUseCase(
         gateway=GitCli.locate(),
         chunker=MarkdownChunker(),
-        sources=CatalogLibrarySources(c.catalog.get_library),
+        sources=CatalogLibrarySources(c.catalog.get_library, c.catalog.list_renames),
         versions=CatalogVersionPublisher(
             c.catalog.store_manifest,
             c.catalog.activate_manifest,

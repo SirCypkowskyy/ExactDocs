@@ -23,12 +23,16 @@ from exactdocs.catalog.dtos import (
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ListRenamesQuery,
     ListTagsQuery,
     ManifestStates,
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenamedPath,
+    RenameList,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
@@ -110,6 +114,34 @@ class ListTags(Protocol):
     """
 
     async def __call__(self, query: ListTagsQuery) -> TagList:
+        """Run the use case."""
+        ...
+
+
+class ResolveRenamedPath(Protocol):
+    """Follow a path across the renames git detected when the version was imported.
+
+    ``FORWARD``: where did ``path`` of the previous version go in ``ref``? ``BACK``: where was
+    ``path`` of ``ref`` in the previous version? ``None`` when the version's manifest has no
+    such rename (or none were detected). It is one hop: callers follow a file across several
+    versions by asking once per version and chaining the answers (a version that was never
+    imported breaks the chain). A tag's map covers the previous numeric tag. A branch's map
+    builds up over its syncs: renames are kept, chained (A to B, then B to C gives A to C) and
+    dropped when their target is gone.
+
+    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` for an unknown target and
+    ``ArticleNotFoundError`` when the version has no active manifest.
+    """
+
+    async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
+        """Run the use case."""
+        ...
+
+
+class ListRenames(Protocol):
+    """List every rename stored with a version (same errors as ``ResolveRenamedPath``)."""
+
+    async def __call__(self, query: ListRenamesQuery) -> RenameList:
         """Run the use case."""
         ...
 

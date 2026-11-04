@@ -10,6 +10,7 @@ from exactdocs.ingestion.models import (
     ArticleChunk,
     Collected,
     Credential,
+    GitRename,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -158,6 +159,30 @@ class GitGateway(Protocol):
         ...
 
 
+class RenameSource(Protocol):
+    """Ask git which files were moved between two commits, cheaply."""
+
+    async def renames(
+        self,
+        repository: RepositoryUrl,
+        old_sha: str,
+        new_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[GitRename]:
+        """Return the ``.md`` / ``.mdx`` files (any letter case) git sees as renamed.
+
+        Only the two commits' trees are fetched (no history, no blobs); git then asks for the
+        few blobs that renames with edits need to be told apart. Everything is bounded: one
+        fetch slot, its own deadline, a size cap and git's rename limit (which bounds CPU; the
+        download is bounded by the size cap and the deadline). Raises what
+        ``GitGateway.fetch`` raises (callers treat any failure as "no renames known").
+        ``refs`` are tried only when the server refuses a request for a bare SHA.
+        """
+        ...
+
+
 class LibraryIds(Protocol):
     """What ingestion needs to know about the catalog, in its own words."""
 
@@ -210,6 +235,10 @@ class LibrarySources(Protocol):
 
     async def get(self, library: str) -> ImportSource:
         """Return the repository and path selection of a library; raises when it is unknown."""
+        ...
+
+    async def renames_of(self, library: str, ref: str) -> Sequence[GitRename]:
+        """Return the rename map the version serves now (empty when it has none or is unknown)."""
         ...
 
 

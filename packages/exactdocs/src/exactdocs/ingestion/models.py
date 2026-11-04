@@ -10,12 +10,13 @@ import ipaddress
 import json
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
 from itertools import pairwise, starmap
+from operator import itemgetter
 from pathlib import PurePosixPath
 from typing import Any, NewType, Self
 from urllib.parse import unquote, urlsplit
@@ -1161,6 +1162,26 @@ class ImportedArticle:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class GitRename:
+    """A file git sees as moved between two commits: ``old_path`` became ``new_path``."""
+
+    old_path: str
+    new_path: str
+    similarity: int
+    """Percent of the content kept (100: moved unchanged); git reports renames from 50."""
+
+    def __post_init__(self) -> None:
+        if not 0 < self.similarity <= MAX_SIMILARITY:
+            message = f"similarity must be 1..{MAX_SIMILARITY}, not {self.similarity}"
+            raise ValueError(message)
+
+
+MAX_SIMILARITY = 100
+MAX_RENAMES = 10_000
+"""Renames kept per version; git lists more only for a rewrite of the whole tree."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImportedVersion:
     """Every article of one library version at one commit, chunked with ``config_hash``."""
 
@@ -1172,6 +1193,9 @@ class ImportedVersion:
     articles: tuple[ImportedArticle, ...]
     refresh: bool = False
     """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
+    renamed_from: str | None = None
+    """The ref whose commit ``renames`` were detected against; ``None`` when none were."""
+    renames: tuple[GitRename, ...] = ()
 
 
 def git_blob_sha(data: bytes) -> str:
@@ -1203,6 +1227,70 @@ class ImportedRef:
     ref: str
     kind: RefKind
     commit_sha: str
+
+
+_NUMERIC_REF = re.compile(r"[vV]?(\d{1,9}(?:\.\d{1,9}){0,7})")
+
+
+def _numbers(ref: str) -> tuple[int, ...] | None:
+    match = _NUMERIC_REF.fullmatch(ref)
+    return tuple(map(int, match[1].split("."))) if match else None
+
+
+def _precedes(older: tuple[int, ...], newer: tuple[int, ...]) -> bool:
+    """Tell whether ``older`` is a lower version; ``1.4`` and ``1.4.0`` are the same one."""
+    width = max(len(older), len(newer))
+    return older + (0,) * (width - len(older)) < newer + (0,) * (width - len(newer))
+
+
+def previous_version(ref: str, imported: Sequence[ImportedRef]) -> ImportedRef | None:
+    """Pick the version whose commit renames are detected against when ``ref`` is imported.
+
+    A numeric ref (``v1.4.0``, ``2.1``) is compared with the highest lower numeric tag, never
+    with itself, so a re-sync of it gives the same map. A ref without an order (a branch, a
+    commit) is compared with what it served before, if it was imported; ``None`` otherwise.
+    Pre-releases and other names have no order and get ``None`` as well.
+    """
+    wanted = _numbers(ref)
+    if wanted is None:
+        return next((v for v in imported if v.ref == ref), None)
+    older = [
+        (number, v)
+        for v in imported
+        if v.kind is RefKind.TAG and (number := _numbers(v.ref)) is not None
+        if _precedes(number, wanted)
+    ]
+    return max(older, key=itemgetter(0))[1] if older else None
+
+
+def is_unordered(ref: str) -> bool:
+    """Tell whether renames of ``ref`` build up over its syncs (it has no place in an order)."""
+    return _numbers(ref) is None
+
+
+def compose_renames(
+    earlier: Sequence[GitRename], latest: Sequence[GitRename], articles: Collection[str]
+) -> tuple[GitRename, ...]:
+    """Chain a branch's earlier renames with the ones of its latest sync.
+
+    ``A -> B`` earlier and ``B -> C`` now gives ``A -> C`` (the lower similarity); renames of
+    the latest sync stay too, unless their old path is one the earlier map already tells about.
+    Entries whose target is not an article any more, or that came back to their old path, go.
+    """
+    now = {r.old_path: r for r in latest}
+    chained = [
+        replace(
+            r,
+            new_path=(moved := now.get(r.new_path, r)).new_path,
+            similarity=min(r.similarity, moved.similarity),
+        )
+        for r in earlier
+    ]
+    seen = {r.old_path for r in chained}
+    chained += [r for r in latest if r.old_path not in seen]
+    return tuple(r for r in chained if r.new_path in articles and r.new_path != r.old_path)[
+        :MAX_RENAMES
+    ]
 
 
 ACTIVE_JOB_STATES = frozenset({JobState.QUEUED, JobState.RUNNING})

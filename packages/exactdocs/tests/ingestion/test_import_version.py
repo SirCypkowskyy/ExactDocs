@@ -33,6 +33,7 @@ from exactdocs.ingestion.models import (
     AccessToken,
     ArticleChunk,
     Credential,
+    GitRename,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -52,6 +53,7 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import import_job
+from exactdocs.ingestion.ports import RenameSource
 from exactdocs.ingestion.use_cases import (
     ImportVersionUseCase,
     RunNextJobUseCase,
@@ -80,6 +82,7 @@ class Checkout:
     credentials: list[Credential | None] = field(default_factory=list)
     tmp: Path | None = None
     after_write: Callable[[Path], None] = lambda _: None
+    open: bool = False  # inside ``fetch``
 
     @asynccontextmanager
     async def fetch(
@@ -103,12 +106,28 @@ class Checkout:
         for name, target in self.links.items():
             (self.tmp / name).symlink_to(target)
         self.after_write(self.tmp)
-        yield self.tmp
+        self.open = True
+        try:
+            yield self.tmp
+        finally:
+            self.open = False
 
 
 class Sources:
-    def __init__(self, selection: PathSelection, rules: tuple[TagRule, ...] = ()) -> None:
+    def __init__(
+        self,
+        selection: PathSelection,
+        rules: tuple[TagRule, ...] = (),
+        imported: Sequence[ImportedRef] = (),
+        earlier: Sequence[GitRename] = (),
+    ) -> None:
         self.source = ImportSource(url=URL, selection=selection, tag_rules=rules)
+        self.imported = list(imported)
+        self.earlier = list(earlier)
+
+    async def renames_of(self, library: str, ref: str) -> list[GitRename]:
+        del library, ref
+        return self.earlier
 
     async def get(self, library: str) -> ImportSource:
         del library
@@ -116,7 +135,7 @@ class Sources:
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
         del library
-        return []
+        return self.imported
 
 
 @dataclass(slots=True)
@@ -250,6 +269,9 @@ def build_world(
     after_write: Callable[[Path], None] = lambda _: None,
     vault: InMemoryCredentialVault | None = None,
     kind: JobKind = IMPORT_JOB,
+    renames: RenameSource | None = None,
+    imported: Sequence[ImportedRef] = (),
+    earlier: Sequence[GitRename] = (),
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -259,12 +281,13 @@ def build_world(
     handlers, _ = import_job(
         gateway=gateway,
         chunker=chunker,
-        sources=Sources(selection or PathSelection.of(["docs/"]), rules),
+        sources=Sources(selection or PathSelection.of(["docs/"]), rules, imported, earlier),
         versions=catalog,
         index=chunks,
         vault=vault,
         max_article_bytes=max_bytes,
         max_import_bytes=max_import_bytes,
+        renames=renames,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -800,3 +823,228 @@ async def test_two_new_files_with_the_same_content_are_one_chunk_set(tmp_path: P
     await world.run(make_job(), world.progress)
 
     assert world.progress.counts == [(1, 0)]  # one chunk set cut, none reused
+
+
+OLD = "b" * 40
+V13 = ImportedRef(ref="v1.3.0", kind=RefKind.TAG, commit_sha=OLD)
+
+
+@dataclass(slots=True)
+class FakeRenames:
+    """A ``RenameSource`` that answers with ``found`` (or raises ``error``) and notes the asks."""
+
+    found: Sequence[GitRename] = ()
+    error: BaseException | None = None
+    asked: list[tuple[str, str, list[str]]] = field(default_factory=list)
+
+    async def renames(
+        self,
+        repository: RepositoryUrl,
+        old_sha: str,
+        new_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[GitRename]:
+        del repository, credential
+        self.asked.append((old_sha, new_sha, list(refs)))
+        if self.error:
+            raise self.error
+        return self.found
+
+
+def moved(old: str, new: str, similarity: int = 100) -> GitRename:
+    return GitRename(old_path=old, new_path=new, similarity=similarity)
+
+
+async def test_renames_since_the_previous_version_are_stored_with_the_new_one(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.renamed_from == "v1.3.0"
+    assert version.renames == (moved("docs/setup.md", "docs/install.md", 84),)
+    assert source.asked == [(OLD, SHA, ["refs/tags/v1.4.0", "refs/tags/v1.3.0"])]
+
+
+async def test_only_renames_into_imported_articles_from_selected_paths_are_kept(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames(
+        [
+            moved("docs/a.md", "docs/install.md"),
+            moved("docs/a.md", "docs/gone.md"),  # not an article of the new version
+            moved("other/b.md", "docs/install.md"),  # came from outside the library's paths
+            moved("docs/same.md", "docs/same.md"),
+            moved("docs/bad\udcff.md", "docs/install.md"),  # a stray byte in git's path
+        ]
+    )
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+
+
+async def test_a_resync_of_a_branch_chains_its_earlier_renames_with_the_new_ones(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/b.md", "docs/install.md", 90)])
+    before = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[V13, before],
+        earlier=[moved("docs/a.md", "docs/b.md", 70), moved("docs/x.md", "docs/gone.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.renamed_from == "main"
+    assert version.renames == (
+        moved("docs/a.md", "docs/install.md", 70),  # chained, the lower similarity
+        moved("docs/b.md", "docs/install.md", 90),
+    )  # x.md -> gone.md is dropped: its target is not an article any more
+    assert source.asked[0][:2] == (OLD, SHA)
+
+
+async def test_a_branch_synced_to_the_same_commit_keeps_its_map(tmp_path: Path) -> None:
+    source = FakeRenames()
+    same = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=SHA)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[same],
+        earlier=[moved("docs/a.md", "docs/install.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+    assert source.asked == []
+
+
+async def test_a_failing_branch_sync_keeps_the_earlier_map(tmp_path: Path) -> None:
+    before = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=RepositoryUnreachableError("it took too long")),
+        imported=[before],
+        earlier=[moved("docs/a.md", "docs/install.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+
+
+async def test_a_resync_of_a_tag_gives_the_same_map_as_its_first_import(tmp_path: Path) -> None:
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    again = ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[V13, again],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert (version.renamed_from, version.renames) == (
+        "v1.3.0",
+        (moved("docs/setup.md", "docs/install.md", 84),),
+    )
+    assert source.asked[0][0] == V13.commit_sha  # never compared with itself
+
+
+@pytest.mark.parametrize(
+    ("version", "imported", "kind"),
+    [
+        ("v1.4.0", [], RefKind.TAG),  # the first version has nothing to compare with
+        ("v1.2.0", [V13], RefKind.TAG),  # only older versions count
+        ("main", [V13], RefKind.BRANCH),  # a branch has no place in a version order
+        ("v1.4.0", [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=SHA)], RefKind.TAG),
+        ("main", [], RefKind.BRANCH),  # a branch never imported has no earlier commit
+    ],
+)
+async def test_without_a_previous_version_git_is_not_asked(
+    tmp_path: Path, version: str, imported: list[ImportedRef], kind: RefKind
+) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=imported
+    )
+
+    await world.run(make_job(version, kind=kind), world.progress)
+
+    assert source.asked == []
+    assert (world.catalog.stored[0].renamed_from, world.catalog.stored[0].renames) == (None, ())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RepositoryUnreachableError("it took too long"), RuntimeError("git exploded"), OSError("disk")],
+)
+async def test_a_failing_rename_detection_never_fails_the_import(
+    tmp_path: Path, error: Exception
+) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=error),
+        imported=[V13],
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+    assert (world.catalog.stored[0].renamed_from, world.catalog.stored[0].renames) == (None, ())
+
+
+async def test_cancelling_the_import_is_not_swallowed_by_rename_detection(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=asyncio.CancelledError()),
+        imported=[V13],
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await world.run(make_job("v1.4.0"), world.progress)
+
+    assert world.catalog.stored == []
+
+
+async def test_renames_are_not_asked_for_while_a_fetch_slot_is_held(tmp_path: Path) -> None:
+    held: list[bool] = []
+
+    class Probe(FakeRenames):
+        async def renames(self, *args: object, **kwargs: object) -> Sequence[GitRename]:
+            del args, kwargs
+            held.append(world.gateway.open)
+            return []
+
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=Probe(), imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    assert held == [False]  # two imports each holding a slot and waiting for a second could stall

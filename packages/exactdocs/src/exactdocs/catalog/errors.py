@@ -99,6 +99,27 @@ class InvalidArticlePathError(ValidationError):
         )
 
 
+class InvalidSimilarityError(ValidationError):
+    """A rename's similarity is not a percentage from 1 to 100."""
+
+    def __init__(self, value: int) -> None:
+        super().__init__(f"similarity {value} is not a percentage from 1 to 100")
+
+
+class SelfRenameError(ValidationError):
+    """A tag's manifest lists renames from the tag itself; a tag has an earlier version only."""
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(f"renames of tag {ref!r} cannot come from {ref!r} itself")
+
+
+class DuplicateRenameError(ValidationError):
+    """A manifest renames the same old path twice."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(f"old path {path!r} is renamed more than once")
+
+
 class DuplicateArticlePathError(ValidationError):
     """A manifest lists the same article path twice."""
 
