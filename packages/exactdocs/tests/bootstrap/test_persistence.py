@@ -26,7 +26,7 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
-from exactdocs.catalog.dtos import GetLibraryQuery
+from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery
 from exactdocs.catalog.errors import LibraryNotFoundError
 from exactdocs.catalog.models import Library, LibraryName, Version
 
@@ -54,7 +54,7 @@ async def test_a_stored_library_is_listed_after_a_restart() -> None:
 
     second = Container.build(Settings())
     async with second.running():
-        listed = await second.catalog.list_libraries()
+        listed = await second.catalog.list_libraries(ListLibrariesQuery())
         found = await second.catalog.get_library(GetLibraryQuery(name="/acme/payments"))
 
     assert [lib.name for lib in listed.libraries] == ["/acme/payments"]

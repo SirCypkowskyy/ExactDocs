@@ -63,6 +63,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: API types are up to date with web/openapi.json
+        run: |
+          pnpm gen:api
+          git diff --exit-code -- src/shared/lib/api-schema.d.ts \
+            || { echo "::error::run 'just api' and commit web/openapi.json and the types"; exit 1; }
       - name: Biome (CI mode, GitHub annotations)
         run: pnpm exec biome ci .
       - run: pnpm lint:arch

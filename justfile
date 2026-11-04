@@ -73,6 +73,11 @@ bdd *args:
 web-test:
     cd {{ web }} && pnpm test
 
+# Regenerate web/openapi.json from the app, then the web's TypeScript types from it (commit both)
+api:
+    uv run python -c "import tempfile; from pathlib import Path; from exactdocs.bootstrap.container import Container; from exactdocs.bootstrap.http import create_app; from exactdocs.bootstrap.rest import v1_openapi_json; from exactdocs.bootstrap.settings import Settings; print(v1_openapi_json(create_app(Container.build(Settings(data_dir=Path(tempfile.mkdtemp()))))), end='')" > {{ web }}/openapi.json
+    cd {{ web }} && pnpm gen:api
+
 # Everything CI runs, in CI order
 check: lint test bdd web-test web-build docs-build
 

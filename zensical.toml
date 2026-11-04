@@ -20,6 +20,7 @@ nav = [
   ] },
   { "Engineering" = [
     { "Architecture" = "architecture.md" },
+    { "REST API" = "rest-api.md" },
     { "Branching and releases" = "releasing.md" },
   ] },
 ]

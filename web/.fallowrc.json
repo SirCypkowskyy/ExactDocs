@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/fallow/schema.json",
-  "entry": ["doctor.config.ts"],
+  "entry": ["doctor.config.ts", ".pnpmfile.cjs"],
   "ignorePatterns": ["src/routeTree.gen.ts"],
   "ignoreExports": [
     {
@@ -61,7 +61,13 @@
     ],
     "coverage": {
       "requireAllFiles": true,
-      "allowUnmatched": ["src/routeTree.gen.ts", "index.html", "vite.config.ts", "doctor.config.ts"]
+      "allowUnmatched": [
+        "src/routeTree.gen.ts",
+        "index.html",
+        "vite.config.ts",
+        "doctor.config.ts",
+        ".pnpmfile.cjs"
+      ]
     }
   }
 }

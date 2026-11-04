@@ -1,8 +1,10 @@
 """REST adapter for the catalog (consumed by the web UI)."""
 
-from fastapi import APIRouter
+from typing import Annotated
 
-from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary
+from fastapi import APIRouter, Query
+
+from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary, ListLibrariesQuery
 from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries
 
 
@@ -11,8 +13,8 @@ def build_router(*, list_libraries: ListLibraries, get_library: GetLibrary) -> A
     router = APIRouter(prefix="/libraries", tags=["catalog"])
 
     @router.get("")
-    async def list_all() -> LibraryList:
-        return await list_libraries()
+    async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
+        return await list_libraries(query)
 
     # Library IDs are `/owner/repo`; refs (later: `/versions/{ref:path}`) always come last,
     # because the server decodes `%2F` before routing.

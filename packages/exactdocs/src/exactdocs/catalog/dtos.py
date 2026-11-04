@@ -1,11 +1,11 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
-from collections.abc import Iterable
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from exactdocs.catalog.models import Library
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
 
 
 class _Dto(BaseModel):
@@ -24,16 +24,31 @@ class LibrarySummary(_Dto):
         return cls(name=library.name, versions=[str(v) for v in sorted(library.versions)])
 
 
+Limit = Annotated[int, Field(ge=1, le=MAX_LIMIT)]
+
+
+class ListLibrariesQuery(_Dto):
+    """One page of libraries: ``limit`` items after the opaque ``cursor`` of the previous page."""
+
+    limit: Limit = DEFAULT_LIMIT
+    cursor: str | None = None
+
+
 class LibraryList(_Dto):
-    """All libraries visible to the caller, sorted by name."""
+    """A page of the libraries visible to the caller, sorted by name."""
 
     libraries: list[LibrarySummary]
+    next_cursor: str | None = Field(
+        description="Pass as `cursor` to get the next page; null on the last page."
+    )
 
     @classmethod
-    def from_models(cls, libraries: Iterable[Library]) -> Self:
-        """Map domain entities."""
-        ordered = sorted(libraries, key=lambda lib: lib.name)
-        return cls(libraries=[LibrarySummary.from_model(lib) for lib in ordered])
+    def from_page(cls, page: Page[Library]) -> Self:
+        """Map a page of domain entities."""
+        return cls(
+            libraries=[LibrarySummary.from_model(lib) for lib in page.items],
+            next_cursor=page.next_cursor,
+        )
 
 
 class GetLibraryQuery(_Dto):

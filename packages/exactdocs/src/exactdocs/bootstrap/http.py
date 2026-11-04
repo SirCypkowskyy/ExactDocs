@@ -2,14 +2,14 @@ from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import APIRouter, FastAPI
+from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -17,19 +17,18 @@ from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import current_revision
 from exactdocs.bootstrap.mcp import build_mcp
+from exactdocs.bootstrap.rest import (
+    ERROR_RESPONSES,
+    OPENAPI_PATH,
+    add_error_handlers,
+    v1_openapi,
+)
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
-from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
 
 # Built web UI, copied into the package by CI / the Docker build (see web/README.md).
 WEB_DIST = Path(__file__).parent.parent / "_web"
 MCP_PATH = "/mcp"
-
-_STATUS_BY_ERROR: dict[type[DomainError], int] = {
-    NotFoundError: 404,
-    ConflictError: 409,
-    ValidationError: 422,
-}
 
 
 class Health(BaseModel):
@@ -63,8 +62,10 @@ def create_app(container: Container) -> FastAPI:
         version=__version__,
         lifespan=lifespan,
         generate_unique_id_function=_operation_id,
+        # No Swagger UI/ReDoc (they load assets from a CDN); the `/api/v1` description is below.
+        openapi_url=None,
     )
-    app.add_exception_handler(DomainError, _domain_error_handler)
+    add_error_handlers(app)
     # DNS-rebinding guard for the whole app (REST, UI and MCP), one allowlist for all.
     app.add_middleware(
         OriginCheck,
@@ -80,7 +81,7 @@ def create_app(container: Container) -> FastAPI:
         revision = await current_revision(container.engine)
         return Health(status="ok", version=__version__, schema_revision=revision)
 
-    v1 = APIRouter(prefix="/v1")
+    v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
     v1.include_router(
         catalog_http.build_router(
             list_libraries=container.catalog.list_libraries,
@@ -90,6 +91,10 @@ def create_app(container: Container) -> FastAPI:
     v1.include_router(retrieval_http.build_router(search_docs=container.retrieval.search_docs))
     api.include_router(v1)
     app.include_router(api)
+
+    @app.get(OPENAPI_PATH, include_in_schema=False)
+    async def openapi_v1() -> dict[str, Any]:
+        return v1_openapi(app)
 
     # Every route of the MCP app (the endpoint, and OAuth/.well-known routes once auth is on)
     # is served as-is, keeping the MCP app's own middleware; `/mcp/` is an alias some hosts
@@ -152,9 +157,3 @@ class OriginCheck:
 
     def _allowed(self, origin: str) -> bool:
         return origin in self.allowed_origins or urlsplit(origin).hostname in self.trusted_hosts
-
-
-async def _domain_error_handler(_: Request, exc: Exception) -> Response:
-    status = next((s for t, s in _STATUS_BY_ERROR.items() if isinstance(exc, t)), 400)
-    code = exc.code if isinstance(exc, DomainError) else "error"
-    return JSONResponse({"error": code, "detail": str(exc)}, status_code=status)

@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass
 
-from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary
+from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary, ListLibrariesQuery
 from exactdocs.catalog.errors import LibraryNotFoundError
 from exactdocs.catalog.models import LibraryName
 from exactdocs.catalog.ports.driven import LibraryRepository
+from exactdocs_kernel import paginate
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,9 +15,11 @@ class ListLibrariesUseCase:
 
     repository: LibraryRepository
 
-    async def __call__(self) -> LibraryList:
-        """List every library."""
-        return LibraryList.from_models(await self.repository.list_all())
+    async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
+        """List a page of libraries, sorted by name."""
+        libraries = sorted(await self.repository.list_all(), key=lambda lib: lib.name)
+        page = paginate(libraries, key=lambda lib: lib.name, limit=query.limit, cursor=query.cursor)
+        return LibraryList.from_page(page)
 
 
 @dataclass(frozen=True, slots=True)
