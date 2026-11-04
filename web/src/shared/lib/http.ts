@@ -8,7 +8,9 @@ type StripBase<P> = P extends `${typeof API_BASE_URL}${infer Rest}` ? Rest : nev
 /** A `{param}` accepts any string (`/v1/tokens/abc`); that is loose: callers must encode it. */
 type Fill<P> = P extends `${infer A}{${string}}${infer B}` ? `${A}${string}${Fill<B>}` : P;
 /** A route that exists in the generated schema, relative to the API base (`/v1/session`). */
-export type ApiPath = Fill<StripBase<keyof paths>>;
+type Route = Fill<StripBase<keyof paths>>;
+/** A route, optionally with a query string (`/v1/repositories/refs?url=...`). */
+export type ApiPath = Route | `${Route}?${string}`;
 
 export class HttpError extends Error {
   readonly status: number;

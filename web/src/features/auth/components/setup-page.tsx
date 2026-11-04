@@ -1,12 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { Field } from "@/shared/ui/field";
+import { FormAlert } from "@/shared/ui/form-alert";
 import { setUp } from "../api/session-query";
 import { explainError, type FormProblem } from "../model/errors";
 import { MIN_PASSWORD_LENGTH, validateSetup } from "../model/session";
 import { AuthLayout } from "./auth-layout";
-import { Field } from "./field";
 import { focusField } from "./focus-field";
-import { FormAlert, SubmitButton } from "./form-parts";
+import { FORM_ALERT_ID, SubmitButton } from "./form-parts";
 
 export function SetupPage({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
@@ -47,7 +48,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
       intro="First run. This account becomes the admin of this server."
     >
       <form onSubmit={submit} noValidate>
-        <FormAlert problem={problem} />
+        <FormAlert id={FORM_ALERT_ID} message={problem.message} link={problem.link} />
         <div className="flex flex-col gap-5">
           <Field
             id="username"

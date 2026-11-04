@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { type SyncState, useLibraries, useSyncStates } from "../hooks/use-libraries";
 import { failedFirst } from "../model/library";
+import { AddLibraryLink } from "./add-library-link";
 import { LibrariesList } from "./libraries-list";
 
 const kindOf = (s: SyncState | undefined) => (s && "kind" in s ? s.kind : undefined);
@@ -19,13 +20,16 @@ export function LibrariesPage() {
   const running = all.filter((s) => kindOf(s) === "running").length;
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
-      <h1
-        ref={heading}
-        tabIndex={-1}
-        className="font-serif text-3xl font-semibold tracking-tight outline-none"
-      >
-        Libraries
-      </h1>
+      <div className="flex items-center justify-between gap-4">
+        <h1
+          ref={heading}
+          tabIndex={-1}
+          className="font-serif text-3xl font-semibold tracking-tight outline-none"
+        >
+          Libraries
+        </h1>
+        {libraries.length > 0 && <AddLibraryLink />}
+      </div>
       {libraries.length > 0 && (
         <>
           {/* Atomic: one sentence is announced, and the sync counts only once they are known. */}

@@ -14,6 +14,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
+import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -39,18 +40,25 @@ const AppAccountRoute = AppAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLibrariesNewRoute = AppLibrariesNewRouteImport.update({
+  id: '/libraries/new',
+  path: '/libraries/new',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
+  '/libraries/new': typeof AppLibrariesNewRoute
 }
 export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
   '/': typeof AppIndexRoute
+  '/libraries/new': typeof AppLibrariesNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -59,13 +67,21 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_app/account': typeof AppAccountRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/libraries/new': typeof AppLibrariesNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/setup' | '/sign-in' | '/account'
+  fullPaths: '/' | '/setup' | '/sign-in' | '/account' | '/libraries/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/setup' | '/sign-in' | '/account' | '/'
-  id: '__root__' | '/_app' | '/setup' | '/sign-in' | '/_app/account' | '/_app/'
+  to: '/setup' | '/sign-in' | '/account' | '/' | '/libraries/new'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/setup'
+    | '/sign-in'
+    | '/_app/account'
+    | '/_app/'
+    | '/_app/libraries/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -111,17 +127,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/libraries/new': {
+      id: '/_app/libraries/new'
+      path: '/libraries/new'
+      fullPath: '/libraries/new'
+      preLoaderRoute: typeof AppLibrariesNewRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppLibrariesNewRoute: typeof AppLibrariesNewRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppIndexRoute: AppIndexRoute,
+  AppLibrariesNewRoute: AppLibrariesNewRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
