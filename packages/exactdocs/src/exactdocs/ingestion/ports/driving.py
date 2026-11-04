@@ -3,6 +3,8 @@
 from typing import Protocol
 
 from exactdocs.ingestion.dtos import (
+    CheckedRepository,
+    CheckRepositoryCommand,
     EnqueueJobCommand,
     GetJobQuery,
     JobList,
@@ -48,4 +50,17 @@ class RunNextJob(Protocol):
 
     async def __call__(self) -> bool:
         """Return whether a job ran (``False``: nothing was waiting)."""
+        ...
+
+
+class CheckRepository(Protocol):
+    """Validate a pasted git URL and propose a library ID, saving nothing.
+
+    Raises ``InvalidRepositoryUrlError``, ``LibraryIdTakenError`` (checked before any network
+    traffic), ``NotAGitRepositoryError``, ``RepositoryUnreachableError`` or
+    ``RepositoryAuthRequiredError``.
+    """
+
+    async def __call__(self, command: CheckRepositoryCommand) -> CheckedRepository:
+        """Run the use case."""
         ...

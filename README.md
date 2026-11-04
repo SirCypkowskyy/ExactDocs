@@ -141,6 +141,13 @@ Git credentials for private repositories (token or SSH deploy key) are set per l
 or CLI and stored encrypted with `EXACTDOCS_SECRET_KEY` (generated in the data volume on first
 run if unset).
 
+ExactDocs reads repositories with the system `git` binary (in the Docker image; on `uvx` it must be
+on `PATH`; without it the server still starts, logs a warning and repository checks answer
+`git_not_installed`). URLs may be `https://`, `http://`, `ssh://`, `user@host:path` or `file://`;
+credentials never go in the URL (they are refused, never echoed or logged), and
+`POST /api/v1/repositories/check` runs git with prompts, user git config and ssh keys switched off
+and a 15 s timeout.
+
 ## Teams and access
 
 Run one instance on PostgreSQL, sign in through OIDC/OAuth, and share libraries with users or

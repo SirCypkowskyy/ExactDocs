@@ -1,4 +1,84 @@
-from exactdocs_kernel import NotFoundError, ValidationError
+"""Ingestion errors. Messages never contain the URL a user typed: it may hold a credential."""
+
+from enum import StrEnum
+
+from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
+
+
+class UrlProblem(StrEnum):
+    """Why a URL is refused. Fixed texts: none of them can repeat what the user typed."""
+
+    EMPTY = "it is empty"
+    OPTION = "it starts with '-' or contains spaces or control characters"
+    FORM = "use https://, http://, ssh://, file:// or user@host:path"
+    MALFORMED = "the URL is malformed"
+    SCHEME = "the scheme must be https, http, ssh or file"
+    QUERY = "a query or fragment is not part of a git URL"
+    FILE_HOST = "a file URL has no host: file:///path/to/repo"
+    HOST = "the host name is invalid"
+    CREDENTIALS = "credentials in the URL are not accepted (they would be stored and shown)"
+    DOTS = "the path must not contain '.' or '..'"
+    NO_OWNER = "the path needs an owner and a repository name"
+    PAGE_URL = "the path has more than owner/repository (is it a link to a page?)"
+    NO_ID = "no library ID can be derived from the path"
+    GIT_OPTION = "it would be read as a git option"
+
+
+class InvalidRepositoryUrlError(ValidationError):
+    """The text is not a git URL ExactDocs accepts."""
+
+    code = "invalid_repository_url"
+
+    def __init__(self, problem: UrlProblem) -> None:
+        super().__init__(f"not a usable git URL: {problem.value}")
+
+
+class NotAGitRepositoryError(ValidationError):
+    """The address answers, but there is no git repository there (or none visible without login)."""
+
+    code = "not_a_git_repository"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "no git repository was found at that address (a private repository can look the same)"
+        )
+
+
+class RepositoryUnreachableError(ValidationError):
+    """The repository could not be contacted (DNS, connection, TLS, timeout...)."""
+
+    code = "repository_unreachable"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"the repository is unreachable: {reason}")
+
+
+class RepositoryAuthRequiredError(ValidationError):
+    """The server wants credentials (a private repository, or one that is hidden without them)."""
+
+    code = "repository_auth_required"
+
+    def __init__(self) -> None:
+        super().__init__("the repository requires authentication")
+
+
+class LibraryIdTakenError(ConflictError):
+    """Another library already uses the ID this repository would get."""
+
+    code = "library_id_taken"
+
+    def __init__(self, library_id: str) -> None:
+        super().__init__(f"library {library_id!r} already exists: choose another library ID")
+        self.library_id = library_id
+
+
+class GitNotInstalledError(DomainError):
+    """The system ``git`` binary is missing, and ExactDocs cannot read repositories without it."""
+
+    code = "git_not_installed"
+
+    def __init__(self) -> None:
+        super().__init__("git is not installed or not on PATH: ExactDocs needs the git binary")
 
 
 class JobNotFoundError(NotFoundError):

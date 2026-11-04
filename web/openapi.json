@@ -1099,6 +1099,103 @@
         }
       }
     },
+    "/api/v1/repositories/check": {
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Check",
+        "description": "Check a git URL (nothing is saved); the URL is never echoed back.",
+        "operationId": "ingestion-check",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckRepositoryCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckedRepository"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -1529,6 +1626,58 @@
         ],
         "title": "AuthenticateQuery",
         "description": "A username and password to check."
+      },
+      "CheckRepositoryCommand": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "description": "https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "CheckRepositoryCommand",
+        "description": "Ask whether a git URL works, before anything is saved."
+      },
+      "CheckedRepository": {
+        "properties": {
+          "host": {
+            "$ref": "#/components/schemas/RepositoryHost",
+            "description": "The hosting service, for source links."
+          },
+          "library_id": {
+            "type": "string",
+            "title": "Library Id",
+            "description": "The proposed `/owner/repo` library ID."
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch",
+            "description": "The branch `HEAD` points at; null for an empty repository."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host",
+          "library_id",
+          "default_branch"
+        ],
+        "title": "CheckedRepository",
+        "description": "A reachable git repository and what a new library from it would look like."
       },
       "ChunkingOut": {
         "properties": {
@@ -2060,6 +2209,18 @@
         ],
         "title": "RefKind",
         "description": "What a version was imported from."
+      },
+      "RepositoryHost": {
+        "type": "string",
+        "enum": [
+          "github",
+          "gitlab",
+          "bitbucket",
+          "gitea",
+          "git"
+        ],
+        "title": "RepositoryHost",
+        "description": "Where a repository is hosted, by exact host name; ``git`` is any other server."
       },
       "ResolvedVersion": {
         "properties": {

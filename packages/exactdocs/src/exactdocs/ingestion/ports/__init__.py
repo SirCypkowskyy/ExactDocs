@@ -1,5 +1,13 @@
-from exactdocs.ingestion.ports.driven import JobHandler, JobProgress, JobRepository, RecoveryHook
+from exactdocs.ingestion.ports.driven import (
+    GitRemote,
+    JobHandler,
+    JobProgress,
+    JobRepository,
+    LibraryIds,
+    RecoveryHook,
+)
 from exactdocs.ingestion.ports.driving import (
+    CheckRepository,
     EnqueueJob,
     GetJob,
     ListLibraryJobs,
@@ -8,11 +16,14 @@ from exactdocs.ingestion.ports.driving import (
 )
 
 __all__ = [
+    "CheckRepository",
     "EnqueueJob",
     "GetJob",
+    "GitRemote",
     "JobHandler",
     "JobProgress",
     "JobRepository",
+    "LibraryIds",
     "ListLibraryJobs",
     "RecoverJobs",
     "RecoveryHook",

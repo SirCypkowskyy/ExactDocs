@@ -5,7 +5,7 @@ from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from exactdocs.ingestion.models import FileProblem, Job, JobState
+from exactdocs.ingestion.models import FileProblem, Job, JobState, RepositoryHost
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
 
 
@@ -96,3 +96,24 @@ class ListLibraryJobsQuery(_Dto):
     library: str = Field(min_length=1)
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
     cursor: str | None = None
+
+
+class CheckRepositoryCommand(_Dto):
+    """Ask whether a git URL works, before anything is saved."""
+
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description="https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, "
+        "without credentials.",
+    )
+
+
+class CheckedRepository(_Dto):
+    """A reachable git repository and what a new library from it would look like."""
+
+    host: RepositoryHost = Field(description="The hosting service, for source links.")
+    library_id: str = Field(description="The proposed `/owner/repo` library ID.")
+    default_branch: str | None = Field(
+        description="The branch `HEAD` points at; null for an empty repository."
+    )

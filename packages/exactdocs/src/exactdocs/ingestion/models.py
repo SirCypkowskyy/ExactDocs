@@ -1,10 +1,11 @@
-"""Ingestion entities and pure logic: jobs, and article parsing.
+"""Pure ingestion logic: git URL parsing and article parsing (front matter, title, invisibles).
 
 Parsing covers front matter, the title rule and removal of invisible characters. Nothing here
 touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX, ``import`` and
 ``export`` lines stay in the body as text and are never executed.
 """
 
+import ipaddress
 import math
 import re
 from dataclasses import dataclass, field, replace
@@ -13,11 +14,12 @@ from enum import StrEnum
 from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import Any, NewType, Self
+from urllib.parse import unquote, urlsplit
 
 import yaml
 from markdown_it import MarkdownIt
 
-from exactdocs.ingestion.errors import InvalidProgressError
+from exactdocs.ingestion.errors import InvalidProgressError, InvalidRepositoryUrlError, UrlProblem
 
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
@@ -304,3 +306,175 @@ class Job:
             started_at=None,
             finished_at=None,
         )
+
+
+ProposedId = NewType("ProposedId", str)
+"""A proposed `/owner/repo` library ID."""
+
+
+class RepositoryHost(StrEnum):
+    """Where a repository is hosted, by exact host name; ``git`` is any other server."""
+
+    GITHUB = "github"
+    GITLAB = "gitlab"
+    BITBUCKET = "bitbucket"
+    GITEA = "gitea"
+    GIT = "git"
+
+
+_KNOWN_HOSTS = {
+    "github.com": RepositoryHost.GITHUB,
+    "gitlab.com": RepositoryHost.GITLAB,
+    "bitbucket.org": RepositoryHost.BITBUCKET,
+    "gitea.com": RepositoryHost.GITEA,
+    "codeberg.org": RepositoryHost.GITEA,
+}
+# These hosts have no nested groups: a longer path is a page (`/tree/main/docs`), not a repo.
+_FLAT_HOSTS = frozenset(_KNOWN_HOSTS) - {"gitlab.com"}
+_GIT_SUFFIX = re.compile(r"\.git\Z", re.IGNORECASE)
+_SCHEMES = frozenset({"https", "http", "ssh", "file"})
+_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?")
+_SSH_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+# `user@host:path`, git's scp-like syntax. The path cannot start with `:` (`ext::...`).
+_SCP_LIKE = re.compile(
+    r"(?P<user>[A-Za-z0-9_][A-Za-z0-9._-]*)@(?P<host>[A-Za-z0-9][A-Za-z0-9.-]*):(?P<path>[^:].*)"
+)
+_UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+_ID_SEGMENTS = 2
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RepositoryUrl:
+    """A git URL that passed ``parse``: the text to hand to git, where it lives, a library ID.
+
+    ``parse`` is the gate. It accepts only ``https``, ``http``, ``ssh`` (``ssh://`` and
+    ``user@host:path``) and ``file`` URLs; refuses a leading ``-`` (an option), whitespace and
+    control characters, transport helpers such as ``ext::`` and ``fd::``, ``git://``, and any
+    credential, query or fragment in the URL. Nothing it raises repeats the input.
+    """
+
+    url: str
+    host_kind: RepositoryHost
+    library_id: ProposedId
+
+    @classmethod
+    def parse(cls, text: str) -> Self:
+        """Validate ``text`` and propose a library ID (``/owner/repo``, lower-case)."""
+        url = text.strip()
+        if not url:
+            raise InvalidRepositoryUrlError(UrlProblem.EMPTY)
+        if url.startswith("-") or any(c.isspace() or not c.isprintable() for c in url):
+            raise InvalidRepositoryUrlError(UrlProblem.OPTION)
+        if "?" in url or "#" in url:
+            raise InvalidRepositoryUrlError(UrlProblem.QUERY)
+        if "://" in url:
+            host, segments, top_level_owner = _split_url(url)
+        elif match := _SCP_LIKE.fullmatch(url):
+            host = match["host"].lower()
+            segments, top_level_owner = _segments(match["path"]), True
+        else:
+            raise InvalidRepositoryUrlError(UrlProblem.FORM)
+        # Hosts with nested groups (GitLab) key a library by its top-level group; plain HTTP
+        # and file URLs (fixture servers, local mirrors) have no such convention: last two.
+        if len(segments) < _ID_SEGMENTS:
+            raise InvalidRepositoryUrlError(UrlProblem.NO_OWNER)
+        if host in _FLAT_HOSTS and len(segments) != _ID_SEGMENTS:
+            raise InvalidRepositoryUrlError(UrlProblem.PAGE_URL)
+        owner, name = (segments[0] if top_level_owner else segments[-2]), segments[-1]
+        name = _GIT_SUFFIX.sub("", name)
+        return cls(
+            url=url,
+            host_kind=_host_kind(host),
+            library_id=ProposedId(f"/{_id_segment(owner)}/{_id_segment(name)}"),
+        )
+
+
+def _split_url(url: str) -> tuple[str, list[str], bool]:
+    """Check a ``scheme://`` URL; return its host, path segments and the owner-group flag."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        raise InvalidRepositoryUrlError(UrlProblem.MALFORMED) from None
+    scheme, host = parts.scheme.lower(), (parts.hostname or "").lower()
+    if scheme not in _SCHEMES:
+        raise InvalidRepositoryUrlError(UrlProblem.SCHEME)
+    if scheme == "file":
+        if host not in {"", "localhost"} or port is not None or "@" in parts.netloc:
+            raise InvalidRepositoryUrlError(UrlProblem.FILE_HOST)
+    else:
+        if not _is_host(host):
+            raise InvalidRepositoryUrlError(UrlProblem.HOST)
+        userinfo = parts.netloc.rpartition("@")[0] if "@" in parts.netloc else None
+        if userinfo is not None and (scheme != "ssh" or not _SSH_USER.fullmatch(userinfo)):
+            raise InvalidRepositoryUrlError(UrlProblem.CREDENTIALS)
+    return host, _segments(parts.path), scheme in {"https", "ssh"}
+
+
+def _segments(path: str) -> list[str]:
+    segments = [unquote(s) for s in path.split("/") if s]
+    if any(s in {".", ".."} or "/" in s for s in segments):
+        raise InvalidRepositoryUrlError(UrlProblem.DOTS)
+    return segments
+
+
+def _is_host(host: str) -> bool:
+    if _HOST.fullmatch(host):
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def _host_kind(host: str) -> RepositoryHost:
+    return _KNOWN_HOSTS.get(host, RepositoryHost.GIT)
+
+
+def _id_segment(raw: str) -> str:
+    """Shape a path segment like a library ID segment (letters, digits, ``._-``), lower-case."""
+    segment = _UNSAFE_ID_CHARS.sub("-", raw).strip("-").lower()
+    if not segment or set(segment) == {"."}:
+        raise InvalidRepositoryUrlError(UrlProblem.NO_ID)
+    return segment
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RemoteRef:
+    """One ref a remote advertises: ``refs/heads/main`` or ``refs/tags/v1.4.0`` and its object."""
+
+    name: str
+    sha: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RemoteRefs:
+    """What ``git ls-remote`` saw: the branch ``HEAD`` points at (``None`` if unknown) and refs."""
+
+    default_branch: str | None
+    refs: tuple[RemoteRef, ...] = ()
+
+
+_BAD_REF_CHARS = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+_MAX_BRANCH = 255
+
+
+def branch_name(raw: str) -> str | None:
+    """Return ``raw`` if it is a branch name git would accept (``git check-ref-format``), else None.
+
+    The name comes from a remote, so it is also capped and checked for control characters
+    before it is stored or shown.
+    """
+    parts = raw.split("/")
+    ok = (
+        0 < len(raw) <= _MAX_BRANCH
+        and not _BAD_REF_CHARS.search(raw)
+        and all(p and not p.startswith(".") and not p.endswith(".lock") for p in parts)
+        and ".." not in raw
+        and "@{" not in raw
+        and not raw.startswith("-")
+        and not raw.endswith((".", "/"))
+        and raw.isprintable()
+    )
+    return raw if ok else None

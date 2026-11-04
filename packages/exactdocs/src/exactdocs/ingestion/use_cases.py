@@ -6,15 +6,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from exactdocs.ingestion.dtos import (
+    CheckedRepository,
+    CheckRepositoryCommand,
     EnqueueJobCommand,
     GetJobQuery,
     JobList,
     JobSummary,
     ListLibraryJobsQuery,
 )
-from exactdocs.ingestion.errors import JobNotFoundError, UnknownJobKindError
-from exactdocs.ingestion.models import Job, JobId, JobKind
-from exactdocs.ingestion.ports.driven import JobHandler, JobRepository, RecoveryHook
+from exactdocs.ingestion.errors import JobNotFoundError, LibraryIdTakenError, UnknownJobKindError
+from exactdocs.ingestion.models import Job, JobId, JobKind, RepositoryUrl
+from exactdocs.ingestion.ports.driven import (
+    GitRemote,
+    JobHandler,
+    JobRepository,
+    LibraryIds,
+    RecoveryHook,
+)
 from exactdocs_kernel import Clock, DomainError, paginate
 
 log = logging.getLogger(__name__)
@@ -161,3 +169,23 @@ class _Progress:
 def _describe(error: Exception) -> str:
     """Return the text users see: a domain error says what is wrong, else only its type."""
     return str(error) if isinstance(error, DomainError) else f"unexpected {type(error).__name__}"
+
+
+@dataclass(frozen=True, slots=True)
+class CheckRepositoryUseCase:
+    """Implements ``ports.driving.CheckRepository``."""
+
+    remote: GitRemote
+    library_ids: LibraryIds
+
+    async def __call__(self, command: CheckRepositoryCommand) -> CheckedRepository:
+        """Parse the URL, refuse a taken ID, then ask the remote for its default branch."""
+        repository = RepositoryUrl.parse(command.url)
+        if await self.library_ids.is_taken(repository.library_id):
+            raise LibraryIdTakenError(repository.library_id)
+        refs = await self.remote.list_refs(repository, "HEAD")
+        return CheckedRepository(
+            host=repository.host_kind,
+            library_id=repository.library_id,
+            default_branch=refs.default_branch,
+        )
