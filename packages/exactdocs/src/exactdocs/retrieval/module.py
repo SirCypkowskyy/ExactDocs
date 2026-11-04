@@ -4,6 +4,7 @@ from typing import Self
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    DefaultVersions,
     Libraries,
     SearchableVersions,
     SearchIndex,
@@ -17,6 +18,7 @@ from exactdocs.retrieval.ports.driving import (
     ReadChunk,
     RemoveChunks,
     ResolveLibraryId,
+    SearchAllLibraries,
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
@@ -29,6 +31,7 @@ from exactdocs.retrieval.use_cases import (
     ReadChunkUseCase,
     RemoveChunksUseCase,
     ResolveLibraryIdUseCase,
+    SearchAllLibrariesUseCase,
     SearchDocsUseCase,
 )
 from exactdocs_kernel import Clock, SystemClock
@@ -39,6 +42,7 @@ class RetrievalModule:
     """Retrieval's driving ports, ready to be exposed by driving adapters."""
 
     search_docs: SearchDocs
+    search_all_libraries: SearchAllLibraries
     index_manifest: IndexManifest
     get_chunk_sets: GetChunkSets
     read_chunk: ReadChunk
@@ -54,6 +58,7 @@ class RetrievalModule:
         *,
         searchable: SearchableVersions,
         libraries: Libraries,
+        defaults: DefaultVersions,
         manifests: ActiveManifests,
         chunks: ChunkRepository,
         search: SearchIndex,
@@ -64,6 +69,7 @@ class RetrievalModule:
         clock = clock or SystemClock()
         return cls(
             search_docs=SearchDocsUseCase(searchable, search, chunks),
+            search_all_libraries=SearchAllLibrariesUseCase(defaults, searchable, search, chunks),
             index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks),
             read_chunk=ReadChunkUseCase(searchable, manifests, chunks),

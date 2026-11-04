@@ -45,6 +45,7 @@ from exactdocs.catalog.ports.driving import (
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
+    ListDefaultManifests,
     ListLibraries,
     ListRenames,
     RemoveLibrary,
@@ -125,6 +126,28 @@ class CatalogSearchableVersions:
             repository_url=detail.source_url,
             host=SourceHost(detail.host.value),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogDefaultVersions:
+    """Implements ``retrieval.ports.driven.DefaultVersions`` using the catalog."""
+
+    list_default_manifests: ListDefaultManifests
+
+    async def all(self) -> Sequence[SearchableVersion]:
+        """Name every library's default version with an active manifest, in one catalog call."""
+        found = await self.list_default_manifests()
+        return [
+            SearchableVersion(
+                library=m.library,
+                version=m.ref,
+                manifest_id=m.manifest_id,
+                commit_sha=m.commit_sha,
+                repository_url=m.source_url,
+                host=SourceHost(m.host.value),
+            )
+            for m in found.manifests
+        ]
 
 
 @dataclass(frozen=True, slots=True)

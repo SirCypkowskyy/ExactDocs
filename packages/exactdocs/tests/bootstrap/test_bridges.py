@@ -4,6 +4,7 @@ import pytest
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogDefaultVersions,
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogSearchableVersions,
@@ -174,3 +175,46 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
     assert found[0].id == "/acme/lib-001"
     assert (found[0].title, found[0].default_version) == ("Lib 1", "v1.4.0")
     assert found[0].version_count == len(PAYMENTS.versions)
+
+
+async def test_default_versions_come_in_one_call_with_active_manifests_only() -> None:
+    other = Library(
+        id=LibraryId("/acme/other"),
+        title="Other",
+        source_url="https://gitlab.com/acme/other",
+        host=HostKind.GITLAB,
+        versions=PAYMENTS.versions,
+    )
+    repository = InMemoryLibraryRepository.of([PAYMENTS, other])
+    catalog = CatalogModule.build(
+        repository=repository, manifests=InMemoryManifestRepository(repository)
+    )
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/other",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="d" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="e" * 40,
+                    content_version=1,
+                    title="A",
+                    tags=[],
+                    front_matter={},
+                    content="x",
+                )
+            ],
+        )
+    )
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    found = await CatalogDefaultVersions(catalog.list_default_manifests).all()
+
+    # /acme/payments has a default version (v1.4.0) but nothing active: it is left out.
+    assert [(v.library, v.version, v.manifest_id) for v in found] == [
+        ("/acme/other", "v1.4.0", stored.manifest_id)
+    ]
+    assert (found[0].commit_sha, found[0].host) == ("d" * 40, SourceHost.GITLAB)
+    assert found[0].repository_url == "https://gitlab.com/acme/other"

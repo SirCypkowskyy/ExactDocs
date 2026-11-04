@@ -19,6 +19,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     GetManifestStates,
     ListArticles,
+    ListDefaultManifests,
     ListLibraries,
     ListRenames,
     ListTags,
@@ -41,6 +42,7 @@ from exactdocs.catalog.use_cases import (
     GetLibraryUseCase,
     GetManifestStatesUseCase,
     ListArticlesUseCase,
+    ListDefaultManifestsUseCase,
     ListLibrariesUseCase,
     ListRenamesUseCase,
     ListTagsUseCase,
@@ -74,6 +76,7 @@ class CatalogModule:
     collect_garbage: CollectGarbage
     get_manifest_states: GetManifestStates
     get_active_manifest: GetActiveManifest
+    list_default_manifests: ListDefaultManifests
     update_library: UpdateLibrary
     apply_readme: ApplyReadme
     remove_version: RemoveVersion
@@ -106,6 +109,7 @@ class CatalogModule:
             collect_garbage=CollectGarbageUseCase(manifests, clock),
             get_manifest_states=GetManifestStatesUseCase(manifests),
             get_active_manifest=GetActiveManifestUseCase(repository, manifests),
+            list_default_manifests=ListDefaultManifestsUseCase(repository, manifests),
             update_library=UpdateLibraryUseCase(repository),
             apply_readme=ApplyReadmeUseCase(repository),
             remove_version=RemoveVersionUseCase(repository, manifests),

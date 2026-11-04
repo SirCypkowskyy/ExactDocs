@@ -42,6 +42,20 @@ MAX_TAG = MAX_TAG_INPUT
 Tag = Annotated[str, StringConstraints(max_length=MAX_TAG)]
 
 
+def _normalize_tags(value: object) -> object:
+    """Split on commas and normalize like ingestion stores tags; drop blanks and repeats."""
+    if not isinstance(value, list | tuple):
+        return value
+    if not all(isinstance(v, str) for v in value):
+        return value
+    parts = [p for v in value for p in v.split(",") if p.strip()]
+    tags = [normalize_tag(p) for p in parts]
+    if None in tags:
+        message = "tags must be valid tags"
+        raise ValueError(message)
+    return list(dict.fromkeys(tags))
+
+
 class SearchDocsQuery(_Dto):
     """Search within exactly one library version; no ``ref`` means the default version."""
 
@@ -78,18 +92,39 @@ class SearchDocsQuery(_Dto):
 
     @field_validator("tags", mode="before")
     @classmethod
-    def _normalize_tags(cls, value: object) -> object:
-        """Split on commas and normalize like ingestion stores tags; drop blanks and repeats."""
-        if not isinstance(value, list | tuple):
-            return value
-        if not all(isinstance(v, str) for v in value):
-            return value
-        parts = [p for v in value for p in v.split(",") if p.strip()]
-        tags = [normalize_tag(p) for p in parts]
-        if None in tags:
-            message = "tags must be valid tags"
-            raise ValueError(message)
-        return list(dict.fromkeys(tags))
+    def _split_tags(cls, value: object) -> object:
+        return _normalize_tags(value)
+
+
+class SearchAllQuery(_Dto):
+    """Search the default version of every library at once, or of one when ``library`` is set."""
+
+    query: str = Field(min_length=1, max_length=MAX_QUERY)
+    library: str | None = Field(
+        default=None,
+        pattern=LIBRARY_ID_PATTERN,
+        max_length=MAX_NAME,
+        description="`/owner/repo`: only its results (its default version); counts stay global.",
+    )
+    tags: list[Tag] = Field(
+        default_factory=list,
+        max_length=MAX_TAGS,
+        description="Only chunks of articles so tagged. Case-insensitive; a comma separates tags.",
+    )
+    tags_match: TagMatch = Field(
+        default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
+    )
+    limit: int = Field(default=10, ge=1, le=50)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _split_tags(cls, value: object) -> object:
+        return _normalize_tags(value)
+
+    @field_validator("library", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 class Span(_Dto):
@@ -171,6 +206,49 @@ class SearchDocsResult(_Dto):
         default=None, description="Why a better mode was not used, when one was asked for."
     )
     results: list[SearchResultOut]
+
+
+class LibrarySearchResultOut(SearchResultOut):
+    """A result of a search across libraries: also names the library and version it came from."""
+
+    library: str
+    version: str
+
+    @classmethod
+    def of(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
+        """Like ``from_models``, plus the library and version."""
+        result = SearchResultOut.from_models(version, stored, hit)
+        return cls(**dict(result), library=version.library, version=version.version)
+
+
+class LibraryFacetOut(_Dto):
+    """How many chunks of one library's default version match the query."""
+
+    library: str
+    version: str
+    commit_sha: str
+    matches: int = Field(description="All matching chunks, not capped by `limit`.")
+
+
+class SearchAllResult(_Dto):
+    """Results across libraries, best first, with the libraries that answer and their counts."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the results."
+    )
+    retrieval_mode: RetrievalMode
+    reranked: bool
+    coverage: CoverageOut
+    libraries_searched: int = Field(description="Libraries whose default version was searched.")
+    libraries_omitted: int = Field(
+        description="Libraries with a default version left out because there are too many."
+    )
+    libraries: list[LibraryFacetOut] = Field(
+        description="Libraries with at least one match, most matches first. Never narrowed."
+    )
+    results: list[LibrarySearchResultOut]
 
 
 class ChunkIn(_Dto):

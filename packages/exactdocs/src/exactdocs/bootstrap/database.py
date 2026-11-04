@@ -39,6 +39,19 @@ def alembic_config(location: Path = MIGRATIONS) -> Config:
     return config
 
 
+MIN_SQLITE = (3, 35)  # search uses `WITH ... AS MATERIALIZED`
+
+
+def _check_sqlite() -> None:
+    if sqlite3.sqlite_version_info < MIN_SQLITE:
+        message = (
+            f"SQLite {sqlite3.sqlite_version} is too old: ExactDocs needs "
+            f"{'.'.join(map(str, MIN_SQLITE))} or newer. Use a Python built against a newer SQLite "
+            "(uv's managed Python or the Docker image)."
+        )
+        raise StartupError(message)
+
+
 def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine:
     """Prepare the data directory and return an engine (no connection is made yet).
 
@@ -46,6 +59,7 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
     creates no directory, switches no journal mode and can never write. A missing file is a
     ``StartupError`` naming it.
     """
+    _check_sqlite()
     try:
         url = make_url(settings.effective_database_url)
     except ArgumentError as exc:

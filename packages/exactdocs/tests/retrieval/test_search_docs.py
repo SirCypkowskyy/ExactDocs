@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryDefaultVersions,
     InMemoryLibraries,
     InMemorySearchIndex,
 )
@@ -103,6 +104,7 @@ async def retrieval() -> RetrievalModule:
         default="v1.4.0",
     )
     module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=versions,
@@ -277,6 +279,7 @@ async def test_a_chunk_that_vanished_is_neither_a_result_nor_a_candidate() -> No
     chunks = Vanishing()
     versions = FakeVersions({"v1.4.0": version("v1.4.0", "m14", "b")}, default="v1.4.0")
     module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=versions,

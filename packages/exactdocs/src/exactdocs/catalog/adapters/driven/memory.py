@@ -128,6 +128,13 @@ class InMemoryManifestRepository:
         found = self._active(library_id, ref)
         return _light(found) if found else None
 
+    async def get_active_many(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], Manifest]:
+        """Return the active manifests (without entries) of these versions, by (library, ref)."""
+        found = {v: await self.get_active(*v) for v in versions}
+        return {v: m for v, m in found.items() if m is not None}
+
     async def list_entries(
         self,
         manifest_id: ManifestId,

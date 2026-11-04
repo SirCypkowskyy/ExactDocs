@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Row,
+    Select,
     Table,
     Text,
     UniqueConstraint,
@@ -245,50 +246,35 @@ class SqliteChunkRepository:
         """Return the chunks of the manifest that exist, by ID, in one query."""
         if not chunk_ids:
             return {}
+        query = _stored_chunks().where(
+            manifest_chunks.c.manifest_id == manifest_id,
+            manifest_chunks.c.chunk_id.in_(list(chunk_ids)),
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {ChunkId(row.chunk_id): _stored(manifest_id, row) for row in rows}
+
+    async def get_across(
+        self, wanted: Mapping[str, Collection[ChunkId]]
+    ) -> Mapping[tuple[str, ChunkId], StoredChunk]:
+        """Return the chunks that exist, by (manifest ID, chunk ID), in one query."""
+        if not wanted:
+            return {}
+        # Chunk IDs hash their version, so the cross product of the two lists holds little more
+        # than the wanted pairs (at most 51 manifests x 51 IDs: a page of results); the rest is
+        # dropped below.
+        every_id = list({i for ids in wanted.values() for i in ids})
         query = (
-            select(manifest_chunks, chunks, indexed_manifests.c.version_id)
-            .select_from(
-                manifest_chunks.join(
-                    indexed_manifests,
-                    indexed_manifests.c.manifest_id == manifest_chunks.c.manifest_id,
-                ).join(
-                    chunks,
-                    (chunks.c.blob_sha == manifest_chunks.c.blob_sha)
-                    & (chunks.c.config_hash == manifest_chunks.c.config_hash)
-                    & (chunks.c.position == manifest_chunks.c.position),
-                )
-            )
-            .where(
-                manifest_chunks.c.manifest_id == manifest_id,
-                manifest_chunks.c.chunk_id.in_(list(chunk_ids)),
-            )
+            _stored_chunks()
+            .where(manifest_chunks.c.manifest_id.in_(list(wanted)))
+            .where(manifest_chunks.c.chunk_id.in_(every_id))
         )
         async with self.engine.connect() as connection:
             rows = (await connection.execute(query)).all()
         return {
-            ChunkId(row.chunk_id): StoredChunk(
-                manifest_id=manifest_id,
-                version_id=row.version_id,
-                row=ManifestChunk(
-                    chunk_id=ChunkId(row.chunk_id),
-                    article_path=row.article_path,
-                    position=row.position,
-                    total=row.total,
-                    prev_chunk_id=None if row.prev_chunk_id is None else ChunkId(row.prev_chunk_id),
-                    next_chunk_id=None if row.next_chunk_id is None else ChunkId(row.next_chunk_id),
-                    tags=tuple(json.loads(row.tags)),
-                    chunk_set=(row.blob_sha, row.config_hash),
-                ),
-                chunk=Chunk(
-                    heading_path=tuple(json.loads(row.heading_path)),
-                    occurrence_index=row.occurrence_index,
-                    content=row.content,
-                    content_hash=row.content_hash,
-                    anchor=row.anchor,
-                    code_languages=tuple(json.loads(row.code_languages)),
-                ),
-            )
+            (row.manifest_id, ChunkId(row.chunk_id)): _stored(row.manifest_id, row)
             for row in rows
+            if row.chunk_id in wanted[row.manifest_id]
         }
 
     async def counts(self, manifest_id: str) -> VersionCounts:
@@ -347,6 +333,45 @@ class SqliteChunkRepository:
                 )
             )
         return Removed(manifests=gone, chunk_sets=unused.rowcount)
+
+
+def _stored_chunks() -> Select[Any]:
+    """Manifest rows joined with their chunk and version, ready for a WHERE."""
+    return select(manifest_chunks, chunks, indexed_manifests.c.version_id).select_from(
+        manifest_chunks.join(
+            indexed_manifests, indexed_manifests.c.manifest_id == manifest_chunks.c.manifest_id
+        ).join(
+            chunks,
+            (chunks.c.blob_sha == manifest_chunks.c.blob_sha)
+            & (chunks.c.config_hash == manifest_chunks.c.config_hash)
+            & (chunks.c.position == manifest_chunks.c.position),
+        )
+    )
+
+
+def _stored(manifest_id: str, row: Row[Any]) -> StoredChunk:
+    return StoredChunk(
+        manifest_id=manifest_id,
+        version_id=row.version_id,
+        row=ManifestChunk(
+            chunk_id=ChunkId(row.chunk_id),
+            article_path=row.article_path,
+            position=row.position,
+            total=row.total,
+            prev_chunk_id=None if row.prev_chunk_id is None else ChunkId(row.prev_chunk_id),
+            next_chunk_id=None if row.next_chunk_id is None else ChunkId(row.next_chunk_id),
+            tags=tuple(json.loads(row.tags)),
+            chunk_set=(row.blob_sha, row.config_hash),
+        ),
+        chunk=Chunk(
+            heading_path=tuple(json.loads(row.heading_path)),
+            occurrence_index=row.occurrence_index,
+            content=row.content,
+            content_hash=row.content_hash,
+            anchor=row.anchor,
+            code_languages=tuple(json.loads(row.code_languages)),
+        ),
+    )
 
 
 def _manifest(row: Row[Any]) -> IndexedManifest:

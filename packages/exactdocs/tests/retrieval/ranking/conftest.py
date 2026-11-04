@@ -23,7 +23,7 @@ from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.models import IMPORT_JOB, Job, JobId, RefKind
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
-from exactdocs.retrieval.ports.driving import SearchDocs
+from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
 
@@ -117,3 +117,16 @@ async def search_docs(imported: tuple[str, Path]) -> AsyncIterator[SearchDocs]:
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):
         yield container.retrieval.search_docs
+
+
+@pytest.fixture
+async def search_all(imported: tuple[str, Path]) -> AsyncIterator[SearchAllLibraries]:
+    """Open the engine under test.
+
+    Yields:
+        Its ``SearchAllLibraries`` driving port.
+    """
+    engine, data_dir = imported
+    container = open_container(engine, data_dir)
+    async with container.running(jobs=False):
+        yield container.retrieval.search_all_libraries

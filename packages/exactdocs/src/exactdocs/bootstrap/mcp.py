@@ -54,7 +54,7 @@ def _build(
         version=__version__,
         instructions=(
             "Version-accurate documentation. Call list_libraries, list_articles to browse a "
-            "version's tree, then search_docs; "
+            "version's tree, then search_docs (one library) or search_all_docs (every library); "
             "resolve-library-id turns a name into a library ID and query-docs returns docs "
             "for one (context7-compatible); "
             "read_article returns a whole article and read_chunk one chunk "
@@ -76,6 +76,7 @@ def _build(
     retrieval_mcp.register_tools(
         mcp,
         search_docs=retrieval.search_docs,
+        search_all_libraries=retrieval.search_all_libraries,
         read_chunk=retrieval.read_chunk,
         resolve_library_id=retrieval.resolve_library_id,
         query_docs=retrieval.query_docs,

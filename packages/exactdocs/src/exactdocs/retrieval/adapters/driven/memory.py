@@ -1,3 +1,4 @@
+import sys
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -11,7 +12,9 @@ from exactdocs.retrieval.models import (
     ChunkSetKey,
     IndexedManifest,
     ManifestChunk,
+    ManifestHit,
     Removed,
+    SearchableVersion,
     SearchHit,
     StoredChunk,
     TagFilter,
@@ -67,6 +70,15 @@ class InMemoryChunkRepository:
         """Return the chunks of the manifest that exist, by ID; missing IDs are left out."""
         found = {i: await self.get(manifest_id, i) for i in chunk_ids}
         return {i: c for i, c in found.items() if c is not None}
+
+    async def get_across(
+        self, wanted: Mapping[str, Collection[ChunkId]]
+    ) -> Mapping[tuple[str, ChunkId], StoredChunk]:
+        """Return the chunks that exist, by (manifest ID, chunk ID)."""
+        found = {
+            (m, i): await self.get(m, i) for m, ids in wanted.items() for i in dict.fromkeys(ids)
+        }
+        return {key: c for key, c in found.items() if c is not None}
 
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks."""
@@ -140,6 +152,28 @@ class InMemorySearchIndex:
         hits.sort(key=lambda h: (-h.score, h.chunk_id))
         return hits[:limit]
 
+    async def search_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
+    ) -> Sequence[ManifestHit]:
+        """Return the best matches of any of the manifests (scores are plain term counts)."""
+        found = [
+            ManifestHit(manifest_id=m, hit=h)
+            for m in dict.fromkeys(manifest_ids)
+            for h in await self.search(m, query, tag_filter, limit)
+        ]
+        found.sort(key=lambda f: (-f.hit.score, f.hit.chunk_id, f.manifest_id))
+        return found[:limit]
+
+    async def count_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
+    ) -> Mapping[str, int]:
+        """Return how many chunks of each manifest match (reference only: it scores every chunk)."""
+        counts = {
+            m: len(await self.search(m, query, tag_filter, sys.maxsize))
+            for m in dict.fromkeys(manifest_ids)
+        }
+        return {m: n for m, n in counts.items() if n}
+
 
 def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> SearchHit:
     marks = highlights(content, terms)
@@ -148,6 +182,17 @@ def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> Sea
     return SearchHit(
         chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryDefaultVersions:
+    """Implements ``ports.driven.DefaultVersions`` with a fixed list."""
+
+    versions: Sequence[SearchableVersion] = ()
+
+    async def all(self) -> Sequence[SearchableVersion]:
+        """Return the versions sorted by library."""
+        return sorted(self.versions, key=lambda v: v.library)
 
 
 @dataclass(frozen=True, slots=True)

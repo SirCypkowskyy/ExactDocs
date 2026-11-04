@@ -639,6 +639,23 @@ class ActiveManifest(_Dto):
     manifest_id: str | None
 
 
+class DefaultManifest(_Dto):
+    """A library's default version and the manifest serving it, with where its source lives."""
+
+    library: str
+    ref: str
+    commit_sha: str = Field(description="The commit of the manifest.")
+    manifest_id: str
+    source_url: str
+    host: HostKind
+
+
+class DefaultManifests(_Dto):
+    """The default versions that have an active manifest, by library ID."""
+
+    manifests: list[DefaultManifest]
+
+
 class ManifestStates(_Dto):
     """Manifest state by ID; IDs the catalog does not know are left out."""
 

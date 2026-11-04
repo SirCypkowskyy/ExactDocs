@@ -17,11 +17,12 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryDefaultVersions,
     InMemoryLibraries,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.adapters.driven.sqlite_fts import _SEARCH, SqliteSearchIndex, _statements
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -146,6 +147,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
+            defaults=InMemoryDefaultVersions(),
             libraries=InMemoryLibraries(),
             searchable=Gone(),
             manifests=Gone(),
@@ -304,6 +306,66 @@ async def test_a_limit_and_an_unknown_manifest(world: World) -> None:
     assert await world.find("nope", "retried") == []
 
 
+async def test_one_search_over_several_manifests_names_the_manifest_of_each_hit(
+    world: World,
+) -> None:
+    await world.index("m13", "v1.3.0", V13)
+    await world.index("m14", "v1.4.0", V14)
+    await world.index("other", "v2", {"x.md": ("blob-x", [section("X", "retried retried")])})
+
+    found = await world.search.search_many(["m13", "m14"], "retried", TagFilter(), 10)
+
+    assert {f.manifest_id for f in found} == {"m13", "m14"}  # "other" was not asked for
+    assert [f.hit.score for f in found] == sorted((f.hit.score for f in found), reverse=True)
+    assert await world.search.search_many([], "retried", TagFilter(), 10) == []
+    assert len(await world.search.search_many(["m13", "m14"], "retried", TagFilter(), 1)) == 1
+
+
+async def test_a_chunk_set_shared_by_two_manifests_is_a_hit_for_each_with_one_score(
+    world: World,
+) -> None:
+    await world.index("a", "v1", V13)
+    await world.index("b", "v1", V13)
+
+    found = await world.search.search_many(["a", "b"], "retried", TagFilter(), 10)
+
+    assert sorted(f.manifest_id for f in found) == ["a", "b"]
+    assert found[0].hit.score == found[1].hit.score  # one set of statistics, not one per manifest
+
+
+async def test_counts_per_manifest_are_not_capped_and_leave_out_zeros(world: World) -> None:
+    many = {f"g/{i}.md": (f"blob-{i}", [section(f"Retry {i}", "retry")]) for i in range(12)}
+    await world.index("big", "v1", many, tagged={"g/0.md": ["x"]})
+    await world.index("m13", "v1.3.0", V13)
+
+    ask = ["big", "m13", "nope"]
+    assert await world.search.count_many(ask, "retry", TagFilter()) == {"big": 12}
+    assert await world.search.count_many(ask, "retried", TagFilter()) == {"m13": 1}
+    assert await world.search.count_many(ask, "retry", TagFilter(tags=("x",))) == {"big": 1}
+    assert await world.search.count_many([], "retry", TagFilter()) == {}
+    assert await world.search.count_many(ask, "()*", TagFilter()) == {}
+
+
+async def test_the_all_tag_filter_across_manifests_keeps_chunks_with_every_tag(
+    world: World,
+) -> None:
+    both = {"a.md": ("blob-a", [section("A", "token")])}
+    one = {"b.md": ("blob-b", [section("B", "token")])}
+    await world.index("m1", "v1", both, tags=["api", "auth"])
+    await world.index("m2", "v1", one, tags=["api"])
+
+    for tags, match, wanted in [
+        (("api", "auth"), TagMatch.ALL, {"m1": 1}),
+        (("api",), TagMatch.ALL, {"m1": 1, "m2": 1}),
+        (("auth", "billing"), TagMatch.ALL, {}),
+        (("auth", "billing"), TagMatch.ANY, {"m1": 1}),
+    ]:
+        tag_filter = TagFilter(tags=tags, match=match)
+        found = await world.search.search_many(["m1", "m2"], "token", tag_filter, 10)
+        assert {f.manifest_id: 1 for f in found} == wanted
+        assert await world.search.count_many(["m1", "m2"], "token", tag_filter) == wanted
+
+
 async def test_collecting_a_manifest_takes_its_index_entries_with_it(world: World) -> None:
     await world.index("m13", "v1.3.0", V13)
     await world.index("m14", "v1.4.0", V14)
@@ -407,3 +469,35 @@ async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -
     first, _ = await world.find("m1", "timeout")
 
     assert first.snippet.startswith("timeout is")
+
+
+async def test_the_search_plan_materializes_the_ranking_and_probes_manifests_by_chunk_set() -> None:
+    """The join order is what keeps a search at milliseconds (a bad plan took seconds).
+
+    Plan shape on SQLite 3.35+: rank first (MATERIALIZE), probe the manifest rows by
+    (blob_sha, config_hash) through `ix_retrieval_manifest_chunks_set` (from the migrations), and
+    only then fetch snippets for the survivors. A probe per searched manifest instead would cost
+    O(hits x manifests); measured, an extra covering index made that plan win and was slower.
+    """
+    container = Container.build(Settings())
+    async with container.running():
+        statement = _statements("EXPLAIN QUERY PLAN " + _SEARCH)[None]
+        params = {
+            "heading_weight": 1.0,
+            "path_weight": 1.0,
+            "text_weight": 1.0,
+            "identifiers_weight": 1.0,
+            "match": '"x"',
+            "manifests": ["a", "b"],
+            "limit": 5,
+        }
+        async with container.engine.connect() as connection:
+            plan = (await connection.execute(statement, params)).all()
+    steps = [row.detail for row in plan]
+    assert any(step.startswith("MATERIALIZE ranked") for step in steps), steps
+    probe = [s for s in steps if s.startswith("SEARCH mc USING")]
+    assert probe
+    assert "ix_retrieval_manifest_chunks_set (blob_sha=? AND config_hash=?)" in probe[0], steps
+    # The snippets are fetched for the ranked survivors: r outside, then a lookup by rowid.
+    outer = [s for s in steps if s.startswith(("SCAN r", "SCAN retrieval_search"))]
+    assert outer[-2:] == ["SCAN r", "SCAN retrieval_search VIRTUAL TABLE INDEX 0:=M4"], steps
