@@ -38,6 +38,10 @@ web-dev:
 dev:
     trap 'kill 0' EXIT; uv run exactdocs serve --reload & (cd {{ web }} && pnpm dev) & wait
 
+# New Alembic revision in the one history owned by bootstrap: `just migration "add jobs table"`
+migration message:
+    uv run alembic -c packages/exactdocs/alembic.ini revision -m "{{ message }}"
+
 # ---------------------------------------------------------------- quality
 
 # Format Python and web code
@@ -69,6 +73,11 @@ bdd *args:
 web-test:
     cd {{ web }} && pnpm test
 
+# Regenerate web/openapi.json from the app, then the web's TypeScript types from it (commit both)
+api:
+    uv run python -c "import tempfile; from pathlib import Path; from exactdocs.bootstrap.container import Container; from exactdocs.bootstrap.http import create_app; from exactdocs.bootstrap.rest import v1_openapi_json; from exactdocs.bootstrap.settings import Settings; print(v1_openapi_json(create_app(Container.build(Settings(data_dir=Path(tempfile.mkdtemp()))))), end='')" > {{ web }}/openapi.json
+    cd {{ web }} && pnpm gen:api
+
 # Everything CI runs, in CI order
 check: lint test bdd web-test web-build docs-build
 
@@ -88,9 +97,9 @@ build version="": web-build
 docker-build version="0.0.0.dev0":
     docker build -f deploy/Dockerfile --build-arg VERSION={{ version }} -t {{ image }} .
 
-# Run the local image on :3000 with a named data volume
+# Run the local image on :3000 with a named data volume, hardened like CI and the Team compose example
 docker-run: docker-build
-    docker run --rm -it -p 3000:3000 -v exactdocs-data:/data {{ image }}
+    docker run --rm -it -p 3000:3000 -v exactdocs-data:/data --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges {{ image }}
 
 # ---------------------------------------------------------------- docs
 
@@ -122,3 +131,9 @@ release version: check
 # Remove build outputs and caches
 clean:
     rm -rf dist site reports {{ web }}/dist packages/exactdocs/src/exactdocs/_web .pytest_cache .ruff_cache
+
+# Browser end-to-end test against `uv run exactdocs serve` (builds the UI into the package first)
+e2e: web-build
+    rm -rf packages/exactdocs/src/exactdocs/_web
+    cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
+    cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install chromium && python3 run.py

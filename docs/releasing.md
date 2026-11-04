@@ -60,6 +60,69 @@ runs after every release, weekly, and on demand (`gh workflow run ghcr-retention
 dry-run=true` shows what would be deleted). Change `KEEP_DEV` / `KEEP_STABLE` in the workflow to
 adjust. PyPI releases are never deleted.
 
+## Size and model-free budgets
+
+RUN-02: many installs only ever use BM25, so the artifacts hold no models and no ML libraries. CI
+enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land in the job summary):
+
+| Artifact | Budget | Now | Also checked |
+|---|---|---|---|
+| wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
+| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 375 MB | 339 MB | no such model file anywhere in the filesystem |
+
+The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
+extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
+onnxruntime, model2vec, tensorflow or pydantic-ai, and that a started app imports none of them
+(`packages/exactdocs/tests/bootstrap/test_model_free.py`). The list is `ML_PACKAGES` in
+`deploy/check_artifacts.py`, shared by the script and the test. Optional AI extras (`[ai]`) are
+allowed to carry them: both checks skip `extra ==` requirements.
+
+**Chonkie is not banned** (the chunker is markdown-it-py, issue #27; Chonkie's Markdown recipe needs the
+HF Hub and network, which breaks RUN-02). If it is ever added, these extras must stay off: anything
+pulling torch, transformers, sentence-transformers, onnx/onnxruntime, huggingface-hub or model2vec
+(for Chonkie: the `semantic`, `neural`, `embeddings`, `code` and `all` extras).
+
+**Why 375 MB and not the 300 MB first planned.** The floor is the `python:3.14-slim` base (~120 MB),
+git and ssh (~25 MB git-core plus libraries; Perl is already purged) and the virtualenv (167 MB). 57 MB
+of that is precompiled `.pyc`: dropping it would reach ~297 MB but make every start of a read-only
+container recompile the whole dependency tree. Keeping it is the better trade, so the budget is the
+measured 339 MB (`du -sxb /`; `docker image inspect` reports 353 MB with overlay2 and only the compressed ~115 MB with the containerd store, so it is not used) plus about 10 % headroom for dependency and Debian security updates. Raising it needs a
+reason in the PR; lowering it is the goal if a dependency is dropped.
+
+## Image scan
+
+Every PR (CI job *Docker image*) and every release scans the built image with
+[Trivy](https://trivy.dev) and lints `deploy/Dockerfile` with hadolint (CI only; its one accepted
+rule, with the reason, is in `.hadolint.yaml`). The scan **fails on a CRITICAL or HIGH
+vulnerability that has a fix** (`--ignore-unfixed`); the table is in the job log and in the
+`trivy-report` artifact. A release is not pushed while the scan fails.
+
+When it fails:
+
+1. Rebuild with fresh base layers: bump the base images (Dependabot's `docker` PRs for `/deploy`
+   move tag and digest together; merging one is usually the fix). Debian packages are not
+   pinned: the Dockerfile's `DEBIAN_REFRESH` build argument (the date in a release, the ISO week
+   in CI) makes a new build fetch fresh package indexes, so it also picks up a fixed `git` or
+   `openssh-client`.
+   Because the week is part of the cache key, the first Docker build of each ISO week (Monday)
+   re-runs the apt steps and is about a minute slower; that is expected, not a cache bug.
+2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.
+3. Only if the finding does not apply to ExactDocs and cannot be fixed yet, accept it: add the ID
+   to `.trivyignore` with a comment above it saying why, the date and who accepted it, in the PR
+   that needs it. The reviewer decides; remove the entry once a fixed version ships.
+
+Unfixed findings are not listed by the gate; check them occasionally with
+`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/aquasecurity/trivy image <image>`.
+
+The scanner and the linter are pinned by digest in `run:`/`env:` text, which Dependabot does not
+read: bump `hadolint/hadolint` (`.github/workflows/ci.yml`, job *image*) and
+`ghcr.io/aquasecurity/trivy` (`.github/actions/trivy-gate/action.yml`) by hand at every release, or
+a stale scanner stops finding new vulnerabilities.
+
+The CI Docker job uses the runner VM's own BuildKit (`driver: docker`), so layers and cache mounts
+persist between jobs on the same VM (see `deploy/runners/README.md`); the release uses the GitHub
+Actions cache instead (`scope=exactdocs`), because it builds multi-arch with a throwaway builder.
+
 ## What the release workflow does
 
 `.github/workflows/release.yml`, on the self-hosted GB10 runners:
@@ -69,8 +132,10 @@ adjust. PyPI releases are never deleted.
 3. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
 4. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
-5. **image**: multi-arch (`linux/amd64` emulated, `linux/arm64` native) build, push, SBOM +
-   provenance attestations, keyless **cosign** signature.
+5. **image**: builds the image natively and scans it (see *Image scan*), then multi-arch
+   (`linux/amd64`, `linux/arm64`) build, push, SBOM + provenance attestations, keyless **cosign**
+   signature. Only the runtime stage's `apt-get` runs under QEMU for amd64; the Python stages
+   cross-build natively.
 6. **github-release**: creates or updates the release with the distributions.
 
 ## One-time setup

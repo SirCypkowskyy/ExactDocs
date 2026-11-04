@@ -2,13 +2,45 @@
 
 from typing import Protocol
 
-from exactdocs.catalog.dtos import GetLibraryQuery, LibraryList, LibrarySummary
+from exactdocs.catalog.dtos import (
+    ActivatedManifest,
+    ActivateManifestCommand,
+    ActiveManifest,
+    ApplyReadmeCommand,
+    Article,
+    ArticleList,
+    CollectGarbageCommand,
+    CollectionResult,
+    CreateLibraryCommand,
+    DiscardedManifests,
+    DiscardLibraryCommand,
+    DiscardPendingManifestsCommand,
+    GetActiveManifestQuery,
+    GetArticleQuery,
+    GetLibraryQuery,
+    GetManifestStatesQuery,
+    LibraryDetail,
+    LibraryList,
+    ListArticlesQuery,
+    ListLibrariesQuery,
+    ListTagsQuery,
+    ManifestStates,
+    Removal,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
+    ResolvedVersion,
+    ResolveVersionQuery,
+    StoredManifest,
+    StoreManifestCommand,
+    TagList,
+    UpdateLibraryCommand,
+)
 
 
 class ListLibraries(Protocol):
-    """List every library and its indexed versions."""
+    """List a page of libraries and their indexed versions."""
 
-    async def __call__(self) -> LibraryList:
+    async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
         """Run the use case."""
         ...
 
@@ -16,6 +48,180 @@ class ListLibraries(Protocol):
 class GetLibrary(Protocol):
     """Fetch one library; raises ``LibraryNotFoundError`` when it is missing."""
 
-    async def __call__(self, query: GetLibraryQuery) -> LibrarySummary:
+    async def __call__(self, query: GetLibraryQuery) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class ResolveVersion(Protocol):
+    """Resolve a context7-style ID to the one version it names.
+
+    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` for unknown targets and a
+    validation error for a malformed ID or an ambiguous short SHA. Never falls back to another
+    version.
+    """
+
+    async def __call__(self, query: ResolveVersionQuery) -> ResolvedVersion:
+        """Run the use case."""
+        ...
+
+
+class StoreManifest(Protocol):
+    """Store a version's articles as a pending manifest; nothing changes for readers yet.
+
+    Raises ``LibraryNotFoundError`` for an unknown library and a validation error for a
+    malformed ref, SHA or path. Returns the manifest ID that ``ActivateManifest`` takes.
+    """
+
+    async def __call__(self, command: StoreManifestCommand) -> StoredManifest:
+        """Run the use case."""
+        ...
+
+
+class ActivateManifest(Protocol):
+    """Make a pending manifest what its version serves, all at once.
+
+    Activating the manifest that is already active succeeds without changes (so a replay after
+    a crash is safe). Raises ``ManifestNotFoundError``; ``ManifestNotPendingError`` when it was
+    superseded; ``ManifestOutdatedError`` when a newer manifest of the version is active. If
+    anything fails, the previous manifest stays active.
+    """
+
+    async def __call__(self, command: ActivateManifestCommand) -> ActivatedManifest:
+        """Run the use case."""
+        ...
+
+
+class ListArticles(Protocol):
+    """List the articles of a version (default version without a ref), sorted by path.
+
+    Raises ``ArticleNotFoundError`` when the version has no active manifest.
+    """
+
+    async def __call__(self, query: ListArticlesQuery) -> ArticleList:
+        """Run the use case."""
+        ...
+
+
+class ListTags(Protocol):
+    """Count the tags of a version's articles (default version without a ref), most used first.
+
+    Raises ``ArticleNotFoundError`` when the version has no active manifest.
+    """
+
+    async def __call__(self, query: ListTagsQuery) -> TagList:
+        """Run the use case."""
+        ...
+
+
+class GetArticle(Protocol):
+    """Read one article of a version (default version without a ref).
+
+    Raises ``ArticleNotFoundError`` when the version has no active manifest or no such path.
+    """
+
+    async def __call__(self, query: GetArticleQuery) -> Article:
+        """Run the use case."""
+        ...
+
+
+class DiscardPendingManifests(Protocol):
+    """Delete the pending manifests that match the command's filters (never "all")."""
+
+    async def __call__(self, command: DiscardPendingManifestsCommand) -> DiscardedManifests:
+        """Run the use case."""
+        ...
+
+
+class CollectGarbage(Protocol):
+    """Delete manifests superseded longer ago than the grace period, and unused contents."""
+
+    async def __call__(self, command: CollectGarbageCommand) -> CollectionResult:
+        """Run the use case."""
+        ...
+
+
+class GetManifestStates(Protocol):
+    """Tell whether manifests are pending, active or superseded, for domains that hold their IDs."""
+
+    async def __call__(self, query: GetManifestStatesQuery) -> ManifestStates:
+        """Run the use case."""
+        ...
+
+
+class GetActiveManifest(Protocol):
+    """Name the manifest that serves a version, for domains that hold manifest IDs."""
+
+    async def __call__(self, query: GetActiveManifestQuery) -> ActiveManifest:
+        """Run the use case."""
+        ...
+
+
+class CreateLibrary(Protocol):
+    """Add a library without versions.
+
+    Raises ``LibraryAlreadyExistsError`` or a validation error.
+    """
+
+    async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class DiscardLibrary(Protocol):
+    """Remove a library that has no versions yet (the undo of ``CreateLibrary``).
+
+    Does nothing for an unknown ID; raises ``LibraryNotEmptyError`` when it has versions.
+    """
+
+    async def __call__(self, command: DiscardLibraryCommand) -> None:
+        """Run the use case."""
+        ...
+
+
+class UpdateLibrary(Protocol):
+    """Set a library's title and/or description by hand; later README imports keep them.
+
+    Raises ``LibraryNotFoundError``.
+    """
+
+    async def __call__(self, command: UpdateLibraryCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class RemoveVersion(Protocol):
+    """Remove a version: it and its manifests are gone at once, in one transaction.
+
+    Texts that no manifest uses any more are freed by ``CollectGarbage``. The default version is
+    computed from the versions that remain, so it follows. Raises ``LibraryNotFoundError`` /
+    ``VersionNotFoundError``; the ref must match exactly (a short SHA does not).
+    """
+
+    async def __call__(self, command: RemoveVersionCommand) -> Removal:
+        """Run the use case."""
+        ...
+
+
+class ApplyReadme(Protocol):
+    """Take title and description from the README of a just-imported version.
+
+    Only the default version's README counts, and only for a field no user has edited. Raises
+    ``LibraryNotFoundError``.
+    """
+
+    async def __call__(self, command: ApplyReadmeCommand) -> None:
+        """Run the use case."""
+        ...
+
+
+class RemoveLibrary(Protocol):
+    """Remove a library with all its versions and manifests, in one transaction.
+
+    Raises ``LibraryNotFoundError``. Unlike ``DiscardLibrary`` it takes libraries that have
+    versions.
+    """
+
+    async def __call__(self, command: RemoveLibraryCommand) -> Removal:
         """Run the use case."""
         ...

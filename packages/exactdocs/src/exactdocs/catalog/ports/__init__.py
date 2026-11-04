@@ -1,4 +1,36 @@
-from exactdocs.catalog.ports.driven import LibraryRepository
-from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries
+from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports.driving import (
+    ActivateManifest,
+    CollectGarbage,
+    DiscardPendingManifests,
+    GetActiveManifest,
+    GetArticle,
+    GetLibrary,
+    GetManifestStates,
+    ListArticles,
+    ListLibraries,
+    ListTags,
+    RemoveLibrary,
+    RemoveVersion,
+    ResolveVersion,
+    StoreManifest,
+)
 
-__all__ = ["GetLibrary", "LibraryRepository", "ListLibraries"]
+__all__ = [
+    "ActivateManifest",
+    "CollectGarbage",
+    "DiscardPendingManifests",
+    "GetActiveManifest",
+    "GetArticle",
+    "GetLibrary",
+    "GetManifestStates",
+    "LibraryRepository",
+    "ListArticles",
+    "ListLibraries",
+    "ListTags",
+    "ManifestRepository",
+    "RemoveLibrary",
+    "RemoveVersion",
+    "ResolveVersion",
+    "StoreManifest",
+]

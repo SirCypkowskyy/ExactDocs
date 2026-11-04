@@ -22,15 +22,24 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   Scenarios use domain language (no URLs or JSON in `.feature` files; that goes in steps).
 - **Test use cases, not adapters' internals.** Build the domain with `XModule.build(...)` and
   in-memory adapters. Test doubles are plain classes matching the Protocol; no `Mock`
-  for ports and no inheritance (see `FakeIndexedVersions` in `tests/retrieval/`).
+  for ports and no inheritance (see `FakeVersions` in `tests/retrieval/`).
 - **Assert outcomes, not calls.** Check returned DTOs and raised errors, not which methods were called.
 - **Version is a hard filter**: anything touching retrieval gets a "wrong version gets nothing" test.
+- **Import and search tests use the fixture docs repository** (`packages/exactdocs/tests/fixtures/docs-repo/`):
+  pytest fixture `docs_repo`, behave `context.fixture_repo`; read its README before changing content.
 - **A bug fix starts with a failing test** that reproduces the issue.
 - **New driven adapter** (e.g. SQLite repository): add it to the adapter contract test so it runs
   the same cases as the in-memory one.
 - **New domain**: the architecture tests discover it automatically; make sure they pass and that
   `test_domain_has_the_standard_module_set` is green.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
+
+## MCP tool snapshot
+
+`packages/exactdocs/tests/bootstrap/snapshots/mcp_tools.json` is the public contract of the MCP
+tools (descriptions, annotations, input and output schemas). A failing diff is a contract change:
+review it, then refresh with `UPDATE_SNAPSHOTS=1 uv run pytest packages/exactdocs/tests/bootstrap/test_mcp_browse.py`.
+A dependency bump can also change it; check that the diff is only generated noise.
 
 ## Commands
 

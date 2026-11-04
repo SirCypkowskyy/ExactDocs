@@ -10,7 +10,7 @@ It holds **103 feature issues** plus **12 epic tracking issues**:
 
 | Milestone | Feature issues |
 |---|---|
-| MVP-1 | 45 |
+| MVP-1 | 46 |
 | MVP-2 | 27 |
 | Next: AI retrieval | 14 |
 | Next: Teams & integrations | 13 |
@@ -437,10 +437,26 @@ reproducible on every machine and in CI.
 - [ ] fixture git servers: `file://` and smart HTTP on 127.0.0.1 (`git http-backend`) for network tests
 - [ ] fixture README explains how to add content without breaking expected SHAs
 
-**Notes.** The suite is used by E4-02, E5-04, E3-05a, E3-05b, E9-01, E10-01, E10-03a (mounted
+**Notes.** Article paths are repo-relative: the scenario shorthand `guide/install.md` means
+`docs/guide/install.md` in the fixture (`docs/api/auth.md` and `docs/guide/auth.md` both exist,
+and `--path docs/` and `docs/archive/**` need the prefix). The suite is used by E4-02, E5-04, E3-05a, E3-05b, E9-01, E10-01, E10-03a (mounted
 into the container), E10-03b and RET-09 (E11-02).
 
 ---
+
+#### E1 · MVP-2
+
+### E1-07 · chore: Python conventions for constants, docstrings and data classes are enforced automatically
+
+**Milestone** MVP-2 · **Labels** `type: chore` `status: triage` `area: backend` · **Area** backend (all Python packages) · **Stories** - (engineering quality) · **Depends on** - · **Size** L · **Issue** [#121](https://github.com/SirCypkowskyy/ExactDocs/issues/121)
+
+**Context.** Many agents write code in parallel; conventions must be checked by CI, not reviewers.
+
+- [ ] constants only in `constants.py` or a `constants/` package (`__init__.py` re-exporting private topic modules like `_auth.py`, `_identity.py`); each typed `Final[...]` with an attribute docstring
+- [ ] private by default: non-API modules, functions, classes and constants are `_private`; public APIs re-exported via `__init__.py`
+- [ ] every function and method, private ones included, has a Google-style docstring with `Args:` and `Returns:` (and `Raises:`) whenever it has them; ruff `convention = "google"`, DOC201/DOC501 re-enabled
+- [ ] every dataclass is `frozen=True, slots=True, kw_only=True` unless marked `# conventions: allow-... -- <reason>`; every dataclass and pydantic field has an attribute docstring; pydantic models use `use_attribute_docstrings=True`
+- [ ] enforced by an AST checker in `tests/architecture/test_conventions.py` with good/bad fixtures per rule; existing code brought into compliance; rules documented in `docs/architecture.md`
 
 ## E2 Accounts & tokens
 
@@ -959,11 +975,11 @@ cuts a code block in half is useless to an agent.
 
 **Criteria of success**
 
-- [ ] driven port `Chunker`; default adapter on Chonkie's Markdown recipe; Chonkie imported only in the adapter
+- [ ] driven port `Chunker`; default adapter on markdown-it-py (issue #27: Chonkie's Markdown recipe needs the HF Hub and network, which breaks RUN-02)
 - [ ] each chunk: heading path, occurrence index (repeated headings), position, content, content hash, GitHub-style anchor, code-block languages
 - [ ] chunking-config hash computed from the effective config plus the parser/sanitizer version (E4-01), so a parser fix re-chunks instead of reusing stale chunk sets (default config now; IMP-03 in MVP-2)
 - [ ] guarantee tests on the fixture repo run against the port (heading paths, never-split code/tables, text before the first heading kept), so any chunker adapter must pass them
-- [ ] dependency `chonkie` added to `pyproject.toml` without extras that pull ML models (RUN-02)
+- [ ] dependency `markdown-it-py` added to `pyproject.toml`; no dependency that pulls ML models (RUN-02, see issue #27)
 
 **Notes.** Chunk IDs are computed by retrieval (E1-04), not by the chunker.
 
@@ -1334,8 +1350,8 @@ Scenario: ExactDocs tools carry the notice in structured content
 
 **Criteria of success**
 
-- [ ] `list_libraries()`: ID, title, description, tags, versions (ref, kind, commit SHA, default flag)
-- [ ] `list_articles(library, version?, path_prefix?, tags?, limit?, cursor?)`: path, title, tags, size; tags filter as TAG-03 (catalog `TagFilter`, E4-03)
+- [ ] `list_libraries(limit?, cursor?)` (default limit 20): ID, title, description, source URL, tags, `refs` (ref, kind, commit SHA, default flag; at most 50 per library, plus `version_count`)
+- [ ] `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` (`ref` like `search_docs`; blank means the default version): path, title, tags, size; tags filter as TAG-03 (catalog `TagFilter`, E4-03)
 - [ ] each domain's result DTO carries a `notice` field whose text is the kernel `NOTICE` constant (a reviewed kernel addition, see [Architecture](architecture.md#bridges-are-one-way)); no shared MCP helper module (the context7 two-block `ToolResult` lives in retrieval's MCP adapter, E7-05)
 - [ ] all tools annotated read-only; `mask_error_details=True` kept; `DomainError`s pass as tool errors (existing middleware) — test both paths
 - [ ] `FASTMCP_CHECK_FOR_UPDATES=off` set in code; stdio banner off — test
@@ -2126,9 +2142,9 @@ Scenario: The release artifacts contain no models
 
 **Criteria of success**
 
-- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 300 MB uncompressed
+- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 375 MB uncompressed (300 MB first planned; the floor is the `python:3.14-slim` base, git/ssh and the 167 MB virtualenv, and dropping 57 MB of `.pyc` would slow every start of a read-only container; see docs/releasing.md)
 - [ ] test: after app start, `sys.modules` has no `torch`, `transformers`, `sentence_transformers`, `pydantic_ai`
-- [ ] dependency review of `chonkie` extras
+- [ ] dependency review: Chonkie dropped in #27 (needs HF Hub/network); `ML_PACKAGES` in `deploy/check_artifacts.py` lists what must stay out of the default install
 
 ### E10-03a · feat: one `docker run` starts ExactDocs and a library is searchable within five minutes
 
@@ -2183,6 +2199,17 @@ Scenario: The whole loop in a real browser
 - [ ] Playwright end-to-end test (one test, in CI against a server started from the built wheel): setup → add the fixture repository (fixture HTTP git server) → browse an article → search a known term
 - [ ] docs: README *Quick start* has the `uvx` variant
 
+### E10-10 · chore: the Docker image caches dependencies across source changes and is hardened and scanned
+
+**Milestone** MVP-1 · **Labels** `type: chore` `status: ready` `area: infra` · **Area** CI / release / infra · **Stories** RUN-01, RUN-02, RUN-03, LIB-05, IMP-01 · **Depends on** - (coordinate with E10-02, E10-03a) · **Size** L · **Issue** [#124](https://github.com/SirCypkowskyy/ExactDocs/issues/124)
+
+**Context.** The layer cache is invalidated by every release and by README/test edits, and the image is not hardened; MVP-1 also needs `git` and `openssh-client` in the runtime.
+
+- [ ] caching: `VERSION` below the dependency layers; dependency layer built only from `uv.lock` (`uv export --frozen`); only `packages/*/src` + metadata copied (no tests); pnpm pinned and installed before any `COPY`, `pnpm fetch` then `install --offline`; source-only changes show dependency layers `CACHED`
+- [ ] hardening: base images pinned by digest (Dependabot), runtime with only `git`, `openssh-client`, `ca-certificates`, `tini` (PID 1), no pip/setuptools, no setuid bits, read-only app files, only `/data` and `/tmp` writable; amd64 apt layer built under QEMU for that stage only
+- [ ] CI: hadolint, Trivy/Grype gate on fixable CRITICAL/HIGH, smoke test with `--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges` incl. a `file://` import; size budget kept
+- [ ] docs: hardened compose example in README; scan gate in `docs/releasing.md`
+
 #### E10 · MVP-2
 
 ### E10-04 · feat: upgrades migrate automatically, and re-indexing is one command when needed
@@ -2205,6 +2232,17 @@ Scenario: Re-indexing while serving
 - [ ] CI upgrade test: data dir from the previous release tag → current release
 - [ ] index format version stored; `exactdocs reindex` (local) rebuilds and swaps
 - [ ] release notes template has a "requires reindex" section (`docs/releasing.md`)
+
+### E10-09 · docs: project docs describe MVP-1 as built, with all diagrams in Mermaid
+
+**Milestone** MVP-2 · **Labels** `type: docs` `status: triage` · **Area** docs · **Stories** - (documentation) · **Depends on** MVP-1 complete · **Size** L · **Issue** [#123](https://github.com/SirCypkowskyy/ExactDocs/issues/123)
+
+**Context.** The ASCII diagrams in README, `docs/architecture.md` and `web/README.md` are hard to maintain and cannot show flows; the docs must describe the system as built.
+
+- [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (mermaid-cli parse/render)
+- [ ] every ASCII diagram replaced by Mermaid (README *How it works*, architecture domains and bridges, web slices)
+- [ ] new diagrams: data model (ER), import flow, query flow, retrieval modes, auth, branching and releases (`gitGraph`), CI/CD and runners
+- [ ] README, architecture, releasing, index and CONTRIBUTING reflect MVP-1 as built; planned features labelled as planned; strict docs build passes
 
 #### E10 · Next: Operations
 

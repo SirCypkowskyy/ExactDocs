@@ -34,7 +34,59 @@ docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
 uvx exactdocs serve
 ```
 
-Open <http://localhost:3000> and create the first account (or run `exactdocs admin create`).
+`uvx exactdocs serve` needs `git` on your `PATH` and refuses to start without it (the import runs
+`git`). Python 3.14 is fetched by `uv` when it is missing. Then open <http://localhost:3000>. For an
+agent that only reads an existing database, `uvx exactdocs serve --stdio` needs no `git` and no port.
+
+A fresh instance offers nothing but its setup: until the first admin account exists, every
+`/api/v1` request is refused with `403 setup_required`. The setup page in the web UI is coming
+(E8-01); until then create the admin from the command line or over the API:
+
+```bash
+docker exec -it exactdocs exactdocs admin create   # prompts for username and password
+# or, without Docker
+uvx exactdocs admin create
+# or, over the API (the password must be 12 to 1024 characters)
+curl -X POST http://localhost:3000/api/v1/setup -H 'content-type: application/json' \
+  -d '{"username": "ada", "password": "a long passphrase"}'
+```
+
+### From `docker run` to a searchable library
+
+The same flow CI runs on every change ([`deploy/smoke.sh`](deploy/smoke.sh), `sh` and `curl`
+only, against a fixture repository instead of a URL), in well under five minutes, with no model
+and no API key. It imports [encode/httpx](https://github.com/encode/httpx) at tag `0.28.1`, so the
+machine needs outbound access to GitHub (CI does not). Create the admin as above, or over the API
+(step 1):
+
+```bash
+docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data ghcr.io/sircypkowskyy/exactdocs:latest
+H='content-type: application/json'; U=http://localhost:3000
+curl -X POST $U/api/v1/setup -H "$H" -d '{"username":"ada","password":"a long passphrase"}'    # 1. admin
+curl -c jar.txt $U/api/v1/session -H "$H" -d '{"username":"ada","password":"a long passphrase"}' # 2. sign in
+curl -b jar.txt $U/api/v1/tokens -H "$H" -d '{"name":"laptop"}'                                  # 3. token (shown once)
+curl -b jar.txt $U/api/v1/libraries -H "$H" \
+  -d '{"url":"https://github.com/encode/httpx","ref":"0.28.1","include_paths":["docs/"]}'         # 4. add; returns job_id
+curl -b jar.txt $U/api/v1/jobs/<job_id>                                                          # 5. until "succeeded"
+TOKEN=<token from step 3>; A="authorization: Bearer $TOKEN"   # reads below use the token, as an agent would
+curl -H "$A" "$U/api/v1/libraries/encode/httpx/articles?ref=0.28.1"                              # 6. list ...
+curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/article" -d ref=0.28.1 -d path=docs/index.md   # ... and read
+curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/search" -d ref=0.28.1 -d q=timeout             # 7. search
+```
+
+8. Point your agent at `http://localhost:3000/mcp` with the token ([Connect your agent](#connect-your-agent))
+   and call `query-docs` with `libraryId` `/encode/httpx/0.28.1`.
+
+`admin create` opens the database directly (so it works before the server is up, and against the
+same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
+Passwords are stored as argon2id hashes.
+
+The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
+ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
+Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
+`admin create`): it sets a new password, signs the admin out everywhere and revokes
+the API tokens.
+
 Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
 ```bash
@@ -60,21 +112,57 @@ and pre-selection from a repository's `context7.json`. See the [Roadmap](#roadma
 }
 ```
 
-Create tokens in the UI (**Settings → Tokens**) or with `exactdocs token create`;
+MCP over HTTP needs an API token; it acts as the account that created it. Tokens start with
+`exd_`, are shown once when created and stored only as a hash, may expire, and stop working the
+moment they are revoked. Until the UI has a token page, use the REST API with your signed-in
+session (the token routes do not accept a token, so a leaked token cannot mint successors):
+
+```bash
+curl -c jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/session \
+  -d '{"username": "ada", "password": "a long passphrase"}'
+curl -b jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/tokens \
+  -d '{"name": "laptop", "expires_at": "2027-01-01T00:00:00Z"}'    # `expires_at` is optional
+curl -b jar.txt http://localhost:3000/api/v1/tokens                  # list (never the secrets)
+curl -b jar.txt -X DELETE http://localhost:3000/api/v1/tokens/<id>   # revoke
+```
+
+REST clients and scripts send the same token as `Authorization: Bearer exd_...` to any `/api/v1`
+route except the token routes themselves.
+
+Planned: tokens in the UI (**Settings → Tokens**) and `exactdocs token create`;
 `exactdocs config --client claude|cursor|vscode` (planned) will print a ready-to-paste snippet with a new token.
-For a local setup without a network port: `uvx exactdocs serve --stdio` (no token needed).
+
+#### Without a network port: stdio
+
+```json
+{
+  "mcpServers": {
+    "exactdocs": { "command": "uvx", "args": ["exactdocs", "serve", "--stdio"] }
+  }
+}
+```
+
+stdio needs no token and no running server, but it needs an **existing database**: run
+`exactdocs serve` (or `exactdocs admin create`) once first. Otherwise it exits with an error on
+stderr naming the expected path. It uses the same data directory (`EXACTDOCS_DATA_DIR`), opens the
+SQLite file read-only (safe next to a running server, which keeps importing), runs no worker and
+no migration, and exposes the same read-only tools. If the server has since been upgraded and
+migrated the database, upgrade the stdio command too. Manage libraries through the server. Run it as the same user as the server: with the server
+stopped, SQLite creates `exactdocs.db-wal` and `-shm` next to the database (the directory must be
+writable for that), and files owned by another user can stop the server from starting later.
+`--host`, `--port` and `--reload` are HTTP-only and rejected with `--stdio`.
 
 ## MCP tools
 
 | Tool | Purpose |
 |---|---|
 | `resolve-library-id(libraryName, query)` | context7-compatible: find a library ID such as `/acme/payments` |
-| `query-docs(libraryId, query, language?)` | context7-compatible: relevant docs for `/owner/repo` (the library's default version) or an exact version `/owner/repo/v1.4.0` |
+| `query-docs(libraryId, query, language?)` | context7-compatible: documentation for `/owner/repo` (default version) or `/owner/repo/<ref>` (exactly that version, never another). Returns whole chunks, best first, within a size budget; `language` moves chunks with code in it first (it does not filter) |
 | `list_libraries()` | Libraries and imported versions you can access |
 | `list_articles(library, version?, path_prefix?, tags?)` | The article tree of a version |
 | `read_article(library, version?, path)` | A full article, verbatim |
-| `search_docs(library, version?, query, tags?, mode?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
-| `read_chunk(chunk_id)` | Fetch a neighboring section of a search result |
+| `search_docs(library, ref?, query, tags?, tags_match?, limit?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
+| `read_chunk(chunk_id)` | Fetch a neighboring section of a search result (planned: E7-03; until then follow `source_url`) |
 
 Library IDs are `/owner/repo`; without a version, a library's **default version** is used (the highest imported stable semver tag, else the default branch, else the most recently imported version, unless pinned), and every response
 says which version answered. Planned: hosts that support MCP Apps (Claude, ChatGPT) will
@@ -102,13 +190,15 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file or PostgreSQL URL; the data directory is `/data` in Docker and the platform user-data directory for `uvx` |
-| `EXACTDOCS_SECRET_KEY` | generated in the data directory | Encrypts stored git credentials |
+| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, the generated secret key, `known_hosts` and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision |
+| `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
+| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
+| `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
-| `EXACTDOCS_AUTH_MODE` | `local` | `local` (single admin account) or `oidc` (teams) |
-| `EXACTDOCS_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` | – | Required for `oidc` |
+| `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |
 | `EXACTDOCS_RERANKER_URL`, `_MODEL`, `_API_KEY` | – | Optional reranker endpoint (Cohere-compatible, Jina, TEI) |
 | `EXACTDOCS_LLM_URL`, `_MODEL`, `_API_KEY`, `_PROXY` | – | Optional OpenAI-compatible LLM; enables HyDE and agentic retrieval |
@@ -116,9 +206,47 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_TELEMETRY` | `off` | `off` or `otlp` (OpenTelemetry export to your collector; never to any cloud) |
 | `EXACTDOCS_METRICS` | `off` | `on` exposes a Prometheus endpoint at `/metrics` |
 
-Git credentials for private repositories (token or SSH deploy key) are set per library in the UI
-or CLI and stored encrypted with `EXACTDOCS_SECRET_KEY` (generated in the data volume on first
-run if unset).
+### Private repositories
+
+Send a credential next to the URL in `POST /api/v1/repositories/check`, `POST /api/v1/libraries`
+or `POST /api/v1/libraries/{owner}/{repo}/versions`:
+
+```json
+{"url": "https://github.com/acme/docs", "credential": {"kind": "token", "token": "ghp_..."}}
+{"url": "git@github.com:acme/docs.git", "credential": {"kind": "ssh_key", "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n..."}}
+```
+
+- A **token** goes with an `https://` URL (`http://` only for localhost); `username` defaults to
+  `x-access-token` (GitHub, GitLab; Bitbucket repository tokens use `x-token-auth`). A **deploy
+  key** (private key without a passphrase) goes with an SSH URL.
+- Credentials are stored encrypted with `EXACTDOCS_SECRET_KEY`, never returned by the API and
+  never written to logs or error messages. They reach git through `GIT_ASKPASS` (token) or a
+  temporary key file named in `GIT_SSH_COMMAND` (deleted after each git call), never in the URL or
+  the command line, and only for the repository's own host: a redirect to another host fails.
+- **SSH host keys** live in `<data dir>/known_hosts`. GitHub, GitLab and Bitbucket are pinned with
+  their published keys; any other host is trusted on first use and remembered. A host whose key
+  changed is refused with `host_key_changed` until you remove its line from that file.
+  `POST /api/v1/repositories/check` returns the `host_key_fingerprint` to compare with the host's
+  published one.
+- A credential is stored for the library **and the host it was given for**: it is never offered to
+  another host, a library added again never inherits an earlier one, and removing a library
+  deletes it. Sending a `credential` needs a signed-in session; an API token (for example an MCP
+  client's) is refused with 401 for those requests.
+- The generated key file and the database live in the same data volume, so a backup of the volume
+  holds both and defeats the encryption: back up the database without `secret.key`, or keep
+  `EXACTDOCS_SECRET_KEY` outside the volume. A key file that was readable by others is made
+  private again but logged as exposed: rotate it. A symlink or a file of another user is refused.
+- If the secret key is lost or changed, the library's docs stay available and adding a version
+  answers `credentials_required`; send the credential again with the new version request.
+
+ExactDocs reads repositories with the system `git` binary (in the Docker image; on `uvx` it must be
+on `PATH`; without it the server still starts, logs a warning and repository checks answer
+`git_not_installed`). URLs may be `https://`, `http://`, `ssh://`, `user@host:path` or `file://`;
+credentials never go in the URL (they are refused, never echoed or logged), and
+`POST /api/v1/repositories/check` runs git with prompts, user git config and ssh keys switched off
+and a 15 s timeout. An import fetches only the pinned commit (no history, no unselected files) into
+a temporary folder under the data directory (`work/`), with hooks, submodules and symlinks off; git
+2.30 or newer is recommended, and a server without partial-clone support just sends more.
 
 ## Teams and access
 
@@ -143,12 +271,17 @@ services:
   exactdocs:
     image: ghcr.io/sircypkowskyy/exactdocs:latest
     ports: ["3000:3000"]
+    # The image runs as UID 10001 and needs nothing but /data and /tmp to be writable.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g }
+    volumes: ["exactdocs-data:/data"]
     environment:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${DB_PASSWORD}@db:5432/exactdocs
-      EXACTDOCS_AUTH_MODE: oidc
-      EXACTDOCS_OIDC_ISSUER: https://sso.example.com/realms/dev
-      EXACTDOCS_OIDC_CLIENT_ID: exactdocs
-      EXACTDOCS_OIDC_CLIENT_SECRET: ${OIDC_SECRET}
     depends_on: [db]
   db:
     image: paradedb/paradedb:latest   # PostgreSQL with pg_search (BM25) and pgvector
@@ -158,6 +291,7 @@ services:
       POSTGRES_DB: exactdocs
     volumes: ["pgdata:/var/lib/postgresql/data"]
 volumes:
+  exactdocs-data:
   pgdata:
 ```
 
@@ -188,6 +322,23 @@ ExactDocs makes no outbound connections you did not configure: only your git hos
 endpoints and, if enabled, your OpenTelemetry collector. No analytics, no update checks.
 Telemetry and the Prometheus endpoint are **off by default**; query text is never exported
 unless you opt in.
+
+This is tested, not just promised, in
+[`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py): an import over
+git/HTTP, REST search and both MCP search tools run with FastMCP's update check forced off and
+no telemetry configured. What that proves, exactly:
+
+- **Observed:** every Python socket and name lookup goes through a guard that refuses anything
+  but loopback. Where unprivileged user namespaces exist (`unshare -rn`), the same loop and a
+  redirect to another host also run in a network namespace with only loopback, so the kernel
+  itself blocks anything else, git included. Elsewhere that check is skipped.
+- **Only pinned:** where it is skipped, git (a child process) is checked by what it was *told*:
+  the only URL is the fixture server, the protocols are restricted, no ssh is started.
+- git follows an HTTP redirect from your git host, and honours `HTTP(S)_PROXY`/`ALL_PROXY`
+  when set (traffic then goes to that proxy). The test runs without proxy variables.
+
+The web UI bundles its fonts; `pnpm build` fails if the built HTML, CSS or any JS chunk names
+another host ([`web/scripts/check-dist.mjs`](web/scripts/check-dist.mjs)).
 
 ## Development
 

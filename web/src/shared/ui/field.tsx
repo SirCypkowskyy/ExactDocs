@@ -1,0 +1,83 @@
+import type * as React from "react";
+import { cn } from "@/shared/lib/utils";
+import { Input } from "@/shared/ui/input";
+
+interface FieldProps extends Omit<React.ComponentProps<"input">, "id"> {
+  id: string;
+  label: string;
+  hint?: string | undefined;
+  error?: string | undefined;
+  /** Id of a form-level alert that explains this field too (a wrong password). */
+  alertId?: string | undefined;
+}
+
+/** A labelled input whose rule, error and form-level alert are all announced with it. */
+export function Field({ id, label, hint, error, alertId, ...props }: FieldProps) {
+  const describedBy = [hint && `${id}-hint`, error && `${id}-error`, alertId]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      <Input
+        id={id}
+        name={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy || undefined}
+        {...props}
+      />
+      {hint && (
+        <p id={`${id}-hint`} className="text-sm text-muted-foreground">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={`${id}-error`} className="fade-in text-sm font-medium text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+interface TextareaFieldProps extends Omit<React.ComponentProps<"textarea">, "id"> {
+  id: string;
+  label: string;
+  hint?: string | undefined;
+  error?: string | undefined;
+}
+
+/** `Field` for several lines of text. */
+export function TextareaField({ id, label, hint, error, className, ...props }: TextareaFieldProps) {
+  const describedBy = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(" ");
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      <textarea
+        id={id}
+        name={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy || undefined}
+        className={cn(
+          "min-h-28 w-full resize-y rounded-md border border-input bg-secondary px-3 py-2.5 text-base leading-6 outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 aria-invalid:border-destructive aria-invalid:ring-destructive/25",
+          className,
+        )}
+        {...props}
+      />
+      {hint && (
+        <p id={`${id}-hint`} className="text-sm text-muted-foreground">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={`${id}-error`} className="fade-in text-sm font-medium text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}

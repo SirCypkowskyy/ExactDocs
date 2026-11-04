@@ -9,50 +9,205 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as SetupRouteImport } from './routes/setup'
+import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as AppAccountRouteImport } from './routes/_app.account'
+import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
+import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
+import { Route as AppLibrariesOwnerRepoSettingsRouteImport } from './routes/_app.libraries.$owner.$repo_.settings'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignInRoute = SignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountRoute = AppAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLibrariesNewRoute = AppLibrariesNewRouteImport.update({
+  id: '/libraries/new',
+  path: '/libraries/new',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLibrariesOwnerRepoRoute = AppLibrariesOwnerRepoRouteImport.update({
+  id: '/libraries/$owner/$repo',
+  path: '/libraries/$owner/$repo',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLibrariesOwnerRepoSettingsRoute =
+  AppLibrariesOwnerRepoSettingsRouteImport.update({
+    id: '/libraries/$owner/$repo_/settings',
+    path: '/libraries/$owner/$repo/settings',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
+  '/setup': typeof SetupRoute
+  '/sign-in': typeof SignInRoute
+  '/account': typeof AppAccountRoute
+  '/libraries/new': typeof AppLibrariesNewRoute
+  '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
+  '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/setup': typeof SetupRoute
+  '/sign-in': typeof SignInRoute
+  '/account': typeof AppAccountRoute
+  '/': typeof AppIndexRoute
+  '/libraries/new': typeof AppLibrariesNewRoute
+  '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
+  '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/setup': typeof SetupRoute
+  '/sign-in': typeof SignInRoute
+  '/_app/account': typeof AppAccountRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/libraries/new': typeof AppLibrariesNewRoute
+  '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
+  '/_app/libraries/$owner/$repo_/settings': typeof AppLibrariesOwnerRepoSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/setup'
+    | '/sign-in'
+    | '/account'
+    | '/libraries/new'
+    | '/libraries/$owner/$repo'
+    | '/libraries/$owner/$repo/settings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/setup'
+    | '/sign-in'
+    | '/account'
+    | '/'
+    | '/libraries/new'
+    | '/libraries/$owner/$repo'
+    | '/libraries/$owner/$repo/settings'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/setup'
+    | '/sign-in'
+    | '/_app/account'
+    | '/_app/'
+    | '/_app/libraries/new'
+    | '/_app/libraries/$owner/$repo'
+    | '/_app/libraries/$owner/$repo_/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
+  SetupRoute: typeof SetupRoute
+  SignInRoute: typeof SignInRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-in': {
+      id: '/sign-in'
+      path: '/sign-in'
+      fullPath: '/sign-in'
+      preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/account': {
+      id: '/_app/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AppAccountRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/libraries/new': {
+      id: '/_app/libraries/new'
+      path: '/libraries/new'
+      fullPath: '/libraries/new'
+      preLoaderRoute: typeof AppLibrariesNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/libraries/$owner/$repo': {
+      id: '/_app/libraries/$owner/$repo'
+      path: '/libraries/$owner/$repo'
+      fullPath: '/libraries/$owner/$repo'
+      preLoaderRoute: typeof AppLibrariesOwnerRepoRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/libraries/$owner/$repo_/settings': {
+      id: '/_app/libraries/$owner/$repo_/settings'
+      path: '/libraries/$owner/$repo/settings'
+      fullPath: '/libraries/$owner/$repo/settings'
+      preLoaderRoute: typeof AppLibrariesOwnerRepoSettingsRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
 
+interface AppRouteChildren {
+  AppAccountRoute: typeof AppAccountRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppLibrariesNewRoute: typeof AppLibrariesNewRoute
+  AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
+  AppLibrariesOwnerRepoSettingsRoute: typeof AppLibrariesOwnerRepoSettingsRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAccountRoute: AppAccountRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppLibrariesNewRoute: AppLibrariesNewRoute,
+  AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
+  AppLibrariesOwnerRepoSettingsRoute: AppLibrariesOwnerRepoSettingsRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
+  SetupRoute: SetupRoute,
+  SignInRoute: SignInRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

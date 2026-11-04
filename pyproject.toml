@@ -33,8 +33,13 @@ exactdocs-kernel = { workspace = true }
 [tool.ruff]
 target-version = "py314"
 line-length = 100
-src = ["packages/*/src", "packages/*/tests", "packages/*/features"]
-extend-exclude = ["web", "packages/exactdocs/src/exactdocs/_web"]
+src = ["packages/*/src", "packages/*/tests", "packages/*/tests/fixtures", "packages/*/features"]
+# The fixture docs repository is content under test (byte-exact, incl. invalid UTF-8), not code.
+extend-exclude = [
+    "web",
+    "packages/exactdocs/src/exactdocs/_web",
+    "packages/exactdocs/tests/fixtures/docs-repo",
+]
 
 [tool.ruff.lint]
 # Everything, including preview rules; opt out only of what conflicts or adds no value here.
@@ -81,10 +86,23 @@ ignore = [
     "ANN",
     "magic-value-comparison",
     "FBT",
+    "hardcoded-password-string",  # fake secrets in tests
+    "hardcoded-password-func-arg",
     "import-private-name",
     "implicit-namespace-package",
 ]
+"e2e/**" = ["D", "implicit-namespace-package", "suspicious-subprocess-import"]
 "**/features/**" = ["assert", "D", "ANN", "FBT", "implicit-namespace-package"]
+# Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
+"**/migrations/versions/**" = ["D"]
+# Every test must start in its own empty data directory (see packages/exactdocs/tests/conftest.py).
+"**/conftest.py" = ["pytest-fixture-autouse"]
+# The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
+"**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
+"deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
+# Runs the app in a fresh interpreter to see which modules it imports.
+"**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -102,6 +120,7 @@ docstring-code-format = true
 # ---------------------------------------------------------------- ty
 [tool.ty.environment]
 python-version = "3.14"
+extra-paths = ["packages/exactdocs/tests/fixtures"]
 
 [tool.ty.src]
 include = ["packages"]
@@ -119,6 +138,7 @@ rules = { call-non-callable = "ignore" }
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["packages/exactdocs-kernel/tests", "packages/exactdocs/tests"]
+pythonpath = ["packages/exactdocs/tests/fixtures"]  # fixture_repo.py
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,11 @@
+{
+  "name": "resolve-library-id",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string"},
+      "libraryName": {"type": "string"}
+    },
+    "required": ["query", "libraryName"]
+  }
+}

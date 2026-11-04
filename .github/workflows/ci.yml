@@ -63,6 +63,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: API types are up to date with web/openapi.json
+        run: |
+          pnpm gen:api
+          git diff --exit-code -- src/shared/lib/api-schema.d.ts \
+            || { echo "::error::run 'just api' and commit web/openapi.json and the types"; exit 1; }
       - name: Biome (CI mode, GitHub annotations)
         run: pnpm exec biome ci .
       - run: pnpm lint:arch
@@ -72,31 +77,185 @@ jobs:
       - run: pnpm build
 
   image:
-    name: Docker image (native build + smoke test)
+    name: Docker image (lint, build, scan, smoke test)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: hadolint
+        run: |
+          docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
+            hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e \
+            < deploy/Dockerfile
+      # The runners are persistent VMs, so the daemon's own BuildKit (driver "docker") keeps layers
+      # and cache mounts between jobs: no remote cache to export or restore. (The default
+      # docker-container driver is deleted at the end of every job.) Each VM has its own cache.
       - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - id: created
+        run: |
+          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
           load: true
           tags: exactdocs:ci
-          build-args: VERSION=0.0.0.dev0
-          cache-from: type=gha,scope=exactdocs
-          cache-to: type=gha,scope=exactdocs,mode=max
-      - name: Smoke test
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # RUN-02: size budgets and no model weights (budgets and reasoning: docs/releasing.md).
+      - name: Image size budget and no model files
+        run: python3 deploy/check_artifacts.py image exactdocs:ci
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - name: Wheel size budget, no model files, no ML dependencies
         run: |
-          docker run -d --rm --name exactdocs-ci -p 127.0.0.1::3000 exactdocs:ci
-          trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
+          cid=$(docker create exactdocs:ci)
+          docker cp "$cid:/app/.venv/lib/python3.14/site-packages/exactdocs/_web" packages/exactdocs/src/exactdocs/_web
+          docker rm "$cid" >/dev/null
+          UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
+          python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
+      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
+      - name: Trivy scan
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci
+      # Only the runtime-tools stage runs a command for the other architecture (apt, under QEMU);
+      # build just that and prove the tools run there. No Python: it crashes under QEMU.
+      - name: amd64 runtime-tools stage (QEMU) builds and runs git, ssh, tini
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          target: runtime-tools
+          load: true
+          tags: exactdocs:ci-amd64
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      - run: |
+          for tool in "git --version" "ssh -V" "tini --version"; do
+            docker run --rm --platform linux/amd64 --entrypoint ${tool%% *} exactdocs:ci-amd64 ${tool#* }
+          done
+      - name: Build a fixture docs repository
+        run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
+      - name: Smoke test (read-only rootfs, no capabilities)
+        run: |
+          flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
+          # The fixture repository is owned by the runner user; the importer lets git read local
+          # repositories of other owners (safe.directory), so it is imported as it is.
+          # RUN-01: the clock covers docker run through the whole smoke flow, web UI and token
+          # checks included (the image is already built). No step needs the network (the only
+          # repository URL is file://); the default bridge does not enforce that.
+          docker volume rm -f exactdocs-ci-data >/dev/null  # a stale volume would not be a fresh instance
+          start=$(date +%s)
+          docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 \
+            -v exactdocs-ci-data:/data -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci
+          trap 'docker logs exactdocs-ci; docker stop exactdocs-ci; docker volume rm exactdocs-ci-data || true' EXIT
           port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
-          for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:${port}/api/health" && break; sleep 1; done
-          curl -fsS "http://127.0.0.1:${port}/api/v1/libraries"
-          curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'
-          init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
-          mcp=(-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$init")
-          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp/")" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 400
+          # setup, sign in, token, import the fixture, list/read, search, MCP query-docs (deploy/smoke.sh)
+          deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
+          elapsed=$(( $(date +%s) - start ))
+          echo "docker run to end of smoke flow: ${elapsed}s (limit 300s)" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          test "$elapsed" -lt 300
+          # Hardening as built: unprivileged, tini is PID 1, no pip, no setuid files.
+          test "$(docker exec exactdocs-ci id -u)" = 10001
+          test "$(docker exec exactdocs-ci cat /proc/1/comm)" = tini
+          docker exec exactdocs-ci sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
+          # What the importer needs: ssh, and git reading a repository over file://. The fixture is
+          # owned by the runner user, so this stand-alone check needs safe.directory (the importer
+          # sets it for its own git calls).
+          docker exec exactdocs-ci ssh -V
+          docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
+            -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
+
+  # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
+  # them the way uvx does, then drives the whole loop in Chromium (e2e/, one test).
+  uvx:
+    name: uvx smoke + browser end-to-end (built wheel)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            e2e/pnpm-lock.yaml
+      - name: Build the web UI into the package, then the wheels
+        run: |
+          (cd web && pnpm install --frozen-lockfile && pnpm build)
+          cp -r web/dist packages/exactdocs/src/exactdocs/_web
+          export UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0
+          uv build --wheel --package exactdocs-kernel --out-dir "$RUNNER_TEMP/dist"
+          uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
+          python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-0*.whl
+      - name: uvx exactdocs serve answers /api/health
+        run: |
+          export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
+          port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 \
+            exactdocs serve --port "$port" &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for _ in $(seq 1 60); do
+            kill -0 "$pid" || { echo "::error::the server exited early"; exit 1; }
+            curl -fsS "http://127.0.0.1:$port/api/health" && break
+            sleep 1
+          done
+          curl -fsS "http://127.0.0.1:$port/api/health"
+          curl -fsS "http://127.0.0.1:$port/" | grep -qi '<div id="root"'
+      - name: Without git on PATH, start fails with a clear message
+        run: |
+          # only what uv and the generated entry point need; git is not linked
+          bin="$RUNNER_TEMP/no-git-bin"; mkdir "$bin"
+          for tool in uvx sh realpath dirname; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
+          if out=$(timeout 120 env PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --offline --prerelease=allow \
+              --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 exactdocs serve 2>&1); then
+            echo "::error::serve started without git"; exit 1
+          fi
+          echo "$out"
+          grep -q "git is not installed" <<<"$out"
+      # The runners may have no browser: cache Playwright's (keyed by its version) and install the
+      # missing part only. System libraries need root; installed when sudo is passwordless.
+      - name: Playwright
+        working-directory: e2e
+        run: pnpm install --frozen-lockfile
+      - id: playwright
+        run: echo "version=$(node -p "require('./e2e/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        working-directory: e2e
+        run: |
+          pnpm exec playwright install chromium
+          if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium
+          else echo "::warning::no passwordless sudo, system libraries for Chromium not installed"; fi
+      - name: Browser end-to-end test (server started with uvx from the wheel)
+        run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e/shots/
+            e2e/test-results/
+          retention-days: 14

@@ -1,0 +1,38 @@
+---
+title: Client
+description: The Client class, with live examples.
+tags: [api]
+---
+
+import { Callout, CodeTabs } from '../components'
+
+export const meta = { stability: 'stable' }
+
+# Client
+
+<Callout type="info">
+  The client is safe to share between threads.
+</Callout>
+
+## Charge a card
+
+<CodeTabs languages={['python', 'curl']}>
+
+```python
+client.charge(amount=1200, currency="eur")
+```
+
+```bash
+curl -X POST https://api.example.invalid/v1/charges -d amount=1200
+```
+
+</CodeTabs>
+
+Call `acme.payments.charge` for one-off payments.
+
+## Options
+
+| Option         | Type          | Meaning                                   |
+| -------------- | ------------- | ----------------------------------------- |
+| `token`        | `str`         | the bearer token                          |
+| `retry_policy` | `RetryPolicy` | how failed calls are repeated, see the guide |

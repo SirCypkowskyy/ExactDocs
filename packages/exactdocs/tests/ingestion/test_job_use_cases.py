@@ -1,0 +1,267 @@
+"""Jobs end to end through the driving ports, with the in-memory repository."""
+
+import asyncio
+
+import pytest
+
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
+from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ListLibraryJobsQuery
+from exactdocs.ingestion.errors import JobNotFoundError, UnknownJobKindError
+from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
+from exactdocs.ingestion.ports import JobProgress
+from exactdocs_kernel import ValidationError
+
+IMPORT = JobKind("import")
+
+
+def enqueue(kind: str = "import", library: str = "/acme/payments") -> EnqueueJobCommand:
+    return EnqueueJobCommand(kind=kind, library=library)
+
+
+def queued(clock, job_id: str, *, kind: JobKind = IMPORT, library: str = "/a/b") -> Job:
+    return Job.queued(
+        job_id=JobId(job_id), kind=kind, library=library, version=None, now=clock.now()
+    )
+
+
+async def succeed(job: Job, progress: JobProgress) -> None:
+    await progress.report(done=job.total, total=job.total)
+
+
+async def test_a_job_that_finished_4_of_10_files_reports_it(build_module) -> None:
+    halfway = asyncio.Event()
+    release = asyncio.Event()
+
+    async def import_ten_files(_job: Job, progress: JobProgress) -> None:
+        await progress.report(done=4, total=10)
+        halfway.set()
+        await release.wait()
+
+    module = build_module({IMPORT: import_ten_files})
+    waiting = await module.enqueue_job(enqueue())
+    running = asyncio.create_task(module.run_next_job())
+    await halfway.wait()
+
+    seen = await module.get_job(GetJobQuery(job_id=waiting.id))
+
+    assert (seen.state, seen.done, seen.total) == (JobState.RUNNING, 4, 10)
+    release.set()
+    assert await running is True
+    finished = await module.get_job(GetJobQuery(job_id=waiting.id))
+    assert finished.state is JobState.SUCCEEDED
+    assert finished.started_at is not None
+    assert finished.finished_at is not None
+    assert finished.created_at < finished.started_at < finished.finished_at
+
+
+async def test_skipped_files_are_listed_with_their_reason(build_module) -> None:
+    async def skip_one(_job: Job, progress: JobProgress) -> None:
+        await progress.problem("assets/logo.png", ProblemCode.BINARY, "binary file")
+
+    module = build_module({IMPORT: skip_one})
+    waiting = await module.enqueue_job(enqueue())
+
+    await module.run_next_job()
+
+    problems = (await module.get_job(GetJobQuery(job_id=waiting.id))).problems
+    assert [(p.path, p.code, p.is_skip) for p in problems] == [
+        ("assets/logo.png", ProblemCode.BINARY, True)
+    ]
+
+
+async def test_a_domain_error_fails_the_job_with_its_message(build_module) -> None:
+    async def refuse(_job: Job, _progress: JobProgress) -> None:
+        message = "the repository has no docs folder"
+        raise ValidationError(message)
+
+    module = build_module({IMPORT: refuse})
+    waiting = await module.enqueue_job(enqueue())
+
+    await module.run_next_job()
+
+    failed = await module.get_job(GetJobQuery(job_id=waiting.id))
+    assert (failed.state, failed.error) == (JobState.FAILED, "the repository has no docs folder")
+    assert failed.finished_at is not None
+
+
+async def test_an_unexpected_error_fails_the_job_without_leaking_internals(
+    build_module, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def crash(_job: Job, progress: JobProgress) -> None:
+        await progress.report(done=2, total=5)
+        message = "/home/me/secret/token.txt"
+        raise RuntimeError(message)
+
+    module = build_module({IMPORT: crash})
+    waiting = await module.enqueue_job(enqueue())
+
+    with caplog.at_level("ERROR"):
+        await module.run_next_job()
+
+    failed = await module.get_job(GetJobQuery(job_id=waiting.id))
+    assert (failed.state, failed.error, failed.done) == (
+        JobState.FAILED,
+        "unexpected RuntimeError",
+        2,
+    )
+    assert "token.txt" in caplog.text  # the details go to the log
+
+
+async def test_a_job_whose_kind_lost_its_handler_fails(clock, jobs, build_module) -> None:
+    await jobs.add(queued(clock, "j1", kind=JobKind("gone")))
+
+    await build_module().run_next_job()
+
+    failed = await build_module().get_job(GetJobQuery(job_id="j1"))
+    assert failed.state is JobState.FAILED
+    assert failed.error == "no handler is registered for job kind 'gone'"
+
+
+async def test_nothing_waiting_means_nothing_runs(build_module) -> None:
+    assert await build_module().run_next_job() is False
+
+
+async def test_a_kind_nothing_can_run_is_refused_when_queued(
+    jobs: InMemoryJobRepository, build_module
+) -> None:
+    module = build_module({IMPORT: succeed})
+
+    with pytest.raises(UnknownJobKindError):
+        await module.enqueue_job(enqueue(kind="teleport"))
+
+    assert jobs.jobs == {}
+
+
+async def test_an_unknown_job_is_not_found(build_module) -> None:
+    with pytest.raises(JobNotFoundError):
+        await build_module().get_job(GetJobQuery(job_id="nope"))
+
+
+async def test_a_library_lists_only_its_own_jobs_newest_first(build_module) -> None:
+    module = build_module({IMPORT: succeed})
+    first = await module.enqueue_job(enqueue(library="/acme/payments"))
+    await module.enqueue_job(enqueue(library="/acme/ledger"))
+    second = await module.enqueue_job(enqueue(library="/acme/payments"))
+
+    listed = await module.list_library_jobs(ListLibraryJobsQuery(library="/acme/payments"))
+    page = await module.list_library_jobs(ListLibraryJobsQuery(library="/acme/payments", limit=1))
+    rest = await module.list_library_jobs(
+        ListLibraryJobsQuery(library="/acme/payments", limit=1, cursor=page.next_cursor)
+    )
+
+    assert [job.id for job in listed.jobs] == [second.id, first.id]
+    assert listed.next_cursor is None
+    assert [job.id for job in page.jobs] == [second.id]
+    assert [job.id for job in rest.jobs] == [first.id]
+    assert rest.next_cursor is None
+
+
+async def test_two_jobs_for_one_library_never_run_together(build_module) -> None:
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def hold(job: Job, _progress: JobProgress) -> None:
+        started.append(job.id)
+        await release.wait()
+
+    module = build_module({IMPORT: hold})
+    first = await module.enqueue_job(enqueue(library="/acme/payments"))
+    second = await module.enqueue_job(enqueue(library="/acme/payments"))
+    other = await module.enqueue_job(enqueue(library="/acme/ledger"))
+
+    first_slot = asyncio.create_task(module.run_next_job())
+    other_slot = asyncio.create_task(module.run_next_job())
+    third_slot = asyncio.create_task(module.run_next_job())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # the second job of the library waits; the other library's job takes the free slot
+    assert started == [first.id, other.id]
+    assert await third_slot is False
+    release.set()
+    assert await asyncio.gather(first_slot, other_slot) == [True, True]
+    assert await module.run_next_job() is True
+    assert started == [first.id, other.id, second.id]
+
+
+async def test_an_interrupted_job_is_cleaned_up_then_queued_to_run_from_the_beginning(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    calls: list[tuple[str, JobState]] = []
+
+    async def discard_pending(job: Job) -> None:
+        stored = await jobs.get(job.id)
+        assert stored is not None
+        calls.append((f"hook {job.id}", stored.state))
+
+    async def import_again(job: Job, progress: JobProgress) -> None:
+        calls.append((f"run {job.id} from {job.done}", job.state))
+        await progress.report(done=10, total=10)
+
+    module = build_module({IMPORT: import_again}, {IMPORT: discard_pending})
+    interrupted = queued(clock, "j1").started(clock.now()).progressed(done=4, total=10)
+    await jobs.add(interrupted.with_problem("x", ProblemCode.BINARY, "y"))
+
+    await module.recover_jobs()
+
+    requeued = await module.get_job(GetJobQuery(job_id="j1"))
+    assert (requeued.state, requeued.done, requeued.total, requeued.problems) == (
+        JobState.QUEUED,
+        0,
+        0,
+        [],
+    )
+    assert requeued.started_at is None
+    assert calls == [("hook j1", JobState.RUNNING)]  # the hook ran while the job was still running
+
+    await module.run_next_job()
+
+    assert calls[1] == ("run j1 from 0", JobState.RUNNING)
+    assert (await module.get_job(GetJobQuery(job_id="j1"))).state is JobState.SUCCEEDED
+
+
+async def test_a_kind_without_a_hook_is_just_queued_again(clock, jobs, build_module) -> None:
+    await jobs.add(queued(clock, "j1").started(clock.now()))
+
+    await build_module({IMPORT: succeed}).recover_jobs()
+
+    assert (await jobs.get(JobId("j1"))).state is JobState.QUEUED
+
+
+async def test_queued_and_finished_jobs_are_left_alone_by_recovery(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    hooked: list[str] = []
+
+    async def hook(job: Job) -> None:
+        hooked.append(job.id)
+
+    finished = queued(clock, "done").started(clock.now()).succeeded(clock.now())
+    failed = queued(clock, "bad").started(clock.now()).failed("boom", clock.now())
+    for each in (queued(clock, "waiting"), finished, failed):
+        await jobs.add(each)
+
+    await build_module(recovery_hooks={IMPORT: hook}).recover_jobs()
+
+    assert hooked == []
+    assert jobs.jobs[JobId("done")] == finished
+    assert jobs.jobs[JobId("bad")] == failed
+
+
+async def test_a_failing_hook_fails_its_job_and_the_others_are_still_recovered(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    async def broken(_job: Job) -> None:
+        message = "disk on fire"
+        raise OSError(message)
+
+    fragile = JobKind("fragile")
+    await jobs.add(queued(clock, "a", kind=fragile, library="/a/x").started(clock.now()))
+    await jobs.add(queued(clock, "b", library="/b/x").started(clock.now()))
+    module = build_module({IMPORT: succeed}, {fragile: broken})
+
+    await module.recover_jobs()
+
+    assert jobs.jobs[JobId("a")].state is JobState.FAILED
+    assert jobs.jobs[JobId("a")].error == "recovery failed: unexpected OSError"
+    assert jobs.jobs[JobId("b")].state is JobState.QUEUED

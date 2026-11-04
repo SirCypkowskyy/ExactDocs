@@ -2,33 +2,37 @@ from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.database import current_revision
 from exactdocs.bootstrap.mcp import build_mcp
+from exactdocs.bootstrap.rest import (
+    ERROR_RESPONSES,
+    OPENAPI_PATH,
+    SetupGuard,
+    add_error_handlers,
+    v1_openapi,
+)
 from exactdocs.catalog.adapters.driving import http as catalog_http
+from exactdocs.identity.adapters.driving import http as identity_http
+from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
-from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
 
 # Built web UI, copied into the package by CI / the Docker build (see web/README.md).
 WEB_DIST = Path(__file__).parent.parent / "_web"
 MCP_PATH = "/mcp"
-
-_STATUS_BY_ERROR: dict[type[DomainError], int] = {
-    NotFoundError: 404,
-    ConflictError: 409,
-    ValidationError: 422,
-}
 
 
 class Health(BaseModel):
@@ -36,6 +40,7 @@ class Health(BaseModel):
 
     status: str
     version: str
+    schema_revision: str | None
 
 
 def create_app(container: Container) -> FastAPI:
@@ -53,7 +58,7 @@ def create_app(container: Container) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-        async with mcp_app.lifespan(mcp_app):
+        async with container.running(), mcp_app.lifespan(mcp_app):
             yield
 
     app = FastAPI(
@@ -61,8 +66,16 @@ def create_app(container: Container) -> FastAPI:
         version=__version__,
         lifespan=lifespan,
         generate_unique_id_function=_operation_id,
+        # No Swagger UI/ReDoc (they load assets from a CDN); the `/api/v1` description is below.
+        openapi_url=None,
     )
-    app.add_exception_handler(DomainError, _domain_error_handler)
+    add_error_handlers(app)
+
+    async def setup_required() -> bool:
+        return (await container.identity.get_setup_state()).setup_required
+
+    # Innermost, so the host and origin checks below still run first.
+    app.add_middleware(SetupGuard, setup_required=setup_required)
     # DNS-rebinding guard for the whole app (REST, UI and MCP), one allowlist for all.
     app.add_middleware(
         OriginCheck,
@@ -75,18 +88,82 @@ def create_app(container: Container) -> FastAPI:
 
     @api.get("/health", tags=["system"])
     async def health() -> Health:
-        return Health(status="ok", version=__version__)
+        revision = await current_revision(container.engine)
+        return Health(status="ok", version=__version__, schema_revision=revision)
 
-    v1 = APIRouter(prefix="/v1")
+    v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
+    # Reachable without a caller: setup and sign-in/state/out. A test pins this list.
     v1.include_router(
+        identity_http.build_router(
+            create_first_admin=container.identity.create_first_admin,
+            sign_in=container.identity.sign_in,
+            sign_out=container.identity.sign_out,
+            get_session_state=container.identity.get_session_state,
+            secure_cookies=settings.secure_cookies,
+        )
+    )
+    session_caller = identity_http.build_session_caller(
+        identify_caller=container.identity.identify_caller
+    )
+    v1.include_router(
+        identity_http.build_tokens_router(
+            create_token=container.identity.create_token,
+            list_tokens=container.identity.list_tokens,
+            revoke_token=container.identity.revoke_token,
+            session_caller=session_caller,
+        )
+    )
+    # Everything else needs a caller: a session cookie or an API token. Add new domain routers here.
+    current_caller = identity_http.build_current_caller(
+        identify_caller=container.identity.identify_caller,
+        identify_token=container.identity.identify_token,
+    )
+    protected = APIRouter(dependencies=[Depends(current_caller)])
+
+    async def require_session(request: Request) -> None:
+        """Sign-in by cookie only (401 otherwise): for what an API token must not do."""
+        await session_caller(request.cookies.get(SESSION_COOKIE))
+
+    protected.include_router(
         catalog_http.build_router(
             list_libraries=container.catalog.list_libraries,
             get_library=container.catalog.get_library,
+            resolve_version=container.catalog.resolve_version,
+            list_articles=container.catalog.list_articles,
+            list_tags=container.catalog.list_tags,
+            get_article=container.catalog.get_article,
+            update_library=container.catalog.update_library,
         )
     )
-    v1.include_router(retrieval_http.build_router(search_docs=container.retrieval.search_docs))
+    protected.include_router(
+        retrieval_http.build_router(
+            search_docs=container.retrieval.search_docs,
+            read_chunk=container.retrieval.read_chunk,
+        )
+    )
+    protected.include_router(
+        ingestion_http.build_router(
+            get_job=container.ingestion.get_job,
+            get_library_access=container.ingestion.get_library_access,
+            list_latest_jobs=container.ingestion.list_latest_jobs,
+            list_library_jobs=container.ingestion.list_library_jobs,
+            check_repository=container.ingestion.check_repository,
+            list_repository_refs=container.ingestion.list_repository_refs,
+            add_library=container.ingestion.add_library,
+            add_version=container.ingestion.add_version,
+            require_session=require_session,
+            remove_version=container.ingestion.remove_version,
+            remove_library=container.ingestion.remove_library,
+            sync_library=container.ingestion.sync_library,
+        )
+    )
+    v1.include_router(protected)
     api.include_router(v1)
     app.include_router(api)
+
+    @app.get(OPENAPI_PATH, include_in_schema=False)
+    async def openapi_v1() -> dict[str, Any]:
+        return v1_openapi(app)
 
     # Every route of the MCP app (the endpoint, and OAuth/.well-known routes once auth is on)
     # is served as-is, keeping the MCP app's own middleware; `/mcp/` is an alias some hosts
@@ -149,9 +226,3 @@ class OriginCheck:
 
     def _allowed(self, origin: str) -> bool:
         return origin in self.allowed_origins or urlsplit(origin).hostname in self.trusted_hosts
-
-
-async def _domain_error_handler(_: Request, exc: Exception) -> Response:
-    status = next((s for t, s in _STATUS_BY_ERROR.items() if isinstance(exc, t)), 400)
-    code = exc.code if isinstance(exc, DomainError) else "error"
-    return JSONResponse({"error": code, "detail": str(exc)}, status_code=status)

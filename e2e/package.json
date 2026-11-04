@@ -1,0 +1,13 @@
+{
+  "name": "@exactdocs/e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "test": "python3 run.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
