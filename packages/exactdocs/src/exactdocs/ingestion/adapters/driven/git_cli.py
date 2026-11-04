@@ -13,6 +13,12 @@ The URL comes from a user, so git is treated as a process that must not surprise
 - at most ``MAX_PROCESSES`` git processes run at once;
 - git's stderr is only classified, never passed on: it may contain the URL.
 
+Network: git talks to the repository's host and nothing else, with two things to know. It
+follows an HTTP redirect on the first request (``http.followRedirects`` is git's default,
+``initial``), so a configured server may send it to another host; a token is never sent there
+(see below). And it honours ``http_proxy``/``https_proxy``/``all_proxy`` from the environment
+(``_PASSTHROUGH``), so behind a proxy its traffic goes to that proxy.
+
 Credentials (``credential=``) never travel in the URL or the argument list. A token reaches git
 through ``GIT_ASKPASS``, a small script in the call's private temporary directory that answers
 only prompts for the repository's own ``host[:port]`` (git asks again for any other host a
