@@ -35,6 +35,12 @@ def step_add_exclusion(context: Context, paths: str, exclusion: str) -> None:
     _add(context, include_paths=[paths], exclude_paths=[exclusion])
 
 
+@when('a user adds the fixture repository with paths "{paths}" and the tag rule "{rule}"')
+def step_add_tag_rule(context: Context, paths: str, rule: str) -> None:
+    pattern, tag = rule.split(" -> ")
+    _add(context, include_paths=[paths], tag_rules=[{"pattern": pattern, "tag": tag}])
+
+
 @when('a user adds the fixture repository as "{library_id}"')
 def step_add_as(context: Context, library_id: str) -> None:
     _add(context, library_id=library_id)
@@ -118,3 +124,11 @@ def step_listed(context: Context, default: str, branches: str, tags: str) -> Non
     assert body["default_branch"] == default
     assert [b["name"] for b in body["branches"]] == branches.split(", ")
     assert [t["name"] for t in body["tags"]] == tags.split(", ")
+
+
+@then('the library keeps the tag rule "{rule}"')
+def step_tag_rule(context: Context, rule: str) -> None:
+    assert context.response.status_code == HTTPStatus.CREATED, context.response.text
+    library = context.client.get(f"/api/v1/libraries{context.response.json()['library_id']}")
+    pattern, tag = rule.split(" -> ")
+    assert library.json()["settings"]["tag_rules"] == [{"pattern": pattern, "tag": tag}]

@@ -20,6 +20,7 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestState,
     StoredArticle,
+    TagSelection,
     Version,
     VersionRef,
 )
@@ -95,13 +96,22 @@ class InMemoryManifestRepository:
         return replace(found, entries=()) if found else None
 
     async def list_entries(
-        self, manifest_id: ManifestId, *, prefix: str, after: str | None, limit: int
+        self,
+        manifest_id: ManifestId,
+        *,
+        prefix: str,
+        tags: TagSelection,
+        after: str | None,
+        limit: int,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path."""
         found = self.manifests.get(manifest_id)
         entries = found.entries if found else ()
         inside = (
-            e for e in entries if not prefix or e.path == prefix or e.path.startswith(f"{prefix}/")
+            e
+            for e in entries
+            if (not prefix or e.path == prefix or e.path.startswith(f"{prefix}/"))
+            and tags.keeps(e.tags)
         )
         later = sorted((e for e in inside if after is None or e.path > after), key=lambda e: e.path)
         return tuple(later[:limit])

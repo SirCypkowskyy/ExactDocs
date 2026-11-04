@@ -34,7 +34,7 @@ def test_title_follows_front_matter_then_h1_then_file_name(name: str, title: str
 def test_front_matter_is_metadata_and_not_part_of_the_body() -> None:
     article = parse_fixture("guide/install.md")
 
-    assert article.tags == ("setup", "getting started")
+    assert article.tags == ("setup", "getting-started")
     assert article.description == "How to install."
     # dates stay text and unknown keys are kept, so the metadata is JSON-serialisable
     assert article.front_matter["date"] == "2026-01-02"

@@ -46,6 +46,12 @@ class InvalidSettingsError(ValidationError):
     """A library setting has a value outside its range."""
 
 
+class InvalidTagFilterError(ValidationError):
+    """A tag filter holds a value that cannot be a tag, or too many values."""
+
+    code = "invalid_tag_filter"
+
+
 class AmbiguousCommitError(ValidationError):
     """A short commit SHA matches more than one commit version."""
 

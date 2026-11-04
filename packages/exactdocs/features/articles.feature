@@ -58,3 +58,33 @@ Feature: Version manifests
     When I read the article "guide/install.md" of "/acme/payments" version "next"
     Then the response status is 404
     And the error code is "not_found"
+
+  Scenario Outline: Listing filters by tags before paging
+    Given "/acme/payments" version "main" has the active manifest at commit "ddd444":
+      | path          | title | content | tags     |
+      | adr/0001.md   | ADR   | adr     | adr      |
+      | api/auth.md   | Auth  | auth    | api,auth |
+      | api/pay.md    | Pay   | pay     | api      |
+      | guide/faq.md  | FAQ   | faq     |          |
+    When I filter the articles of "/acme/payments" version "main" by <match> of tags "<tags>"
+    Then the articles are "<paths>" at commit "ddd444"
+
+    Examples:
+      | match | tags     | paths                           |
+      | any   | adr, API | adr/0001.md, api/auth.md, api/pay.md |
+      | all   | api,auth | api/auth.md                     |
+
+  Scenario: A filtered list is paged over the matches only
+    Given "/acme/payments" version "main" has the active manifest at commit "ddd444":
+      | path          | title | content | tags |
+      | a.md          | A     | a       |      |
+      | b.md          | B     | b       | api  |
+      | c.md          | C     | c       |      |
+      | d.md          | D     | d       | api  |
+    When I filter 1 articles of "/acme/payments" version "main" by any of tags "api"
+    Then the articles are "b.md" at commit "ddd444"
+    And there is a next page
+
+  Scenario: A filter that is not a tag is refused
+    When I filter the articles of "/acme/payments" version "main" by any of tags "not a tag!"
+    Then the response status is 422

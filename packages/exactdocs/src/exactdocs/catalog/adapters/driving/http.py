@@ -16,7 +16,9 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ResolvedVersion,
     ResolveVersionQuery,
+    TagFilter,
 )
+from exactdocs.catalog.models import TagMatch
 from exactdocs.catalog.ports.driving import (
     GetArticle,
     GetLibrary,
@@ -70,6 +72,18 @@ def build_router(
                 )
             ),
         ] = "",
+        tags: Annotated[
+            list[str],
+            Query(
+                description=(
+                    "Only articles with these tags: comma-separated, or repeat the parameter. "
+                    "Case does not matter."
+                )
+            ),
+        ] = [],  # ruff: ignore[mutable-argument-default] - FastAPI copies the default
+        tags_match: Annotated[
+            TagMatch, Query(description="`any` (default): one of the tags; `all`: every tag.")
+        ] = TagMatch.ANY,
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> ArticleList:
@@ -77,6 +91,10 @@ def build_router(
             library=f"/{owner}/{repo}",
             ref=ref,
             path_prefix=path_prefix,
+            tag_filter=TagFilter(
+                tags=[t for value in tags for t in value.split(",") if t.strip()],
+                match=tags_match,
+            ),
             limit=limit,
             cursor=cursor,
         )

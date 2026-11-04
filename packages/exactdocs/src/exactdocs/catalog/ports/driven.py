@@ -13,6 +13,7 @@ from exactdocs.catalog.models import (
     ManifestEntry,
     ManifestId,
     StoredArticle,
+    TagSelection,
     Version,
     VersionRef,
 )
@@ -71,9 +72,17 @@ class ManifestRepository(Protocol):
         ...
 
     async def list_entries(
-        self, manifest_id: ManifestId, *, prefix: str, after: str | None, limit: int
+        self,
+        manifest_id: ManifestId,
+        *,
+        prefix: str,
+        tags: TagSelection,
+        after: str | None,
+        limit: int,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` entries sorted by path, starting after the path ``after``.
+
+        Only entries that pass ``tags`` count, so ``limit`` and ``after`` page over the matches.
 
         ``prefix`` is directory-aware: ``guide`` matches ``guide`` and ``guide/...``, not
         ``guide-old/...``; empty matches everything.

@@ -49,6 +49,7 @@ from exactdocs.catalog.models import (
     ManifestEntry,
     ManifestId,
     ParsedId,
+    TagRule,
     Version,
     VersionRef,
 )
@@ -101,6 +102,7 @@ class CreateLibraryUseCase:
             settings=LibrarySettings(
                 include_paths=tuple(command.include_paths),
                 exclude_paths=tuple(command.exclude_paths),
+                tag_rules=tuple(TagRule(pattern=r.pattern, tag=r.tag) for r in command.tag_rules),
             ),
         )
         await self.repository.add(library)
@@ -242,6 +244,7 @@ class ListArticlesUseCase:
         entries = await self.manifests.list_entries(
             manifest.id,
             prefix=query.path_prefix.strip("/"),
+            tags=query.tag_filter.selection(),
             after=after,
             limit=query.limit + 1,  # one more than asked tells whether another page follows
         )

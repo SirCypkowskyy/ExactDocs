@@ -1,6 +1,8 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import re
+import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -16,12 +18,16 @@ from exactdocs.catalog.errors import (
     InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
+    InvalidTagFilterError,
     InvalidVersionRefError,
 )
 
 # A segment is `[a-z0-9._-]+` once lower-cased, but never only dots (`.`, `..`).
 _ID_PARTS = 3  # "", owner, repo
 _HEADING_LEVELS = 6
+_MAX_TAG_LENGTH = 40
+MAX_FILTER_TAGS = 20
+_TAG = re.compile(r"[^\W_][\w.+-]*")
 _SEGMENT = re.compile(r"(?!\.+$)[A-Za-z0-9._-]+")
 _OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _SHORT_SHA = re.compile(r"[0-9a-f]{7,64}")
@@ -120,12 +126,57 @@ class HostKind(StrEnum):
     GIT = "git"
 
 
+def normalize_tag(raw: str) -> str | None:
+    """Return the one form of a tag (NFKC, lower-case, whitespace as `-`), or `None` if none.
+
+    Same rule as the ingestion domain, which normalizes tags before they reach the catalog.
+    """
+    tag = "-".join(unicodedata.normalize("NFKC", raw).lower().split())
+    return tag if len(tag) <= _MAX_TAG_LENGTH and _TAG.fullmatch(tag) else None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TagRule:
     """Articles whose path matches the glob get the tag (`docs/api/**` -> `api`)."""
 
     pattern: str
     tag: str
+
+    def __post_init__(self) -> None:
+        if normalize_tag(self.tag) != self.tag:
+            message = f"{self.tag!r} is not a normalized tag"
+            raise InvalidSettingsError(message)
+
+
+class TagMatch(StrEnum):
+    """Whether an article needs any or all of the filter's tags."""
+
+    ANY = "any"
+    ALL = "all"
+
+
+@dataclass(frozen=True, slots=True)
+class TagSelection:
+    """Which articles a tag filter keeps. No tags keeps every article."""
+
+    tags: frozenset[str] = frozenset()
+    match: TagMatch = TagMatch.ANY
+
+    @classmethod
+    def of(cls, tags: Iterable[str], match: TagMatch = TagMatch.ANY) -> Self:
+        """Normalize what a caller typed; refuse a value that is no tag, or too many."""
+        found = [normalize_tag(tag) for tag in tags]
+        if None in found or len(set(found)) > MAX_FILTER_TAGS:
+            message = f"tags must be valid tags, at most {MAX_FILTER_TAGS} of them"
+            raise InvalidTagFilterError(message)
+        return cls(frozenset(t for t in found if t), match)
+
+    def keeps(self, article_tags: Iterable[str]) -> bool:
+        """Tell whether an article with these tags passes."""
+        if not self.tags:
+            return True
+        have = self.tags & set(article_tags)
+        return have == self.tags if self.match is TagMatch.ALL else bool(have)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

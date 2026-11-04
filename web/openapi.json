@@ -1115,6 +1115,32 @@
             "description": "Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything."
           },
           {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter.",
+              "default": [],
+              "title": "Tags"
+            },
+            "description": "Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TagMatch",
+              "description": "`any` (default): one of the tags; `all`: every tag.",
+              "default": "any"
+            },
+            "description": "`any` (default): one of the tags; `all`: every tag."
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -1352,7 +1378,7 @@
         }
       }
     },
-    "/api/v1/libraries/{owner}/{repo}/search": {
+    "/api/v1/search": {
       "get": {
         "tags": [
           "retrieval"
@@ -1369,83 +1395,33 @@
         ],
         "parameters": [
           {
-            "name": "owner",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Owner"
-            }
-          },
-          {
-            "name": "repo",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Repo"
-            }
-          },
-          {
-            "name": "q",
+            "name": "library",
             "in": "query",
             "required": true,
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 1000,
-              "description": "Identifier, error or question.",
-              "title": "Q"
-            },
-            "description": "Identifier, error or question."
-          },
-          {
-            "name": "ref",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 256
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ref"
+              "title": "Library"
             }
           },
           {
-            "name": "tags",
+            "name": "version",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "maxLength": 100
-                  },
-                  "maxItems": 20
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Repeat or comma-separate.",
-              "title": "Tags"
-            },
-            "description": "Repeat or comma-separate."
+              "type": "string",
+              "minLength": 1,
+              "title": "Version"
+            }
           },
           {
-            "name": "tags_match",
+            "name": "query",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "$ref": "#/components/schemas/TagMatch",
-              "default": "any"
+              "type": "string",
+              "minLength": 1,
+              "title": "Query"
             }
           },
           {
@@ -2055,6 +2031,15 @@
             "type": "array",
             "title": "Exclude Paths",
             "description": "Folders, files or globs to leave out; they win."
+          },
+          "tag_rules": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleIn"
+            },
+            "type": "array",
+            "maxItems": 64,
+            "title": "Tag Rules",
+            "description": "Tags for articles by path; they are added to the front-matter tags."
           }
         },
         "additionalProperties": false,
@@ -2356,34 +2341,6 @@
         "title": "ChunkingOut",
         "description": "How articles are cut into chunks."
       },
-      "CoverageOut": {
-        "properties": {
-          "candidates": {
-            "type": "integer",
-            "title": "Candidates",
-            "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1."
-          },
-          "reranked": {
-            "type": "integer",
-            "title": "Reranked",
-            "description": "Of those, how many a reranker reordered."
-          },
-          "complete": {
-            "type": "boolean",
-            "title": "Complete",
-            "description": "False when more matches exist than `limit` allowed."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "candidates",
-          "reranked",
-          "complete"
-        ],
-        "title": "CoverageOut",
-        "description": "How much of the index the answer stands on."
-      },
       "CreateFirstAdminCommand": {
         "properties": {
           "username": {
@@ -2463,6 +2420,48 @@
         ],
         "title": "ErrorResponse",
         "description": "The one error shape of the API: a stable machine ``error`` code and a human ``detail``."
+      },
+      "ExcerptOut": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "source_url",
+          "library",
+          "version",
+          "commit_sha"
+        ],
+        "title": "ExcerptOut",
+        "description": "One verbatim excerpt with its provenance."
       },
       "FieldError": {
         "properties": {
@@ -2989,187 +2988,23 @@
         "title": "ResolvedVersion",
         "description": "The version an ID resolved to; always states which one was used."
       },
-      "RetrievalMode": {
-        "type": "string",
-        "enum": [
-          "bm25"
-        ],
-        "title": "RetrievalMode",
-        "description": "How a search found its results. One result shape serves every mode."
-      },
       "SearchDocsResult": {
         "properties": {
-          "library": {
-            "type": "string",
-            "title": "Library"
-          },
-          "version": {
-            "type": "string",
-            "title": "Version"
-          },
-          "commit_sha": {
-            "type": "string",
-            "title": "Commit Sha"
-          },
-          "retrieval_mode": {
-            "$ref": "#/components/schemas/RetrievalMode"
-          },
-          "reranked": {
-            "type": "boolean",
-            "title": "Reranked"
-          },
-          "coverage": {
-            "$ref": "#/components/schemas/CoverageOut"
-          },
-          "fallback_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fallback Reason",
-            "description": "Why a better mode was not used, when one was asked for."
-          },
-          "results": {
+          "excerpts": {
             "items": {
-              "$ref": "#/components/schemas/SearchResultOut"
+              "$ref": "#/components/schemas/ExcerptOut"
             },
             "type": "array",
-            "title": "Results"
+            "title": "Excerpts"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "library",
-          "version",
-          "commit_sha",
-          "retrieval_mode",
-          "reranked",
-          "coverage",
-          "results"
+          "excerpts"
         ],
         "title": "SearchDocsResult",
-        "description": "Results of one search, best first, with the version and the way they were found."
-      },
-      "SearchResultOut": {
-        "properties": {
-          "chunk_id": {
-            "type": "string",
-            "title": "Chunk Id"
-          },
-          "article_path": {
-            "type": "string",
-            "title": "Article Path"
-          },
-          "heading_path": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Heading Path"
-          },
-          "anchor": {
-            "type": "string",
-            "title": "Anchor"
-          },
-          "position": {
-            "type": "integer",
-            "title": "Position",
-            "description": "0-based index of the chunk in its article."
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total",
-            "description": "Number of chunks of the article."
-          },
-          "prev_chunk_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prev Chunk Id"
-          },
-          "next_chunk_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Chunk Id"
-          },
-          "commit_sha": {
-            "type": "string",
-            "title": "Commit Sha"
-          },
-          "source_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Url",
-            "description": "Link to the section at the commit; null when the host is unknown."
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags"
-          },
-          "score": {
-            "type": "number",
-            "title": "Score",
-            "description": "Higher is better; only comparable within one search."
-          },
-          "snippet": {
-            "type": "string",
-            "title": "Snippet",
-            "description": "Verbatim text of the chunk, possibly cut at either end."
-          },
-          "highlights": {
-            "items": {
-              "$ref": "#/components/schemas/Span"
-            },
-            "type": "array",
-            "title": "Highlights",
-            "description": "Offsets into `snippet` of the words that matched."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "chunk_id",
-          "article_path",
-          "heading_path",
-          "anchor",
-          "position",
-          "total",
-          "prev_chunk_id",
-          "next_chunk_id",
-          "commit_sha",
-          "source_url",
-          "tags",
-          "score",
-          "snippet",
-          "highlights"
-        ],
-        "title": "SearchResultOut",
-        "description": "One verbatim result with where it lives and how to read around it."
+        "description": "Excerpts ordered from most to least relevant."
       },
       "SessionState": {
         "properties": {
@@ -3201,26 +3036,6 @@
         "title": "SessionState",
         "description": "What the UI needs to know first: is setup due, is anyone signed in, and who."
       },
-      "Span": {
-        "properties": {
-          "start": {
-            "type": "integer",
-            "title": "Start"
-          },
-          "end": {
-            "type": "integer",
-            "title": "End"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "start",
-          "end"
-        ],
-        "title": "Span",
-        "description": "A `[start, end)` range of characters."
-      },
       "TagMatch": {
         "type": "string",
         "enum": [
@@ -3228,7 +3043,31 @@
           "all"
         ],
         "title": "TagMatch",
-        "description": "How a tag filter combines its tags."
+        "description": "Whether an article needs any or all of the filter's tags."
+      },
+      "TagRuleIn": {
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Pattern"
+          },
+          "tag": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tag"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pattern",
+          "tag"
+        ],
+        "title": "TagRuleIn",
+        "description": "Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`."
       },
       "TagRuleOut": {
         "properties": {

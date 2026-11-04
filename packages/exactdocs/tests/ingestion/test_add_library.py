@@ -3,10 +3,11 @@ from dataclasses import dataclass, field
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
-from exactdocs.ingestion.dtos import AddLibraryCommand, ListRepositoryRefsQuery
+from exactdocs.ingestion.dtos import AddLibraryCommand, ListRepositoryRefsQuery, TagRuleIn
 from exactdocs.ingestion.errors import (
     InvalidPathPatternError,
     InvalidRepositoryUrlError,
+    InvalidTagError,
     LibraryIdTakenError,
     UnknownJobKindError,
     UnknownRefError,
@@ -115,6 +116,7 @@ async def test_the_default_branch_is_pinned_and_the_import_is_queued(
         "main",
     )
     assert library.selection == PathSelection(include=("docs/",))
+    assert library.tag_rules == ()
     job = await jobs.get(JobId(added.job_id))
     assert job is not None
     assert (job.kind, job.library, job.version, job.commit_sha) == (
@@ -158,6 +160,10 @@ async def test_a_taken_id_is_refused_before_any_network_traffic(
         (AddLibraryCommand(url=URL, ref="v9"), UnknownRefError),
         (AddLibraryCommand(url=URL, include_paths=["../x"]), InvalidPathPatternError),
         (AddLibraryCommand(url="--upload-pack=x"), InvalidRepositoryUrlError),
+        (
+            AddLibraryCommand(url=URL, tag_rules=[TagRuleIn(pattern="docs/**", tag="a b!")]),
+            InvalidTagError,
+        ),
     ],
 )
 async def test_nothing_is_stored_when_the_request_cannot_be_met(
@@ -233,3 +239,14 @@ async def test_a_short_list_is_not_flagged(module: IngestionModule) -> None:
     refs = await module.list_repository_refs(ListRepositoryRefsQuery(url=URL))
 
     assert not refs.truncated
+
+
+async def test_tag_rules_are_normalized_and_handed_to_the_catalog(
+    module: IngestionModule, catalog: FakeCatalog
+) -> None:
+    await module.add_library(
+        AddLibraryCommand(url=URL, tag_rules=[TagRuleIn(pattern="docs/api/**", tag=" API ")])
+    )
+
+    (library,) = catalog.added
+    assert [(r.pattern, r.tag) for r in library.tag_rules] == [("docs/api/**", "api")]

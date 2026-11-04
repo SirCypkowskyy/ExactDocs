@@ -15,6 +15,8 @@ from exactdocs.catalog.models import (
     ManifestState,
     RefKind,
     StoredArticle,
+    TagMatch,
+    TagSelection,
     Version,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
@@ -296,6 +298,20 @@ class CollectionResult(_Dto):
         return cls(manifests=collected.manifests, contents=collected.contents)
 
 
+class TagFilter(_Dto):
+    """Keep articles tagged with any (default) or all of `tags`; no tags keeps every article.
+
+    Values are normalized like tags (case, trimmed); a value that is no tag is refused.
+    """
+
+    tags: list[str] = Field(default_factory=list)
+    match: TagMatch = TagMatch.ANY
+
+    def selection(self) -> TagSelection:
+        """Return the domain filter; raises `InvalidTagFilterError` for bad values."""
+        return TagSelection.of(self.tags, self.match)
+
+
 class ListArticlesQuery(_Dto):
     """One page of a version's articles; no `ref` means the default version."""
 
@@ -308,6 +324,7 @@ class ListArticlesQuery(_Dto):
             "not `guide-old/x.md`. Empty lists everything."
         ),
     )
+    tag_filter: TagFilter = Field(default_factory=TagFilter, description="Applied before paging.")
     limit: Limit = DEFAULT_LIMIT
     cursor: str | None = None
 
@@ -399,6 +416,13 @@ class ManifestStates(_Dto):
     states: dict[str, ManifestState]
 
 
+class TagRuleIn(_Dto):
+    """Articles whose path matches `pattern` get `tag` (already normalized by the importer)."""
+
+    pattern: str = Field(min_length=1)
+    tag: str = Field(min_length=1)
+
+
 class CreateLibraryCommand(_Dto):
     """Add an empty library; its versions arrive with imports."""
 
@@ -409,6 +433,7 @@ class CreateLibraryCommand(_Dto):
     default_branch: str | None = None
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
+    tag_rules: list[TagRuleIn] = Field(default_factory=list)
 
 
 class DiscardLibraryCommand(_Dto):
