@@ -338,7 +338,7 @@
       "read_only_hint": true,
       "title": "Search a library version"
     },
-    "description": "Search one library version. Returns verbatim chunks with location and source link.\n\nAn empty result with coverage.complete true means the version holds no match; it never falls back to another version. Pass `ref` to pin a version.",
+    "description": "Search one library version. Returns verbatim chunks with location and source link.\n\nAn empty result with `coverage.complete` true means this version has no match.\nIt never falls back to another version; pass `ref` to pin one.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
