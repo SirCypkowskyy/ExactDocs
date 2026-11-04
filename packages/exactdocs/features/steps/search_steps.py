@@ -47,7 +47,7 @@ def _git_blob_sha(content: str) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
 
-def _read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]]:
+def read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]]:
     """Return the commit and the (path, text) of every article the importer would take."""
     repo, git = context.fixture_repo.path, context.fixture_git
     commit = git("rev-parse", ref, cwd=repo)
@@ -77,7 +77,7 @@ async def _import(context: Context, refs: list[str]) -> None:
             )
         )
         for ref in refs:
-            commit, files = _read_version(context, ref)
+            commit, files = read_version(context, ref)
             parsed = list(starmap(parse_article, files))
             stored = await container.catalog.store_manifest(
                 StoreManifestCommand(
@@ -92,6 +92,7 @@ async def _import(context: Context, refs: list[str]) -> None:
                             content_version=1,
                             title=a.title,
                             tags=_tags(a.path, a.tags),
+                            front_matter=a.front_matter,
                             content=a.body,
                         )
                         for a, (_, text) in zip(parsed, files, strict=True)

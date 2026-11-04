@@ -22,7 +22,7 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   Scenarios use domain language (no URLs or JSON in `.feature` files; that goes in steps).
 - **Test use cases, not adapters' internals.** Build the domain with `XModule.build(...)` and
   in-memory adapters. Test doubles are plain classes matching the Protocol; no `Mock`
-  for ports and no inheritance (see `FakeIndexedVersions` in `tests/retrieval/`).
+  for ports and no inheritance (see `FakeVersions` in `tests/retrieval/`).
 - **Assert outcomes, not calls.** Check returned DTOs and raised errors, not which methods were called.
 - **Version is a hard filter**: anything touching retrieval gets a "wrong version gets nothing" test.
 - **Import and search tests use the fixture docs repository** (`packages/exactdocs/tests/fixtures/docs-repo/`):

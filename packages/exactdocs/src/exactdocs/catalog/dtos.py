@@ -23,6 +23,7 @@ from exactdocs_kernel import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_PATH,
     MAX_TAG_LENGTH,
     NOTICE,
     Page,
@@ -420,31 +421,64 @@ class GetArticleQuery(_Dto):
 
     library: str = Field(min_length=1)
     ref: str | None = None
-    path: str = Field(min_length=1)
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
 
-class Article(ArticleSummary):
-    """One article with its Markdown and the commit it comes from."""
+class ArticleInfo(_Dto):
+    """Where an article comes from and its metadata: everything but the text."""
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
     library: str
     ref: str
     commit_sha: str
     manifest_id: str
+    path: str
+    title: str
+    tags: list[str]
+    size: int
     front_matter: dict[str, Any]
-    content: str
+    source_url: str | None = Field(
+        description="Link to the file at the commit; null when the host is unknown."
+    )
 
     @classmethod
-    def from_stored(cls, library: str, ref: str, stored: StoredArticle) -> Self:
+    def from_stored(
+        cls, library: str, ref: str, stored: StoredArticle, source_url: str | None
+    ) -> Self:
         """Map a stored article of the given version."""
+        entry = stored.entry
         return cls(
             library=library,
             ref=ref,
             commit_sha=stored.commit_sha,
             manifest_id=stored.manifest_id,
-            front_matter=stored.entry.front_matter,
-            content=stored.content,
-            **ArticleSummary.from_model(stored.entry).model_dump(),
+            path=entry.path,
+            title=entry.title,
+            tags=list(entry.tags),
+            size=entry.size,
+            front_matter=entry.front_matter,
+            source_url=source_url,
         )
+
+
+class Article(ArticleInfo):
+    """One article with its Markdown, verbatim as imported."""
+
+    content: str
+
+    @classmethod
+    def with_content(cls, info: ArticleInfo, content: str) -> Self:
+        """Add the text to an article's metadata."""
+        return cls(**dict(info), content=content)
 
 
 class GetManifestStatesQuery(_Dto):

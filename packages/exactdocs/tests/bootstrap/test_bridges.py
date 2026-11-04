@@ -4,7 +4,6 @@ import pytest
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
-    CatalogIndexedVersions,
     CatalogLibraryIds,
     CatalogSearchableVersions,
 )
@@ -57,29 +56,7 @@ _LIBRARIES = InMemoryLibraryRepository.of([PAYMENTS])
 CATALOG = CatalogModule.build(
     repository=_LIBRARIES, manifests=InMemoryManifestRepository(_LIBRARIES)
 )
-BRIDGE = CatalogIndexedVersions(CATALOG.resolve_version)
 ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
-
-
-@pytest.mark.parametrize("library", ["/acme/payments", "/Acme/Payments", "/ACME/PAYMENTS"])
-async def test_an_indexed_version_comes_back_with_the_stored_library_id(library: str) -> None:
-    found = await BRIDGE.find_indexed(DocTarget(library=library, version="v1.4.0"))
-
-    assert found == DocTarget(library="/acme/payments", version="v1.4.0")
-
-
-@pytest.mark.parametrize(
-    ("library", "version"),
-    [
-        ("/acme/payments", "V1.4.0"),  # refs are case-sensitive
-        ("/acme/payments", "v1.3.0"),
-        ("/acme/payments", "abc12340"),  # a short SHA of a commit is not the exact ref
-        ("/acme/payments/v1", "v1.4.0"),  # the split must not move the ref into the ID
-        ("/vuejs/docs", "v1.4.0"),
-    ],
-)
-async def test_anything_but_an_exact_indexed_ref_is_not_indexed(library: str, version: str) -> None:
-    assert await BRIDGE.find_indexed(DocTarget(library=library, version=version)) is None
 
 
 _TAKEN = InMemoryLibraryRepository.of([PAYMENTS])

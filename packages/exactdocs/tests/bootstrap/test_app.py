@@ -223,7 +223,13 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
         tools = {tool.name: tool for tool in await mcp.list_tools()}
         result = await mcp.call_tool("list_libraries", {})
 
-    assert set(tools) == {"list_libraries", "list_articles", "search_docs"}
+    assert set(tools) == {
+        "list_libraries",
+        "list_articles",
+        "search_docs",
+        "read_article",
+        "read_chunk",
+    }
     assert all(tool.annotations and tool.annotations.read_only_hint for tool in tools.values())
     assert result.structured_content is not None
 

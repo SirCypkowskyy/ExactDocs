@@ -663,3 +663,12 @@ async def test_listing_filters_by_tags_before_it_pages(stores: Stores) -> None:
     assert await paths(stores.manifests, "m1", tags=all_of) == ["b.md"]
     assert await paths(stores.manifests, "m1", tags=TagSelection(frozenset({"nope"}))) == []
     assert await paths(stores.manifests, "m1", prefix="a.md", tags=any_of) == []
+
+
+async def test_only_paths_are_listed_sorted_and_capped_for_suggestions(stores: Stores) -> None:
+    names = ["guide/b.md", "api/z.md", "guide/a.md"]
+    await store(stores, manifest("m1", "main", "aaa111", *(entry(n, "b1") for n in names)))
+
+    assert list(await stores.manifests.list_paths(ManifestId("m1"), limit=100)) == sorted(names)
+    assert list(await stores.manifests.list_paths(ManifestId("m1"), limit=2)) == sorted(names)[:2]
+    assert not await stores.manifests.list_paths(ManifestId("none"), limit=100)

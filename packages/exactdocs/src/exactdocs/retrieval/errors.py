@@ -37,11 +37,31 @@ class DuplicateChunkError(ValidationError):
 
 
 class ChunkNotFoundError(NotFoundError):
-    """The version's active manifest has no chunk with this ID."""
+    """No version serves a chunk with this ID (it never existed, or was collected long ago)."""
 
-    def __init__(self, library: str, version: str, chunk_id: str) -> None:
-        super().__init__(f"no chunk {chunk_id!r} in {library}@{version}")
+    def __init__(self, chunk_id: str) -> None:
+        super().__init__(f"no chunk {chunk_id!r}; find chunk IDs with search_docs")
         self.chunk_id = chunk_id
+
+
+class StaleChunkError(ConflictError):
+    """The chunk ID belongs to a superseded index of a version that has since been re-synced.
+
+    The text may have changed or gone, so it is not served. The version itself is still there:
+    searching it again (or reading the article) gives current chunk IDs.
+    """
+
+    code = "stale_chunk"
+
+    def __init__(self, chunk_id: str, library: str, version: str) -> None:
+        super().__init__(
+            f"chunk {chunk_id!r} is stale: its version was re-synced since the ID was issued. "
+            "Run search_docs for the same library and ref again, or read the article with "
+            "read_article, to get current chunk IDs."
+        )
+        self.chunk_id = chunk_id
+        self.library = library
+        self.version = version
 
 
 class ChunkSetMismatchError(ConflictError):

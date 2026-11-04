@@ -10,9 +10,9 @@ from datetime import datetime
 from enum import StrEnum
 from itertools import groupby
 from typing import NewType
-from urllib.parse import quote, urlsplit
 
 from exactdocs.retrieval.errors import DuplicateChunkError, EmptySearchTextError
+from exactdocs_kernel import section_link
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -330,44 +330,11 @@ class SearchableVersion:
     host: SourceHost
 
 
-_SCP_URL = re.compile(r"[\w.-]+@(?P<host>[\w.-]+):(?P<path>[^:].*)")
-_BLOB_PATHS = {
-    SourceHost.GITHUB: "blob",
-    SourceHost.GITLAB: "-/blob",
-    SourceHost.BITBUCKET: "src",
-    SourceHost.GITEA: "src/commit",
-}
-
-
-def _web_base(repository_url: str) -> str | None:
-    """Return the repository's web page (`https://host/owner/repo`), or ``None`` without one."""
-    url = repository_url.strip()
-    if scp := _SCP_URL.fullmatch(url):
-        scheme, host, path = "https", scp["host"], scp["path"]
-    else:
-        parts = urlsplit(url)
-        if parts.scheme not in {"http", "https", "ssh"} or not parts.hostname:
-            return None
-        web = parts.scheme in {"http", "https"}
-        scheme = parts.scheme if web else "https"
-        host = parts.hostname + (f":{parts.port}" if web and parts.port else "")
-        path = parts.path
-    path = path.strip("/").removesuffix(".git")
-    return f"{scheme}://{host}/{path}" if path else None
-
-
 def source_link(version: SearchableVersion, article_path: str, anchor: str) -> str | None:
     """Link to the section at the version's commit, or ``None`` for hosts we cannot build one for.
 
     Pinned to the commit SHA, so the link keeps showing the text the search returned.
     """
-    blob = _BLOB_PATHS.get(version.host)
-    base = _web_base(version.repository_url)
-    if blob is None or base is None:
-        return None
-    link = f"{base}/{blob}/{version.commit_sha}/{quote(article_path)}"
-    if not anchor:
-        return link
-    # Bitbucket prefixes the anchors of rendered Markdown headings.
-    prefix = "markdown-header-" if version.host is SourceHost.BITBUCKET else ""
-    return f"{link}#{quote(prefix + anchor)}"
+    return section_link(
+        version.host.value, version.repository_url, version.commit_sha, article_path, anchor
+    )

@@ -14,10 +14,11 @@ from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
     ChunkOut,
-    GetChunkQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    ReadChunkQuery,
 )
+from exactdocs.retrieval.errors import StaleChunkError
 from exactdocs_kernel import DomainError
 
 CONFIG_HASH = "default-chunking"
@@ -124,14 +125,13 @@ def step_activate(context: Context, name: str) -> None:
     _run(context, lambda container: container.catalog.activate_manifest(command))
 
 
-@when('I read the second chunk of "{path}" in "{name}" as "{library}" version "{ref}"')
-def step_read(context: Context, path: str, name: str, library: str, ref: str) -> None:
-    chunk_id = context.indexed[name].chunk_ids[path][1]
-    query = GetChunkQuery(library=library, version=ref, chunk_id=chunk_id)
+@when('I read the second chunk of "{path}" in "{name}"')
+def step_read(context: Context, path: str, name: str) -> None:
+    query = ReadChunkQuery(chunk_id=context.indexed[name].chunk_ids[path][1])
 
     async def action(container: Container) -> ChunkOut | DomainError:
         try:
-            return await container.retrieval.get_chunk(query)
+            return await container.retrieval.read_chunk(query)
         except DomainError as error:
             return error
 
@@ -168,6 +168,14 @@ def step_nothing_new(context: Context) -> None:
 @then("the chunk cannot be found")
 def step_not_found(context: Context) -> None:
     assert isinstance(context.read, DomainError), context.read
+
+
+@then("the chunk is stale and says how to find the current one")
+def step_stale(context: Context) -> None:
+    error = context.read
+    assert isinstance(error, StaleChunkError), error
+    assert error.code == "stale_chunk", error
+    assert "search_docs" in str(error), error
 
 
 @then('the chunk says "{text}" and its previous chunk is the first one')

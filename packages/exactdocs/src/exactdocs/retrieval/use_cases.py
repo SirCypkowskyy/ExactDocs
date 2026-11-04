@@ -9,10 +9,10 @@ from exactdocs.retrieval.dtos import (
     CollectChunksCommand,
     CoverageOut,
     DiscardPendingChunksCommand,
-    GetChunkQuery,
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    ReadChunkQuery,
     RemovedChunks,
     SearchDocsQuery,
     SearchDocsResult,
@@ -21,6 +21,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
+    StaleChunkError,
     UnavailableModeError,
     VersionNotIndexedError,
 )
@@ -29,7 +30,6 @@ from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
     ChunkSetKey,
-    DocTarget,
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
@@ -41,7 +41,6 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
-    IndexedVersions,
     SearchableVersions,
     SearchIndex,
 )
@@ -198,24 +197,38 @@ class IndexManifestUseCase:
 
 
 @dataclass(frozen=True, slots=True)
-class GetChunkUseCase:
-    """Implements ``ports.driving.GetChunk``."""
+class ReadChunkUseCase:
+    """Implements ``ports.driving.ReadChunk``."""
 
-    versions: IndexedVersions
+    versions: SearchableVersions
     manifests: ActiveManifests
     chunks: ChunkRepository
 
-    async def __call__(self, query: GetChunkQuery) -> ChunkOut:
-        """Look the chunk up in the version's active manifest only."""
-        target = DocTarget(library=query.library, version=query.version)
-        indexed = await self.versions.find_indexed(target)
-        active = None if indexed is None else await self.manifests.active_id(indexed)
-        if indexed is None or active is None:
-            raise VersionNotIndexedError(target.library, target.version)
-        stored = await self.chunks.get(active, ChunkId(query.chunk_id))
-        if stored is None or stored.version_id != f"{indexed.library}/{indexed.version}":
-            raise ChunkNotFoundError(indexed.library, indexed.version, query.chunk_id)
-        return ChunkOut.from_stored(indexed.library, indexed.version, stored)
+    async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
+        """Serve the chunk from its version's active manifest, or say why it cannot be served."""
+        chunk_id = ChunkId(query.chunk_id)
+        holders = await self.chunks.manifests_with_chunk(chunk_id)
+        # The ID is a hash of the version it was issued for, so all holders share one version_id.
+        # Anything else is not a state we understand: refuse rather than guess from the first row.
+        if len({m.version_id for m in holders}) != 1:
+            raise ChunkNotFoundError(query.chunk_id)
+        first = holders[0]
+        ref = first.version_id.removeprefix(f"{first.library}/")
+        version = await self.versions.find(first.library, ref)
+        ids = {m.manifest_id for m in holders}
+        if version is not None and version.manifest_id in ids:
+            stored = await self.chunks.get(version.manifest_id, chunk_id)
+            if (
+                stored is not None
+                and stored.version_id == f"{version.library.lower()}/{version.version}"
+            ):
+                return ChunkOut.from_stored(version, stored)
+        # Note: manifests the catalog already collected (E9-03) are unknown to it, so after
+        # collection an old ID reports not_found, not stale, until tombstones keep them (E9-03).
+        statuses = await self.manifests.statuses(ids)
+        if ManifestStatus.SUPERSEDED in statuses.values():
+            raise StaleChunkError(query.chunk_id, first.library, ref)
+        raise ChunkNotFoundError(query.chunk_id)  # only pending manifests hold it: not served yet
 
 
 @dataclass(frozen=True, slots=True)

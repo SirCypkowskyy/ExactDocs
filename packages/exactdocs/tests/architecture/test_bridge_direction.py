@@ -61,7 +61,9 @@ def test_the_allowed_edges_have_no_cycle() -> None:
 
 
 def test_the_catalog_bridge_is_read_as_retrieval_to_catalog() -> None:
-    assert bridge_edges(BRIDGES.read_text())["CatalogIndexedVersions"] == {("retrieval", "catalog")}
+    assert bridge_edges(BRIDGES.read_text())["CatalogSearchableVersions"] == {
+        ("retrieval", "catalog")
+    }
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
-    CatalogIndexedVersions,
     CatalogLibraryIds,
     CatalogLibrarySources,
     CatalogNewLibraries,
@@ -95,7 +94,6 @@ class Container:
             clock=SystemClock(),
         )
         retrieval = RetrievalModule.build(
-            versions=CatalogIndexedVersions(catalog.resolve_version),
             searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
             manifests=CatalogActiveManifests(
                 catalog.get_active_manifest, catalog.get_manifest_states

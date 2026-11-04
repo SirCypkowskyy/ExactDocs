@@ -280,20 +280,27 @@ class RemovedChunks(_Dto):
         return cls(manifests=removed.manifests, chunk_sets=removed.chunk_sets)
 
 
-class GetChunkQuery(_Dto):
-    """Read one chunk of a version's active manifest."""
+class ReadChunkQuery(_Dto):
+    """Read one chunk by the ID a search result gave."""
 
-    library: str = Field(min_length=1)
-    version: str = Field(min_length=1)
-    chunk_id: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1, max_length=MAX_NAME)
 
 
 class ChunkOut(_Dto):
-    """A chunk with its place in the article."""
+    """A chunk verbatim, with its place in the article and where it came from."""
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
     chunk_id: str
     library: str
     version: str
+    commit_sha: str
+    source_url: str | None = Field(
+        description="Link to the section at the commit; null when the host is unknown."
+    )
     article_path: str
     heading_path: list[str]
     anchor: str
@@ -306,13 +313,15 @@ class ChunkOut(_Dto):
     code_languages: list[str]
 
     @classmethod
-    def from_stored(cls, library: str, version: str, stored: StoredChunk) -> Self:
-        """Map a stored chunk of ``library``@``version``."""
+    def from_stored(cls, version: SearchableVersion, stored: StoredChunk) -> Self:
+        """Map a stored chunk of the active manifest of ``version``."""
         row, chunk = stored.row, stored.chunk
         return cls(
             chunk_id=row.chunk_id,
-            library=library,
-            version=version,
+            library=version.library,
+            version=version.version,
+            commit_sha=version.commit_sha,
+            source_url=source_link(version, row.article_path, chunk.anchor),
             article_path=row.article_path,
             heading_path=list(chunk.heading_path),
             anchor=chunk.anchor,

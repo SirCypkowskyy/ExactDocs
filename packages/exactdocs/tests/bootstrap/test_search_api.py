@@ -139,3 +139,67 @@ async def test_a_session_cookie_sent_to_mcp_is_refused(
         )
 
     assert response.status_code == 401
+
+
+CHUNK = "/api/v1/chunks/" + "f" * 32
+
+
+@pytest.mark.parametrize(
+    ("credentials", "status"), [("none", 401), ("cookie", 404), ("bearer", 404)]
+)
+async def test_rest_chunk_read_needs_a_cookie_or_a_bearer(
+    anonymous: httpx.AsyncClient,
+    signed_in: httpx.AsyncClient,
+    token: str,
+    credentials: str,
+    status: int,
+) -> None:
+    client, headers = {
+        "none": (anonymous, {}),
+        "cookie": (signed_in, {}),
+        "bearer": (anonymous, {"authorization": f"Bearer {token}"}),
+    }[credentials]
+
+    response = await client.get(CHUNK, headers=headers)
+
+    assert response.status_code == status  # unknown ID: 404 for a caller who got in
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [("read_chunk", {"chunk_id": "f" * 32}), ("read_article", {"library": "/a/b", "path": "x.md"})],
+)
+async def test_mcp_reads_need_a_bearer(
+    app: FastAPI, token: str, tool: str, arguments: dict[str, str]
+) -> None:
+    async with app.router.lifespan_context(app):
+        with pytest.raises(Exception, match="error response"):
+            async with mcp_client(app, None) as mcp:
+                await mcp.call_tool(tool, arguments)
+        async with mcp_client(app, token) as mcp:
+            result = await mcp.call_tool(tool, arguments, raise_on_error=False)
+    assert result.is_error
+    assert "not_found" in str(result.content)
+
+
+@pytest.mark.parametrize(
+    ("credentials", "status"), [("none", 401), ("cookie", 404), ("bearer", 404)]
+)
+async def test_rest_article_read_needs_a_cookie_or_a_bearer(
+    anonymous: httpx.AsyncClient,
+    signed_in: httpx.AsyncClient,
+    token: str,
+    credentials: str,
+    status: int,
+) -> None:
+    client, headers = {
+        "none": (anonymous, {}),
+        "cookie": (signed_in, {}),
+        "bearer": (anonymous, {"authorization": f"Bearer {token}"}),
+    }[credentials]
+
+    response = await client.get(
+        "/api/v1/libraries/acme/payments/article", params={"path": "a.md"}, headers=headers
+    )
+
+    assert response.status_code == status

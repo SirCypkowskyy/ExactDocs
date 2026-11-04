@@ -20,22 +20,6 @@ from exactdocs.retrieval.models import (
 )
 
 
-class IndexedVersions(Protocol):
-    """Which library versions have an index.
-
-    The catalog domain owns this knowledge. Retrieval states what it needs in its own terms
-    and the composition root plugs in an adapter, so neither domain imports the other.
-    """
-
-    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
-        """Return ``target`` in its canonical spelling, or ``None`` unless that version exists.
-
-        Canonical means the library ID as stored (`/Acme/Payments` is `/acme/payments`); the
-        version is never altered or approximated.
-        """
-        ...
-
-
 class SearchableVersions(Protocol):
     """Which version a search runs on, in retrieval's own terms (the catalog answers).
 
@@ -102,6 +86,10 @@ class ChunkRepository(Protocol):
         self, manifest_id: str, chunk_ids: Sequence[ChunkId]
     ) -> Mapping[ChunkId, StoredChunk]:
         """Return the chunks of the manifest that exist, by ID, in one query."""
+        ...
+
+    async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
+        """Return every indexed manifest that has a row for this chunk ID (any status)."""
         ...
 
     async def find_manifests(

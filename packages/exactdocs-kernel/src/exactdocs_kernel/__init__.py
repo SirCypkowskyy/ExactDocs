@@ -15,6 +15,7 @@ from exactdocs_kernel.limits import (
     LIBRARY_ID_PATTERN,
     MAX_CURSOR,
     MAX_NAME,
+    MAX_PATH,
     MAX_TAG_INPUT,
     TOOL_HINTS,
 )
@@ -28,6 +29,7 @@ from exactdocs_kernel.pagination import (
     encode_cursor,
     paginate,
 )
+from exactdocs_kernel.source_link import section_link
 from exactdocs_kernel.tags import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
 
 __all__ = [
@@ -36,6 +38,7 @@ __all__ = [
     "MAX_CURSOR",
     "MAX_LIMIT",
     "MAX_NAME",
+    "MAX_PATH",
     "MAX_TAGS",
     "MAX_TAG_INPUT",
     "MAX_TAG_LENGTH",
@@ -54,4 +57,5 @@ __all__ = [
     "encode_cursor",
     "normalize_tag",
     "paginate",
+    "section_link",
 ]

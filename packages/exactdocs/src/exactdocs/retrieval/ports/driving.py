@@ -7,10 +7,10 @@ from exactdocs.retrieval.dtos import (
     ChunkSetsOut,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
-    GetChunkQuery,
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    ReadChunkQuery,
     RemovedChunks,
     SearchDocsQuery,
     SearchDocsResult,
@@ -52,14 +52,15 @@ class GetChunkSets(Protocol):
         ...
 
 
-class GetChunk(Protocol):
-    """Read one chunk of a version's active manifest.
+class ReadChunk(Protocol):
+    """Read one chunk verbatim by its ID; the ID names its version, so nothing else is needed.
 
-    Raises ``VersionNotIndexedError`` or ``ChunkNotFoundError``; chunks of pending or superseded
-    manifests are never returned.
+    Only the version's active manifest is served. Raises ``StaleChunkError`` for an ID of a
+    superseded manifest of a version that still exists, and ``ChunkNotFoundError`` for an ID
+    nobody serves (unknown, still pending, or collected).
     """
 
-    async def __call__(self, query: GetChunkQuery) -> ChunkOut:
+    async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
         """Run the use case."""
         ...
 

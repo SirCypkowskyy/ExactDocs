@@ -18,7 +18,6 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     GetManifestStatesQuery,
     HostKind,
-    ResolveVersionQuery,
     StoreManifestCommand,
     TagRuleIn,
 )
@@ -34,7 +33,6 @@ from exactdocs.catalog.ports.driving import (
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
-    ResolveVersion,
     StoreManifest,
 )
 from exactdocs.ingestion.models import (
@@ -58,25 +56,6 @@ from exactdocs.retrieval.dtos import (
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion, SourceHost
 from exactdocs.retrieval.ports.driving import DiscardPendingChunks, GetChunkSets, IndexManifest
 from exactdocs_kernel import NotFoundError, ValidationError
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogIndexedVersions:
-    """Implements ``retrieval.ports.driven.IndexedVersions`` using the catalog."""
-
-    resolve_version: ResolveVersion
-
-    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
-        """Ask the catalog for this exact ref (a short SHA does not count); return the stored ID."""
-        try:
-            resolved = await self.resolve_version(
-                ResolveVersionQuery(id=f"{target.library}/{target.version}")
-            )
-        except NotFoundError:
-            return None
-        if resolved.ref != target.version:
-            return None
-        return DocTarget(library=resolved.library, version=resolved.ref)
 
 
 @dataclass(frozen=True, slots=True)

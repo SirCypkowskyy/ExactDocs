@@ -46,9 +46,6 @@ LIB = "/acme/payments"
 class Gone:
     """A catalog that has dropped every manifest."""
 
-    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
-        return target
-
     async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
         del library, ref
         return None
@@ -148,7 +145,6 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
-            versions=Gone(),
             searchable=Gone(),
             manifests=Gone(),
             chunks=chunks,

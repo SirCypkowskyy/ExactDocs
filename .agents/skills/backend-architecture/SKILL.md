@@ -59,12 +59,12 @@ Don't import it. In the **consumer**, declare a driven port in its own words:
 
 ```python
 # retrieval/ports/driven.py
-class IndexedVersions(Protocol):
-    async def is_indexed(self, target: DocTarget) -> bool: ...
+class SearchableVersions(Protocol):
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None: ...
 ```
 
 In **bootstrap/bridges.py**, implement it with the provider's *driving* port and wire it in
-`container.py`. See `CatalogIndexedVersions`.
+`container.py`. See `CatalogSearchableVersions`.
 
 ## Shared code
 

@@ -1,7 +1,7 @@
 """Adapter contract: every ``ChunkRepository`` behaves the same, whatever stores the data."""
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -20,22 +20,29 @@ from exactdocs.retrieval.dtos import (
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
-    GetChunkQuery,
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    ReadChunkQuery,
     RemovedChunks,
 )
 from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
     ChunkSetMismatchError,
     DuplicateChunkError,
-    VersionNotIndexedError,
+    StaleChunkError,
 )
-from exactdocs.retrieval.models import ChunkId, DocTarget, ManifestStatus, SearchableVersion
+from exactdocs.retrieval.models import (
+    ChunkId,
+    DocTarget,
+    ManifestStatus,
+    SearchableVersion,
+    SourceHost,
+)
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
-from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE
+from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE, ReadChunkUseCase
+from exactdocs_kernel import NOTICE
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 PAYMENTS = "/acme/payments"
@@ -50,12 +57,25 @@ class FakeCatalog:
     after_first_statuses: dict[str, ManifestStatus] = field(default_factory=dict)  # a race
     refs: dict[str, str] = field(default_factory=dict)  # manifest ID -> ref, for active_id
 
-    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
-        return DocTarget(library=target.library.lower(), version=target.version)
-
     async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
-        del library, ref
-        return None
+        manifest = next(
+            (
+                m
+                for m, s in self.statuses_.items()
+                if s is ManifestStatus.ACTIVE and self.refs[m] == ref
+            ),
+            None,
+        )
+        if manifest is None or ref is None:
+            return None
+        return SearchableVersion(
+            library=library.lower(),
+            version=ref,
+            manifest_id=manifest,
+            commit_sha="a" * 40,
+            repository_url="https://github.com/acme/payments",
+            host=SourceHost.GITHUB,
+        )
 
     async def active_id(self, target: DocTarget) -> str | None:
         return next(
@@ -131,10 +151,8 @@ class World:
             self.catalog.refs[manifest_id] = ref
         return done
 
-    async def read(self, ref: str, chunk_id: str):
-        return await self.retrieval.get_chunk(
-            GetChunkQuery(library=PAYMENTS, version=ref, chunk_id=chunk_id)
-        )
+    async def read(self, chunk_id: str):
+        return await self.retrieval.read_chunk(ReadChunkQuery(chunk_id=chunk_id))
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -143,7 +161,6 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
-            versions=catalog,
             searchable=catalog,
             manifests=catalog,
             chunks=chunks,
@@ -214,21 +231,21 @@ async def test_indexing_the_same_input_twice_stores_nothing_new(world: World) ->
     assert (first.chunk_sets_stored, again.chunk_sets_stored) == (2, 0)
     assert await world.count_chunk_sets() == 2
     (chunk_id, *_) = first.chunk_ids["guide/auth.md"]
-    assert (await world.read("main", chunk_id)).position == 0  # still exactly one row
+    assert (await world.read(chunk_id)).position == 0  # still exactly one row
 
 
 async def test_a_chunk_is_read_from_the_active_manifest_only(world: World) -> None:
     old = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.SUPERSEDED)
     pending = await world.index("m2", "main", {"a.md": "two"}, status=ManifestStatus.PENDING)
 
-    with pytest.raises(VersionNotIndexedError):
-        await world.read("main", pending.chunk_ids["a.md"][0])
+    with pytest.raises(ChunkNotFoundError):  # not visible before the catalog activates it
+        await world.read(pending.chunk_ids["a.md"][0])
 
     world.catalog.statuses_["m2"] = ManifestStatus.ACTIVE
-    chunk = await world.read("main", pending.chunk_ids["a.md"][0])
+    chunk = await world.read(pending.chunk_ids["a.md"][0])
     assert chunk.content == "text of two one"
-    with pytest.raises(ChunkNotFoundError):  # the superseded manifest's IDs are stale now
-        await world.read("main", old.chunk_ids["a.md"][0])
+    with pytest.raises(StaleChunkError):  # the superseded manifest's IDs are stale now
+        await world.read(old.chunk_ids["a.md"][0])
 
 
 async def test_many_chunks_come_back_by_id_and_unknown_ones_are_left_out(world: World) -> None:
@@ -249,7 +266,7 @@ async def test_a_chunk_knows_its_place_tags_and_neighbours(world: World) -> None
     done = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
     first_id, second_id = done.chunk_ids["a.md"]
 
-    first, second = await world.read("main", first_id), await world.read("main", second_id)
+    first, second = await world.read(first_id), await world.read(second_id)
 
     assert (first.position, first.total, first.prev_chunk_id) == (0, 2, None)
     assert (first.next_chunk_id, second.prev_chunk_id) == (second_id, first_id)
@@ -261,12 +278,66 @@ async def test_a_chunk_knows_its_place_tags_and_neighbours(world: World) -> None
     assert (first.library, first.version, first.article_path) == (PAYMENTS, "main", "a.md")
 
 
-async def test_a_chunk_id_from_another_version_is_not_found(world: World) -> None:
-    other = await world.index("m1", "v1.3.0", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
-    await world.index("m2", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+async def test_a_chunk_id_names_its_version_so_no_version_is_needed(world: World) -> None:
+    old = await world.index("m1", "v1.3.0", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+    new = await world.index("m2", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+
+    assert (await world.read(old.chunk_ids["a.md"][0])).version == "v1.3.0"
+    assert (await world.read(new.chunk_ids["a.md"][0])).version == "main"
+
+
+async def test_a_chunk_says_where_it_came_from_and_that_it_is_untrusted(world: World) -> None:
+    done = await world.index("m1", "main", {"docs/a.md": "one"}, status=ManifestStatus.ACTIVE)
+
+    chunk = await world.read(done.chunk_ids["docs/a.md"][0])
+
+    assert chunk.notice == NOTICE
+    assert chunk.commit_sha == "a" * 40
+    assert chunk.source_url == (
+        "https://github.com/acme/payments/blob/" + "a" * 40 + "/docs/a.md#one-one"
+    )
+    assert chunk.content == "text of one one"  # verbatim: nothing is added around the stored text
+
+
+async def test_a_stale_chunk_says_so_and_how_to_find_the_current_one(world: World) -> None:
+    old = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.SUPERSEDED)
+    await world.index("m2", "main", {"a.md": "two"}, status=ManifestStatus.ACTIVE)
+
+    with pytest.raises(StaleChunkError) as stale:
+        await world.read(old.chunk_ids["a.md"][0])
+
+    assert stale.value.code == "stale_chunk"
+    message = str(stale.value)
+    assert "search_docs" in message
+    assert "read_article" in message
+    assert "main" not in message  # a git ref is repository text: never interpolated unlabelled
+
+
+async def test_a_stale_chunk_of_a_version_without_an_active_manifest_is_still_stale(
+    world: World,
+) -> None:
+    old = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.SUPERSEDED)
+
+    with pytest.raises(StaleChunkError):
+        await world.read(old.chunk_ids["a.md"][0])
+
+
+async def test_an_id_nobody_issued_is_not_found_not_stale(world: World) -> None:
+    await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
 
     with pytest.raises(ChunkNotFoundError):
-        await world.read("main", other.chunk_ids["a.md"][0])
+        await world.read("0" * 32)
+
+
+async def test_the_manifests_holding_a_chunk_are_found_by_its_id(world: World) -> None:
+    first = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.SUPERSEDED)
+    await world.index("m2", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+    chunk_id = ChunkId(first.chunk_ids["a.md"][0])
+
+    found = await world.chunks.manifests_with_chunk(chunk_id)
+
+    assert {m.manifest_id for m in found} == {"m1", "m2"}  # an unchanged section keeps its ID
+    assert not await world.chunks.manifests_with_chunk(ChunkId("nope"))
 
 
 async def test_a_chunk_of_a_manifest_indexed_under_another_ref_is_not_served(world: World) -> None:
@@ -276,7 +347,7 @@ async def test_a_chunk_of_a_manifest_indexed_under_another_ref_is_not_served(wor
     world.catalog.refs["m1"] = "main"
 
     with pytest.raises(ChunkNotFoundError):
-        await world.read("main", wrong.chunk_ids["a.md"][0])
+        await world.read(wrong.chunk_ids["a.md"][0])
 
 
 async def test_a_replay_says_so_and_a_full_dedup_does_not(world: World) -> None:
@@ -409,7 +480,7 @@ async def test_a_manifest_activated_while_a_discard_runs_is_kept(world: World) -
 
     assert (removed.manifests, removed.chunk_sets) == (0, 0)
     assert await world.count_chunk_sets() == 1
-    assert (await world.read("main", done.chunk_ids["a.md"][0])).content == "text of one one"
+    assert (await world.read(done.chunk_ids["a.md"][0])).content == "text of one one"
 
 
 async def test_a_manifest_in_a_state_retrieval_cannot_name_is_never_removed(world: World) -> None:
@@ -471,3 +542,39 @@ async def test_stored_chunk_sets_come_back_by_blob_and_config_and_unknown_ones_a
     assert [c.content for c in found.chunks["one"]] == ["text of one one", "text of one two"]
     assert found.chunks["one"][0].code_languages == ["python"]
     assert other_config.chunks == {}
+
+
+async def test_an_id_held_by_two_versions_is_refused_not_guessed(world: World) -> None:
+    done = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+    # Not reachable with the real hash (it covers the version): a corrupted index must not be
+    # resolved by whichever row comes first.
+    await world.index("m2", "v2", {"a.md": "two"}, status=ManifestStatus.ACTIVE)
+    chunk_id = ChunkId(done.chunk_ids["a.md"][0])
+    rows = world.chunks
+    holders = await rows.manifests_with_chunk(chunk_id)
+    assert len(holders) == 1  # sanity: IDs of different versions differ
+
+    class TwoVersions:
+        async def manifests_with_chunk(self, _: ChunkId):
+            return [
+                replace(holders[0], manifest_id="x1", version_id="/acme/payments/main"),
+                replace(holders[0], manifest_id="x2", version_id="/acme/payments/v2"),
+            ]
+
+    use_case = ReadChunkUseCase(world.catalog, world.catalog, TwoVersions())  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ChunkNotFoundError):
+        await use_case(ReadChunkQuery(chunk_id=chunk_id))
+
+
+@pytest.mark.xfail(
+    reason="E9-03 keeps tombstones for collected manifests; until then an old ID is not_found",
+    strict=True,
+    raises=ChunkNotFoundError,
+)
+async def test_a_stale_id_stays_stale_after_its_manifest_was_collected(world: World) -> None:
+    old = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.SUPERSEDED)
+    await world.index("m2", "main", {"a.md": "two"}, status=ManifestStatus.ACTIVE)
+    world.catalog.statuses_.pop("m1")  # the catalog collected m1: it no longer knows the ID
+
+    with pytest.raises(StaleChunkError):
+        await world.read(old.chunk_ids["a.md"][0])

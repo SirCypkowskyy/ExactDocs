@@ -10,6 +10,7 @@ from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ActiveManifest,
     Article,
+    ArticleInfo,
     ArticleList,
     ArticleSummary,
     CollectGarbageCommand,
@@ -53,9 +54,13 @@ from exactdocs.catalog.models import (
     TagRule,
     Version,
     VersionRef,
+    close_paths,
 )
 from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
-from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate
+from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
+
+# A missing article lists at most this many paths to look for close matches.
+MAX_SUGGESTION_SCAN = 10_000
 
 
 async def _find_version(
@@ -280,8 +285,26 @@ class GetArticleUseCase:
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         stored = await self.manifests.get_article(library.id, version.ref, query.path)
         if stored is None:
-            raise ArticleNotFoundError(str(library.id), str(version.ref), query.path)
-        return Article.from_stored(str(library.id), str(version.ref), stored)
+            raise ArticleNotFoundError(
+                str(library.id),
+                str(version.ref),
+                query.path,
+                await self._close(library, version, query.path),
+            )
+        link = section_link(
+            library.host.value, library.source_url, stored.commit_sha, stored.entry.path
+        )
+        info = ArticleInfo.from_stored(str(library.id), str(version.ref), stored, link)
+        return Article.with_content(info, stored.content)
+
+    async def _close(self, library: Library, version: Version, path: str) -> list[str]:
+        """Paths of this version an agent may have meant (only looked up on a miss)."""
+        manifest = await self.manifests.get_active(library.id, version.ref)
+        if manifest is None:
+            return []
+        paths = await self.manifests.list_paths(manifest.id, limit=MAX_SUGGESTION_SCAN)
+        # difflib is CPU-bound: keep it off the event loop so a miss cannot stall other requests.
+        return await asyncio.to_thread(close_paths, path, paths)
 
 
 @dataclass(frozen=True, slots=True)
