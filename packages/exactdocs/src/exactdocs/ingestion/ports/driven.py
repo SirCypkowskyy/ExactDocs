@@ -1,7 +1,9 @@
 """Driven (secondary) ports of ingestion: what it needs from git, storage and other domains."""
 
 from collections.abc import Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from exactdocs.ingestion.models import (
@@ -10,6 +12,7 @@ from exactdocs.ingestion.models import (
     JobId,
     NewLibrary,
     ParsedArticle,
+    PathSelection,
     ProposedId,
     RemoteRefs,
     RepositoryUrl,
@@ -84,6 +87,31 @@ class GitRemote(Protocol):
 
         Never prompts for credentials. Raises ``NotAGitRepositoryError``,
         ``RepositoryUnreachableError`` (including a timeout) or ``RepositoryAuthRequiredError``.
+        """
+        ...
+
+
+class GitGateway(Protocol):
+    """Fetch the files of one commit: shallow, without unselected blobs, into a managed folder."""
+
+    def fetch(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        selection: PathSelection,
+        *,
+        refs: Sequence[str] = (),
+    ) -> AbstractAsyncContextManager[Path]:
+        """Check out ``commit_sha``: only the files ``selection`` may pick, plus the root README.
+
+        Use as ``async with gateway.fetch(...) as folder``. The folder is private to this call and
+        is removed on exit, also when the body or the fetch failed. It is a git work tree with no
+        history: nothing older than the commit is fetched. ``refs`` (full names such as
+        ``refs/tags/v1``) are tried only when the server refuses a request for a bare SHA.
+
+        Never prompts, runs hooks or follows submodules. Raises ``RepositoryUnreachableError``
+        (including a timeout), ``RepositoryAuthRequiredError``, ``NotAGitRepositoryError``,
+        ``CommitUnavailableError`` or ``RepositoryTooLargeError``.
         """
         ...
 

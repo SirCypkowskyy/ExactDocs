@@ -12,9 +12,18 @@ The URL comes from a user, so git is treated as a process that must not surprise
   group is killed whenever the call ends, so no helper outlives it;
 - at most ``MAX_PROCESSES`` git processes run at once;
 - git's stderr is only classified, never passed on: it may contain the URL.
+
+``fetch`` (the ``GitGateway`` port) builds on the same ``_run``. Into a folder of its own it
+fetches one commit by SHA, ``--depth 1`` and ``--filter=blob:none`` (a server without filters just
+sends more), and checks out only the sparse patterns made from the selection plus the root
+README, so only those blobs are downloaded. The repository config is written by us and sets no
+hooks, no submodules, no symlinks (they become small text files, so a link can never point out
+of the folder), no fsmonitor, no auto-gc. A server that refuses a bare SHA is asked for the
+caller's ref names instead, and the result must still be the pinned commit.
 """
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -22,27 +31,67 @@ import signal
 import sys
 import tempfile
 from asyncio.subprocess import DEVNULL, PIPE, Process
-from collections.abc import Sequence
-from contextlib import suppress
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
 from exactdocs.ingestion.errors import (
+    CommitUnavailableError,
     GitNotInstalledError,
     InvalidRepositoryUrlError,
     NotAGitRepositoryError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
     UrlProblem,
 )
-from exactdocs.ingestion.models import RemoteRef, RemoteRefs, RepositoryUrl, branch_name
+from exactdocs.ingestion.models import (
+    PathSelection,
+    RemoteRef,
+    RemoteRefs,
+    RepositoryUrl,
+    branch_name,
+)
 
 TIMEOUT_SECONDS = 15.0
 MAX_PROCESSES = 4
 ALLOWED_PROTOCOLS = "file:http:https:ssh"
 MAX_STDOUT = 16 * 1024 * 1024
 MAX_STDERR = 64 * 1024
+FETCH_TIMEOUT_SECONDS = 300.0
+MAX_FETCH_BYTES = 512 * 2**20
+_MAX_STEP_OUTPUT = 1024 * 1024
+_MAX_BRACE_EXPANSIONS = 64
+_ROOT_README = ("/README.md", "/README.mdx")
+# What servers say when they will not serve a bare SHA (or the ref we named instead).
+_GONE = re.compile(r"not our ref|unadvertised object|couldn't find remote ref|no such remote ref")
+_CONFIG = """\
+[core]
+\trepositoryformatversion = 1
+\tsymlinks = false
+\thooksPath = {null}
+\tfsmonitor = false
+\tprotectNTFS = true
+\tprotectHFS = true
+\tsparseCheckout = true
+\tsparseCheckoutCone = false
+[extensions]
+\tpartialClone = origin
+[gc]
+\tauto = 0
+[maintenance]
+\tauto = false
+[protocol]
+\tversion = 2
+[submodule]
+\trecurse = false
+[remote "origin"]
+\turl = {url}
+\tpromisor = true
+\tpartialclonefilter = blob:none
+"""
 _TOO_BIG = "the repository advertises too many refs"
 _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _NO_CONNECTION = "could not connect to it"
@@ -90,6 +139,9 @@ class GitCli:
     git: str
     timeout: float = TIMEOUT_SECONDS
     max_output: int = MAX_STDOUT
+    work_root: Path | None = None  # where fetches get their folders; the temp dir when None
+    fetch_timeout: float = FETCH_TIMEOUT_SECONDS  # for a whole fetch, not per git call
+    max_fetch_bytes: int = MAX_FETCH_BYTES  # of the fetched repository plus its work tree
     # Bounds the cost of an unauthenticated endpoint: one process, its helpers and up to
     # `max_output` bytes each.
     slots: asyncio.Semaphore = field(
@@ -97,12 +149,12 @@ class GitCli:
     )
 
     @classmethod
-    def locate(cls, *, timeout: float = TIMEOUT_SECONDS) -> Self:
+    def locate(cls, *, timeout: float = TIMEOUT_SECONDS, work_root: Path | None = None) -> Self:
         """Find ``git`` on ``PATH``; raises ``GitNotInstalledError`` when it is missing."""
         git = shutil.which("git")
         if git is None:
             raise GitNotInstalledError
-        return cls(git=git, timeout=timeout)
+        return cls(git=git, timeout=timeout, work_root=work_root)
 
     async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
         """Run ``git ls-remote --symref`` and parse it."""
@@ -120,6 +172,77 @@ class GitCli:
         if output.code:
             raise _failure(output.stderr)
         return _parse(output.stdout.decode(errors="replace"))
+
+    @asynccontextmanager
+    async def fetch(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        selection: PathSelection,
+        *,
+        refs: Sequence[str] = (),
+    ) -> AsyncGenerator[Path]:
+        """Implement ``GitGateway.fetch`` (see the module docstring).
+
+        Yields:
+            The folder with the checked-out files; it is removed afterwards.
+
+        """
+        if (
+            repository.url.startswith("-")
+            or not repository.url.isprintable()
+            or not _SHA.fullmatch(commit_sha)
+            or any(not ref.startswith("refs/") or not ref.isprintable() for ref in refs)
+        ):
+            raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
+        if self.work_root is not None:
+            self.work_root.mkdir(parents=True, exist_ok=True)
+        folder = Path(tempfile.mkdtemp(prefix="fetch-", dir=self.work_root))
+        try:
+            await self._populate(folder, repository.url, commit_sha, selection, refs)
+            yield folder
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    async def _populate(
+        self, folder: Path, url: str, sha: str, selection: PathSelection, refs: Sequence[str]
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + self.fetch_timeout
+        local = url.lower().startswith("file:")
+
+        async def git(*args: str) -> _Output:
+            remaining = deadline - asyncio.get_running_loop().time()
+            return await self._run(
+                ["-C", str(folder), *args],
+                cap=_MAX_STEP_OUTPUT,
+                limit=remaining,
+                trust_local=local,
+            )
+
+        init = await git("init", "-q", "--template=")
+        if init.code:
+            raise _failure(init.stderr)
+        sparse = "\n".join(sparse_patterns(selection)) + "\n"
+        await asyncio.to_thread(_write_config, folder, url, sparse)
+        for target in (sha, *refs):
+            out = await git(
+                "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags",
+                "--no-recurse-submodules", "origin", target,
+            )  # fmt: skip
+            if out.code and not _GONE.search(out.stderr):
+                raise _failure(out.stderr)
+            if not out.code:
+                head = await git("rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}")
+                if head.stdout.decode().strip() == sha:
+                    break
+        else:
+            raise CommitUnavailableError
+        out = await git("checkout", "-q", "--detach", "--no-recurse-submodules", sha)
+        if out.code:
+            raise _failure(out.stderr)
+        # ponytail: measured after the download; a server can still send up to the timeout's worth.
+        if await asyncio.to_thread(_size, folder) > self.max_fetch_bytes:
+            raise RepositoryTooLargeError(self.max_fetch_bytes)
 
     async def _run(
         self,
@@ -184,6 +307,68 @@ class MissingGit:
         """Refuse with ``GitNotInstalledError``."""
         del repository, patterns
         raise GitNotInstalledError
+
+    def fetch(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        selection: PathSelection,
+        *,
+        refs: Sequence[str] = (),
+    ) -> AbstractAsyncContextManager[Path]:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository, commit_sha, selection, refs
+        return _no_git()
+
+
+@asynccontextmanager
+async def _no_git() -> AsyncGenerator[Path]:
+    raise GitNotInstalledError
+    yield  # pragma: no cover
+
+
+def _write_config(folder: Path, url: str, sparse: str) -> None:
+    git_dir = folder / ".git"
+    quoted = json.dumps(url, ensure_ascii=False)  # git unescapes \\ and \" in quoted values
+    config = _CONFIG.format(null=os.devnull, url=quoted)
+    (git_dir / "config").write_text(config, "utf-8")
+    (git_dir / "info").mkdir(exist_ok=True)
+    (git_dir / "info" / "sparse-checkout").write_text(sparse, "utf-8")
+
+
+def _size(folder: Path) -> int:
+    return sum(
+        (Path(root) / name).lstat().st_size for root, _, names in os.walk(folder) for name in names
+    )
+
+
+def sparse_patterns(selection: PathSelection) -> list[str]:
+    """Non-cone sparse-checkout patterns that cover (at least) every file the selection picks.
+
+    Includes come first, the root README next, exclusions last as ``!`` lines (the last matching
+    line wins, as with ``PathSelection``). Over-fetching is harmless because the importer applies
+    ``PathSelection.selects`` again; a folder pattern brings its non-article files too.
+    """
+    # ponytail: no include means "all articles", fetched as every file; narrow it if repos with
+    # big non-doc trees show up.
+    includes = [p for i in selection.include for p in _anchored(i)] or ["/*"]
+    excludes = [f"!{p}" for e in selection.exclude for p in _anchored(e)]
+    return [*includes, *_ROOT_README, *excludes]
+
+
+def _anchored(pattern: str) -> list[str]:
+    """Expand ``{a,b}`` choices, escape ``[`` and anchor at the repository root."""
+    match = re.search(r"\{([^{}]*)\}", pattern)
+    if match is None:
+        return ["/" + pattern.replace("[", "\\[")]
+    if not match[1]:
+        return []  # `{}` matches nothing
+    expanded = [
+        e
+        for option in match[1].split(",")
+        for e in _anchored(pattern[: match.start()] + option + pattern[match.end() :])
+    ]
+    return expanded[:_MAX_BRACE_EXPANSIONS] if len(expanded) <= _MAX_BRACE_EXPANSIONS else ["/*"]
 
 
 def _environment(home: str) -> dict[str, str]:

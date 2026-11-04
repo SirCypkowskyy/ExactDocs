@@ -1,4 +1,5 @@
 import logging
+import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
+WORK_DIR = "work"  # under the data dir: one folder per running git fetch
 
 
 async def _import_not_available(job: Job, progress: JobProgress, /) -> None:
@@ -71,7 +73,7 @@ class Container:
         """
         if remote is None:
             try:
-                remote = GitCli.locate()
+                remote = GitCli.locate(work_root=settings.data_dir / WORK_DIR)
             except GitNotInstalledError as exc:
                 logger.warning("%s", exc)
                 remote = MissingGit()
@@ -127,6 +129,8 @@ class Container:
         try:
             await migrate(self.engine)
             if jobs:
+                # Folders of fetches a crash left behind; only the job runner owns this folder.
+                shutil.rmtree(self.settings.data_dir / WORK_DIR, ignore_errors=True)
                 async with self.job_worker.running():
                     yield
             else:
