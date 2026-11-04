@@ -446,7 +446,7 @@ export interface components {
         readonly CoverageOut: {
             /**
              * Candidates
-             * @description Matching chunks the search looked at.
+             * @description Lower bound: matching chunks the search looked at, at most `limit` + 1.
              */
             readonly candidates: number;
             /**
@@ -779,12 +779,9 @@ export interface components {
             readonly snippet: string;
             /**
              * Highlights
-             * @description `[start, end)` offsets into `snippet` of the words that matched.
+             * @description Offsets into `snippet` of the words that matched.
              */
-            readonly highlights: readonly (readonly [
-                number,
-                number
-            ])[];
+            readonly highlights: readonly components["schemas"]["Span"][];
         };
         /**
          * SessionState
@@ -797,6 +794,16 @@ export interface components {
              */
             readonly state: "setup_required" | "signed_out" | "signed_in";
             readonly account?: components["schemas"]["AccountSummary"] | null;
+        };
+        /**
+         * Span
+         * @description A `[start, end)` range of characters.
+         */
+        readonly Span: {
+            /** Start */
+            readonly start: number;
+            /** End */
+            readonly end: number;
         };
         /**
          * TagMatch

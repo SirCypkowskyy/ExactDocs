@@ -1393,6 +1393,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
+              "maxLength": 1000,
               "description": "Identifier, error or question.",
               "title": "Q"
             },
@@ -1405,7 +1406,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 256
                 },
                 {
                   "type": "null"
@@ -1423,8 +1425,10 @@
                 {
                   "type": "array",
                   "items": {
-                    "type": "string"
-                  }
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "maxItems": 20
                 },
                 {
                   "type": "null"
@@ -2357,7 +2361,7 @@
           "candidates": {
             "type": "integer",
             "title": "Candidates",
-            "description": "Matching chunks the search looked at."
+            "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1."
           },
           "reranked": {
             "type": "integer",
@@ -3139,21 +3143,11 @@
           },
           "highlights": {
             "items": {
-              "prefixItems": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "integer"
-                }
-              ],
-              "type": "array",
-              "maxItems": 2,
-              "minItems": 2
+              "$ref": "#/components/schemas/Span"
             },
             "type": "array",
             "title": "Highlights",
-            "description": "`[start, end)` offsets into `snippet` of the words that matched."
+            "description": "Offsets into `snippet` of the words that matched."
           }
         },
         "additionalProperties": false,
@@ -3206,6 +3200,26 @@
         ],
         "title": "SessionState",
         "description": "What the UI needs to know first: is setup due, is anyone signed in, and who."
+      },
+      "Span": {
+        "properties": {
+          "start": {
+            "type": "integer",
+            "title": "Start"
+          },
+          "end": {
+            "type": "integer",
+            "title": "End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "description": "A `[start, end)` range of characters."
       },
       "TagMatch": {
         "type": "string",
