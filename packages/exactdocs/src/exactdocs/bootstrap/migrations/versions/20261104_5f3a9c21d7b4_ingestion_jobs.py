@@ -1,14 +1,14 @@
 """Create the ingestion jobs table.
 
 Revision ID: 5f3a9c21d7b4
-Revises: ac89e0a428cd
+Revises: f421064ebb87
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "5f3a9c21d7b4"
-down_revision = "ac89e0a428cd"
+down_revision = "f421064ebb87"
 branch_labels = None
 depends_on = None
 
