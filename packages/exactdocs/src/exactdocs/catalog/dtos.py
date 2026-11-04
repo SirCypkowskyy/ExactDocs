@@ -100,8 +100,11 @@ class LibrarySummary(_Dto):
     description: str
     versions: list[str]
     default_version: str | None
+    source_url: str
+    refs: list[VersionOut] = Field(description="The imported versions, with their commits.")
+    tags: list[str] = Field(description="The tags the library's tag rules give its articles.")
     last_imported_at: datetime | None = Field(
-        description="When the newest version was imported; null while none is."
+        description="When any version was last imported; null while none is."
     )
 
     @classmethod
@@ -114,6 +117,12 @@ class LibrarySummary(_Dto):
             description=library.description,
             versions=sorted(str(v.ref) for v in library.versions),
             default_version=str(default.ref) if default else None,
+            source_url=library.source_url,
+            refs=[
+                VersionOut.from_model(v, is_default=v == default)
+                for v in sorted(library.versions, key=lambda v: v.ref.value)
+            ],
+            tags=sorted({rule.tag for rule in library.settings.tag_rules}),
             last_imported_at=max((v.imported_at for v in library.versions), default=None),
         )
 

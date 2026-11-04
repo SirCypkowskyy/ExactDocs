@@ -1688,6 +1688,96 @@
         }
       }
     },
+    "/api/v1/jobs/latest": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "List Latest Jobs",
+        "description": "List the newest job of every library version, in one call (no per-library requests).",
+        "operationId": "ingestion-list_latest_jobs",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestJobs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -2652,6 +2742,125 @@
         "title": "JobSummary",
         "description": "A job and how far it got. ``total`` is 0 until the job knows its size."
       },
+      "LatestJob": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "description": "How many files the job skipped; see `/jobs/{id}`."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "library",
+          "version",
+          "state",
+          "done",
+          "total",
+          "skipped",
+          "error",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "LatestJob",
+        "description": "The newest job of one version of a library, light enough to list for every library."
+      },
+      "LatestJobs": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/LatestJob"
+            },
+            "type": "array",
+            "title": "Jobs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "title": "LatestJobs",
+        "description": "The newest job of every (library, version), ordered by library and version."
+      },
       "LibraryDetail": {
         "properties": {
           "id": {
@@ -2823,6 +3032,26 @@
             ],
             "title": "Default Version"
           },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "refs": {
+            "items": {
+              "$ref": "#/components/schemas/VersionOut"
+            },
+            "type": "array",
+            "title": "Refs",
+            "description": "The imported versions, with their commits."
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "The tags the library's tag rules give its articles."
+          },
           "last_imported_at": {
             "anyOf": [
               {
@@ -2834,7 +3063,7 @@
               }
             ],
             "title": "Last Imported At",
-            "description": "When the newest version was imported; null while none is."
+            "description": "When any version was last imported; null while none is."
           }
         },
         "additionalProperties": false,
@@ -2845,6 +3074,9 @@
           "description",
           "versions",
           "default_version",
+          "source_url",
+          "refs",
+          "tags",
           "last_imported_at"
         ],
         "title": "LibrarySummary",

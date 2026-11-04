@@ -23,6 +23,7 @@ from exactdocs.ingestion.ports.driving import (
     CheckRepository,
     EnqueueJob,
     GetJob,
+    ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
     RecoverJobs,
@@ -33,6 +34,7 @@ from exactdocs.ingestion.use_cases import (
     CheckRepositoryUseCase,
     EnqueueJobUseCase,
     GetJobUseCase,
+    ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     RecoverJobsUseCase,
@@ -49,6 +51,7 @@ class IngestionModule:
     check_repository: CheckRepository
     enqueue_job: EnqueueJob
     get_job: GetJob
+    list_latest_jobs: ListLatestJobs
     list_library_jobs: ListLibraryJobs
     list_repository_refs: ListRepositoryRefs
     recover_jobs: RecoverJobs
@@ -77,6 +80,7 @@ class IngestionModule:
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),
+            list_latest_jobs=ListLatestJobsUseCase(jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),

@@ -11,6 +11,7 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     JobList,
     JobSummary,
+    LatestJobs,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RepositoryRefs,
@@ -37,6 +38,14 @@ class ListLibraryJobs(Protocol):
     """List a page of a library's jobs, newest first."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
+        """Run the use case."""
+        ...
+
+
+class ListLatestJobs(Protocol):
+    """List the newest job of every (library, version)."""
+
+    async def __call__(self) -> LatestJobs:
         """Run the use case."""
         ...
 

@@ -133,6 +133,7 @@ def create_app(container: Container) -> FastAPI:
     protected.include_router(
         ingestion_http.build_router(
             get_job=container.ingestion.get_job,
+            list_latest_jobs=container.ingestion.list_latest_jobs,
             list_library_jobs=container.ingestion.list_library_jobs,
             check_repository=container.ingestion.check_repository,
             list_repository_refs=container.ingestion.list_repository_refs,

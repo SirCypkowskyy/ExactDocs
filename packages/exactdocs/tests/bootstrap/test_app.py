@@ -14,7 +14,8 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
-from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
+from exactdocs.catalog.dtos import LibrarySummary
+from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -73,6 +74,26 @@ async def test_a_listed_library_says_when_it_was_last_imported(client: httpx.Asy
 
     payments = next(lib for lib in listed if lib["id"] == "/acme/payments")
     assert payments["last_imported_at"] == max(v["imported_at"] for v in detail["versions"])
+
+
+async def test_a_listed_library_carries_its_source_refs_and_tags(client: httpx.AsyncClient) -> None:
+    listed = (await client.get("/api/v1/libraries")).json()["libraries"]
+    detail = (await client.get("/api/v1/libraries/acme/payments")).json()
+
+    payments = next(lib for lib in listed if lib["id"] == "/acme/payments")
+    assert payments["source_url"] == detail["source_url"]
+    assert payments["refs"] == detail["versions"]
+    assert payments["tags"] == sorted({r["tag"] for r in detail["settings"]["tag_rules"]})
+
+
+def test_a_library_without_versions_was_never_imported() -> None:
+    library = Library(
+        id=LibraryId("/acme/new"), title="New", source_url="https://x/y", host=HostKind.GIT
+    )
+
+    summary = LibrarySummary.from_model(library)
+
+    assert (summary.last_imported_at, summary.refs, summary.default_version) == (None, [], None)
 
 
 async def test_a_library_is_shown_with_its_default_version(client: httpx.AsyncClient) -> None:

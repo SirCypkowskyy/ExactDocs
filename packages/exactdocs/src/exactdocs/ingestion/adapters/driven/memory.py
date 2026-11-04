@@ -34,6 +34,13 @@ class InMemoryJobRepository:
         mine = [job for job in self.jobs.values() if job.library == library]
         return sorted(mine, key=lambda job: job.id, reverse=True)
 
+    async def list_latest(self) -> Sequence[Job]:
+        """Return the newest job of every (library, version), ordered by library and version."""
+        newest: dict[tuple[str, str | None], Job] = {}
+        for job in sorted(self.jobs.values(), key=lambda job: job.id):
+            newest[job.library, job.version] = job
+        return sorted(newest.values(), key=lambda job: (job.library, job.version or ""))
+
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""
         return [job for job in self.jobs.values() if job.state is JobState.RUNNING]

@@ -12,6 +12,7 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     JobList,
     JobSummary,
+    LatestJobs,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RepositoryRefs,
@@ -20,6 +21,7 @@ from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     CheckRepository,
     GetJob,
+    ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
 )
@@ -29,6 +31,7 @@ from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT
 def build_router(
     *,
     get_job: GetJob,
+    list_latest_jobs: ListLatestJobs,
     list_library_jobs: ListLibraryJobs,
     check_repository: CheckRepository,
     list_repository_refs: ListRepositoryRefs,
@@ -58,6 +61,11 @@ def build_router(
         added = await add_library(command)
         response.headers["Location"] = f"{request.url.path.rstrip('/')}{added.library_id}"
         return added
+
+    @router.get("/jobs/latest", name="list_latest_jobs")
+    async def latest() -> LatestJobs:
+        """List the newest job of every library version, in one call (no per-library requests)."""
+        return await list_latest_jobs()
 
     @router.get("/jobs/{job_id}", name="get_job")
     async def get_one(job_id: str) -> JobSummary:

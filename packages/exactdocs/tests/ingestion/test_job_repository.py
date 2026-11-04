@@ -88,6 +88,31 @@ async def test_a_library_lists_its_own_jobs_newest_first(repository: JobReposito
     assert [job.id for job in listed] == ["job-3", "job-2", "job-1"]
 
 
+async def test_the_latest_job_of_each_library_and_version_is_listed(
+    repository: JobRepository,
+) -> None:
+    def job(job_id: str, library: str, version: str | None) -> Job:
+        return Job.queued(
+            job_id=JobId(job_id), kind=JobKind("import"), library=library, version=version, now=T0
+        )
+
+    for added in (
+        job("1", "/acme/payments", "v1"),
+        job("2", "/acme/payments", "v1"),  # supersedes 1
+        job("3", "/acme/payments", "v2"),
+        job("4", "/acme/ledger", None),
+    ):
+        await repository.add(added)
+
+    latest = await repository.list_latest()
+
+    assert [(j.library, j.version, j.id) for j in latest] == [
+        ("/acme/ledger", None, "4"),
+        ("/acme/payments", "v1", "2"),
+        ("/acme/payments", "v2", "3"),
+    ]
+
+
 async def test_list_running_returns_only_running_jobs(repository: JobRepository) -> None:
     await repository.add(queued("waiting"))
     await repository.add(queued("busy", library="/a/b").started(T0))

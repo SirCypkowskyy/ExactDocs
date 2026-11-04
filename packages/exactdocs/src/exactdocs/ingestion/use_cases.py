@@ -14,6 +14,8 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     JobList,
     JobSummary,
+    LatestJob,
+    LatestJobs,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     RefOut,
@@ -104,6 +106,18 @@ class ListLibraryJobsUseCase:
             jobs, key=lambda job: job.id, limit=query.limit, cursor=query.cursor, descending=True
         )
         return JobList.from_page(page)
+
+
+@dataclass(frozen=True, slots=True)
+class ListLatestJobsUseCase:
+    """Implements ``ports.driving.ListLatestJobs``."""
+
+    jobs: JobRepository
+
+    async def __call__(self) -> LatestJobs:
+        """List the newest job of every (library, version), without their skipped files."""
+        # ponytail: not paged; one row per imported version, fine until thousands exist.
+        return LatestJobs(jobs=[LatestJob.from_model(job) for job in await self.jobs.list_latest()])
 
 
 @dataclass(frozen=True, slots=True)
