@@ -182,6 +182,7 @@ async def test_an_unchanged_blob_is_not_chunked_again_in_the_next_version(world:
         "docs/api/client.mdx",
         "docs/guide/install.md",
         "docs/guide/resilience.md",
+        "docs/reference/errors.md",
     ]
     assert "docs/guide/resilience.md" in await world.paths("v1.4.0")
     assert "docs/guide/resilience.md" not in await world.paths("v1.3.0")

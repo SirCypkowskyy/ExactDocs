@@ -11,7 +11,7 @@ from exactdocs.bootstrap.database import alembic_config
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.models import TagFilter
 
-BEFORE, AFTER = "c4d8e2f6a1b7", "3b8f0d6e2a71"
+BEFORE, AFTER = "c4d8e2f6a1b7", "a91c4e7b3d02"
 
 
 def _alembic(connection, action: str, revision: str) -> None:

@@ -5,7 +5,7 @@ build its ``Container`` in ``open_container``: the cases and the assertions do n
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -87,16 +87,24 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
 @pytest.fixture(scope="session", params=ENGINES)
 def imported(
     request: pytest.FixtureRequest, docs_repo: DocsRepo, tmp_path_factory: pytest.TempPathFactory
-) -> Iterator[tuple[str, Path]]:
-    """Import the three versions once per engine; tests reopen the same data directory."""
+) -> tuple[str, Path]:
+    """Import the three versions once per engine; tests reopen the same data directory.
+
+    Returns:
+        The engine's name and the data directory holding its imported versions.
+    """
     data_dir = tmp_path_factory.mktemp("ranking")
     asyncio.run(_import_all(request.param, data_dir, docs_repo))
-    yield request.param, data_dir
+    return request.param, data_dir
 
 
 @pytest.fixture
 async def search_docs(imported: tuple[str, Path]) -> AsyncIterator[SearchDocs]:
-    """The ``SearchDocs`` driving port of the engine under test."""
+    """Open the engine under test.
+
+    Yields:
+        Its ``SearchDocs`` driving port.
+    """
     engine, data_dir = imported
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):

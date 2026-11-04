@@ -20,12 +20,16 @@ from exactdocs.retrieval.models import (
 # created by an Alembic revision in `exactdocs.bootstrap`. Its rowid is `retrieval_chunks.id`,
 # the explicit INTEGER PRIMARY KEY, so one entry exists per stored chunk, not per manifest, and
 # neither VACUUM nor a table rebuild can detach an entry from its chunk. The tokenizer keeps
-# `-_.` inside a token (see `identifier_tokens`). Columns: heading, text, identifiers.
+# `-_.` inside a token (see `identifier_tokens`). Columns: heading, path, text, identifiers.
 # FTS5 adds the weighted term counts of all columns *before* BM25 saturates them, so a repeated
 # word in the body can drown a heading hit. The identifiers column repeats every word (and adds
 # its parts), so it only gets a small weight: it makes camelCase and snake_case parts findable
 # without counting twice.
-HEADING_WEIGHT, TEXT_WEIGHT, IDENTIFIERS_WEIGHT = 20.0, 1.0, 0.1
+# `heading` is the section's own heading and `path` its ancestors: a section that *defines* a term
+# outranks the sub-sections that merely sit under a heading naming it (ranking suite: `docker`
+# finds "Docker", not "Docker > Troubleshooting"), yet "docker troubleshooting" still finds the
+# latter because the path still counts.
+HEADING_WEIGHT, PATH_WEIGHT, TEXT_WEIGHT, IDENTIFIERS_WEIGHT = 20.0, 4.0, 1.0, 0.1
 
 _MISSING = text(
     """
@@ -35,14 +39,15 @@ _MISSING = text(
     """
 )
 _INSERT = text(
-    "INSERT INTO retrieval_search (rowid, heading, text, identifiers) "
-    "VALUES (:rowid, :heading, :text, :identifiers)"
+    "INSERT INTO retrieval_search (rowid, heading, path, text, identifiers) "
+    "VALUES (:rowid, :heading, :path, :text, :identifiers)"
 )
 # Rank first and cut to LIMIT, then build snippets for the survivors only.
 _SEARCH = """
     WITH ranked AS (
         SELECT c.id AS id, mc.chunk_id AS chunk_id,
-               -bm25(retrieval_search, :heading_weight, :text_weight, :identifiers_weight) AS score
+               -bm25(retrieval_search, :heading_weight, :path_weight, :text_weight,
+                     :identifiers_weight) AS score
         FROM retrieval_search
         JOIN retrieval_chunks c ON c.id = retrieval_search.rowid
         JOIN retrieval_manifest_chunks mc
@@ -52,7 +57,7 @@ _SEARCH = """
         ORDER BY score DESC, mc.chunk_id
         LIMIT :limit
     )
-    SELECT r.chunk_id, r.score, snippet(retrieval_search, 1, '', '', '', 24) AS snippet
+    SELECT r.chunk_id, r.score, snippet(retrieval_search, 2, '', '', '', 24) AS snippet
     FROM ranked r
     JOIN retrieval_search ON retrieval_search.rowid = r.id
     WHERE retrieval_search MATCH :match
@@ -75,12 +80,13 @@ _SEARCHES = {match: text(_SEARCH.format(tags=sql)) for match, sql in _TAG_CONDIT
 
 def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, object]:
     """Return the values of one `retrieval_search` row; the migration backfills with it too."""
-    heading = " / ".join(heading_path)
+    path = " / ".join(heading_path)
     return {
         "rowid": rowid,
-        "heading": heading,
+        "heading": heading_path[-1] if heading_path else "",
+        "path": " / ".join(heading_path[:-1]),
         "text": content,
-        "identifiers": identifier_tokens(f"{heading}\n{content}"),
+        "identifiers": identifier_tokens(f"{path}\n{content}"),
     }
 
 
@@ -133,6 +139,7 @@ class SqliteSearchIndex:
             return []
         params: dict[str, object] = {
             "heading_weight": HEADING_WEIGHT,
+            "path_weight": PATH_WEIGHT,
             "text_weight": TEXT_WEIGHT,
             "identifiers_weight": IDENTIFIERS_WEIGHT,
             "match": match,

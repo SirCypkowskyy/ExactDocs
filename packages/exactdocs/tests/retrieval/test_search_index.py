@@ -364,6 +364,32 @@ async def test_a_heading_match_outranks_many_body_matches(world: World) -> None:
     assert first.score > second.score
 
 
+async def test_a_section_naming_a_term_outranks_the_sub_sections_under_it(world: World) -> None:
+    if world.engine != "sqlite":
+        pytest.skip("the memory reference does not weigh a heading's ancestors")
+    child = ChunkIn(
+        heading_path=["Guide", "Docker", "Troubleshooting"],
+        occurrence_index=0,
+        content="If the port is taken, pick another one.",
+        content_hash="h-child",
+        anchor="troubleshooting",
+    )
+    await world.index(
+        "m1",
+        "main",
+        {
+            "a.md": ("a", [section("Docker", "Pull the image, then docker run it."), child]),
+            **{f"f{i}.md": (f"f{i}", [section(f"Other {i}", f"unrelated {i}")]) for i in range(5)},
+        },
+    )
+
+    defining, *_ = await world.find("m1", "docker")
+    both, *_ = await world.find("m1", "docker troubleshooting")
+
+    assert defining.snippet.startswith("Pull the image")
+    assert both.snippet.startswith("If the port")  # the ancestors still count
+
+
 async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -> None:
     if world.engine != "sqlite":
         pytest.skip("length normalisation is BM25's; the memory reference only counts terms")

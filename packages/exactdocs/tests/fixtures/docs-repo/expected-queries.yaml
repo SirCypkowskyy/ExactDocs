@@ -36,7 +36,9 @@ queries:
     expected:
       v1.3.0: {article: docs/guide/setup.md, heading_path: [Guide, Install, Docker]}
       v1.4.0: {article: docs/guide/install.md, heading_path: [Guide, Install, Docker]}
+  # xfail: the importer skips this file as undecodable until it detects Latin-1 (#32).
   - query: crème brûlée
+    xfail: "Latin-1 articles are skipped by the importer until #32 lands"
     expected:
       v1.3.0: &latin {article: docs/legacy/latin1.md, heading_path: [Journal de bord, Paiements récents]}
       v1.4.0: *latin
@@ -53,3 +55,13 @@ queries:
       v1.3.0: null
       v1.4.0: null
       next: {article: docs/guide/install.md, heading_path: [Guide, Install, Podman]}
+  # An error code: defined by its own heading; guide/resilience.md only mentions it.
+  - query: ACME-4021
+    expected:
+      v1.4.0: {article: docs/reference/errors.md, heading_path: [Errors, ACME-4021]}
+  # A tag-filtered query: unfiltered, "Rotating tokens" (guide/auth.md, no tags) wins.
+  - query: tokens
+    tags: [auth]
+    expected:
+      v1.3.0: &token {article: docs/api/auth.md, heading_path: [Authentication API, Issue a token]}
+      v1.4.0: *token

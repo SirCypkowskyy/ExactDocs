@@ -16,19 +16,20 @@ from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import SearchDocs
 from fixture_repo import DocsRepo, git
 
-from .conftest import LIBRARY  # ty: ignore[unresolved-import]
-
+LIBRARY = "/fixture/docs-repo"  # as imported by conftest.py
 TABLE = Path(__file__).parents[2] / "fixtures" / "docs-repo" / "expected-queries.yaml"
 TOP = 5  # how many hits a failure prints
 
 
 def load_cases() -> list[Any]:
-    """``(entry, version, expected)`` per asserted version; ``xfail: <reason>`` marks a known gap."""
+    """One case per asserted version; an entry's ``xfail: <reason>`` marks a known gap."""
     cases = []
     for entry in yaml.safe_load(TABLE.read_text(encoding="utf-8"))["queries"]:
         for version, expected in entry["expected"].items():
             marks = [pytest.mark.xfail(reason=entry["xfail"])] if "xfail" in entry else []
-            cases.append(pytest.param(entry, version, expected, marks=marks, id=_id(entry, version)))
+            cases.append(
+                pytest.param(entry, version, expected, marks=marks, id=_id(entry, version))
+            )
     return cases
 
 
@@ -55,7 +56,9 @@ async def test_expected_section_ranks_first(
             limit=TOP,
         )
     )
-    top = [f"{h.article_path} > {' > '.join(h.heading_path)} ({h.score:.2f})" for h in result.results]
+    top = [
+        f"{h.article_path} > {' > '.join(h.heading_path)} ({h.score:.2f})" for h in result.results
+    ]
     context = f"\n{entry['query']!r} in {version}; top {TOP}:\n  " + "\n  ".join(top or ["(none)"])
 
     assert result.version == version
