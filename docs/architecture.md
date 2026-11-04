@@ -16,6 +16,7 @@ packages/
     src/exactdocs/
       bootstrap/                composition root: settings, wiring, HTTP/MCP/CLI entry points
       catalog/                  domain
+      identity/                 domain: the admin account (later sessions, API tokens)
       retrieval/                domain
       _web/                     built web UI (gitignored, added by CI / Docker)
     tests/                      pytest: unit, integration, architecture
@@ -127,6 +128,21 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
 - Tests build a container on an empty temporary data directory (`tests/conftest.py` points
   `EXACTDOCS_DATA_DIR` at one for every test) and seed data through the repository, so the
   catalog starts empty in production.
+
+## Identity: accounts and the setup guard
+
+`identity` owns accounts (`identity_accounts`: username, password hash, `role`, created time).
+Passwords are hashed by the `PasswordHasher` driven port; its adapter is **argon2id**
+(`argon2-cffi`, RFC 9106 low-memory profile: 64 MiB, 3 passes), run in a thread, with `verify`
+constant-time. The use cases take the password as a `SecretStr`, an unknown username costs one
+hash like a real check, and wrong password and unknown user raise the same error.
+
+`AccountRepository.add_first` stores an account only while the table is empty, in one atomic
+statement under `BEGIN IMMEDIATE`, so two concurrent setups (or `exactdocs admin create` next to
+the running server) can never create two admins. `bootstrap/rest.py:SetupGuard` answers
+`403 setup_required` for everything under `/api/v1` until an account exists (default deny; the
+exemptions are `POST /setup`, `GET /session` and `openapi.json`) and stops asking the database
+once one does.
 
 ## Python conventions
 

@@ -19,6 +19,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `error` is the stable `DomainError.code` (`not_found` is 404, `conflict` 409, `validation_error`
   and every `ValidationError` 422, anything else 400). Request validation failures are 422 with
   `error: "validation_error"` and one `fields` entry (`loc`, `msg`, `type`) per invalid field.
+- **First run**: until the first admin account exists, every `/api/v1` request except
+  `POST /api/v1/setup`, `GET /api/v1/session` and the OpenAPI document is refused with 403
+  `setup_required`. `POST /api/v1/setup` creates the admin once (409 `already_set_up` afterwards).
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.

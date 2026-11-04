@@ -22,6 +22,8 @@ from exactdocs.catalog.models import (
     Version,
     VersionRef,
 )
+from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
+from exactdocs.identity.models import Account, AccountId, Role, Username
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -61,9 +63,21 @@ DEMO_LIBRARIES = [
 ]
 
 
+# Ends the setup state (the API refuses everything before an account exists); never signs in.
+NOT_A_HASH = "not-a-hash"
+PLACEHOLDER_ADMIN = Account(
+    id=AccountId("00000000000000000000000000000001"),
+    username=Username("admin"),
+    password_hash=NOT_A_HASH,
+    role=Role.ADMIN,
+    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+)
+
+
 async def store_demo_catalog(settings: Settings) -> None:
     container = Container.build(settings)
     async with container.running():
+        await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
         repository = SqliteLibraryRepository(container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)

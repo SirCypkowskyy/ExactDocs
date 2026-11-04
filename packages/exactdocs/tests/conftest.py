@@ -15,6 +15,8 @@ from exactdocs.catalog.models import (
     Version,
     VersionRef,
 )
+from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
+from exactdocs.identity.models import Account, AccountId, Role, Username
 from fixture_repo import DocsRepo, served
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -55,6 +57,18 @@ DEMO_LIBRARIES = [
 ]
 
 
+# An admin that can never sign in (the "hash" is not a hash): it only ends the setup state, so
+# the `/api/v1` guard lets the tests through.
+NOT_A_HASH = "not-a-hash"
+PLACEHOLDER_ADMIN = Account(
+    id=AccountId("00000000000000000000000000000001"),
+    username=Username("admin"),
+    password_hash=NOT_A_HASH,
+    role=Role.ADMIN,
+    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+)
+
+
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Never touch the real data directory: every test starts on an empty one."""
@@ -66,9 +80,10 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 async def demo_catalog() -> None:
-    """Store the demo libraries in the data directory, as an earlier run of the app would have."""
+    """Set the instance up and store the demo libraries, as earlier runs of the app would have."""
     container = Container.build(Settings())
     async with container.running():
+        await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
         repository = SqliteLibraryRepository(container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)

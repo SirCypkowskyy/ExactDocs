@@ -1,10 +1,13 @@
 """``exactdocs`` command line."""
 
 import asyncio
+import getpass
+import sys
 from typing import Annotated
 
 import uvicorn
 from cyclopts import App, Parameter
+from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
@@ -12,8 +15,14 @@ from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.dtos import CreateFirstAdminCommand
+from exactdocs_kernel import DomainError
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
+
+
+admin = App(name="admin", help="Local administration; opens the database directly.")
+app.command(admin)
 
 
 @app.command
@@ -39,6 +48,47 @@ def serve(
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
     )
+
+
+@admin.command
+def create(
+    *,
+    username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
+    password_stdin: Annotated[
+        bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
+    ] = False,
+) -> None:
+    """Create the first admin account (only while no account exists)."""
+    name = username if username is not None else input("Username: ")
+    password = _read_password(from_stdin=password_stdin)
+    try:
+        created = asyncio.run(_create_first_admin(Settings(), name, password))
+    except ValidationError as exc:
+        # Pydantic's message would echo the rejected password; say only what is wrong.
+        fields = ", ".join(str(error["loc"][0]) for error in exc.errors())
+        message = f"exactdocs: invalid {fields} (the password needs at least 12 characters)"
+        raise SystemExit(message) from None
+    except DomainError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
+    sys.stdout.write(f"Created admin {created!r}.\n")
+
+
+def _read_password(*, from_stdin: bool) -> str:
+    if from_stdin:
+        return sys.stdin.readline().rstrip("\r\n")
+    password = getpass.getpass("Password: ")
+    if getpass.getpass("Repeat password: ") != password:
+        message = "exactdocs: the passwords differ"
+        raise SystemExit(message)
+    return password
+
+
+async def _create_first_admin(settings: Settings, username: str, password: str) -> str:
+    container = _build(settings)
+    async with container.running():
+        command = CreateFirstAdminCommand(username=username, password=SecretStr(password))
+        return (await container.identity.create_first_admin(command)).username
 
 
 async def _serve_stdio(settings: Settings) -> None:

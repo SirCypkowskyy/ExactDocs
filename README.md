@@ -34,7 +34,10 @@ docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
 uvx exactdocs serve
 ```
 
-Open <http://localhost:3000> and create the first account (or run `exactdocs admin create`).
+Open <http://localhost:3000> and create the first account (or run `exactdocs admin create`, which
+opens the database directly and prompts for the password). Until that account exists, the only
+thing the instance offers is `POST /api/v1/setup`; every other `/api/v1` request is refused with
+`403 setup_required`. Passwords are stored as argon2id hashes (at least 12 characters).
 Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
 ```bash
@@ -108,8 +111,6 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
-| `EXACTDOCS_AUTH_MODE` | `local` | `local` (single admin account) or `oidc` (teams) |
-| `EXACTDOCS_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` | – | Required for `oidc` |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |
 | `EXACTDOCS_RERANKER_URL`, `_MODEL`, `_API_KEY` | – | Optional reranker endpoint (Cohere-compatible, Jina, TEI) |
 | `EXACTDOCS_LLM_URL`, `_MODEL`, `_API_KEY`, `_PROXY` | – | Optional OpenAI-compatible LLM; enables HyDE and agentic retrieval |
@@ -146,10 +147,6 @@ services:
     ports: ["3000:3000"]
     environment:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${DB_PASSWORD}@db:5432/exactdocs
-      EXACTDOCS_AUTH_MODE: oidc
-      EXACTDOCS_OIDC_ISSUER: https://sso.example.com/realms/dev
-      EXACTDOCS_OIDC_CLIENT_ID: exactdocs
-      EXACTDOCS_OIDC_CLIENT_SECRET: ${OIDC_SECRET}
     depends_on: [db]
   db:
     image: paradedb/paradedb:latest   # PostgreSQL with pg_search (BM25) and pgvector

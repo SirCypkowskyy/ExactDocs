@@ -36,6 +36,7 @@ FRAMEWORKS = [
     "uvicorn*",
     "httpx*",
     "dbos*",
+    "argon2*",
     *DATABASE_LIBRARIES,
 ]
 
@@ -54,7 +55,7 @@ def _layer(domain: str, layer: str) -> list[str]:
 
 
 def test_domains_are_discovered() -> None:
-    assert {"catalog", "retrieval"} <= set(DOMAINS)
+    assert {"catalog", "identity", "retrieval"} <= set(DOMAINS)
 
 
 @pytest.mark.parametrize("domain", DOMAINS)
