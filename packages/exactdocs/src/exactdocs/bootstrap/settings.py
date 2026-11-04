@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=_default_data_dir)
     # Overrides the SQLite file in the data directory, e.g. `sqlite:////srv/exactdocs.db`.
     database_url: str | None = None
-    auth_mode: Literal["local", "oidc"] = "local"
     telemetry: Literal["off", "otlp"] = "off"
     metrics: bool = False
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,

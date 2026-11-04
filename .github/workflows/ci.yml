@@ -98,6 +98,9 @@ jobs:
           trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
           port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
           for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:${port}/api/health" && break; sleep 1; done
+          # a fresh instance offers only the setup: everything else is refused until it is done
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/v1/libraries")" = 403
+          curl -fsS -H 'content-type: application/json' -d '{"username":"ci","password":"ci smoke test password"}' "http://127.0.0.1:${port}/api/v1/setup"
           curl -fsS "http://127.0.0.1:${port}/api/v1/libraries"
           curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'
           init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'

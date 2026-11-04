@@ -1,6 +1,8 @@
 """Conventions of the REST API under ``/api/v1``: the error envelope and the OpenAPI document."""
 
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -13,6 +15,7 @@ from fastapi.routing import APIRoute, iter_route_contexts
 from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException
 from starlette.responses import PlainTextResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
 
@@ -49,6 +52,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in {
         400: "The request cannot be processed (error code in `error`).",
+        403: "Refused: the instance has no admin account yet (`setup_required`).",
         404: "The thing does not exist or is not visible to the caller.",
         409: "The request conflicts with the current state.",
         422: "A field is invalid (`fields` names them) or a business rule is violated.",
@@ -115,3 +119,50 @@ def v1_openapi(app: FastAPI) -> dict[str, Any]:
 def v1_openapi_json(app: FastAPI) -> str:
     """Render the document as the committed ``web/openapi.json``."""
     return json.dumps(v1_openapi(app), indent=2) + "\n"
+
+
+# (method, path) pairs that stay reachable before the first admin exists: `POST /setup` is the
+# way out of that state. `GET /session` is reserved for E2-02 (the UI learns the session state
+# there); the route does not exist yet.
+SETUP_EXEMPT = frozenset(
+    {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
+)
+
+
+@dataclass(slots=True)
+class SetupGuard:
+    """Refuse everything under ``/api/v1`` with 403 ``setup_required`` until an account exists.
+
+    Deny by default: a new route is guarded without anyone remembering to guard it. The
+    ``setup_required`` check hits the database only while it is true; an account is never
+    removed in the MVP, so the first ``False`` is remembered for the life of the process.
+
+    Only ``/api/v1`` is guarded (every method, HEAD and OPTIONS included). ``/mcp`` and
+    ``/.well-known`` are left to the MCP token verifier (E2-03).
+    """
+
+    app: ASGIApp
+    setup_required: Callable[[], Awaitable[bool]]
+    _done: bool = False
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass the request on, or answer 403 while the instance has no account."""
+        if scope["type"] == "http" and await self._refuse(scope["method"], scope["path"]):
+            body = ErrorResponse(
+                error="setup_required",
+                detail="create the first admin account (POST /api/v1/setup) before using the API",
+            )
+            response = JSONResponse(body.model_dump(), status_code=403)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+    async def _refuse(self, method: str, path: str) -> bool:
+        if self._done or not (path == V1_PREFIX or path.startswith(f"{V1_PREFIX}/")):
+            return False
+        if (method, path) in SETUP_EXEMPT:
+            return False
+        if await self.setup_required():
+            return True
+        self._done = True
+        return False

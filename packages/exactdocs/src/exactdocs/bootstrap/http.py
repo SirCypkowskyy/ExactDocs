@@ -20,10 +20,12 @@ from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.rest import (
     ERROR_RESPONSES,
     OPENAPI_PATH,
+    SetupGuard,
     add_error_handlers,
     v1_openapi,
 )
 from exactdocs.catalog.adapters.driving import http as catalog_http
+from exactdocs.identity.adapters.driving import http as identity_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 
 # Built web UI, copied into the package by CI / the Docker build (see web/README.md).
@@ -66,6 +68,12 @@ def create_app(container: Container) -> FastAPI:
         openapi_url=None,
     )
     add_error_handlers(app)
+
+    async def setup_required() -> bool:
+        return (await container.identity.get_setup_state()).setup_required
+
+    # Innermost, so the host and origin checks below still run first.
+    app.add_middleware(SetupGuard, setup_required=setup_required)
     # DNS-rebinding guard for the whole app (REST, UI and MCP), one allowlist for all.
     app.add_middleware(
         OriginCheck,
@@ -88,6 +96,9 @@ def create_app(container: Container) -> FastAPI:
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
         )
+    )
+    v1.include_router(
+        identity_http.build_router(create_first_admin=container.identity.create_first_admin)
     )
     v1.include_router(retrieval_http.build_router(search_docs=container.retrieval.search_docs))
     api.include_router(v1)
