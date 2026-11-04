@@ -101,6 +101,9 @@ class InMemorySearchIndex:
 
     It reads the chunk rows of the repository it is built on, so it forgets a chunk set when the
     repository does, as the SQLite index does. Headings weigh ten times the body.
+
+    It scores the whole heading path alike; it does not model the SQLite index's own-heading versus
+    ancestors weighting. The ranking suite (`docker`) is what every engine must satisfy.
     """
 
     chunks: InMemoryChunkRepository

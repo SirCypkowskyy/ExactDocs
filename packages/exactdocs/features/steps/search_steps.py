@@ -4,8 +4,10 @@ import asyncio
 import fnmatch
 import hashlib
 from itertools import starmap
+from pathlib import Path
 from urllib.parse import quote
 
+import yaml
 from behave import given, then, when
 from behave.runner import Context
 
@@ -16,13 +18,15 @@ from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Vers
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.models import parse_article
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
+from fixture_repo import git_bytes
 from steps.http_steps import step_running
 
 LIBRARY = "/fixture/docs-repo"
 REPOSITORY = "https://github.com/fixture/docs-repo"
 SKIPPED_DIRECTORIES = (
     "docs/reference/oversized.md",
-    "docs/legacy/",
+    "docs/legacy/binary.md",
+    "docs/legacy/undecodable.md",
     "docs/archive/",
     "docs/assets/",
 )
@@ -55,10 +59,11 @@ def read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]
     for path in git("ls-tree", "-r", "--name-only", ref, "--", "docs", cwd=repo).splitlines():
         if not path.endswith((".md", ".mdx")) or path.startswith(SKIPPED_DIRECTORIES):
             continue
+        data = git_bytes("show", f"{ref}:{path}", cwd=repo)
         try:
-            text = git("show", f"{ref}:{path}", cwd=repo)
+            text = data.decode()
         except UnicodeDecodeError:
-            continue
+            text = data.decode("cp1252")  # the Latin-1 article, as the importer reads it
         articles.append((path, text))
     return commit, articles
 
@@ -221,3 +226,45 @@ def step_tagged(context: Context, first: str, second: str) -> None:
     assert results, context.response.text
     for result in results:
         assert {first, second} <= set(result["tags"]), result
+
+
+TABLE = Path(__file__).parents[2] / "tests" / "fixtures" / "docs-repo" / "expected-queries.yaml"
+
+
+@when("each query of the expected-queries table is searched in its version")
+def step_search_table(context: Context) -> None:
+    """Search the table over HTTP.
+
+    This scenario mirrors the importer's rules (``SKIPPED_DIRECTORIES``, ``TAG_RULES``) by hand;
+    the pytest suite in ``tests/retrieval/ranking`` is the check on the real importer. Only the
+    imported versions are asked (not ``next``), and entries marked ``xfail`` are skipped.
+    """
+    context.ranked = []
+    for entry in yaml.safe_load(TABLE.read_text(encoding="utf-8"))["queries"]:
+        if "xfail" in entry:  # a known gap, tracked in the ranking suite
+            continue
+        for version, expected in entry["expected"].items():
+            if version not in context.commits:  # only the imported versions are asked
+                continue
+            _search(
+                context,
+                f"{LIBRARY}/{version}",
+                {
+                    "q": entry["query"],
+                    "tags": entry.get("tags", []),
+                    "tags_match": entry.get("tags_match", "any"),
+                },
+            )
+            context.ranked.append((entry["query"], version, expected, context.response.json()))
+
+
+@then("its expected section is the top result")
+def step_table_ranked(context: Context) -> None:
+    assert context.ranked
+    wrong = []
+    for query, version, expected, body in context.ranked:
+        top = [(r["article_path"], r["heading_path"]) for r in body["results"]]
+        want = None if expected is None else (expected["article"], expected["heading_path"])
+        if (top[0] if top else None) != want:
+            wrong.append(f"{query!r} in {version}: wanted {want}, top 5 {top[:5]}")
+    assert not wrong, "\n".join(wrong)

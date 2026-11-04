@@ -29,3 +29,7 @@ Feature: Version-pinned documentation search
   Scenario: Search with an all-of tag filter
     When a user searches "token" in "/fixture/docs-repo/v1.4.0" with all of tags "api, auth"
     Then every result is tagged "api" and "auth"
+
+  Scenario: Every expected query ranks its section first
+    When each query of the expected-queries table is searched in its version
+    Then its expected section is the top result

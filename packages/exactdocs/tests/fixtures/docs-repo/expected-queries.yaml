@@ -53,3 +53,13 @@ queries:
       v1.3.0: null
       v1.4.0: null
       next: {article: docs/guide/install.md, heading_path: [Guide, Install, Podman]}
+  # An error code: defined by its own heading; guide/resilience.md only mentions it.
+  - query: ACME-4021
+    expected:
+      v1.4.0: {article: docs/reference/errors.md, heading_path: [Errors, ACME-4021]}
+  # A tag-filtered query: unfiltered, "Rotating tokens" (guide/auth.md, no tags) wins.
+  - query: tokens
+    tags: [auth]
+    expected:
+      v1.3.0: &token {article: docs/api/auth.md, heading_path: [Authentication API, Issue a token]}
+      v1.4.0: *token

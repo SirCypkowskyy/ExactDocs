@@ -99,9 +99,21 @@ Rules for content:
   deliberate: other articles mention the same terms (`retry_policy` is also a row of the
   `client.mdx` table), so ranking has something to get wrong.
 - `null` means the version has no hit at all; leave a version out to not assert it.
-- Optional keys on a query entry are the extension point for the ranking suite (E5-04), for
-  example `tags: [api, auth]` (a tag-filtered query) or `top_n: 3` (the section must be among the
-  first three). They are not implemented yet and unknown keys are ignored.
+- Optional keys on a query entry, read by the ranking suite:
+  - `tags: [api, auth]` (with `tags_match: any|all`, default `any`) searches with a tag filter;
+  - `top_n: 3` accepts the section anywhere in the first three hits (default: first);
+  - `xfail: "<reason and #issue>"` marks a known gap; the suite expects it to fail (strict), so
+    delete the key when the issue is fixed.
 - Versions are `v1.3.0`, `v1.4.0` and `next`. `test_fixture_repo.py` checks that every entry
   points at a heading that exists and contains the query, so a typo fails fast. Whether the
-  section really ranks first is asserted by the ranking suite (E5-04), not here.
+  section really ranks first is asserted by the ranking suite, not here.
+
+## The ranking suite
+
+`tests/retrieval/ranking/` imports this repository with the real importer and runs every table
+entry through the `SearchDocs` port (`pytest packages/exactdocs/tests/retrieval/ranking`); the
+behave scenario "Every expected query ranks its section first" does the same over HTTP. A failure
+prints the actual top 5. To add a case, add an entry to `expected-queries.yaml` (above); if the
+content it needs is missing, add it under the *latest* commit that can hold it (see "Adding content
+without breaking the SHAs") and update `GOLDEN_SHAS`. To run the suite on another engine, add it to
+`ENGINES` and to `open_container` in `tests/retrieval/ranking/conftest.py`: the cases stay the same.

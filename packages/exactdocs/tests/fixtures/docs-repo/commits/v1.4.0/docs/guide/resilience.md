@@ -28,6 +28,8 @@ client = Client(token="sk_test_123", retry_policy=RetryPolicy(max_retries=3, bac
 | HTTP 429 and 503     | yes                 |
 | HTTP 4xx (the rest)  | no                  |
 
+A declined card (error `ACME-4021`) is a 4xx failure, so it is never repeated.
+
 ### max_retries
 
 `max_retries` limits the attempts after the first call. Use `0` to turn repeating off.
