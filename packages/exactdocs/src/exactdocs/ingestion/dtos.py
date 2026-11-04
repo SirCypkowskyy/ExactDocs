@@ -356,6 +356,45 @@ class RepositoryRefs(_Dto):
     truncated: bool = Field(description="True when branches or tags were cut at 1000 each.")
 
 
+class PreviewRepositoryCommand(_Dto):
+    """Ask which files an import would take (a dry run: nothing is fetched beyond the tree)."""
+
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description=CheckRepositoryCommand.model_fields["url"].description,
+    )
+    ref: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description=AddLibraryCommand.model_fields["ref"].description,
+    )
+    include_paths: list[str] = Field(
+        default_factory=list,
+        description=AddLibraryCommand.model_fields["include_paths"].description,
+    )
+    exclude_paths: list[str] = Field(
+        default_factory=list,
+        description=AddLibraryCommand.model_fields["exclude_paths"].description,
+    )
+    credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
+
+
+class RepositoryPreview(_Dto):
+    """The articles an import would take: the first ones, and how many there are in all."""
+
+    ref: str = Field(description="The tag or branch name, or the full SHA of a commit.")
+    ref_kind: RefKind
+    commit_sha: str
+    files: list[str] = Field(
+        description="Sorted repository-relative paths, at most 1000. Untrusted text: show it "
+        "as text, never as markup or a link target."
+    )
+    total: int = Field(description="How many files match, also those not listed.")
+    truncated: bool = Field(description="True when `files` is cut (`total` is more than listed).")
+
+
 class RemoveVersionCommand(_Dto):
     """Remove one version of a library everywhere and free its content."""
 

@@ -542,3 +542,32 @@ async def test_fetch_files_is_bounded_by_its_own_byte_limit(
         ):
             pass
     assert leftovers(work) == []
+
+
+async def test_lists_the_tree_without_a_checkout_or_blobs(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path
+) -> None:
+    pinned = sha(docs_repo, "v1.4.0")
+
+    listed = await gateway.list_files(repository(docs_repo.file_url), pinned)
+
+    assert "docs/guide/install.md" in listed
+    assert "docs/assets/logo.png" in listed  # everything in the tree; the use case filters
+    assert set(listed) == set(
+        git("ls-tree", "-r", "--name-only", pinned, cwd=docs_repo.path).split("\n")
+    )
+    assert leftovers(work) == []
+
+
+async def test_a_listing_of_a_missing_commit_is_reported(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    with pytest.raises(CommitUnavailableError):
+        await gateway.list_files(repository(docs_repo.file_url), "0" * 40)
+
+
+async def test_a_listing_shares_the_process_deadline(gateway: GitCli, docs_repo: DocsRepo) -> None:
+    slow = GitCli(git=gateway.git, work_root=gateway.work_root, fetch_timeout=0.0)
+
+    with pytest.raises(RepositoryUnreachableError):
+        await slow.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))

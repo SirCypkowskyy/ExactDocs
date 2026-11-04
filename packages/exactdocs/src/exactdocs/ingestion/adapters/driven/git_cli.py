@@ -94,6 +94,7 @@ MAX_STDOUT = 16 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 FETCH_TIMEOUT_SECONDS = 300.0
 MAX_FETCHES = 2
+MAX_PREVIEWS = 2
 MAX_FETCH_FILES = 100_000
 WATCH_SECONDS = 1.0
 STALE_MARGIN_SECONDS = 60.0
@@ -220,6 +221,10 @@ class GitCli:
     # Fetches wait here, so long imports cannot take every slot of `slots` from the checks.
     fetch_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_FETCHES), compare=False, repr=False
+    )
+    # Previews wait here, apart from imports: a flood of dry runs must not starve the importer.
+    preview_slots: asyncio.Semaphore = field(
+        default_factory=lambda: asyncio.Semaphore(MAX_PREVIEWS), compare=False, repr=False
     )
     # Bounds the cost of an unauthenticated endpoint: one process, its helpers and up to
     # `max_output` bytes each.
@@ -416,6 +421,47 @@ class GitCli:
         if size > self.max_fetch_bytes or count > self.max_fetch_files:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
 
+    async def list_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> list[str]:
+        """Implement ``RepositoryTree.list_files``: fetch the trees only, run ``git ls-tree``.
+
+        The same hardening, deadline (``fetch_timeout``), size watchdog and process ``slots`` as
+        ``fetch``, with ``preview_slots`` of its own. No blob is downloaded and nothing is checked
+        out. More than ``max_output`` bytes of paths is an error (``RepositoryUnreachableError``).
+        """
+        if (
+            repository.url.startswith("-")
+            or not repository.url.isprintable()
+            or not _COMMIT.fullmatch(commit_sha)
+            or not all(_valid_ref(ref) for ref in refs)
+        ):
+            raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
+        async with self.preview_slots:
+            if self.work_root is not None:
+                await asyncio.to_thread(self.work_root.mkdir, parents=True, exist_ok=True)
+            folder = Path(await asyncio.to_thread(_make_folder, self.work_root))
+            try:
+                url = repository.url
+                deadline = asyncio.get_running_loop().time() + self.fetch_timeout
+                git = self._stepper(folder, url, deadline, _Auth.of(repository, credential))
+                ssh = repository_url_is_ssh(url)
+                await _prepare(git, folder, url, "", ssh=ssh)
+                await _fetch_commit(git, commit_sha, refs, ssh=ssh)
+                out = await git(
+                    "ls-tree", "-r", "-z", "--full-tree", commit_sha, cap=self.max_output
+                )
+                if out.code:
+                    raise _failure(out.stderr, ssh=ssh)
+                return _tree_files(out.stdout)
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
+
     async def renames(
         self,
         repository: RepositoryUrl,
@@ -601,6 +647,18 @@ class MissingGit:
         del repository, commit_sha, selection, refs, credential
         return _no_git()
 
+    async def list_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> list[str]:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository, commit_sha, refs, credential
+        raise GitNotInstalledError
+
     async def renames(
         self,
         repository: RepositoryUrl,
@@ -692,6 +750,16 @@ def _write_config(folder: Path, url: str, sparse: str) -> None:
     (git_dir / "info").mkdir(exist_ok=True)
     (git_dir / "info" / "sparse-checkout").write_text(sparse, "utf-8")
     (git_dir / "info" / "attributes").write_text(_ATTRIBUTES, "utf-8")
+
+
+def _tree_files(output: bytes) -> list[str]:
+    """Parse ``ls-tree -r -z`` (NUL-ended entries ``mode type sha TAB path``): blobs only."""
+    paths = []
+    for entry in output.split(b"\0"):
+        meta, _, path = entry.partition(b"\t")
+        if path and meta.split(b" ")[1:2] == [b"blob"]:
+            paths.append(path.decode(errors="replace"))
+    return paths
 
 
 def _make_folder(work_root: Path | None) -> str:

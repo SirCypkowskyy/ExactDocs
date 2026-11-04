@@ -202,6 +202,27 @@ class RenameSource(Protocol):
         ...
 
 
+class RepositoryTree(Protocol):
+    """List the files of one commit without downloading any file content."""
+
+    async def list_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[str]:
+        """Return the repository-relative path of every file in the commit's tree.
+
+        Only the commit and its trees are fetched (``--filter=blob:none``, depth 1), never a
+        blob, and nothing is checked out. The paths are untrusted text from the repository
+        (lossy-decoded, any characters). ``refs`` and ``credential`` are as in ``GitGateway.fetch``.
+        Raises what ``GitGateway.fetch`` raises.
+        """
+        ...
+
+
 class LibraryIds(Protocol):
     """What ingestion needs to know about the catalog, in its own words."""
 
