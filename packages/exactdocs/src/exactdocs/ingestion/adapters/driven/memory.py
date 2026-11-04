@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self
@@ -63,6 +63,13 @@ class InMemoryLibrarySources:
     """Implements ``ports.driven.LibrarySources``. For tests."""
 
     sources: dict[str, ImportSource] = field(default_factory=dict)
+    versions: dict[str, dict[str, str]] = field(default_factory=dict)
+    """``{library: {ref: commit SHA}}``."""
+
+    async def imported_versions(self, library: str) -> Mapping[str, str]:
+        """Return the library's ``{ref: commit SHA}``; raises ``NotFoundError`` if unknown."""
+        await self.get(library)
+        return self.versions.get(library, {})
 
     async def get(self, library: str) -> ImportSource:
         """Return the library's source; raises ``NotFoundError`` for an unknown library."""

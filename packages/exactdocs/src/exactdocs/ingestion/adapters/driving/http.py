@@ -67,7 +67,20 @@ def build_router(
         response.headers["Location"] = f"{request.url.path.rstrip('/')}{added.library_id}"
         return added
 
-    @router.post("/libraries/{owner}/{repo}/versions", status_code=status.HTTP_202_ACCEPTED)
+    @router.post(
+        "/libraries/{owner}/{repo}/versions",
+        status_code=status.HTTP_202_ACCEPTED,
+        responses={
+            status.HTTP_202_ACCEPTED: {
+                "headers": {
+                    "Location": {
+                        "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                        "schema": {"type": "string"},
+                    }
+                }
+            }
+        },
+    )
     async def add_another_version(
         owner: str, repo: str, body: AddVersionBody, request: Request, response: Response
     ) -> AddedVersion:
@@ -75,7 +88,9 @@ def build_router(
 
         The import is queued: `Location` is its job. A ref the library already has is a 409.
         """
-        added = await add_version(AddVersionCommand(library=f"/{owner}/{repo}", ref=body.ref))
+        added = await add_version(
+            AddVersionCommand(library=f"/{owner}/{repo}".lower(), ref=body.ref)
+        )
         response.headers["Location"] = request.url_for("get_job", job_id=added.job_id).path
         return added
 

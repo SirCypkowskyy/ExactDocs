@@ -1006,8 +1006,6 @@ class ImportSource:
     url: RepositoryUrl
     selection: PathSelection
     tag_rules: tuple[TagRule, ...] = ()
-    imported_refs: frozenset[str] = frozenset()
-    """The refs of the versions the library already has."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -409,7 +409,7 @@ export interface components {
         };
         /**
          * AddedVersion
-         * @description The commit the ref was pinned to, and the queued import.
+         * @description Like ``AddedLibrary``, but ``library_id`` is the existing library.
          */
         readonly AddedVersion: {
             /** Library Id */
@@ -2622,6 +2622,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 202: {
                 headers: {
+                    /** @description The import job: `/api/v1/jobs/{job_id}`. */
+                    readonly Location?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {

@@ -99,3 +99,17 @@ Text is decoded as UTF-8, then UTF-16/32 announced by a byte order mark, then Wi
 (which covers Latin-1 files). At most 1000 skips and 200 `front_matter` notes are listed.
 New codes may be added: clients must treat an unknown `code` as a generic problem, using
 `is_skip` to tell skips from notes.
+- **Adding a version**: `POST /libraries/{owner}/{repo}/versions` (`{"ref"}`) imports another
+  version of an existing library with the library's own include/exclude paths and tag rules (and
+  chunking), so versions stay comparable. The ref is resolved like when adding a library (tag over
+  branch, full or short SHA). It answers **202 Accepted** (the version exists once its import has
+  run) with the same body as adding a library (`library_id` is the existing library) and
+  `Location: /api/v1/jobs/{job_id}`, the import job to poll. The default version is computed from
+  the versions, so it moves when the import finishes (a newer stable tag takes it; a branch does
+  not take it from a release). Errors: 404 `not_found` (unknown library), 422 `unknown_ref` /
+  `ambiguous_ref` (also 422 for a malformed library ID), 409 `version_exists` (the library already
+  has that ref; re-importing is a sync, not this call), 409 `version_importing` (an import of that
+  ref is queued or running; the check is not atomic, so two simultaneous requests may both pass
+  and the later import replaces the first's version, wasting one import), and 409
+  `commit_already_imported` (a commit SHA that is already a version under another ref, named in
+  the message; a tag and a branch at the same commit stay two versions).

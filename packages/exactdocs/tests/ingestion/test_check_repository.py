@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, InMemoryLibrarySources
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.dtos import CheckRepositoryCommand
 from exactdocs.ingestion.errors import (
     InvalidRepositoryUrlError,
@@ -50,7 +50,6 @@ def build(remote: GitRemote, taken: frozenset[str] = frozenset()) -> IngestionMo
         remote=remote,
         library_ids=FakeLibraryIds(taken),
         libraries=_NoLibraries(),
-        sources=InMemoryLibrarySources(),
     )
 
 

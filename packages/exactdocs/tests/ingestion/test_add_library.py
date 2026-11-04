@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, InMemoryLibrarySources
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.dtos import AddLibraryCommand, ListRepositoryRefsQuery, TagRuleIn
 from exactdocs.ingestion.errors import (
     InvalidPathPatternError,
@@ -95,7 +95,6 @@ def module(
         remote=remote,
         library_ids=catalog,
         libraries=catalog,
-        sources=InMemoryLibrarySources(),
         handlers=handlers,
     )
 
@@ -195,12 +194,7 @@ async def test_the_library_is_removed_when_the_import_cannot_be_queued(
     remote: FakeRemote, catalog: FakeCatalog, jobs: InMemoryJobRepository
 ) -> None:
     module = IngestionModule.build(  # no handler for `import`: queueing is refused
-        jobs=jobs,
-        clock=SystemClock(),
-        remote=remote,
-        library_ids=catalog,
-        libraries=catalog,
-        sources=InMemoryLibrarySources(),
+        jobs=jobs, clock=SystemClock(), remote=remote, library_ids=catalog, libraries=catalog
     )
 
     with pytest.raises(UnknownJobKindError):
@@ -219,12 +213,7 @@ async def test_a_failing_undo_does_not_hide_the_original_error(
 
     catalog = BrokenUndo()
     module = IngestionModule.build(
-        jobs=jobs,
-        clock=SystemClock(),
-        remote=remote,
-        library_ids=catalog,
-        libraries=catalog,
-        sources=InMemoryLibrarySources(),
+        jobs=jobs, clock=SystemClock(), remote=remote, library_ids=catalog, libraries=catalog
     )
 
     with pytest.raises(UnknownJobKindError):

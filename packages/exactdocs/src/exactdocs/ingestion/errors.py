@@ -109,6 +109,28 @@ class VersionExistsError(ConflictError):
         self.library, self.ref = library, ref
 
 
+class VersionImportingError(ConflictError):
+    """An import of this ref is already queued or running."""
+
+    code = "version_importing"
+
+    def __init__(self, library: str, ref: str) -> None:
+        super().__init__(f"an import of {ref!r} into library {library!r} is already in progress")
+        self.library, self.ref = library, ref
+
+
+class CommitImportedError(ConflictError):
+    """The commit a SHA names is already a version of the library, under another ref."""
+
+    code = "commit_already_imported"
+
+    def __init__(self, library: str, commit_sha: str, ref: str) -> None:
+        super().__init__(
+            f"commit {commit_sha} is already the version {ref!r} of library {library!r}"
+        )
+        self.library, self.commit_sha, self.ref = library, commit_sha, ref
+
+
 class GitNotInstalledError(DomainError):
     """The system ``git`` binary is missing, and ExactDocs cannot read repositories without it."""
 

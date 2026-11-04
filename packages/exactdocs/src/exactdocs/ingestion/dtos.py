@@ -242,17 +242,6 @@ class AddedLibrary(_Dto):
         )
 
 
-class AddVersionCommand(_Dto):
-    """Import another version of an existing library, with the library's own settings."""
-
-    library: str = Field(min_length=1, max_length=200)
-    ref: str = Field(
-        min_length=1,
-        max_length=255,
-        description="A tag, a branch or a full or short commit SHA.",
-    )
-
-
 class AddVersionBody(_Dto):
     """The request body of adding a version; the library is in the path."""
 
@@ -263,8 +252,14 @@ class AddVersionBody(_Dto):
     )
 
 
+class AddVersionCommand(AddVersionBody):
+    """Import another version of an existing library, with the library's own settings."""
+
+    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+
+
 class AddedVersion(AddedLibrary):
-    """The commit the ref was pinned to, and the queued import."""
+    """Like ``AddedLibrary``, but ``library_id`` is the existing library."""
 
 
 class ListRepositoryRefsQuery(_Dto):

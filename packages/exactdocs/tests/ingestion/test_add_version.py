@@ -2,7 +2,13 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, InMemoryLibrarySources
 from exactdocs.ingestion.dtos import AddVersionCommand
-from exactdocs.ingestion.errors import AmbiguousRefError, UnknownRefError, VersionExistsError
+from exactdocs.ingestion.errors import (
+    AmbiguousRefError,
+    CommitImportedError,
+    UnknownRefError,
+    VersionExistsError,
+    VersionImportingError,
+)
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
     ImportSource,
@@ -24,6 +30,8 @@ REFS = RemoteRefs(
         RemoteRef(name="refs/heads/main", sha=MAIN),
         RemoteRef(name="refs/tags/v1.3.0", sha=OLD),
         RemoteRef(name="refs/tags/v1.4.0", sha=NEW),
+        RemoteRef(name="refs/heads/v1.4.0", sha=MAIN),
+        RemoteRef(name="refs/heads/same", sha=NEW),
         RemoteRef(name="refs/tags/v2.0.0", sha="e" * 7 + "1" * 33),
         RemoteRef(name="refs/tags/v2.0.1", sha="e" * 7 + "2" * 33),
     ),
@@ -32,8 +40,8 @@ SOURCE = ImportSource(
     url=RepositoryUrl.parse("https://github.com/Acme/Orders"),
     selection=PathSelection(include=("docs/**",), exclude=("docs/archive/**",)),
     tag_rules=TagRule.many([("docs/api/**", "api")]),
-    imported_refs=frozenset({"v1.4.0"}),
 )
+EXISTING = {"v1.4.0": NEW}
 
 
 class FakeRemote:
@@ -69,7 +77,7 @@ def module(jobs: InMemoryJobRepository) -> IngestionModule:
         remote=FakeRemote(),
         library_ids=_None(),
         libraries=_None(),
-        sources=InMemoryLibrarySources({"/acme/orders": SOURCE}),
+        sources=InMemoryLibrarySources({"/acme/orders": SOURCE}, {"/acme/orders": EXISTING}),
         handlers={IMPORT_JOB: _run},
     )
 
@@ -77,7 +85,7 @@ def module(jobs: InMemoryJobRepository) -> IngestionModule:
 async def test_a_tag_is_pinned_and_its_import_queued(
     module: IngestionModule, jobs: InMemoryJobRepository
 ) -> None:
-    added = await module.add_version(AddVersionCommand(library="/Acme/Orders", ref="v1.3.0"))
+    added = await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
 
     assert (added.library_id, added.ref, added.ref_kind, added.commit_sha) == (
         "/acme/orders",
@@ -110,6 +118,60 @@ async def test_a_ref_the_library_has_is_refused_and_queues_nothing(
 
     assert error.value.code == "version_exists"
     assert not await jobs.list_for_library("/acme/orders")
+
+
+async def test_an_import_in_progress_for_the_ref_is_refused(
+    module: IngestionModule, jobs: InMemoryJobRepository
+) -> None:
+    await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
+
+    with pytest.raises(VersionImportingError) as error:
+        await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
+
+    assert error.value.code == "version_importing"
+    assert len(await jobs.list_for_library("/acme/orders")) == 1
+
+
+async def test_a_finished_import_does_not_block_the_ref(
+    module: IngestionModule, jobs: InMemoryJobRepository
+) -> None:
+    first = await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
+    job = await jobs.get(JobId(first.job_id))
+    assert job is not None
+    await jobs.save(job.failed("boom", job.created_at))
+
+    again = await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
+
+    assert again.job_id != first.job_id
+
+
+async def test_a_sha_that_is_already_a_version_is_refused_naming_it(
+    module: IngestionModule, jobs: InMemoryJobRepository
+) -> None:
+    with pytest.raises(CommitImportedError) as error:
+        await module.add_version(AddVersionCommand(library="/acme/orders", ref=NEW[:9]))
+
+    assert (error.value.code, error.value.ref) == ("commit_already_imported", "v1.4.0")
+    assert not await jobs.list_for_library("/acme/orders")
+
+
+async def test_a_branch_at_an_imported_commit_is_still_its_own_version(
+    module: IngestionModule,
+) -> None:
+    added = await module.add_version(AddVersionCommand(library="/acme/orders", ref="same"))
+
+    assert (added.ref, added.commit_sha) == ("same", NEW)
+
+
+async def test_a_tag_that_shadows_a_branch_is_one_version(module: IngestionModule) -> None:
+    # "v1.4.0" is both a tag and a branch (REFS); the tag wins and the library has it already
+    with pytest.raises(VersionExistsError):
+        await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.4.0"))
+
+
+async def test_refs_are_case_sensitive(module: IngestionModule) -> None:
+    with pytest.raises(UnknownRefError):
+        await module.add_version(AddVersionCommand(library="/acme/orders", ref="V1.3.0"))
 
 
 async def test_an_unknown_ref_queues_nothing(

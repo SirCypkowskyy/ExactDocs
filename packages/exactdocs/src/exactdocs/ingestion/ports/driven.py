@@ -168,6 +168,13 @@ class NewLibraries(Protocol):
 class LibrarySources(Protocol):
     """Where a library's articles come from (the catalog, in ingestion's words)."""
 
+    async def imported_versions(self, library: str) -> Mapping[str, str]:
+        """Return ``{ref: commit SHA}`` of the library's versions; raises ``NotFoundError``.
+
+        ``library`` is a canonical (lower-case) ID.
+        """
+        ...
+
     async def get(self, library: str) -> ImportSource:
         """Return the repository and path selection of a library; raises when it is unknown."""
         ...

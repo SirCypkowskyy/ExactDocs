@@ -2048,6 +2048,14 @@
                   "$ref": "#/components/schemas/AddedVersion"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "400": {
@@ -2625,7 +2633,7 @@
           "job_id"
         ],
         "title": "AddedVersion",
-        "description": "The commit the ref was pinned to, and the queued import."
+        "description": "Like ``AddedLibrary``, but ``library_id`` is the existing library."
       },
       "Article": {
         "properties": {
