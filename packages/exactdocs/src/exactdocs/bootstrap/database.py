@@ -97,8 +97,10 @@ def _enable_wal(cursor: DBAPICursor) -> None:
         try:
             cursor.execute("PRAGMA journal_mode=WAL")
         except sqlite3.OperationalError as exc:
-            if "locked" not in str(exc) or time.monotonic() >= deadline:
+            if exc.sqlite_errorcode & 0xFF != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
                 raise
+            # Blocking sleep is deliberate: this is a sync connect listener, and it only runs
+            # on the first connections to a new file (afterwards the pragma is a no-op).
             time.sleep(0.01)
         else:
             return

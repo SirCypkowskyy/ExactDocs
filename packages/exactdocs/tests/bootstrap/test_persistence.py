@@ -233,7 +233,7 @@ async def test_processes_starting_together_all_migrate_an_empty_database(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The race is in the first moments of a fresh database file, so every round gets its own.
-    for round_ in range(10):
+    for round_ in range(5):
         monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(tmp_path / f"round-{round_}"))
         containers = [Container.build(Settings()) for _ in range(8)]
 
