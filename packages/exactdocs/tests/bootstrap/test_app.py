@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import pytest
@@ -282,4 +283,67 @@ async def test_mcp_domain_errors_become_tool_errors(container: Container) -> Non
         )
 
     assert result.is_error
+    assert "not_found" in str(result.content)
+
+
+async def test_a_blank_or_malformed_ref_is_not_found_not_a_validation_error(
+    client: httpx.AsyncClient,
+) -> None:
+    for ref in ("", "v 1"):
+        response = await client.get(
+            "/api/v1/libraries/acme/payments/search", params={"ref": ref, "q": "hook"}
+        )
+        assert response.status_code == 404, ref
+        assert response.json()["error"] == "not_found"
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"q": "x" * 1001},
+        {"q": "x", "ref": "r" * 257},
+        {"q": "x", "tags": [f"t{i}" for i in range(21)]},
+        {"q": "x", "tags": ["t" * 101]},
+        {"q": "x", "tags": ",".join(f"t{i}" for i in range(21))},
+    ],
+)
+async def test_rest_search_input_is_capped(
+    client: httpx.AsyncClient, params: dict[str, Any]
+) -> None:
+    response = await client.get("/api/v1/libraries/acme/payments/search", params=params)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"library": "/acme/payments", "query": "x" * 1001},
+        {"library": "/acme/payments", "query": "x", "ref": "r" * 257},
+        {"library": "/acme/payments", "query": "x", "tags": [f"t{i}" for i in range(21)]},
+        {"library": "/acme/payments", "query": "x", "tags": ["t" * 101]},
+        {"library": "/" + "a" * 256 + "/b", "query": "x"},
+        {"library": "/acme/payments/v1", "query": "x"},
+        {"library": "react", "query": "x"},
+    ],
+)
+async def test_mcp_search_input_is_capped_and_the_library_shape_checked(
+    container: Container, arguments: dict[str, Any]
+) -> None:
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        result = await mcp.call_tool("search_docs", arguments, raise_on_error=False)
+
+    assert result.is_error
+    assert "not_found" not in str(result.content)
+
+
+async def test_mcp_search_accepts_a_blank_ref_as_the_default_version(container: Container) -> None:
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        result = await mcp.call_tool(
+            "search_docs",
+            {"library": "/acme/payments", "ref": "", "query": "hook"},
+            raise_on_error=False,
+        )
+
     assert "not_found" in str(result.content)

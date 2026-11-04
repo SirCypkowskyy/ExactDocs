@@ -55,6 +55,13 @@ class InMemoryChunkRepository:
         version_id = self.manifests[manifest_id].version_id
         return StoredChunk(manifest_id=manifest_id, version_id=version_id, row=row, chunk=chunk)
 
+    async def get_many(
+        self, manifest_id: str, chunk_ids: Sequence[ChunkId]
+    ) -> Mapping[ChunkId, StoredChunk]:
+        """Return the chunks of the manifest that exist, by ID; missing IDs are left out."""
+        found = {i: await self.get(manifest_id, i) for i in chunk_ids}
+        return {i: c for i, c in found.items() if c is not None}
+
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:

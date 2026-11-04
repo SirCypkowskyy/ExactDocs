@@ -389,6 +389,7 @@ class ActiveManifest(_Dto):
 
     library: str
     ref: str
+    commit_sha: str = Field(description="The commit of the manifest, else of the version.")
     manifest_id: str | None
 
 

@@ -91,6 +91,12 @@ class ChunkRepository(Protocol):
         """Return one chunk of the manifest with its content, or ``None``."""
         ...
 
+    async def get_many(
+        self, manifest_id: str, chunk_ids: Sequence[ChunkId]
+    ) -> Mapping[ChunkId, StoredChunk]:
+        """Return the chunks of the manifest that exist, by ID, in one query."""
+        ...
+
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:

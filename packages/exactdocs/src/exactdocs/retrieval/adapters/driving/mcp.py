@@ -6,7 +6,14 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
+from exactdocs.retrieval.dtos import (
+    MAX_NAME,
+    MAX_QUERY,
+    MAX_TAGS,
+    SearchDocsQuery,
+    SearchDocsResult,
+    Tag,
+)
 from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import SearchDocs
 
@@ -18,14 +25,27 @@ def register_tools(mcp: FastMCP, *, search_docs: SearchDocs) -> None:
 
     @mcp.tool(name="search_docs", annotations=READ_ONLY)
     async def search_docs_tool(
-        library: Annotated[str, Field(description="Library name, e.g. 'react'")],
-        query: Annotated[str, Field(description="Identifier, error message or question")],
+        library: Annotated[
+            str, Field(max_length=MAX_NAME, description="Library ID, e.g. '/facebook/react'")
+        ],
+        query: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=MAX_QUERY,
+                description="Identifier, error message or question",
+            ),
+        ],
         ref: Annotated[
             str | None,
-            Field(description="Exact imported ref, e.g. 'v19.1'; default version if empty"),
+            Field(
+                max_length=MAX_NAME,
+                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+            ),
         ] = None,
         tags: Annotated[
-            list[str] | None, Field(description="Only articles with these tags")
+            list[Tag] | None,
+            Field(max_length=MAX_TAGS, description="Only articles with these tags"),
         ] = None,
         tags_match: Annotated[TagMatch, Field(description="'any' or 'all' of tags")] = TagMatch.ANY,
         limit: Annotated[int, Field(ge=1, le=50)] = 5,

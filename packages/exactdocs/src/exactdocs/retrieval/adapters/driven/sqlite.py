@@ -201,6 +201,14 @@ class SqliteChunkRepository:
 
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
         """Return one chunk of the manifest with its content, or ``None``."""
+        return (await self.get_many(manifest_id, [chunk_id])).get(chunk_id)
+
+    async def get_many(
+        self, manifest_id: str, chunk_ids: Sequence[ChunkId]
+    ) -> Mapping[ChunkId, StoredChunk]:
+        """Return the chunks of the manifest that exist, by ID, in one query."""
+        if not chunk_ids:
+            return {}
         query = (
             select(manifest_chunks, chunks, indexed_manifests.c.version_id)
             .select_from(
@@ -215,35 +223,37 @@ class SqliteChunkRepository:
                 )
             )
             .where(
-                manifest_chunks.c.manifest_id == manifest_id, manifest_chunks.c.chunk_id == chunk_id
+                manifest_chunks.c.manifest_id == manifest_id,
+                manifest_chunks.c.chunk_id.in_(list(chunk_ids)),
             )
         )
         async with self.engine.connect() as connection:
-            row = (await connection.execute(query)).first()
-        if row is None:
-            return None
-        return StoredChunk(
-            manifest_id=manifest_id,
-            version_id=row.version_id,
-            row=ManifestChunk(
-                chunk_id=ChunkId(row.chunk_id),
-                article_path=row.article_path,
-                position=row.position,
-                total=row.total,
-                prev_chunk_id=None if row.prev_chunk_id is None else ChunkId(row.prev_chunk_id),
-                next_chunk_id=None if row.next_chunk_id is None else ChunkId(row.next_chunk_id),
-                tags=tuple(json.loads(row.tags)),
-                chunk_set=(row.blob_sha, row.config_hash),
-            ),
-            chunk=Chunk(
-                heading_path=tuple(json.loads(row.heading_path)),
-                occurrence_index=row.occurrence_index,
-                content=row.content,
-                content_hash=row.content_hash,
-                anchor=row.anchor,
-                code_languages=tuple(json.loads(row.code_languages)),
-            ),
-        )
+            rows = (await connection.execute(query)).all()
+        return {
+            ChunkId(row.chunk_id): StoredChunk(
+                manifest_id=manifest_id,
+                version_id=row.version_id,
+                row=ManifestChunk(
+                    chunk_id=ChunkId(row.chunk_id),
+                    article_path=row.article_path,
+                    position=row.position,
+                    total=row.total,
+                    prev_chunk_id=None if row.prev_chunk_id is None else ChunkId(row.prev_chunk_id),
+                    next_chunk_id=None if row.next_chunk_id is None else ChunkId(row.next_chunk_id),
+                    tags=tuple(json.loads(row.tags)),
+                    chunk_set=(row.blob_sha, row.config_hash),
+                ),
+                chunk=Chunk(
+                    heading_path=tuple(json.loads(row.heading_path)),
+                    occurrence_index=row.occurrence_index,
+                    content=row.content,
+                    content_hash=row.content_hash,
+                    anchor=row.anchor,
+                    code_languages=tuple(json.loads(row.code_languages)),
+                ),
+            )
+            for row in rows
+        }
 
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None

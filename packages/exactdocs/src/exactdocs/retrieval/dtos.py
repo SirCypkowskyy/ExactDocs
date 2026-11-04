@@ -1,8 +1,15 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from exactdocs.retrieval.models import (
     Removed,
@@ -19,19 +26,61 @@ class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+MAX_QUERY = 1000
+MAX_TAGS = 20
+MAX_TAG = 100
+MAX_NAME = 256  # library and ref
+
+Tag = Annotated[str, StringConstraints(max_length=MAX_TAG)]
+
+
 class SearchDocsQuery(_Dto):
     """Search within exactly one library version; no ``ref`` means the default version."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
-    ref: str | None = Field(
-        default=None, description="Exact imported ref; default version if empty."
+    library: str = Field(
+        pattern=r"^/[^/]+/[^/]+$",
+        max_length=MAX_NAME,
+        description="`/owner/repo`, any letter case; the version goes in `ref`.",
     )
-    query: str = Field(min_length=1)
-    tags: list[str] = Field(default_factory=list, description="Only chunks of articles so tagged.")
+    ref: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Exact imported ref; default version if empty.",
+    )
+    query: str = Field(min_length=1, max_length=MAX_QUERY)
+    tags: list[Tag] = Field(
+        default_factory=list,
+        max_length=MAX_TAGS,
+        description="Only chunks of articles so tagged. Case-insensitive; a comma separates tags.",
+    )
     tags_match: TagMatch = Field(
         default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
     )
     limit: int = Field(default=5, ge=1, le=50)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _normalize_tags(cls, value: object) -> object:
+        """Split on commas, strip, lowercase (as ingestion stores them), drop blanks and repeats."""
+        if not isinstance(value, list | tuple):
+            return value
+        if not all(isinstance(v, str) for v in value):
+            return value
+        return list(
+            dict.fromkeys(t for v in value for p in v.split(",") if (t := p.strip().lower()))
+        )
+
+
+class Span(_Dto):
+    """A `[start, end)` range of characters."""
+
+    start: int
+    end: int
 
 
 class SearchResultOut(_Dto):
@@ -52,9 +101,7 @@ class SearchResultOut(_Dto):
     tags: list[str]
     score: float = Field(description="Higher is better; only comparable within one search.")
     snippet: str = Field(description="Verbatim text of the chunk, possibly cut at either end.")
-    highlights: list[tuple[int, int]] = Field(
-        description="`[start, end)` offsets into `snippet` of the words that matched."
-    )
+    highlights: list[Span] = Field(description="Offsets into `snippet` of the words that matched.")
 
     @classmethod
     def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
@@ -74,14 +121,17 @@ class SearchResultOut(_Dto):
             tags=list(row.tags),
             score=hit.score,
             snippet=hit.snippet,
-            highlights=list(hit.highlights),
+            highlights=[Span(start=a, end=b) for a, b in hit.highlights],
         )
 
 
 class CoverageOut(_Dto):
     """How much of the index the answer stands on."""
 
-    candidates: int = Field(description="Matching chunks the search looked at.")
+    candidates: int = Field(
+        description="Lower bound: matching chunks the search looked at, at most `limit` + 1."
+    )
+    # Constant (0) while BM25 is the only mode; the shape is mode-agnostic on purpose.
     reranked: int = Field(description="Of those, how many a reranker reordered.")
     complete: bool = Field(description="False when more matches exist than `limit` allowed.")
 
@@ -95,6 +145,7 @@ class SearchDocsResult(_Dto):
     retrieval_mode: RetrievalMode
     reranked: bool
     coverage: CoverageOut
+    # Always null until a mode that can fall back exists.
     fallback_reason: str | None = Field(
         default=None, description="Why a better mode was not used, when one was asked for."
     )

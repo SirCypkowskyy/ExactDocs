@@ -113,7 +113,7 @@ For a local setup without a network port: `uvx exactdocs serve --stdio` (no toke
 | `list_articles(library, version?, path_prefix?, tags?)` | The article tree of a version |
 | `read_article(library, version?, path)` | A full article, verbatim |
 | `search_docs(library, ref?, query, tags?, tags_match?, limit?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
-| `read_chunk(chunk_id)` | Fetch a neighboring section of a search result |
+| `read_chunk(chunk_id)` | Fetch a neighboring section of a search result (planned: E7-03; until then follow `source_url`) |
 
 Library IDs are `/owner/repo`; without a version, a library's **default version** is used (the highest imported stable semver tag, else the default branch, else the most recently imported version, unless pinned), and every response
 says which version answered. Planned: hosts that support MCP Apps (Claude, ChatGPT) will

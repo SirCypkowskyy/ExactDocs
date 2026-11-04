@@ -84,21 +84,26 @@ class SearchDocsUseCase:
 
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
         """Search the active manifest of one exact version; never fall back to another version."""
+        # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
         version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
-        tag_filter = TagFilter(tags=tuple(dict.fromkeys(query.tags)), match=query.tags_match)
+        tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         # One more than asked for tells whether the answer was cut short.
         found = await self.search.search(
             version.manifest_id, text.value, tag_filter, query.limit + 1
         )
-        results = []
-        for hit in found[: query.limit]:
-            # ponytail: one lookup per hit (at most 50); a batch `get_many` if it ever shows.
-            stored = await self.chunks.get(version.manifest_id, hit.chunk_id)
-            if stored is not None:  # gone since the search: the manifest was collected
-                results.append(SearchResultOut.from_models(version, stored, hit))
+        shown = found[: query.limit]
+        stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in shown])
+        # A chunk gone since the search (the manifest was collected) leaves no result, and is not
+        # counted as a candidate either, so results and coverage stay consistent.
+        results = [
+            SearchResultOut.from_models(version, stored[hit.chunk_id], hit)
+            for hit in shown
+            if hit.chunk_id in stored
+        ]
+        vanished = len(shown) - len(results)
         return SearchDocsResult(
             library=version.library,
             version=version.version,
@@ -106,7 +111,7 @@ class SearchDocsUseCase:
             retrieval_mode=RetrievalMode.BM25,
             reranked=False,
             coverage=CoverageOut(
-                candidates=len(found), reranked=0, complete=len(found) <= query.limit
+                candidates=len(found) - vanished, reranked=0, complete=len(found) <= query.limit
             ),
             results=results,
         )

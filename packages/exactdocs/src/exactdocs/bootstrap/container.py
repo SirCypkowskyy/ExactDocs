@@ -88,9 +88,7 @@ class Container:
         )
         retrieval = RetrievalModule.build(
             versions=CatalogIndexedVersions(catalog.resolve_version),
-            searchable=CatalogSearchableVersions(
-                catalog.resolve_version, catalog.get_library, catalog.get_active_manifest
-            ),
+            searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
             manifests=CatalogActiveManifests(
                 catalog.get_active_manifest, catalog.get_manifest_states
             ),

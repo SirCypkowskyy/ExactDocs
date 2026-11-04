@@ -149,9 +149,7 @@ async def test_a_state_the_catalog_adds_later_maps_to_other_so_it_is_kept() -> N
     }
 
 
-SEARCHABLE = CatalogSearchableVersions(
-    CATALOG.resolve_version, CATALOG.get_library, CATALOG.get_active_manifest
-)
+SEARCHABLE = CatalogSearchableVersions(CATALOG.get_library, CATALOG.get_active_manifest)
 
 
 async def test_a_searchable_version_needs_an_active_manifest_and_names_its_source() -> None:
@@ -172,3 +170,4 @@ async def test_a_searchable_version_needs_an_active_manifest_and_names_its_sourc
     assert await SEARCHABLE.find("/acme/payments", None) == found  # the default version
     assert await SEARCHABLE.find("/acme/payments", "abc12340") is None  # not an exact ref
     assert await SEARCHABLE.find("/vuejs/docs", None) is None
+    assert await SEARCHABLE.find("/acme/payments", "v 1") is None  # not a ref at all

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemorySearchIndex
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchDocsQuery
@@ -166,7 +168,9 @@ async def test_a_result_carries_its_location_and_how_it_was_found(
     assert first.next_chunk_id
     assert first.commit_sha == "b" * 40
     assert first.source_url == f"{REPO}/blob/{'b' * 40}/docs/guide/resilience.md#retry_policy"
-    assert [first.snippet[a:b] for a, b in first.highlights] == ["retry_policy"]
+    assert [first.snippet[a:b] for a, b in ((h.start, h.end) for h in first.highlights)] == [
+        "retry_policy"
+    ]
     assert (result.retrieval_mode, result.reranked, result.fallback_reason) == (
         RetrievalMode.BM25,
         False,
@@ -208,3 +212,92 @@ async def test_the_tag_filter_decides_which_chunks_are_ranked(
 async def test_a_blank_query_is_refused(retrieval: RetrievalModule) -> None:
     with pytest.raises(EmptySearchTextError):
         await retrieval.search_docs(SearchDocsQuery(library=LIB, query="  "))
+
+
+@pytest.mark.parametrize("ref", ["", "  ", None])
+async def test_a_blank_ref_is_the_default_version(
+    retrieval: RetrievalModule, ref: str | None
+) -> None:
+    result = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, ref=ref, query="retry_policy")
+    )
+
+    assert result.version == "v1.4.0"
+
+
+@pytest.mark.parametrize(
+    "library", ["/acme/payments/v1.3.0", "acme/payments", "/acme", "react", ""]
+)
+def test_a_library_must_be_owner_slash_repo_so_it_cannot_carry_a_version(library: str) -> None:
+    with pytest.raises(ValidationError):
+        SearchDocsQuery(library=library, query="x")
+
+
+def test_tags_are_split_stripped_lowercased_and_deduplicated_in_one_place() -> None:
+    query = SearchDocsQuery(library=LIB, query="x", tags=["Docs, API", " ", "", "docs", "auth"])
+
+    assert query.tags == ["docs", "api", "auth"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"query": "x" * 1001},
+        {"query": "x", "ref": "r" * 257},
+        {"query": "x", "tags": [f"t{i}" for i in range(21)]},
+        {"query": "x", "tags": ["t" * 101]},
+    ],
+)
+def test_input_over_the_caps_is_refused(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        SearchDocsQuery(library=LIB, **fields)
+
+
+async def test_a_tag_in_another_letter_case_still_matches(retrieval: RetrievalModule) -> None:
+    result = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, ref="v1.4.0", query="token", tags=["API"])
+    )
+
+    assert {r.article_path for r in result.results} == {"docs/api/auth.md", "docs/api/client.md"}
+
+
+async def test_a_chunk_that_vanished_is_neither_a_result_nor_a_candidate() -> None:
+    gone: set[str] = set()
+
+    class Vanishing(InMemoryChunkRepository):
+        async def get_many(self, manifest_id, chunk_ids):
+            found = await super().get_many(manifest_id, chunk_ids)
+            return {i: c for i, c in found.items() if i not in gone}
+
+    chunks = Vanishing()
+    versions = FakeVersions({"v1.4.0": version("v1.4.0", "m14", "b")}, default="v1.4.0")
+    module = RetrievalModule.build(
+        versions=versions,
+        searchable=versions,
+        manifests=versions,
+        chunks=chunks,
+        search=InMemorySearchIndex(chunks),
+    )
+    done = await module.index_manifest(
+        IndexManifestCommand(
+            manifest_id="m14",
+            library=LIB,
+            ref="v1.4.0",
+            config_hash="cfg",
+            articles=[
+                ArticleChunksIn(
+                    path=p,
+                    blob_sha=blob,
+                    chunks=cs,
+                )
+                for p, (blob, cs, _) in NEW.items()
+            ],
+        )
+    )
+    gone.add(done.chunk_ids["docs/api/auth.md"][0])  # collected between the search and the read
+    assert len(await chunks.get_many("m14", done.chunk_ids["docs/api/auth.md"])) == 0
+
+    result = await module.search_docs(SearchDocsQuery(library=LIB, query="token"))
+
+    assert [r.article_path for r in result.results] == ["docs/api/client.md"]
+    assert result.coverage.candidates == len(result.results)
