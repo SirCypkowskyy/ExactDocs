@@ -1,5 +1,6 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Any, Self
 
@@ -545,18 +546,49 @@ _Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
 _Description = Annotated[str, Field(max_length=MAX_DESCRIPTION)]
 
 
-class LibraryPatch(_Dto):
-    """The fields a user may change; a field that is absent or null stays as it is."""
-
-    title: (
-        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TITLE)]
-        | None
-    ) = None
-    description: (
-        Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_DESCRIPTION)] | None
-    ) = Field(
-        default=None, description="Empty is allowed: it keeps the library without a description."
+def _clean(text: str) -> str:
+    r"""Drop control and format characters (zero-width, bidi, tags, escapes); keep \n and \t."""
+    return "".join(
+        c for c in text if c in "\n\t" or unicodedata.category(c) not in {"Cc", "Cf", "Co", "Cs"}
     )
+
+
+class LibraryPatch(_Dto):
+    """The fields a user may change; at least one must be given."""
+
+    title: Annotated[str, StringConstraints(min_length=1, max_length=MAX_TITLE)] | None = Field(
+        default=None, description="A single line of text. Null or absent: unchanged."
+    )
+    description: Annotated[str, StringConstraints(max_length=MAX_DESCRIPTION)] | None = Field(
+        default=None,
+        description="Empty is allowed: no description. Null or absent: unchanged.",
+    )
+
+    @field_validator("title")
+    @classmethod
+    def _single_line(cls, title: str | None) -> str | None:
+        if title is None:
+            return None
+        if any(unicodedata.category(c) in {"Zl", "Zp"} or c in "\n\r\v\f\x85" for c in title):
+            message = "the title must be a single line"
+            raise ValueError(message)
+        title = " ".join(_clean(title).split())
+        if not title:
+            message = "the title must have visible text"
+            raise ValueError(message)
+        return title
+
+    @field_validator("description")
+    @classmethod
+    def _plain(cls, description: str | None) -> str | None:
+        return None if description is None else _clean(description).strip()
+
+    @model_validator(mode="after")
+    def _says_something(self) -> Self:
+        if self.title is None and self.description is None:
+            message = "give a title or a description"
+            raise ValueError(message)
+        return self
 
 
 class UpdateLibraryCommand(LibraryPatch):

@@ -31,6 +31,11 @@ from exactdocs.ingestion.models import (
         ("# Acme\n\n<img src=x>\n\nText.\n", "Acme", "Text."),
         ("# Ac\u200bme\n\nTe\u202ext\x1b[31m.\n", "Acme", "Text[31m."),
         ("#\n\nText.\n", None, "Text."),
+        ("# Acme\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter table.\n", "Acme", "After table."),
+        ("# Acme\n\n[Docs](http://x.y) | [API](http://x.z)\n\nReal.\n", "Acme", "Real."),
+        ("# Acme\n\n[Docs](http://x.y)\n\nReal.\n", "Acme", "Real."),
+        ("# [Acme](http://x.y)\n\nSee [the docs](http://x.y) now.\n", "Acme", "See the docs now."),
+        ("<h1 align=center>Acme</h1>\n\nText.\n", None, "Text."),
     ],
 )
 def test_extraction(source: str, title: str | None, description: str | None) -> None:

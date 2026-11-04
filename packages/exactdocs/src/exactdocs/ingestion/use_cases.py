@@ -551,15 +551,19 @@ def _readme(folder: Path, limit: int) -> ReadmeSummary:
     """Summarize the root README (``README.md``, else ``README.mdx``); nothing if there is none.
 
     It is read whatever the path selection says (the git gateway always fetches it) and is as
-    untrusted as any article. A README that is a symlink, too big or not UTF-8 counts as absent.
+    untrusted as any article. A README that is a symlink, not a plain file, too big or not
+    UTF-8 counts as absent (the first of the two names that exists decides). This never raises:
+    the summary is a nicety and must not fail an import whose articles are fine.
     """
     for name in ("README.md", "README.mdx"):
         try:
             data = _read(folder / name, limit)
-            if not isinstance(data, Skip):
-                return readme_summary(data.decode("utf-8"))
-        except OSError, UnicodeDecodeError:
+            return ReadmeSummary() if isinstance(data, Skip) else readme_summary(data.decode())
+        except FileNotFoundError:
             continue
+        except Exception:
+            log.exception("could not summarize the README of a checkout")
+            return ReadmeSummary()
     return ReadmeSummary()
 
 

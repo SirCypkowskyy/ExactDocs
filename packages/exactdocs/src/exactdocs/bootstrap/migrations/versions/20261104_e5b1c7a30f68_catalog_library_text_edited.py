@@ -1,14 +1,14 @@
 """Remember which of a library's title and description a user typed (README imports keep them).
 
 Revision ID: e5b1c7a30f68
-Revises: d7e2a4b9c150
+Revises: e7a4b1c9d2f6
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "e5b1c7a30f68"
-down_revision = "d7e2a4b9c150"
+down_revision = "e7a4b1c9d2f6"
 branch_labels = None
 depends_on = None
 

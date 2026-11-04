@@ -128,13 +128,12 @@ class UpdateLibraryUseCase:
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
-        changes: dict[str, str | bool] = {}
-        if command.title is not None:
-            changes |= {"title": command.title, "title_edited": True}
-        if command.description is not None:
-            changes |= {"description": command.description, "description_edited": True}
-        updated = replace(library, **changes)
-        await self.repository.save(updated)
+        await self.repository.set_text(
+            library.id, title=command.title, description=command.description
+        )
+        updated = await self.repository.get(library.id)
+        if updated is None:  # deleted in between
+            raise LibraryNotFoundError(command.id)
         return LibraryDetail.from_model(updated)
 
 
@@ -149,6 +148,10 @@ class ApplyReadmeUseCase:
 
         The README of any other version is ignored. No heading means the repository name as
         title, no paragraph means no description, so a field never keeps text a README dropped.
+
+        Only the two text columns are written, in one statement that keeps edited fields, so a
+        concurrent user edit survives. The caller does not retry: if this fails the library keeps
+        its old text until the default version is imported again.
         """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
@@ -156,15 +159,11 @@ class ApplyReadmeUseCase:
         default = library.default_version()
         if default is None or default.ref != VersionRef(command.ref):
             return
-        title = library.title if library.title_edited else command.title
-        description = library.description if library.description_edited else command.description
-        updated = replace(
-            library,
-            title=title or library.id.value.rsplit("/", 1)[-1],
-            description=description or "",
+        await self.repository.follow_readme(
+            library.id,
+            title=command.title or library.id.value.rsplit("/", 1)[-1],
+            description=command.description or "",
         )
-        if updated != library:
-            await self.repository.save(updated)
 
 
 @dataclass(frozen=True, slots=True)

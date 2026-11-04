@@ -1,6 +1,6 @@
 """Title and description of a library: README defaults for the default version, user edits win."""
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import pytest
@@ -10,7 +10,12 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
-from exactdocs.catalog.dtos import ApplyReadmeCommand, GetLibraryQuery, UpdateLibraryCommand
+from exactdocs.catalog.dtos import (
+    ApplyReadmeCommand,
+    GetLibraryQuery,
+    LibraryPatch,
+    UpdateLibraryCommand,
+)
 from exactdocs.catalog.errors import LibraryNotFoundError
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
 from exactdocs.catalog.module import CatalogModule
@@ -164,3 +169,67 @@ def test_a_title_must_have_text_and_stay_short(title: str) -> None:
 
 def repository_of(catalog: CatalogModule) -> InMemoryLibraryRepository:
     return REPOSITORIES[id(catalog)]
+
+
+@dataclass
+class EditsBetweenReadAndWrite(InMemoryLibraryRepository):
+    """A user edit lands after the import read the library and before it writes."""
+
+    edit_once: bool = True
+
+    async def get(self, library_id: LibraryId) -> Library | None:
+        found = await super().get(library_id)
+        if self.edit_once:
+            self.edit_once = False
+            await self.set_text(library_id, title="Payments SDK", description=None)
+        return found
+
+
+async def test_an_edit_between_the_import_read_and_write_survives() -> None:
+    repository = EditsBetweenReadAndWrite.of(
+        [
+            Library(
+                id=LibraryId(LIBRARY),
+                title="payments",
+                source_url="https://github.com/acme/payments",
+                host=HostKind.GITHUB,
+                versions=frozenset({MAIN}),
+                default_branch=VersionRef("main"),
+            )
+        ]
+    )
+    catalog = CatalogModule.build(
+        repository=repository, manifests=InMemoryManifestRepository(repository)
+    )
+
+    await catalog.apply_readme(
+        ApplyReadmeCommand(library=LIBRARY, ref="main", title="README", description="Text.")
+    )
+
+    assert await texts(catalog) == ("Payments SDK", "Text.")
+    assert (await repository.get(LibraryId(LIBRARY))).title_edited  # ty: ignore[unresolved-attribute]
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {},
+        {"title": None},
+        {"title": None, "description": None},
+        {"title": "   "},
+        {"title": "two\nlines"},
+        {"title": "sep\u2028arated"},
+        {"title": "\u200b\u202e"},
+        {"title": "x" * 201},
+        {"description": "x" * 1001},
+    ],
+)
+def test_a_bad_patch_is_refused(patch: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        LibraryPatch(**patch)  # ty: ignore[invalid-argument-type]
+
+
+def test_invisible_characters_and_extra_spaces_are_removed() -> None:
+    patch = LibraryPatch(title=" Pay\u200bments \x1b[31m  SDK\u202e ", description="a\u200bb\x07\n")
+
+    assert (patch.title, patch.description) == ("Payments [31m SDK", "ab")

@@ -18,6 +18,7 @@ from sqlalchemy import (
     Table,
     Text,
     and_,
+    case,
     delete,
     exists,
     insert,
@@ -187,6 +188,37 @@ class SqliteLibraryRepository:
                 .on_conflict_do_update(index_elements=[libraries.c.id], set_=values)
             )
             await _insert_versions(connection, library)
+
+    async def set_text(
+        self, library_id: LibraryId, *, title: str | None, description: str | None
+    ) -> None:
+        """Update only the given columns and their edited flags."""
+        values: dict[str, str | bool] = {}
+        if title is not None:
+            values |= {"title": title, "title_edited": True}
+        if description is not None:
+            values |= {"description": description, "description_edited": True}
+        if not values:
+            return
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                update(libraries).where(libraries.c.id == library_id.value).values(**values)
+            )
+
+    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
+        """One UPDATE that keeps every field whose edited flag is set."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                update(libraries)
+                .where(libraries.c.id == library_id.value)
+                .values(
+                    title=case((libraries.c.title_edited, libraries.c.title), else_=title),
+                    description=case(
+                        (libraries.c.description_edited, libraries.c.description),
+                        else_=description,
+                    ),
+                )
+            )
 
     async def _load(self, *where: ColumnElement[bool]) -> Sequence[Library]:
         chosen = select(libraries.c.id).where(*where)

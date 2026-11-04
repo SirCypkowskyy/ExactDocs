@@ -3443,7 +3443,8 @@
                 "type": "null"
               }
             ],
-            "title": "Title"
+            "title": "Title",
+            "description": "A single line of text. Null or absent: unchanged."
           },
           "description": {
             "anyOf": [
@@ -3456,13 +3457,13 @@
               }
             ],
             "title": "Description",
-            "description": "Empty is allowed: it keeps the library without a description."
+            "description": "Empty is allowed: no description. Null or absent: unchanged."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "LibraryPatch",
-        "description": "The fields a user may change; a field that is absent or null stays as it is."
+        "description": "The fields a user may change; at least one must be given."
       },
       "LibrarySettingsOut": {
         "properties": {

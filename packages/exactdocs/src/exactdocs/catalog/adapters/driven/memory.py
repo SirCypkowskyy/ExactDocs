@@ -62,6 +62,29 @@ class InMemoryLibraryRepository:
         merged = known | {v.ref: v for v in library.versions if v.ref not in known}
         self.libraries[library.id] = replace(library, versions=frozenset(merged.values()))
 
+    async def set_text(
+        self, library_id: LibraryId, *, title: str | None, description: str | None
+    ) -> None:
+        """Set the given fields and mark them as edited."""
+        if (stored := self.libraries.get(library_id)) is None:
+            return
+        changes: dict[str, str | bool] = {}
+        if title is not None:
+            changes |= {"title": title, "title_edited": True}
+        if description is not None:
+            changes |= {"description": description, "description_edited": True}
+        self.libraries[library_id] = replace(stored, **changes)
+
+    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
+        """Set the fields no user edited."""
+        if (stored := self.libraries.get(library_id)) is None:
+            return
+        self.libraries[library_id] = replace(
+            stored,
+            title=stored.title if stored.title_edited else title,
+            description=stored.description if stored.description_edited else description,
+        )
+
 
 @dataclass(slots=True)
 class InMemoryManifestRepository:

@@ -791,14 +791,17 @@ export interface components {
         };
         /**
          * LibraryPatch
-         * @description The fields a user may change; a field that is absent or null stays as it is.
+         * @description The fields a user may change; at least one must be given.
          */
         readonly LibraryPatch: {
-            /** Title */
+            /**
+             * Title
+             * @description A single line of text. Null or absent: unchanged.
+             */
             readonly title?: string | null;
             /**
              * Description
-             * @description Empty is allowed: it keeps the library without a description.
+             * @description Empty is allowed: no description. Null or absent: unchanged.
              */
             readonly description?: string | null;
         };

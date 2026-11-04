@@ -653,3 +653,39 @@ def test_decode(data: bytes, expected: str | ProblemCode) -> None:
         assert result.code == expected
     else:
         assert result == expected
+
+
+async def test_a_readme_that_is_a_symlink_is_absent(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": INSTALL.encode(), "secret.md": README},
+        links={"README.md": "secret.md"},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+
+
+async def test_a_readme_that_is_not_a_plain_file_is_absent(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode()})
+    world.gateway.after_write = lambda folder: os.mkfifo(folder / "README.md")
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+
+
+async def test_a_summary_that_blows_up_does_not_fail_the_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def explode(source: str) -> object:
+        raise RecursionError(source)
+
+    monkeypatch.setattr("exactdocs.ingestion.use_cases.readme_summary", explode)
+    world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "README.md": README})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", None, None)]
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]

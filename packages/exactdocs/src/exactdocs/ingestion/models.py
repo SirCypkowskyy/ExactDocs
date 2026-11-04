@@ -117,6 +117,7 @@ _FrontMatterLoader.yaml_implicit_resolvers = {
     for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 _MARKDOWN = MarkdownIt("commonmark")
+_README_MARKDOWN = MarkdownIt("commonmark").enable("table")  # a table is not a description
 
 
 def malformed_front_matter_length(body: str) -> int:
@@ -271,7 +272,7 @@ def readme_summary(source: str) -> ReadmeSummary:
     and paragraphs with no text (badges, images), are skipped. Without a heading the first
     paragraph of the file is used.
     """
-    tokens = _MARKDOWN.parse(parse_article("README.md", source).body)
+    tokens = _README_MARKDOWN.parse(parse_article("README.md", source).body)
     title, start = None, 0
     for index, token in enumerate(tokens):
         if token.type == "heading_open" and (text := _inline_text(tokens[index + 1])):
@@ -282,20 +283,34 @@ def readme_summary(source: str) -> ReadmeSummary:
         if (
             tokens[index].type == "paragraph_open"
             and tokens[index].level == 0
-            and (text := _inline_text(tokens[index + 1]))
+            and (text := _inline_text(tokens[index + 1], skip_link_only=True))
         ):
             description = text[:README_DESCRIPTION_MAX].rstrip()
             break
     return ReadmeSummary(title=title, description=description)
 
 
-def _inline_text(inline: Token) -> str:
-    """Join the visible text of an inline token, collapsing whitespace."""
-    words = (
-        " " if child.type in {"softbreak", "hardbreak"} else child.content
-        for child in inline.children or []
-        if child.type in {"text", "code_inline", "softbreak", "hardbreak"}
-    )
+def _inline_text(inline: Token, *, skip_link_only: bool = False) -> str:
+    """Join the visible text of an inline token, collapsing whitespace.
+
+    With ``skip_link_only`` a line that is nothing but links (a nav bar) gives ``""``.
+    """
+    words, outside, in_link = [], [], False
+    for child in inline.children or []:
+        match child.type:
+            case "link_open":
+                in_link = True
+            case "link_close":
+                in_link = False
+            case "softbreak" | "hardbreak":
+                words.append(" ")
+                outside.append(" ")
+            case "text" | "code_inline":
+                words.append(child.content)
+                if not in_link:
+                    outside.append(child.content)
+    if skip_link_only and not "".join(outside).strip(" |-*\u00b7\u2022"):
+        return ""
     return " ".join("".join(words).split())
 
 
