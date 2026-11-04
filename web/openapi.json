@@ -2890,19 +2890,30 @@
             "type": "string",
             "title": "Path"
           },
+          "code": {
+            "$ref": "#/components/schemas/ProblemCode"
+          },
           "reason": {
             "type": "string",
-            "title": "Reason"
+            "title": "Reason",
+            "description": "A sentence for people; may change, branch on `code`."
+          },
+          "is_skip": {
+            "type": "boolean",
+            "title": "Is Skip",
+            "description": "False when the file was imported despite the problem."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "path",
-          "reason"
+          "code",
+          "reason",
+          "is_skip"
         ],
         "title": "FileProblemSummary",
-        "description": "A file the job skipped and the reason."
+        "description": "A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable."
       },
       "HostKind": {
         "type": "string",
@@ -3418,6 +3429,21 @@
         ],
         "title": "LibrarySummary",
         "description": "A library and its imported versions."
+      },
+      "ProblemCode": {
+        "type": "string",
+        "enum": [
+          "binary",
+          "too_large",
+          "undecodable",
+          "not_a_file",
+          "unreadable",
+          "bad_file_name",
+          "front_matter",
+          "truncated"
+        ],
+        "title": "ProblemCode",
+        "description": "Why a file shows up in a job's problems; stable, clients may branch on it."
       },
       "RefOut": {
         "properties": {

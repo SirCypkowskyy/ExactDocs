@@ -56,7 +56,10 @@ function serve(libraries: unknown[], jobs: unknown[] | (() => unknown[]) = []) {
     if (url.includes("/v1/jobs/")) {
       return Response.json({
         ...job(),
-        problems: [{ path: "docs/broken.md", reason: "invalid front matter" }],
+        problems: [
+          { path: "docs/broken.md", code: "undecodable", reason: "not text", is_skip: true },
+          { path: "docs/odd.md", code: "front_matter", reason: "bad tags", is_skip: false },
+        ],
       });
     }
     return new Response("{}", { status: 404 });
@@ -128,6 +131,7 @@ describe("libraries slice", () => {
     expect(screen.getAllByText("git fetch failed: repository not found").length).toBeGreaterThan(0);
     expect(await screen.findByText("docs/broken.md")).toBeInTheDocument();
     expect(screen.getByText("Skipped files (1)")).toBeInTheDocument();
+    expect(screen.queryByText("docs/odd.md")).not.toBeInTheDocument();
   });
 
   it("keeps a failed version visible when another version synced", async () => {

@@ -7,7 +7,7 @@ import pytest
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ListLibraryJobsQuery
 from exactdocs.ingestion.errors import JobNotFoundError, UnknownJobKindError
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
+from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
 from exactdocs.ingestion.ports import JobProgress
 from exactdocs_kernel import ValidationError
 
@@ -56,7 +56,7 @@ async def test_a_job_that_finished_4_of_10_files_reports_it(build_module) -> Non
 
 async def test_skipped_files_are_listed_with_their_reason(build_module) -> None:
     async def skip_one(_job: Job, progress: JobProgress) -> None:
-        await progress.problem("assets/logo.png", "binary")
+        await progress.problem("assets/logo.png", ProblemCode.BINARY, "binary file")
 
     module = build_module({IMPORT: skip_one})
     waiting = await module.enqueue_job(enqueue())
@@ -64,7 +64,9 @@ async def test_skipped_files_are_listed_with_their_reason(build_module) -> None:
     await module.run_next_job()
 
     problems = (await module.get_job(GetJobQuery(job_id=waiting.id))).problems
-    assert [(p.path, p.reason) for p in problems] == [("assets/logo.png", "binary")]
+    assert [(p.path, p.code, p.is_skip) for p in problems] == [
+        ("assets/logo.png", ProblemCode.BINARY, True)
+    ]
 
 
 async def test_a_domain_error_fails_the_job_with_its_message(build_module) -> None:
@@ -198,7 +200,7 @@ async def test_an_interrupted_job_is_cleaned_up_then_queued_to_run_from_the_begi
 
     module = build_module({IMPORT: import_again}, {IMPORT: discard_pending})
     interrupted = queued(clock, "j1").started(clock.now()).progressed(done=4, total=10)
-    await jobs.add(interrupted.with_problem("x", "y"))
+    await jobs.add(interrupted.with_problem("x", ProblemCode.BINARY, "y"))
 
     await module.recover_jobs()
 

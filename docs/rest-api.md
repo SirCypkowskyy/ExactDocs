@@ -73,3 +73,27 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
   Like `/repositories/check`, both accept `file://`, localhost and private addresses (see
   SECURITY.md).
+
+## Job problems
+
+`GET /api/v1/jobs/{id}` lists the problems an import found per file as
+`{path, code, reason, is_skip}`. `reason` is a sentence for people and may change; branch on
+`code`. `is_skip` is true when the file was left out of the version, false when it was imported
+anyway. `skipped` on `GET /api/v1/jobs/latest` is the number of skipped files, exact even when
+the list is capped.
+
+| `code` | `is_skip` | Meaning |
+|---|---|---|
+| `binary` | true | the file contains NUL bytes |
+| `too_large` | true | the file is over the per-file size cap (2 MiB by default) |
+| `undecodable` | true | the file is not text in UTF-8, UTF-16/32 with a BOM or Windows-1252 |
+| `not_a_file` | true | not a regular file (for example a symlink) |
+| `unreadable` | true | the file could not be read |
+| `bad_file_name` | true | the file name is not valid UTF-8 |
+| `front_matter` | false | the article was imported, its front matter is malformed or partly ignored |
+| `truncated` | false | marker with an empty `path`: more files were skipped than are listed |
+
+Text is decoded as UTF-8, then UTF-16/32 announced by a byte order mark, then Windows-1252
+(which covers Latin-1 files). At most 1000 skips and 200 `front_matter` notes are listed.
+New codes may be added: clients must treat an unknown `code` as a generic problem, using
+`is_skip` to tell skips from notes.

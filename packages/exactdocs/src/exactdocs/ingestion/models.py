@@ -266,11 +266,32 @@ class JobState(StrEnum):
     FAILED = "failed"
 
 
+class ProblemCode(StrEnum):
+    """Why a file shows up in a job's problems; stable, clients may branch on it."""
+
+    BINARY = "binary"
+    TOO_LARGE = "too_large"
+    UNDECODABLE = "undecodable"
+    NOT_A_FILE = "not_a_file"
+    UNREADABLE = "unreadable"
+    BAD_FILE_NAME = "bad_file_name"
+    FRONT_MATTER = "front_matter"
+    """The article was imported, but its front matter is malformed or partly ignored."""
+    TRUNCATED = "truncated"
+    """The marker that says more files were skipped than ``MAX_JOB_PROBLEMS``."""
+
+    @property
+    def is_skip(self) -> bool:
+        """Whether the file was left out of the version (as opposed to imported with a note)."""
+        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED}
+
+
 @dataclass(frozen=True, slots=True)
 class FileProblem:
-    """A file a job skipped, and why."""
+    """A problem with one file of an import: ``code`` is the stable kind, ``reason`` the text."""
 
     path: str
+    code: ProblemCode
     reason: str
 
 
@@ -293,6 +314,8 @@ class Job:
     done: int = 0
     total: int = 0
     problems: tuple[FileProblem, ...] = ()
+    notes: int = 0
+    """How many of ``problems`` are notes on imported files (derived, not stored)."""
     error: str | None = None
     created_at: datetime
     started_at: datetime | None = None
@@ -332,17 +355,39 @@ class Job:
             raise InvalidProgressError(done, total)
         return replace(self, done=done, total=total)
 
-    def with_problem(self, path: str, reason: str) -> Self:
-        """Record a skipped file; the job goes on. Beyond ``MAX_JOB_PROBLEMS`` they are dropped.
+    def with_problem(self, path: str, code: ProblemCode, reason: str) -> Self:
+        """Record a problem with a file; the job goes on.
 
-        # E3-05b: the listing of skipped files is designed there; this is only a safeguard.
+        Skips are kept up to ``MAX_JOB_PROBLEMS``, then counted in one ``truncated`` marker.
+        Notes (``front_matter``) have a separate, lower ``MAX_JOB_NOTES`` and are dropped beyond
+        it, so they can never crowd skips out.
         """
-        if len(self.problems) > MAX_JOB_PROBLEMS:
-            return self
-        if len(self.problems) == MAX_JOB_PROBLEMS:
-            path, reason = "", "more files were skipped; they are not listed"
-            return replace(self, problems=(*self.problems, FileProblem(path, reason)))
-        return replace(self, problems=(*self.problems, FileProblem(path, reason)))
+        if code is ProblemCode.FRONT_MATTER:
+            if self.notes >= MAX_JOB_NOTES:
+                return self
+            problem = FileProblem(path, code, reason)
+            return replace(self, problems=(*self.problems, problem), notes=self.notes + 1)
+        if len(self.problems) - self.notes < MAX_JOB_PROBLEMS:
+            return replace(self, problems=(*self.problems, FileProblem(path, code, reason)))
+        # The marker is the last skip-sized entry; notes may have been appended after it.
+        marker = next(
+            (i for i, p in enumerate(self.problems) if p.code is ProblemCode.TRUNCATED), None
+        )
+        if marker is None:
+            problem = FileProblem("", ProblemCode.TRUNCATED, _dropped_reason(1))
+            return replace(self, problems=(*self.problems, problem))
+        dropped = _dropped(self.problems[marker]) + 1
+        problems = list(self.problems)
+        problems[marker] = FileProblem("", ProblemCode.TRUNCATED, _dropped_reason(dropped))
+        return replace(self, problems=tuple(problems))
+
+    @property
+    def skipped_count(self) -> int:
+        """Files left out of the version, including the ones past the cap."""
+        return sum(
+            _dropped(p) if p.code is ProblemCode.TRUNCATED else p.code.is_skip
+            for p in self.problems
+        )
 
     def succeeded(self, now: datetime) -> Self:
         """Mark the job as finished."""
@@ -360,6 +405,7 @@ class Job:
             done=0,
             total=0,
             problems=(),
+            notes=0,
             error=None,
             started_at=None,
             finished_at=None,
@@ -874,6 +920,17 @@ DEFAULT_MAX_IMPORT_BYTES = 256 * 2**20
 """An import whose selected articles add up to more than this many bytes fails."""
 
 MAX_JOB_PROBLEMS = 1000
+MAX_JOB_NOTES = 200
+
+
+def _dropped_reason(count: int) -> str:
+    return f"{count} more skipped files are not listed"
+
+
+def _dropped(marker: FileProblem) -> int:
+    return int(marker.reason.split()[0])
+
+
 """Skipped files a job lists; the rest are only counted in a last entry."""
 
 
