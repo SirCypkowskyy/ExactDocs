@@ -45,3 +45,46 @@ class UnknownAccountError(NotFoundError):
 
     def __init__(self) -> None:
         super().__init__("no account has this username")
+
+
+class InvalidTokenNameError(ValidationError):
+    """A token name is blank or too long."""
+
+    code = "invalid_token_name"
+
+    def __init__(self, max_length: int) -> None:
+        super().__init__(f"token name must be 1 to {max_length} characters")
+
+
+class InvalidTokenExpiryError(ValidationError):
+    """A token would expire before it exists."""
+
+    code = "invalid_token_expiry"
+
+    def __init__(self) -> None:
+        super().__init__("a token must expire in the future")
+
+
+class TooManyTokensError(ConflictError):
+    """The account already holds the most tokens it may."""
+
+    code = "too_many_tokens"
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"an account may hold at most {limit} API tokens; revoke one first")
+
+
+class InvalidTokenError(UnauthenticatedError):
+    """An API token that is unknown, expired or revoked; deliberately not told apart."""
+
+    def __init__(self) -> None:
+        super().__init__("the API token is invalid, expired or revoked")
+
+
+class UnknownTokenError(NotFoundError):
+    """No token of the caller has this id."""
+
+    code = "unknown_token"
+
+    def __init__(self) -> None:
+        super().__init__("no such token")

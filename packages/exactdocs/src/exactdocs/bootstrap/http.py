@@ -91,7 +91,7 @@ def create_app(container: Container) -> FastAPI:
         return Health(status="ok", version=__version__, schema_revision=revision)
 
     v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
-    # Reachable without a session: setup and sign-in/state/out. A test pins this list.
+    # Reachable without a caller: setup and sign-in/state/out. A test pins this list.
     v1.include_router(
         identity_http.build_router(
             create_first_admin=container.identity.create_first_admin,
@@ -101,9 +101,21 @@ def create_app(container: Container) -> FastAPI:
             secure_cookies=settings.secure_cookies,
         )
     )
-    # Everything else needs a signed-in caller. Add new domain routers here.
-    current_caller = identity_http.build_current_caller(
+    session_caller = identity_http.build_session_caller(
         identify_caller=container.identity.identify_caller
+    )
+    v1.include_router(
+        identity_http.build_tokens_router(
+            create_token=container.identity.create_token,
+            list_tokens=container.identity.list_tokens,
+            revoke_token=container.identity.revoke_token,
+            session_caller=session_caller,
+        )
+    )
+    # Everything else needs a caller: a session cookie or an API token. Add new domain routers here.
+    current_caller = identity_http.build_current_caller(
+        identify_caller=container.identity.identify_caller,
+        identify_token=container.identity.identify_token,
     )
     protected = APIRouter(dependencies=[Depends(current_caller)])
     protected.include_router(

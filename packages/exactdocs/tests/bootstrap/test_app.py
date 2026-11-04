@@ -226,7 +226,8 @@ def test_mcp_endpoint_answers_on_both_paths_without_redirect(
         path, json=INITIALIZE, headers=MCP_HEADERS, follow_redirects=False
     )
 
-    assert response.status_code == 200
+    # Reached (not redirected, not 404) and asking for an API token.
+    assert response.status_code == 401
 
 
 def test_mcp_rejects_unknown_hosts(localhost_client: TestClient) -> None:

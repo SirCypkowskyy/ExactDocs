@@ -7,6 +7,7 @@ from pydantic import SecretStr, ValidationError
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemorySessionRepository,
+    InMemoryTokenRepository,
 )
 from exactdocs.identity.dtos import AuthenticateQuery, CreateFirstAdminCommand
 from exactdocs.identity.errors import (
@@ -78,6 +79,7 @@ def identity(repository: InMemoryAccountRepository, hasher: FakeHasher) -> Ident
     return IdentityModule.build(
         repository=repository,
         sessions=InMemorySessionRepository(),
+        tokens=InMemoryTokenRepository(),
         hasher=hasher,
         clock=FixedClock(),
     )
@@ -134,6 +136,7 @@ async def test_a_lost_race_to_the_repository_is_refused_too(
     racing = IdentityModule.build(
         repository=RacedRepository(repository),
         sessions=InMemorySessionRepository(),
+        tokens=InMemoryTokenRepository(),
         hasher=hasher,
         clock=FixedClock(),
     )

@@ -270,9 +270,8 @@ async def test_mcp_ignores_the_session_cookie(
     with_cookie = browser.post("/mcp", json=INITIALIZE, headers={**MCP_HEADERS, **cookie_of(token)})
     without = browser.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
 
-    # Whatever MCP answers an anonymous client (it is open until API tokens, E2-03), the
-    # cookie changes nothing: it is not a credential there, so it grants no more.
-    assert with_cookie.status_code == without.status_code == 200
+    # MCP wants an API token: the cookie is not a credential there, so it changes nothing.
+    assert with_cookie.status_code == without.status_code == 401
     assert with_cookie.text == without.text
     assert token not in with_cookie.text
     assert "set-cookie" not in with_cookie.headers

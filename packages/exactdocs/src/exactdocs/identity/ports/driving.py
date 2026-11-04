@@ -6,10 +6,13 @@ from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
+    CreateTokenCommand,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
     SetupState,
+    TokenGrant,
+    TokenList,
 )
 
 
@@ -75,5 +78,37 @@ class ResetPassword(Protocol):
     """Set a new password and end every session of the account; ``UnknownAccountError`` if none."""
 
     async def __call__(self, command: ResetPasswordCommand) -> None:
+        """Run the use case."""
+        ...
+
+
+class CreateToken(Protocol):
+    """Mint an API token for an account; the secret is in the result and nowhere else."""
+
+    async def __call__(self, account: AccountSummary, command: CreateTokenCommand) -> TokenGrant:
+        """Run the use case; ``InvalidTokenExpiryError`` if ``expires_at`` is not in the future."""
+        ...
+
+
+class ListTokens(Protocol):
+    """The account's tokens, never their secrets."""
+
+    async def __call__(self, account: AccountSummary) -> TokenList:
+        """Run the use case."""
+        ...
+
+
+class RevokeToken(Protocol):
+    """Delete one of the account's tokens; ``UnknownTokenError`` when it has none by this id."""
+
+    async def __call__(self, account: AccountSummary, token_id: str) -> None:
+        """Run the use case."""
+        ...
+
+
+class IdentifyToken(Protocol):
+    """Who an API token acts as; raises ``InvalidTokenError`` when it is no good."""
+
+    async def __call__(self, token: str) -> AccountSummary:
         """Run the use case."""
         ...

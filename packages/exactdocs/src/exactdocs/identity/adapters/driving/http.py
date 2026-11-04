@@ -4,18 +4,26 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal, TypedDict
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.security import APIKeyCookie
+from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
+    CreateTokenCommand,
     SessionState,
+    TokenGrant,
+    TokenList,
 )
+from exactdocs.identity.errors import InvalidTokenError
 from exactdocs.identity.ports.driving import (
     CreateFirstAdmin,
+    CreateToken,
     GetSessionState,
     IdentifyCaller,
+    IdentifyToken,
+    ListTokens,
+    RevokeToken,
     SignIn,
     SignOut,
 )
@@ -42,23 +50,87 @@ _session_cookie = APIKeyCookie(
     auto_error=False,
 )
 
+# Only documents the scheme in OpenAPI; `current_caller` reads the raw header itself, so that
+# `Authorization: Bearer ` (empty) or any odd value is still refused rather than skipped.
+_api_token = HTTPBearer(
+    scheme_name="ApiToken",
+    description="An API token from `POST /api/v1/tokens`: `Authorization: Bearer exd_...`.",
+    auto_error=False,
+)
+
 type CurrentCaller = Callable[..., Awaitable[AccountSummary]]
 
 
-def build_current_caller(*, identify_caller: IdentifyCaller) -> CurrentCaller:
-    """Return the FastAPI dependency that answers "who is calling?" (401 when nobody is).
+def build_session_caller(*, identify_caller: IdentifyCaller) -> CurrentCaller:
+    """Return the dependency that accepts the session cookie only (401 otherwise)."""
 
-    Depend on it to require a signed-in caller (``Depends(current_caller)``); a route that needs
-    the account takes ``caller: Annotated[AccountSummary, Depends(current_caller)]``. It is the one
-    place that learns how a request proves who it is (today: the session cookie).
-    """
-
-    async def current_caller(
+    async def session_caller(
         session_token: Annotated[str | None, Depends(_session_cookie)] = None,
     ) -> AccountSummary:
         return await identify_caller(session_token)
 
+    return session_caller
+
+
+def build_current_caller(
+    *, identify_caller: IdentifyCaller, identify_token: IdentifyToken
+) -> CurrentCaller:
+    """Return the FastAPI dependency that answers "who is calling?" (401 when nobody is).
+
+    Depend on it to require a caller (``Depends(current_caller)``); a route that needs the
+    account takes ``caller: Annotated[AccountSummary, Depends(current_caller)]``. It is the one
+    place that learns how a request proves who it is: an API token in ``Authorization: Bearer``,
+    or else the session cookie. A bearer token that is wrong is refused outright, never
+    quietly replaced by a cookie that happens to be there.
+    """
+    session_caller = build_session_caller(identify_caller=identify_caller)
+
+    async def current_caller(
+        request: Request,
+        _documented: Annotated[HTTPAuthorizationCredentials | None, Depends(_api_token)] = None,
+        session_token: Annotated[str | None, Depends(_session_cookie)] = None,
+    ) -> AccountSummary:
+        authorization = request.headers.get("authorization")
+        if authorization is not None:
+            scheme, _, credentials = authorization.partition(" ")
+            if scheme.lower() != "bearer":
+                raise InvalidTokenError
+            return await identify_token(credentials.strip())
+        return await session_caller(session_token)
+
     return current_caller
+
+
+def build_tokens_router(
+    *,
+    create_token: CreateToken,
+    list_tokens: ListTokens,
+    revoke_token: RevokeToken,
+    session_caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/tokens``. Managing tokens takes a signed-in session, not a token.
+
+    So a leaked token cannot mint itself a successor that outlives its own revocation.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(session_caller)])
+    caller = Annotated[AccountSummary, Depends(session_caller)]
+
+    @router.post("/tokens", status_code=201)
+    async def create(
+        command: CreateTokenCommand, account: caller, response: Response
+    ) -> TokenGrant:
+        response.headers["Cache-Control"] = "no-store"  # the one time the secret is shown
+        return await create_token(account, command)
+
+    @router.get("/tokens")
+    async def list_all(account: caller) -> TokenList:
+        return await list_tokens(account)
+
+    @router.delete("/tokens/{token_id}", status_code=204)
+    async def revoke(token_id: str, account: caller) -> None:
+        await revoke_token(account, token_id)
+
+    return router
 
 
 def build_router(

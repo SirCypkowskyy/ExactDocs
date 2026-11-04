@@ -6,24 +6,37 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.identity.ports.driven import AccountRepository, PasswordHasher, SessionRepository
+from exactdocs.identity.ports.driven import (
+    AccountRepository,
+    PasswordHasher,
+    SessionRepository,
+    TokenRepository,
+)
 from exactdocs.identity.ports.driving import (
     Authenticate,
     CreateFirstAdmin,
+    CreateToken,
     GetSessionState,
     GetSetupState,
     IdentifyCaller,
+    IdentifyToken,
+    ListTokens,
     ResetPassword,
+    RevokeToken,
     SignIn,
     SignOut,
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
     CreateFirstAdminUseCase,
+    CreateTokenUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     IdentifyCallerUseCase,
+    IdentifyTokenUseCase,
+    ListTokensUseCase,
     ResetPasswordUseCase,
+    RevokeTokenUseCase,
     SignInUseCase,
     SignOutUseCase,
 )
@@ -42,6 +55,10 @@ class IdentityModule:
     identify_caller: IdentifyCaller
     get_session_state: GetSessionState
     reset_password: ResetPassword
+    create_token: CreateToken
+    list_tokens: ListTokens
+    revoke_token: RevokeToken
+    identify_token: IdentifyToken
 
     @classmethod
     def build(
@@ -49,6 +66,7 @@ class IdentityModule:
         *,
         repository: AccountRepository,
         sessions: SessionRepository,
+        tokens: TokenRepository,
         hasher: PasswordHasher,
         clock: Clock,
     ) -> Self:
@@ -63,5 +81,9 @@ class IdentityModule:
             sign_out=SignOutUseCase(sessions),
             identify_caller=identify_caller,
             get_session_state=GetSessionStateUseCase(repository, identify_caller),
-            reset_password=ResetPasswordUseCase(repository, sessions, hasher),
+            reset_password=ResetPasswordUseCase(repository, sessions, tokens, hasher),
+            create_token=CreateTokenUseCase(tokens, clock),
+            list_tokens=ListTokensUseCase(tokens),
+            revoke_token=RevokeTokenUseCase(tokens),
+            identify_token=IdentifyTokenUseCase(tokens, repository, clock),
         )

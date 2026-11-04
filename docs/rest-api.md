@@ -22,11 +22,12 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **First run**: until the first admin account exists, every `/api/v1` request except
   `POST /api/v1/setup`, `GET /api/v1/session` and the OpenAPI document is refused with 403
   `setup_required`, whatever the method (HEAD and OPTIONS included). `POST /api/v1/setup` creates the
-  admin once (409 `already_set_up` afterwards). Only `/api/v1` is guarded: `/mcp` and
-  `/.well-known/...` are not guarded by the setup yet; MCP access control comes with E2-03 (API
-  tokens).
-- **Authentication**: every `/api/v1` operation needs a signed-in caller (401 `unauthenticated`
-  otherwise) except `POST /setup` and the three `/session` operations; a test pins that list, and
+  admin once (409 `already_set_up` afterwards). Only `/api/v1` is guarded: `/mcp` is
+  guarded by its own API-token check instead (see Authentication).
+- **Authentication**: every `/api/v1` operation needs a caller (401 `unauthenticated` otherwise):
+  the session cookie, or `Authorization: Bearer exd_...` with an API token (a wrong bearer is
+  refused even if a valid cookie is sent too). Exempt: `POST /setup`, the three `/session`
+  operations and the OpenAPI document; a test pins that list, and
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
@@ -35,7 +36,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
   7 days idle or 30 days in all. Unsafe requests with a foreign `Origin` are refused with 403
-  (also sign-in and sign-out). `/mcp` never looks at the cookie. Signing in again with a live
+  (also sign-in and sign-out). `/mcp` never looks at the cookie; it takes API tokens only. Signing in again with a live
   cookie ends that old session. The cookie's `Max-Age` is the 30-day limit; idle expiry is
   server-side only and accurate to about an hour (last use is written at most hourly), so do not
   test exact 7-day boundaries from a client.
@@ -45,3 +46,15 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Refs containing `/`**: library IDs are `/{owner}/{repo}` in the path. A ref may only be the
   last path segment, declared `{ref:path}`; a route that needs a ref and an article path takes
   `?ref=` and `?path=`, because servers decode `%2F` before routing.
+
+- **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?}`, timezone-aware, in the future)
+  answers 201 with the token's fields and `token`, the secret `exd_...`, which no other call ever
+  returns (`Cache-Control: no-store`). `GET /tokens` lists the caller's tokens (`id`, `name`,
+  `prefix`, `created_at`, `expires_at`, `last_used_at`; newest first) and `DELETE /tokens/{id}`
+  revokes one at once (204; 404 `unknown_token` for another account's or a missing id). The
+  secret is 256 random bits and only its SHA-256 is stored. An unknown, expired or revoked token is
+  the same 401. `last_used_at` is written at most hourly, best effort (a failed write is logged
+  and the request goes on). Expired tokens are purged when a new one is created. An account holds
+  at most 50 tokens (409 `too_many_tokens`). A password reset revokes all of the account's
+  tokens. The three token routes need the **session cookie**, not a token, so a stolen token
+  cannot create a successor.
