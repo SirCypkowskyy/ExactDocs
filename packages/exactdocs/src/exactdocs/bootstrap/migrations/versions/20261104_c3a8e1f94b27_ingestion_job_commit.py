@@ -1,14 +1,14 @@
 """Record the commit a job's version was pinned to.
 
 Revision ID: c3a8e1f94b27
-Revises: c4d8e2f6a1b7
+Revises: 3b8f0d6e2a71
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "c3a8e1f94b27"
-down_revision = "c4d8e2f6a1b7"
+down_revision = "3b8f0d6e2a71"
 branch_labels = None
 depends_on = None
 
