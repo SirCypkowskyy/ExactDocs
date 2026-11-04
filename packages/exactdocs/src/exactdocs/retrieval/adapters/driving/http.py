@@ -172,7 +172,7 @@ def build_router(
 
     # context7's REST API (`/v2/libs/search`, `/v2/context`) over the MCP tools' use cases.
     @router.get("/c7/search")
-    async def context7_search(
+    async def context_search(
         libraryName: Annotated[  # ruff: ignore[invalid-argument-name] - context7's parameter
             str, Query(min_length=1, max_length=MAX_NAME, description="Library name, e.g. 'react'.")
         ],
@@ -202,7 +202,7 @@ def build_router(
             }
         },
     )
-    async def context7_docs(
+    async def context_docs(
         libraryId: Annotated[  # ruff: ignore[invalid-argument-name] - context7's parameter
             str,
             Query(
