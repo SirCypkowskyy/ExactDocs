@@ -60,6 +60,28 @@ runs after every release, weekly, and on demand (`gh workflow run ghcr-retention
 dry-run=true` shows what would be deleted). Change `KEEP_DEV` / `KEEP_STABLE` in the workflow to
 adjust. PyPI releases are never deleted.
 
+## Size and model-free budgets
+
+RUN-02: many installs only ever use BM25, so the artifacts hold no models and no ML libraries. CI
+enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land in the job summary):
+
+| Artifact | Budget | Now | Also checked |
+|---|---|---|---|
+| wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
+| image (uncompressed) | 375 MB | 354 MB | no such model file anywhere in the filesystem |
+
+The unit tests add that `uv.lock` holds no torch, transformers, sentence-transformers,
+huggingface-hub, onnx, pydantic-ai or chonkie, and that a started app imports none of them
+(`packages/exactdocs/tests/bootstrap/test_model_free.py`). Optional AI extras must stay out of the
+default dependencies; add them as extras and extend those lists.
+
+**Why 375 MB and not the 300 MB first planned.** The floor is the `python:3.14-slim` base (~120 MB),
+git and ssh (~25 MB git-core plus libraries; Perl is already purged) and the virtualenv (167 MB). 57 MB
+of that is precompiled `.pyc`: dropping it would reach ~297 MB but make every start of a read-only
+container recompile the whole dependency tree. Keeping it is the better trade, so the budget is the
+measured 354 MB plus about 6 % headroom for dependency and Debian security updates. Raising it needs a
+reason in the PR; lowering it is the goal if a dependency is dropped.
+
 ## Image scan
 
 Every PR (CI job *Docker image*) and every release scans the built image with
