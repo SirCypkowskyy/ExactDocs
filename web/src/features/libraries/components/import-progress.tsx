@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Check, CircleAlert } from "lucide-react";
 import { Fragment, useEffect, useRef } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { cn } from "@/shared/lib/utils";
 import { buttonVariants } from "@/shared/ui/button";
 import { importJobQueryOptions } from "../api/add-library";
@@ -145,6 +146,7 @@ function useRefreshListsWhen(finished: boolean) {
     if (!finished) return;
     void queryClient.invalidateQueries({ queryKey: librariesKeys.list() });
     void queryClient.invalidateQueries({ queryKey: librariesKeys.latestJobs() });
+    void queryClient.invalidateQueries({ queryKey: BROWSE_KEY });
   }, [finished, queryClient]);
 }
 

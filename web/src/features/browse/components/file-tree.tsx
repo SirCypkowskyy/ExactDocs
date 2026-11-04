@@ -55,124 +55,162 @@ interface TreeRowProps {
   onFocusRow: (key: string) => void;
 }
 
+type FolderRow = Extract<Row, { kind: "folder" }>;
+type FileRow = Extract<Row, { kind: "file" }>;
+type PagerRow = Extract<Row, { kind: "more" | "failed" }>;
+
+/** What every focusable row shares: its key, depth, tab stop and focus tracking. */
+function rowProps(row: Row, stop: boolean, onFocusRow: (key: string) => void) {
+  return {
+    "data-key": row.key,
+    "aria-level": row.depth + 1,
+    tabIndex: stop ? 0 : -1,
+    onFocus: () => onFocusRow(row.key),
+    style: indent(row.depth),
+  };
+}
+
+function Folder({
+  row,
+  stop,
+  onToggle,
+  onFocusRow,
+}: Pick<TreeRowProps, "stop" | "onToggle" | "onFocusRow"> & { row: FolderRow }) {
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
+    <div
+      {...rowProps(row, stop, onFocusRow)}
+      role="treeitem"
+      tabIndex={stop ? 0 : -1}
+      aria-posinset={row.pos}
+      aria-setsize={row.size}
+      aria-expanded={row.open}
+      aria-selected="false"
+      onClick={() => onToggle(row.path)}
+      className={cn(rowBase, hoverable)}
+      title={row.path}
+    >
+      <ChevronRight
+        aria-hidden="true"
+        className={cn(
+          "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none",
+          row.open && "rotate-90",
+        )}
+      />
+      <span className="truncate font-medium">{row.name}</span>
+    </div>
+  );
+}
+
+function pagerText(row: PagerRow, state: ScopeState, bad: boolean): string {
+  const where = row.scope ? row.scope.split("/").pop() : "";
+  if (bad) return `Couldn't load ${where || "more files"}. Try again`;
+  if (state === "paging") return "Loading more";
+  return where ? `Show more in ${where}` : "Show more files";
+}
+
+function Pager({
+  row,
+  stop,
+  state,
+  onMore,
+  onFocusRow,
+}: Pick<TreeRowProps, "stop" | "state" | "onMore" | "onFocusRow"> & { row: PagerRow }) {
+  const bad = row.kind === "failed" || state === "error";
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
+    <div
+      {...rowProps(row, stop, onFocusRow)}
+      role="treeitem"
+      tabIndex={stop ? 0 : -1}
+      aria-selected="false"
+      aria-busy={state === "paging"}
+      onClick={() => onMore(row.scope)}
+      className={cn(
+        rowBase,
+        hoverable,
+        "underline-offset-4 hover:underline focus-visible:underline",
+        bad ? "text-destructive" : "text-foreground",
+      )}
+    >
+      {bad ? (
+        <CircleAlert aria-hidden="true" className="size-4 shrink-0" />
+      ) : state === "paging" ? (
+        <Loader aria-hidden="true" className="spin size-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-mark" />
+      )}
+      <span className="truncate">{pagerText(row, state, bad)}</span>
+    </div>
+  );
+}
+
+function File({
+  row,
+  stop,
+  selected,
+  owner,
+  repo,
+  version,
+  tags,
+  onOpen,
+  onFocusRow,
+}: Omit<TreeRowProps, "row" | "state" | "onToggle" | "onMore"> & { row: FileRow }) {
+  return (
+    <Link
+      {...rowProps(row, stop, onFocusRow)}
+      role="treeitem"
+      tabIndex={stop ? 0 : -1}
+      aria-posinset={row.pos}
+      aria-setsize={row.size}
+      to="/libraries/$owner/$repo"
+      params={{ owner, repo }}
+      search={{ version, path: row.path, tags }}
+      aria-selected={selected}
+      aria-current={selected ? "page" : undefined}
+      onClick={onOpen}
+      title={`${row.title}\n${row.path}`}
+      className={cn(rowBase, "py-1", selected ? "bg-mark/[0.16] ring-1 ring-mark/40" : hoverable)}
+    >
+      <span aria-hidden="true" className="size-4 shrink-0" />
+      <span className="min-w-0">
+        <span className="block truncate leading-snug">{row.title}</span>
+        {showFileName(row.title, row.name) && (
+          <span className="block truncate text-xs leading-snug text-muted-foreground">
+            <span className="sr-only">File </span>
+            {row.name}
+          </span>
+        )}
+      </span>
+    </Link>
+  );
+}
+
+function Loading({ depth }: { depth: number }) {
+  return (
+    <div
+      role="treeitem"
+      tabIndex={-1}
+      aria-selected="false"
+      aria-disabled="true"
+      aria-level={depth + 1}
+      style={indent(depth)}
+      className="flex min-h-9 items-center gap-2 text-sm text-muted-foreground"
+    >
+      <Loader aria-hidden="true" className="spin ml-[18px] size-3.5" />
+      Loading
+    </div>
+  );
+}
+
+/** One row; it re-renders only when its own data, tab stop or selection changes. */
 const TreeRow = memo(
   function TreeRow(props: TreeRowProps) {
-    const { row, stop, selected, state, owner, repo, version, tags } = props;
-    const { onToggle, onMore, onOpen, onFocusRow } = props;
-    const pad = indent(row.depth);
-    if (row.kind === "loading") {
-      return (
-        <div
-          role="treeitem"
-          tabIndex={-1}
-          aria-selected="false"
-          aria-disabled="true"
-          aria-level={row.depth + 1}
-          style={pad}
-          className="flex min-h-9 items-center gap-2 text-sm text-muted-foreground"
-        >
-          <Loader aria-hidden="true" className="spin ml-[18px] size-3.5" />
-          Loading
-        </div>
-      );
-    }
-    const common = {
-      "data-key": row.key,
-      "aria-level": row.depth + 1,
-      onFocus: () => onFocusRow(row.key),
-      style: pad,
-    } as const;
-    if (row.kind === "folder") {
-      return (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
-        <div
-          {...common}
-          role="treeitem"
-          tabIndex={stop ? 0 : -1}
-          aria-posinset={row.pos}
-          aria-setsize={row.size}
-          aria-expanded={row.open}
-          aria-selected="false"
-          onClick={() => onToggle(row.path)}
-          className={cn(rowBase, hoverable)}
-          title={row.path}
-        >
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none",
-              row.open && "rotate-90",
-            )}
-          />
-          <span className="truncate font-medium">{row.name}</span>
-        </div>
-      );
-    }
-    if (row.kind === "more" || row.kind === "failed") {
-      const bad = row.kind === "failed" || state === "error";
-      const where = row.scope ? row.scope.split("/").pop() : "";
-      return (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
-        <div
-          {...common}
-          role="treeitem"
-          tabIndex={stop ? 0 : -1}
-          aria-selected="false"
-          aria-busy={state === "paging"}
-          onClick={() => onMore(row.scope)}
-          className={cn(
-            rowBase,
-            hoverable,
-            "underline-offset-4 hover:underline focus-visible:underline",
-            bad ? "text-destructive" : "text-foreground",
-          )}
-        >
-          {bad ? (
-            <CircleAlert aria-hidden="true" className="size-4 shrink-0" />
-          ) : state === "paging" ? (
-            <Loader aria-hidden="true" className="spin size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-mark" />
-          )}
-          <span className="truncate">
-            {bad
-              ? `Couldn't load ${where || "more files"}. Try again`
-              : state === "paging"
-                ? "Loading more"
-                : where
-                  ? `Show more in ${where}`
-                  : "Show more files"}
-          </span>
-        </div>
-      );
-    }
-    return (
-      <Link
-        {...common}
-        role="treeitem"
-        aria-posinset={row.pos}
-        aria-setsize={row.size}
-        to="/libraries/$owner/$repo"
-        params={{ owner, repo }}
-        search={{ version, path: row.path, tags }}
-        aria-selected={selected}
-        aria-current={selected ? "page" : undefined}
-        onClick={onOpen}
-        title={`${row.title}\n${row.path}`}
-        className={cn(rowBase, "py-1", selected ? "bg-mark/[0.16] ring-1 ring-mark/40" : hoverable)}
-      >
-        <span aria-hidden="true" className="size-4 shrink-0" />
-        <span className="min-w-0">
-          <span className="block truncate leading-snug">{row.title}</span>
-          {showFileName(row.title, row.name) && (
-            <span className="block truncate text-xs leading-snug text-muted-foreground">
-              <span className="sr-only">File </span>
-              {row.name}
-            </span>
-          )}
-        </span>
-      </Link>
-    );
+    const { row } = props;
+    if (row.kind === "loading") return <Loading depth={row.depth} />;
+    if (row.kind === "folder") return <Folder {...props} row={row} />;
+    if (row.kind === "file") return <File {...props} row={row} />;
+    return <Pager {...props} row={row} />;
   },
   (a, b) =>
     sameRow(a.row, b.row) &&

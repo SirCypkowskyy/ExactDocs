@@ -96,6 +96,7 @@ interface LibraryRowProps {
 }
 
 export function LibraryRow({ library, sync, now }: LibraryRowProps) {
+  const [, owner = "", repo = ""] = library.id.split("/");
   const imported = library.last_imported_at;
   const [open, setOpen] = useState(false);
   const panel = useId();
@@ -107,10 +108,7 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
           <h2 className="font-mono text-[15px] font-medium [overflow-wrap:anywhere]">
             <Link
               to="/libraries/$owner/$repo"
-              params={{
-                owner: library.id.split("/")[1] ?? "",
-                repo: library.id.split("/")[2] ?? "",
-              }}
+              params={{ owner, repo }}
               className="rounded underline decoration-mark/40 underline-offset-4 outline-none hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Id id={library.id} />
