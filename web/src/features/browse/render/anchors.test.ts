@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-// The same table the Python chunker is tested with: a search link must land on the heading.
-import vectors from "../../../../../packages/exactdocs/tests/fixtures/heading_anchors.json";
+// A copy of packages/exactdocs/tests/fixtures/heading_anchors.json (the Docker build sees only web/);
+// test_chunker.py checks the two are identical and tests the Python chunker against the same table.
+import vectors from "./fixtures/heading_anchors.json";
 import { headingAnchors } from "./parse";
 
 describe("heading anchors match the chunk anchors", () => {

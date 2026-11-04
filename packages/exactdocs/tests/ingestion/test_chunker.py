@@ -286,3 +286,12 @@ def test_anchors_match_the_shared_vectors(case: dict, chunker: Chunker) -> None:
     """The web renderer (anchors.test.ts) reads the same table, so search links land on headings."""
     chunks = chunker.chunk(parse_article("a.md", case["markdown"]))
     assert [c.anchor for c in chunks if c.heading_path] == case["anchors"]
+
+
+def test_the_web_copy_of_the_anchor_vectors_is_identical() -> None:
+    """The web build sees only ``web/``, so its test reads a copy: keep it in step."""
+    copy = TESTS.parents[2] / "web/src/features/browse/render/fixtures/heading_anchors.json"
+    assert copy.read_bytes() == (TESTS / "fixtures" / "heading_anchors.json").read_bytes(), (
+        "cp packages/exactdocs/tests/fixtures/heading_anchors.json "
+        "web/src/features/browse/render/fixtures/"
+    )
