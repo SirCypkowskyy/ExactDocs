@@ -17,6 +17,7 @@ import socket
 import sys
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -137,6 +138,15 @@ class ClientConfig:
             )
             raise ClientError(message)
         return cls(url=chosen_url, token=chosen_token)
+
+
+def resolve_url(*, url: str | None = None, env: Mapping[str, str] = os.environ) -> str:
+    """Return the server for a command that signs in with a password (no stored token needed)."""
+    chosen = url or env.get(URL_VARIABLE) or read_stored(config_path(env)).get("url")
+    if not chosen:
+        message = "no server configured; run `exactdocs login <url>` or set EXACTDOCS_URL"
+        raise ClientError(message)
+    return normalize_url(chosen)
 
 
 def read_stored(path: Path) -> dict[str, str]:
@@ -293,3 +303,15 @@ class ApiClient:
     async def check_token(self) -> None:
         """Raise ``ApiError`` unless the token this client holds is accepted."""
         await self.request("GET", "/libraries")
+
+    async def sign_in(self, username: str, password: str) -> None:
+        """Start a browser-style session (``POST /session``); the client keeps its cookie.
+
+        What a token cannot do (manage tokens, set a repository credential) needs a session.
+        """
+        await self.request("POST", "/session", json={"username": username, "password": password})
+
+    async def sign_out(self) -> None:
+        """End the session (``DELETE /session``); never raises for a server that is gone."""
+        with suppress(ClientError):
+            await self.request("DELETE", "/session")
