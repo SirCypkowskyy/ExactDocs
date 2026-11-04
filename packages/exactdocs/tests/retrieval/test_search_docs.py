@@ -3,7 +3,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemoryExcerptIndex
+from exactdocs.retrieval.adapters.driven.memory import (
+    InMemoryChunkRepository,
+    InMemoryExcerptIndex,
+    InMemorySearchIndex,
+)
 from exactdocs.retrieval.dtos import SearchDocsQuery
 from exactdocs.retrieval.errors import VersionNotIndexedError
 from exactdocs.retrieval.models import DocTarget, Excerpt, ManifestStatus
@@ -48,11 +52,13 @@ def retrieval() -> RetrievalModule:
             ),
         ]
     )
+    chunks = InMemoryChunkRepository()
     return RetrievalModule.build(
         versions=FakeIndexedVersions(frozenset({REACT_19})),
         index=index,
         manifests=NoManifests(),
-        chunks=InMemoryChunkRepository(),
+        chunks=chunks,
+        search=InMemorySearchIndex(chunks),
     )
 
 

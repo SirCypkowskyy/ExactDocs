@@ -9,8 +9,13 @@ from sqlalchemy import func, select
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemoryExcerptIndex
+from exactdocs.retrieval.adapters.driven.memory import (
+    InMemoryChunkRepository,
+    InMemoryExcerptIndex,
+    InMemorySearchIndex,
+)
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
+from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -29,7 +34,7 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import DocTarget, ManifestStatus
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports import ChunkRepository
+from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
 from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -131,12 +136,13 @@ class World:
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     catalog, clock = FakeCatalog(), FakeClock()
 
-    def build(chunks: ChunkRepository) -> RetrievalModule:
+    def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
             versions=catalog,
             index=InMemoryExcerptIndex(),
             manifests=catalog,
             chunks=chunks,
+            search=search,
             clock=clock,
         )
 
@@ -146,7 +152,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
         async def count() -> int:
             return len(memory.chunk_sets)
 
-        yield World(build(memory), catalog, clock, count)
+        yield World(build(memory, InMemorySearchIndex(memory)), catalog, clock, count)
         return
     container = Container.build(Settings())
     async with container.running():
@@ -157,7 +163,9 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                     await connection.execute(select(func.count()).select_from(chunk_set_rows))
                 ).scalar_one()
 
-        yield World(build(SqliteChunkRepository(container.engine)), catalog, clock, count_rows)
+        sqlite = SqliteChunkRepository(container.engine)
+        search = SqliteSearchIndex(container.engine)
+        yield World(build(sqlite, search), catalog, clock, count_rows)
 
 
 async def test_an_article_that_did_not_change_keeps_its_chunk_ids_when_the_branch_moves(

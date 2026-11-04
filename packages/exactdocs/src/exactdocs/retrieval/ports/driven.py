@@ -14,6 +14,7 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestStatus,
     Removed,
+    SearchHit,
     SearchText,
     StoredChunk,
 )
@@ -92,4 +93,31 @@ class ChunkRepository(Protocol):
 
     async def remove(self, manifest_ids: Collection[str]) -> Removed:
         """Delete these manifests' rows, then every chunk set no manifest points at."""
+        ...
+
+
+class SearchIndex(Protocol):
+    """Full-text (BM25) search over stored chunk sets; SQLite FTS5 now, ParadeDB later.
+
+    Every engine behaves the same: see ``tests/retrieval/test_search_index.py``. The index holds
+    one entry per chunk of a chunk set, so a set shared by several manifests is indexed once.
+    Which chunks a search may return is decided by the manifest's chunk rows, not by the index.
+    Entries die with their chunk rows: when ``ChunkRepository.remove`` deletes a chunk set its
+    index entries go in the same step, so discard and collect need no call here.
+    """
+
+    async def index(self, chunk_set: ChunkSet) -> None:
+        """Index a chunk set that ``ChunkRepository.add`` stored. Idempotent; indexes only gaps."""
+        ...
+
+    async def search(
+        self, manifest_id: str, query: str, tag_filter: Collection[str], limit: int
+    ) -> Sequence[SearchHit]:
+        """Return at most ``limit`` chunks of this manifest, best first.
+
+        ``query`` is plain text: quotes, ``NEAR``, ``*`` and ``(`` are ordinary characters, never
+        syntax. Its words are alternatives (see ``identifier_tokens``). ``tag_filter`` keeps the
+        chunks whose article has any of these tags; empty keeps all. An unknown manifest or a
+        query without words gives no hits.
+        """
         ...

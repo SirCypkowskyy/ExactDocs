@@ -207,6 +207,21 @@ class StoredChunk:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SearchHit:
+    """One chunk a search found: higher ``score`` is better, scores only compare within a search."""
+
+    chunk_id: ChunkId
+    score: float
+    snippet: str  # verbatim text from the chunk, possibly cut at either end
+    highlights: tuple[tuple[int, int], ...]  # [start, end) offsets into ``snippet``, in order
+
+
+def search_terms(query: str) -> list[str]:
+    """Return the distinct alternatives a query is matched by: each word whole and by its parts."""
+    return list(dict.fromkeys(identifier_tokens(query).split()))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Removed:
     """What a discard or collection deleted."""
 
