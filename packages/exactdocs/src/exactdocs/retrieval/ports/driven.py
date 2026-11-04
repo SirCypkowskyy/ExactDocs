@@ -87,6 +87,13 @@ class ChunkRepository(Protocol):
         """
         ...
 
+    async def get_sets(self, keys: Sequence[ChunkSetKey]) -> Mapping[ChunkSetKey, ChunkSet]:
+        """Return the stored chunk sets among ``keys``, chunks in order; the rest is left out.
+
+        Batched, so a caller may pass thousands of keys.
+        """
+        ...
+
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
         """Return one chunk of the manifest with its content, or ``None``."""
         ...

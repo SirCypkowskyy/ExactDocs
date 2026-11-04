@@ -4,6 +4,6 @@ Public API for the composition root (``exactdocs.bootstrap``). Other domains mus
 this package; they declare their own driven port and bootstrap wires in an adapter.
 """
 
-from exactdocs.ingestion.module import IngestionModule
+from exactdocs.ingestion.module import IngestionModule, import_job
 
-__all__ = ["IngestionModule"]
+__all__ = ["IngestionModule", "import_job"]

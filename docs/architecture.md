@@ -18,7 +18,7 @@ packages/
       catalog/                  domain
       identity/                 domain: the admin account and its web sessions (later API tokens)
       retrieval/                domain
-      ingestion/                domain: jobs and the worker (git access, import use cases to come)
+      ingestion/                domain: jobs, the worker, git access and the import
       _web/                     built web UI (gitignored, added by CI / Docker)
     tests/                      pytest: unit, integration, architecture
     features/                   behave: acceptance scenarios (Gherkin)
@@ -201,6 +201,41 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   claim itself is safe across processes. Several job-running processes need a lease/heartbeat
   per job first.
 - DBOS replaces the worker behind the same driving ports in MVP-2 (resumable imports).
+
+### The import: a complete version or nothing
+
+The `import` kind is `ImportVersionUseCase` (built by `ingestion.import_job`, which also returns
+its recovery hook). It imports the commit the job was pinned to: fetch, read and parse every
+selected file, tag, chunk, then **store** the articles as a pending catalog manifest, **index**
+their chunks in retrieval and **activate** the manifest. Readers see the previous state until
+that last step, which is one transaction in the catalog.
+
+- **Undo.** Any failure after the store (an exception or a cancellation) discards the pending
+  chunks and then the pending manifest. The order matters: retrieval asks the catalog and only
+  removes a manifest it is told is still pending. After a crash the recovery hook does the same
+  for the library's pending data before the job runs again (a library has one running job).
+- **Reuse.** Content is keyed by git blob SHA and the parser version, chunk sets by blob SHA and
+  the chunking config, so a blob that an earlier import chunked is not chunked again. The
+  stored chunks are read back through retrieval's `GetChunkSets`; parsing is repeated, because
+  the title and tags depend on the path as well as the bytes. Importing a commit again changes
+  nothing a reader can see.
+- **Memory.** The selected text is held in memory until stored, and again as chunks, as DTOs in
+  the bridges and as SQL parameters: several times over, and the worker runs two jobs at once.
+  `EXACTDOCS_MAX_IMPORT_BYTES` (256 MiB) bounds the text an import takes; above it the import
+  fails with `import_too_large` instead of the process being killed. The CPU-heavy part of
+  storing and indexing (DTO validation, sorting, chunk-ID hashing) runs in a thread so the event
+  loop keeps serving requests. Progress is stored every 100 files or 250 ms, and at the end.
+- **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
+  bare commit, so the import never asks the remote again; a deleted tag does not break it.
+- **Replays.** A crash right after the activation commits re-queues the job; importing the same
+  commit again activates an equal manifest, so nothing a reader sees changes.
+- **Files.** Only regular files are read (a symlink could point out of the checkout), none over
+  `EXACTDOCS_MAX_ARTICLE_BYTES` (2 MiB), and only valid UTF-8. A skipped file (also an
+  unreadable one or one with a file name that is not UTF-8) is recorded as a job problem (the
+  first 1000) and counted as processed. A folder that cannot be listed fails the import. `done`/`total` count the selected files.
+- **Bridges** (`bootstrap/bridges.py`): `CatalogLibrarySources`, `CatalogVersionPublisher`
+  (`StoreManifest`, `ActivateManifest`, `DiscardPendingManifests`) and `RetrievalChunkIndex`
+  (`IndexManifest`, `GetChunkSets`, `DiscardPendingChunks`).
 
 ## Python conventions
 

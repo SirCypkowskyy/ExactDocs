@@ -10,7 +10,7 @@ from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
+from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -23,6 +23,7 @@ def queued(job_id: str, library: str = "/acme/payments", minute: int = 0) -> Job
         library=library,
         version="1.4",
         commit_sha="c" * 40,  # the commit the version was pinned to must survive too
+        ref_kind=RefKind.TAG,  # and what the version is
         now=T0 + timedelta(minutes=minute),
     )
 

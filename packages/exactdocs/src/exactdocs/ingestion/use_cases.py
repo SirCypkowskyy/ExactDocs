@@ -1,9 +1,16 @@
 """Ingestion use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
+import asyncio
 import logging
+import os
+import stat
+import time
 import uuid
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import BinaryIO
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
@@ -21,28 +28,52 @@ from exactdocs.ingestion.dtos import (
     RefOut,
     RepositoryRefs,
 )
-from exactdocs.ingestion.errors import JobNotFoundError, LibraryIdTakenError, UnknownJobKindError
+from exactdocs.ingestion.errors import (
+    CheckoutUnreadableError,
+    ImportNotPinnedError,
+    ImportTooLargeError,
+    JobNotFoundError,
+    LibraryIdTakenError,
+    NoArticlesError,
+    UnknownJobKindError,
+)
 from exactdocs.ingestion.models import (
+    DEFAULT_MAX_ARTICLE_BYTES,
+    DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
+    ArticleChunk,
+    ImportedArticle,
+    ImportedVersion,
+    ImportSource,
     Job,
     JobId,
     JobKind,
     NewLibrary,
+    ParsedArticle,
     PathSelection,
     ProposedId,
     RefKind,
     RepositoryUrl,
     TagRule,
+    article_tags,
+    git_blob_sha,
+    parse_article,
     ref_tips,
     resolve_ref,
 )
 from exactdocs.ingestion.ports.driven import (
+    Chunker,
+    ChunkIndex,
+    GitGateway,
     GitRemote,
     JobHandler,
+    JobProgress,
     JobRepository,
     LibraryIds,
+    LibrarySources,
     NewLibraries,
     RecoveryHook,
+    VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob
 from exactdocs_kernel import Clock, DomainError, paginate
@@ -72,6 +103,7 @@ class EnqueueJobUseCase:
             library=command.library,
             version=command.version,
             commit_sha=command.commit_sha,
+            ref_kind=command.ref_kind,
             now=self.clock.now(),
         )
         await self.jobs.add(job)
@@ -188,19 +220,42 @@ class RunNextJobUseCase:
         return True
 
 
+SAVE_EVERY_FILES = 100
+SAVE_EVERY_SECONDS = 0.25
+
+
 @dataclass(slots=True)
 class _Progress:
-    """Implements ``ports.driven.JobProgress``: keeps the latest job and stores every change."""
+    """Implements ``ports.driven.JobProgress``: keeps the latest job, stores it every so often.
+
+    A job over thousands of files would otherwise rewrite its row (and its problem list) for
+    each one. The first and the last report are always stored, and ``RunNextJob`` stores the end.
+    """
 
     jobs: JobRepository
     job: Job
+    saved_done: int = 0
+    reported: bool = False
+    saved_at: float = field(default_factory=time.monotonic)
 
     async def report(self, *, done: int, total: int) -> None:
         self.job = self.job.progressed(done=done, total=total)
-        await self.jobs.save(self.job)
+        first, self.reported = not self.reported, True
+        if first or done == total or done - self.saved_done >= SAVE_EVERY_FILES:
+            await self._save()
+        else:
+            await self._save_if_due()
 
     async def problem(self, path: str, reason: str) -> None:
         self.job = self.job.with_problem(path, reason)
+        await self._save_if_due()
+
+    async def _save_if_due(self) -> None:
+        if time.monotonic() - self.saved_at >= SAVE_EVERY_SECONDS:
+            await self._save()
+
+    async def _save(self) -> None:
+        self.saved_done, self.saved_at = self.job.done, time.monotonic()
         await self.jobs.save(self.job)
 
 
@@ -291,6 +346,7 @@ class AddLibraryUseCase:
                     library=created,
                     version=resolved.name,
                     commit_sha=resolved.commit_sha,
+                    ref_kind=resolved.kind,
                 )
             )
         except BaseException:
@@ -302,3 +358,232 @@ class AddLibraryUseCase:
                 )
             raise
         return AddedLibrary.of(created, resolved, job)
+
+
+@dataclass(frozen=True, slots=True)
+class ImportVersionUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
+
+    Fetch the pinned commit, read and parse every selected file, chunk the blobs no earlier
+    import chunked, store everything as a pending manifest, index its chunks, then activate it.
+    Readers see the previous state until the last step; any failure (also a cancellation)
+    discards what was stored, so a version never shows half of its articles.
+
+    Memory: the selected text of the version is held in memory until it is stored, and again as
+    chunks, as DTOs in the bridges and as SQL parameters, so a job needs several times
+    ``max_import_bytes`` at its peak (and the worker runs two jobs at once). The budget makes the
+    import fail with a clear error instead of the process being killed. Batched storing (the
+    catalog would need an "append to a pending manifest" step) would lift the limit.
+    """
+
+    gateway: GitGateway
+    chunker: Chunker
+    sources: LibrarySources
+    versions: VersionPublisher
+    index: ChunkIndex
+    max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
+    max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Run the import from the beginning; raising fails the job."""
+        if job.version is None or job.commit_sha is None:
+            raise ImportNotPinnedError
+        source = await self.sources.get(job.library)
+        # A job queued without a kind is imported as a bare commit: the SHA is what is fetched.
+        kind = job.ref_kind or RefKind.COMMIT
+        full_ref = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
+        refs = [] if full_ref is None else [full_ref + job.version]
+        config_hash = self.chunker.config_hash
+        async with self.gateway.fetch(
+            source.url, job.commit_sha, source.selection, refs=refs
+        ) as folder:
+            articles = await self._articles(folder, source, config_hash, progress)
+        if not articles:
+            raise NoArticlesError
+        version = ImportedVersion(
+            library=job.library,
+            ref=job.version,
+            kind=kind,
+            commit_sha=job.commit_sha,
+            config_hash=config_hash,
+            articles=tuple(articles),
+        )
+        manifest_id: str | None = None
+        try:
+            manifest_id = await self.versions.store(version)
+            await self.index.index(manifest_id, version)
+            await self.versions.activate(manifest_id)
+        except BaseException:
+            # Run as a task of its own and shielded, so that the cancellation that got us here
+            # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
+            cleanup = asyncio.ensure_future(self._discard(job.library, manifest_id))
+            _cleanups.add(cleanup)
+            cleanup.add_done_callback(_cleanups.discard)
+            await asyncio.shield(cleanup)
+            raise
+
+    async def _articles(
+        self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress
+    ) -> list[ImportedArticle]:
+        try:
+            paths = await asyncio.to_thread(_selected_files, folder, source.selection)
+        except OSError as error:
+            raise CheckoutUnreadableError from error
+        await progress.report(done=0, total=len(paths))
+        loaded: list[tuple[str, str, ParsedArticle]] = []
+        used = 0
+        for done, path in enumerate(paths, 1):
+            result = await asyncio.to_thread(_load, folder, path, self.max_article_bytes)
+            if isinstance(result, str):  # why the file was skipped; E3-05b grades these
+                await progress.problem(path.encode(errors="replace").decode(), result)
+            else:
+                blob_sha, parsed, size = result
+                used += size
+                if used > self.max_import_bytes:
+                    raise ImportTooLargeError(self.max_import_bytes)
+                loaded.append((path, blob_sha, parsed))
+            await progress.report(done=done, total=len(paths))
+        # E3-05b: ParsedArticle.problems (malformed front matter, bad tags) are not reported yet.
+        blobs = list(dict.fromkeys(blob_sha for _, blob_sha, _ in loaded))
+        chunks: dict[str, tuple[ArticleChunk, ...]] = {}
+        for start in range(0, len(blobs), KNOWN_BATCH):
+            chunks |= await self.index.known(config_hash, blobs[start : start + KNOWN_BATCH])
+        unknown: dict[str, ParsedArticle] = {}
+        for _, blob_sha, parsed in loaded:
+            if blob_sha not in chunks:
+                unknown.setdefault(blob_sha, parsed)
+        chunks |= await asyncio.to_thread(self._cut, unknown)
+        return [
+            ImportedArticle(
+                path=path,
+                blob_sha=blob_sha,
+                title=parsed.title,
+                tags=article_tags(path, parsed.tags, source.tag_rules),
+                front_matter=parsed.front_matter,
+                content=parsed.body,
+                chunks=chunks[blob_sha],
+            )
+            for path, blob_sha, parsed in loaded
+        ]
+
+    def _cut(self, articles: Mapping[str, ParsedArticle]) -> dict[str, tuple[ArticleChunk, ...]]:
+        return {sha: tuple(self.chunker.chunk(a)) for sha, a in articles.items()}
+
+    async def _discard(self, library: str, manifest_id: str | None) -> None:
+        try:
+            await _discard_pending(self.versions, self.index, library, manifest_id)
+        except Exception:
+            log.exception("could not discard the pending import of %s", library)
+
+
+KNOWN_BATCH = 500
+_cleanups: set[asyncio.Future[None]] = set()  # the loop holds tasks weakly
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardInterruptedImportUseCase:
+    """Implements ``ports.driven.RecoveryHook`` for ``IMPORT_JOB``."""
+
+    versions: VersionPublisher
+    index: ChunkIndex
+
+    async def __call__(self, job: Job, /) -> None:
+        """Drop what the interrupted run stored; a library has one running import at a time."""
+        await _discard_pending(self.versions, self.index, job.library, None)
+
+
+async def _discard_pending(
+    versions: VersionPublisher, index: ChunkIndex, library: str, manifest_id: str | None
+) -> None:
+    """Delete the pending chunks, then the pending manifests (the order matters, see the port).
+
+    Both are attempted whatever happens to the first; the first error is raised afterwards.
+    """
+    errors: list[Exception] = []
+    for discard in (index.discard, versions.discard):
+        try:
+            await discard(manifest_id=manifest_id, library=library)
+        except Exception as error:
+            log.exception("discarding pending data of %s failed", library)
+            errors.append(error)
+    if errors:
+        raise errors[0]
+
+
+def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
+    """List the checked-out files the library takes, repository-relative, sorted.
+
+    A folder that cannot be listed raises, so that a version is never published without it.
+    """
+
+    def fail(error: OSError) -> None:
+        raise error
+
+    found = []
+    # symlinked folders are listed in `dirs`, not entered
+    for root, dirs, files in os.walk(folder, onerror=fail):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in files:
+            path = (Path(root) / name).relative_to(folder).as_posix()
+            if selection.selects(path):
+                found.append(path)
+    return sorted(found)
+
+
+def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int] | str:
+    """Read and parse one file, or say why it is skipped (never echoing its content).
+
+    Returns the blob SHA, the article and the byte size. A file over ``limit`` bytes is not read
+    at all. Anything that is not a plain file (a symlink could point outside the checkout), not
+    UTF-8 or not readable is skipped; decoding other charsets is E3-05b.
+    The blob SHA is hashed from the checked-out bytes, which equals git's because the
+    ``GitGateway`` must check files out verbatim (no eol or filter conversion).
+    """
+    try:
+        path.encode()
+    except UnicodeEncodeError:
+        return "file name is not valid UTF-8"
+    try:
+        data = _read(folder / path, limit)
+    except OSError:
+        return "unreadable"
+    if isinstance(data, str):
+        return data
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "not valid UTF-8"
+    return git_blob_sha(data), parse_article(path, text), len(data)
+
+
+def _read(file: Path, limit: int) -> bytes | str:
+    """Return the bytes of a plain file of up to ``limit`` bytes, else why it is skipped."""
+    too_big = f"larger than {limit} bytes"
+    info = file.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        return "not a regular file"
+    if info.st_size > limit:
+        return too_big
+    with _open_plain(file) as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):  # swapped since lstat
+            return "not a regular file"
+        data = handle.read(limit + 1)
+    return data if len(data) <= limit else too_big
+
+
+@contextmanager
+def _open_plain(file: Path) -> Generator[BinaryIO]:
+    """Open for reading without following a symlink; the descriptor is always closed.
+
+    Yields:
+        The binary file object.
+
+    """
+    fd = os.open(file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
+        yield handle

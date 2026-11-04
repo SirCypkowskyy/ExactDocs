@@ -12,12 +12,14 @@ from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
     GetChunk,
+    GetChunkSets,
     IndexManifest,
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
+    GetChunkSetsUseCase,
     GetChunkUseCase,
     IndexManifestUseCase,
     SearchDocsUseCase,
@@ -32,6 +34,7 @@ class RetrievalModule:
     search_docs: SearchDocs
     index_manifest: IndexManifest
     get_chunk: GetChunk
+    get_chunk_sets: GetChunkSets
     discard_pending_chunks: DiscardPendingChunks
     collect_chunks: CollectChunks
 
@@ -52,6 +55,7 @@ class RetrievalModule:
             search_docs=SearchDocsUseCase(searchable, search, chunks),
             index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk=GetChunkUseCase(versions, manifests, chunks),
+            get_chunk_sets=GetChunkSetsUseCase(chunks),
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
         )

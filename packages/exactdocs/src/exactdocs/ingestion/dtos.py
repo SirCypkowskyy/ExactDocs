@@ -134,6 +134,7 @@ class EnqueueJobCommand(_Dto):
     library: str = Field(min_length=1)
     version: str | None = Field(default=None, min_length=1)
     commit_sha: str | None = Field(default=None, min_length=1)
+    ref_kind: RefKind | None = Field(default=None, description="What `version` is.")
 
 
 class GetJobQuery(_Dto):

@@ -199,6 +199,36 @@ class SqliteChunkRepository:
                 )
             return len(new)
 
+    async def get_sets(self, keys: Sequence[ChunkSetKey]) -> Mapping[ChunkSetKey, ChunkSet]:
+        """Return the stored chunk sets among ``keys``, with their chunks in order."""
+        found: dict[ChunkSetKey, list[Chunk]] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(keys), 400):  # two bound variables per key
+                batch = list(keys[start : start + 400])
+                on = tuple_(chunk_set_rows.c.blob_sha, chunk_set_rows.c.config_hash).in_(batch)
+                for row in await connection.execute(select(chunk_set_rows).where(on)):
+                    found[row.blob_sha, row.config_hash] = []
+                rows = await connection.execute(
+                    select(chunks)
+                    .where(tuple_(chunks.c.blob_sha, chunks.c.config_hash).in_(batch))
+                    .order_by(chunks.c.blob_sha, chunks.c.config_hash, chunks.c.position)
+                )
+                for row in rows:
+                    found[row.blob_sha, row.config_hash].append(
+                        Chunk(
+                            heading_path=tuple(json.loads(row.heading_path)),
+                            occurrence_index=row.occurrence_index,
+                            content=row.content,
+                            content_hash=row.content_hash,
+                            anchor=row.anchor,
+                            code_languages=tuple(json.loads(row.code_languages)),
+                        )
+                    )
+        return {
+            key: ChunkSet(blob_sha=key[0], config_hash=key[1], chunks=tuple(cs))
+            for key, cs in found.items()
+        }
+
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
         """Return one chunk of the manifest with its content, or ``None``."""
         return (await self.get_many(manifest_id, [chunk_id])).get(chunk_id)

@@ -11,8 +11,11 @@ from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogIndexedVersions,
     CatalogLibraryIds,
+    CatalogLibrarySources,
     CatalogNewLibraries,
     CatalogSearchableVersions,
+    CatalogVersionPublisher,
+    RetrievalChunkIndex,
 )
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
@@ -28,13 +31,13 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteSessionRepository,
     SqliteTokenRepository,
 )
-from exactdocs.ingestion import IngestionModule
+from exactdocs.ingestion import IngestionModule, import_job
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
+from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
-from exactdocs.ingestion.errors import GitNotInstalledError, ImportNotAvailableError
-from exactdocs.ingestion.models import IMPORT_JOB, Job
-from exactdocs.ingestion.ports.driven import GitRemote, JobProgress
+from exactdocs.ingestion.errors import GitNotInstalledError
+from exactdocs.ingestion.ports.driven import GitGateway, GitRemote
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
@@ -42,12 +45,6 @@ from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
 WORK_DIR = "work"  # under the data dir: one folder per running git fetch
-
-
-async def _import_not_available(job: Job, progress: JobProgress, /) -> None:
-    """Stands in for the importer (E3-05a) so that adding a library can queue its job."""
-    del job, progress
-    raise ImportNotAvailableError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -63,20 +60,29 @@ class Container:
     job_worker: JobWorker
 
     @classmethod
-    def build(cls, settings: Settings, *, remote: GitRemote | None = None) -> Self:
+    def build(
+        cls,
+        settings: Settings,
+        *,
+        remote: GitRemote | None = None,
+        gateway: GitGateway | None = None,
+    ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
         Creates the data directory (``StartupError`` when it is unusable) but opens no
         connection; ``running()`` migrates the schema and releases the engine afterwards.
-        ``remote`` replaces the system ``git`` (tests). A missing ``git`` is logged here and
+        ``remote`` and ``gateway`` replace the system ``git`` for listing refs and for fetching
+        (tests). A missing ``git`` is logged here and
         reported as ``git_not_installed`` by everything that needs it, so the rest still runs.
         """
-        if remote is None:
+        if remote is None or gateway is None:
             try:
-                remote = GitCli.locate(work_root=settings.data_dir / WORK_DIR)
+                git: GitCli | MissingGit = GitCli.locate(work_root=settings.data_dir / WORK_DIR)
             except GitNotInstalledError as exc:
                 logger.warning("%s", exc)
-                remote = MissingGit()
+                git = MissingGit()
+            remote = remote or git
+            gateway = gateway or git
         engine = open_database(settings)
         catalog = CatalogModule.build(
             repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
@@ -97,14 +103,27 @@ class Container:
             chunks=SqliteChunkRepository(engine),
             search=SqliteSearchIndex(engine),
         )
-        # E3-05a replaces the placeholder handler and adds the import's recovery hook.
+        handlers, recovery_hooks = import_job(
+            gateway=gateway,
+            chunker=MarkdownChunker(),
+            sources=CatalogLibrarySources(catalog.get_library),
+            versions=CatalogVersionPublisher(
+                catalog.store_manifest, catalog.activate_manifest, catalog.discard_pending_manifests
+            ),
+            index=RetrievalChunkIndex(
+                retrieval.index_manifest, retrieval.get_chunk_sets, retrieval.discard_pending_chunks
+            ),
+            max_article_bytes=settings.max_article_bytes,
+            max_import_bytes=settings.max_import_bytes,
+        )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),
             clock=SystemClock(),
             remote=remote,
             library_ids=CatalogLibraryIds(catalog.get_library),
             libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
-            handlers={IMPORT_JOB: _import_not_available},
+            handlers=handlers,
+            recovery_hooks=recovery_hooks,
         )
         job_worker = JobWorker(
             recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job

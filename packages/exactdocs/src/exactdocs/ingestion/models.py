@@ -279,7 +279,8 @@ class Job:
     """A long task for one library (optionally one version) and how far it got.
 
     ``total`` is 0 until the job knows its size. ``commit_sha`` is the commit the job's
-    ``version`` was pinned to when it was queued. Every transition returns a new job.
+    ``version`` was pinned to when it was queued, ``ref_kind`` what ``version`` is (a tag, a
+    branch or a bare commit) as resolved then. Every transition returns a new job.
     """
 
     id: JobId
@@ -288,6 +289,7 @@ class Job:
     version: str | None
     state: JobState
     commit_sha: str | None = None
+    ref_kind: RefKind | None = None
     done: int = 0
     total: int = 0
     problems: tuple[FileProblem, ...] = ()
@@ -306,6 +308,7 @@ class Job:
         version: str | None,
         now: datetime,
         commit_sha: str | None = None,
+        ref_kind: RefKind | None = None,
     ) -> Self:
         """Create a job that waits for the worker."""
         return cls(
@@ -314,6 +317,7 @@ class Job:
             library=library,
             version=version,
             commit_sha=commit_sha,
+            ref_kind=ref_kind,
             state=JobState.QUEUED,
             created_at=now,
         )
@@ -329,7 +333,15 @@ class Job:
         return replace(self, done=done, total=total)
 
     def with_problem(self, path: str, reason: str) -> Self:
-        """Record a skipped file; the job goes on."""
+        """Record a skipped file; the job goes on. Beyond ``MAX_JOB_PROBLEMS`` they are dropped.
+
+        # E3-05b: the listing of skipped files is designed there; this is only a safeguard.
+        """
+        if len(self.problems) > MAX_JOB_PROBLEMS:
+            return self
+        if len(self.problems) == MAX_JOB_PROBLEMS:
+            path, reason = "", "more files were skipped; they are not listed"
+            return replace(self, problems=(*self.problems, FileProblem(path, reason)))
         return replace(self, problems=(*self.problems, FileProblem(path, reason)))
 
     def succeeded(self, now: datetime) -> Self:
@@ -851,3 +863,54 @@ class NewLibrary:
     default_branch: str | None
     selection: PathSelection
     tag_rules: tuple[TagRule, ...] = ()
+
+
+# ---------------------------------------------------------------- import
+
+DEFAULT_MAX_ARTICLE_BYTES = 2 * 2**20
+"""Files above this many bytes are skipped without being read."""
+
+DEFAULT_MAX_IMPORT_BYTES = 256 * 2**20
+"""An import whose selected articles add up to more than this many bytes fails."""
+
+MAX_JOB_PROBLEMS = 1000
+"""Skipped files a job lists; the rest are only counted in a last entry."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportSource:
+    """Where a library's articles come from and which of them are taken."""
+
+    url: RepositoryUrl
+    selection: PathSelection
+    tag_rules: tuple[TagRule, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedArticle:
+    """An article ready to publish: its text, metadata and chunks."""
+
+    path: str
+    blob_sha: str
+    title: str
+    tags: tuple[str, ...]
+    front_matter: dict[str, Any]
+    content: str
+    chunks: tuple[ArticleChunk, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedVersion:
+    """Every article of one library version at one commit, chunked with ``config_hash``."""
+
+    library: str
+    ref: str
+    kind: RefKind
+    commit_sha: str
+    config_hash: str
+    articles: tuple[ImportedArticle, ...]
+
+
+def git_blob_sha(data: bytes) -> str:
+    """Return the SHA-1 git gives a file with exactly these bytes."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()

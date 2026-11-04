@@ -1,13 +1,16 @@
 from exactdocs.ingestion.ports.driven import (
     Chunker,
+    ChunkIndex,
     GitGateway,
     GitRemote,
     JobHandler,
     JobProgress,
     JobRepository,
     LibraryIds,
+    LibrarySources,
     NewLibraries,
     RecoveryHook,
+    VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
@@ -24,6 +27,7 @@ from exactdocs.ingestion.ports.driving import (
 __all__ = [
     "AddLibrary",
     "CheckRepository",
+    "ChunkIndex",
     "Chunker",
     "EnqueueJob",
     "GetJob",
@@ -33,6 +37,7 @@ __all__ = [
     "JobProgress",
     "JobRepository",
     "LibraryIds",
+    "LibrarySources",
     "ListLatestJobs",
     "ListLibraryJobs",
     "ListRepositoryRefs",
@@ -40,4 +45,5 @@ __all__ = [
     "RecoverJobs",
     "RecoveryHook",
     "RunNextJob",
+    "VersionPublisher",
 ]

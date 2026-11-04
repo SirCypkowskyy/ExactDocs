@@ -4,9 +4,11 @@ from typing import Protocol
 
 from exactdocs.retrieval.dtos import (
     ChunkOut,
+    ChunkSetsOut,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
     GetChunkQuery,
+    GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     RemovedChunks,
@@ -35,6 +37,17 @@ class IndexManifest(Protocol):
     """
 
     async def __call__(self, command: IndexManifestCommand) -> IndexedManifestOut:
+        """Run the use case."""
+        ...
+
+
+class GetChunkSets(Protocol):
+    """Return the stored chunks of blobs chunked under one config; unknown blobs are left out.
+
+    This is how an importer skips chunking a blob that an earlier import already chunked.
+    """
+
+    async def __call__(self, query: GetChunkSetsQuery) -> ChunkSetsOut:
         """Run the use case."""
         ...
 

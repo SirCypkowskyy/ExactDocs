@@ -1,19 +1,23 @@
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from exactdocs.retrieval.dtos import (
     ChunkOut,
+    ChunkSetsOut,
     CollectChunksCommand,
     CoverageOut,
     DiscardPendingChunksCommand,
     GetChunkQuery,
+    GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     RemovedChunks,
     SearchDocsQuery,
     SearchDocsResult,
     SearchResultOut,
+    SetChunkOut,
 )
 from exactdocs.retrieval.errors import ChunkNotFoundError, VersionNotIndexedError
 from exactdocs.retrieval.models import (
@@ -52,7 +56,7 @@ async def _confirmed_removals(
     now: datetime,
     pending_too: bool,
 ) -> list[str]:
-    """Pick the manifests safe to remove, asking the catalog twice.
+    """Import asyncioPick the manifests safe to remove, asking the catalog twice.
 
     Removable: pending in the catalog (when ``pending_too``), or unknown to it and older than
     the grace period. Everything else stays, including a status we cannot name. The second
@@ -137,6 +141,27 @@ class IndexManifestUseCase:
             library=library,
             indexed_at=self.clock.now(),
         )
+        chunk_sets, rows = await asyncio.to_thread(self._build, command, manifest)
+        stored = await self.chunks.add(manifest, chunk_sets, rows)
+        # Also when the manifest was already indexed: a crash between the two calls above and
+        # below leaves sets without index entries, and indexing only fills gaps.
+        for chunk_set in chunk_sets.values():
+            await self.search.index(chunk_set)
+        ids: dict[str, list[str]] = {a.path: [] for a in command.articles}
+        for row in rows:
+            ids[row.article_path].append(row.chunk_id)
+        return IndexedManifestOut(
+            manifest_id=command.manifest_id,
+            chunk_ids=ids,
+            chunk_sets_stored=stored or 0,
+            already_indexed=stored is None,
+        )
+
+    @staticmethod
+    def _build(
+        command: IndexManifestCommand, manifest: IndexedManifest
+    ) -> tuple[dict[ChunkSetKey, ChunkSet], list[ManifestChunk]]:
+        """Make the chunk sets and rows: CPU-bound (chunk IDs are hashed), so run in a thread."""
         chunk_sets: dict[ChunkSetKey, ChunkSet] = {}
         rows: list[ManifestChunk] = []
         for article in command.articles:
@@ -161,20 +186,7 @@ class IndexManifestUseCase:
             rows += article_chunk_rows(
                 manifest.version_id, article.path, chunk_set, tuple(article.tags)
             )
-        stored = await self.chunks.add(manifest, chunk_sets, rows)
-        # Also when the manifest was already indexed: a crash between the two calls above and
-        # below leaves sets without index entries, and indexing only fills gaps.
-        for chunk_set in chunk_sets.values():
-            await self.search.index(chunk_set)
-        ids: dict[str, list[str]] = {a.path: [] for a in command.articles}
-        for row in rows:
-            ids[row.article_path].append(row.chunk_id)
-        return IndexedManifestOut(
-            manifest_id=command.manifest_id,
-            chunk_ids=ids,
-            chunk_sets_stored=stored or 0,
-            already_indexed=stored is None,
-        )
+        return chunk_sets, rows
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +208,35 @@ class GetChunkUseCase:
         if stored is None or stored.version_id != f"{indexed.library}/{indexed.version}":
             raise ChunkNotFoundError(indexed.library, indexed.version, query.chunk_id)
         return ChunkOut.from_stored(indexed.library, indexed.version, stored)
+
+
+@dataclass(frozen=True, slots=True)
+class GetChunkSetsUseCase:
+    """Implements ``ports.driving.GetChunkSets``."""
+
+    chunks: ChunkRepository
+
+    async def __call__(self, query: GetChunkSetsQuery) -> ChunkSetsOut:
+        """Look the sets up by (blob, config); sets that were never stored are left out."""
+        found = await self.chunks.get_sets(
+            [(sha, query.config_hash) for sha in dict.fromkeys(query.blob_shas)]
+        )
+        return ChunkSetsOut(
+            chunks={
+                sha: [
+                    SetChunkOut(
+                        heading_path=list(c.heading_path),
+                        occurrence_index=c.occurrence_index,
+                        content=c.content,
+                        content_hash=c.content_hash,
+                        anchor=c.anchor,
+                        code_languages=list(c.code_languages),
+                    )
+                    for c in chunk_set.chunks
+                ]
+                for (sha, _), chunk_set in found.items()
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)
