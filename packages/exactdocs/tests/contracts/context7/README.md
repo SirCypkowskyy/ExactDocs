@@ -11,7 +11,7 @@ from context7 to ExactDocs is a URL change.
 - `query-docs.json`: `libraryId` and `query` required strings, `language` optional string.
   context7 returns the text of its `/v2/context` API as one text block, `isError` on failure;
   ExactDocs puts the notice first and mirrors the `### title` / `Source:` / text blocks.
-- `session.json`: a recorded session using both tools; `tests/bootstrap/test_context7_session_replay.py`
+- `session.json`: a **hand-built** session (not a captured transcript) using both tools with realistic arguments; `tests/bootstrap/test_context7_session_replay.py`
   replays it and requires no errors.
 - `tests/bootstrap/test_context7_contract.py` checks that ExactDocs' tool has this name and that
   its input schema matches: every property here exists with the same type and the set of required
@@ -36,3 +36,12 @@ Output text format (`Available Libraries:` and the `- Title:` / `- Context7-comp
 ID:` / `- Description:` / `- Versions:` / `- Source:` lines, entries separated by `----------`)
 is mirrored by `exactdocs.retrieval.adapters.driving.mcp.format_library` and pinned by a
 golden-text test in `tests/retrieval/test_resolve_library_id.py`.
+
+## The `query-docs` payload
+
+Blocks are `### <heading path>`, `Source: <link>`, `Chunk: <id>` and the verbatim text, separated
+by 32 dashes. A chunk too large for the budget is a block with no text, saying to fetch it with
+`read_chunk`. A last line states how many matching chunks did not fit. The budget
+(`EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET`, at least 500) covers the whole payload, notice included, and
+counts a token as 4 characters; that undercounts CJK text and dense code. `language` reorders the
+best 50 matches; it does not filter.

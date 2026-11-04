@@ -89,13 +89,21 @@ def step_fails(context: Context, code: str) -> None:
 @then("the payload is at most {limit:d} characters")
 def step_limit(context: Context, limit: int) -> None:
     assert _payload(context).strip(), "an empty payload proves nothing"
-    assert len(_payload(context)) <= limit, len(_payload(context))
+    # Everything the agent receives: the notice block and the documentation block.
+    total = sum(len(block.text) for block in context.mcp_result.content)
+    assert total <= limit, total
 
 
 @then("the payload holds whole chunks only")
 def step_whole(context: Context) -> None:
-    for block in _payload(context).split(SECTION_SEPARATOR):
+    *blocks, last = _payload(context).split(SECTION_SEPARATOR)
+    # The last part is either a block or the line saying how many matches were left out.
+    if not last.endswith("did not fit the size budget; narrow the query."):
+        blocks.append(last)
+    assert blocks
+    for block in blocks:
         assert block.startswith("### "), block[:80]
+        assert "\n\nChunk: " in block, block[:200]
         assert block.count("```") % 2 == 0, block  # no code fence was cut in half
 
 

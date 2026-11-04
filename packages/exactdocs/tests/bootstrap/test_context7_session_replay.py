@@ -18,6 +18,7 @@ from exactdocs_kernel import NOTICE
 SESSION = json.loads(
     (Path(__file__).parents[1] / "contracts" / "context7" / "session.json").read_text("utf-8")
 )
+BUDGET_TOKENS = 500
 LIBRARY = "/vercel/next.js"
 REF = "v15.1.8"
 PATH = "docs/app/building-your-application/routing/middleware.mdx"
@@ -87,7 +88,7 @@ async def import_next(container: Container) -> None:
 
 
 async def test_a_recorded_context7_session_runs_without_errors() -> None:
-    container = Container.build(Settings())
+    container = Container.build(Settings(query_docs_token_budget=BUDGET_TOKENS))
     async with container.running(), Client(build_mcp(container)) as mcp:
         await import_next(container)
         results = [await mcp.call_tool(c["tool"], c["arguments"]) for c in SESSION["calls"]]
@@ -98,4 +99,8 @@ async def test_a_recorded_context7_session_runs_without_errors() -> None:
     # The ID the first call hands out is the one the recorded client then queries.
     assert f"- Context7-compatible library ID: {LIBRARY}\n" in resolved
     for docs in results[1:]:
-        assert MIDDLEWARE in docs.content[1].text
+        text = docs.content[1].text
+        assert text.startswith("### Middleware\n\nSource: https://github.com/vercel/next.js/blob/")
+        assert "\n\nChunk: " in text
+        assert text.endswith(MIDDLEWARE)
+        assert sum(len(b.text) for b in docs.content) <= BUDGET_TOKENS * 4

@@ -460,7 +460,7 @@ class DocSectionOut(_Dto):
         )
 
     def as_pointer(self) -> Self:
-        """The same section without its text, for a chunk that cannot fit the budget."""
+        """Return the section without its text, for a chunk that cannot fit the budget."""
         return self.model_copy(update={"content": "", "too_large": True})
 
 

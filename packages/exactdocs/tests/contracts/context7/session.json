@@ -1,5 +1,5 @@
 {
-  "recorded_with": "@upstash/context7-mcp 4.5.0, a Claude Code session answering 'protect routes in Next.js with middleware'",
+  "provenance": "hand-built, not a captured transcript: the calls have the shape context7-mcp 4.5.0 clients send (names and argument types pinned by the sibling files), with realistic arguments for the task 'protect routes in Next.js with middleware'",
   "calls": [
     {
       "tool": "resolve-library-id",

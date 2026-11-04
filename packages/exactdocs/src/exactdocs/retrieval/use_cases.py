@@ -34,6 +34,9 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import (
     CHARS_PER_TOKEN,
+    FOOTER_CHARS,
+    POINTER_TEXT,
+    SECTION_FRAMING_CHARS,
     Candidate,
     CatalogLibrary,
     Chunk,
@@ -49,9 +52,6 @@ from exactdocs.retrieval.models import (
     SearchText,
     TagFilter,
     TagMatch,
-    FOOTER_CHARS,
-    POINTER_TEXT,
-    SECTION_FRAMING_CHARS,
     article_chunk_rows,
     language_first,
     name_match,
@@ -426,6 +426,21 @@ def _cost(section: DocSectionOut) -> int:
     )
 
 
+def _pack(sections: Sequence[DocSectionOut], room: int) -> list[DocSectionOut]:
+    """Take sections in order while they fit ``room``; a chunk that never could becomes a pointer.
+
+    A chunk is never cut. One that merely finds the room used up is skipped, and a smaller one
+    after it may still fit.
+    """
+    used, kept = 0, []
+    for section in sections:
+        shown = section if _cost(section) <= room else section.as_pointer()
+        if used + _cost(shown) <= room:
+            kept.append(shown)
+            used += _cost(shown)
+    return kept
+
+
 @dataclass(frozen=True, slots=True)
 class QueryDocsUseCase:
     """Implements ``ports.driving.QueryDocs``."""
@@ -465,19 +480,7 @@ class QueryDocsUseCase:
         if query.language:
             sections = language_first(sections, lambda s: s.code_languages, query.language)
         budget = self.token_budget * CHARS_PER_TOKEN
-        room = budget - len(NOTICE) - FOOTER_CHARS
-        used, kept = 0, []
-        for section in sections:
-            # A chunk that does not fit whole is never cut; a smaller one may still fit.
-            if used + _cost(section) <= room:
-                shown = section
-            elif _cost(section) > room:
-                shown = section.as_pointer()
-            else:
-                continue
-            if used + _cost(shown) <= room:
-                kept.append(shown)
-                used += _cost(shown)
+        kept = _pack(sections, budget - len(NOTICE) - FOOTER_CHARS)
         return QueryDocsResult(
             library=version.library,
             version=version.version,
