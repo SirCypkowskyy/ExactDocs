@@ -52,7 +52,7 @@ export function TreePane({
   onClearTags,
   onOpen,
 }: TreePaneProps) {
-  const tree = useTree({ owner, repo, ref: version, tags, selected });
+  const tree = useTree({ owner, repo, ref: version, tags: tagsParam, selected });
 
   if (tree.status === "loading") return <Skeleton />;
   if (tree.status === "error") {

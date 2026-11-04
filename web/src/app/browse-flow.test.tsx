@@ -39,7 +39,7 @@ const ALL = [
 const gone = { error: "not_found", detail: "no article", fields: [] };
 
 /** An in-memory API: v1.3.0 lacks webhooks.md; v1.4.0 has everything. */
-function serve() {
+function serve(paged = false) {
   const calls: URL[] = [];
   vi.stubGlobal(
     "fetch",
@@ -63,6 +63,13 @@ function serve() {
             a.path.startsWith(prefix) &&
             (tags.length === 0 || a.tags.some((t) => tags.includes(t))),
         );
+        if (paged && prefix === "") {
+          // Two at a time: README.md and docs/guide/auth.md first.
+          const cursor = url.searchParams.get("cursor");
+          return cursor
+            ? Response.json({ articles: articles.slice(2), next_cursor: null })
+            : Response.json({ articles: articles.slice(0, 2), next_cursor: "c1" });
+        }
         return Response.json({ articles, next_cursor: null });
       }
       if (p.endsWith("/article")) {
@@ -98,8 +105,8 @@ function serve() {
   return calls;
 }
 
-function mount(path: string) {
-  const calls = serve();
+function mount(path: string, paged = false) {
+  const calls = serve(paged);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter(client, createMemoryHistory({ initialEntries: [path] }));
   render(
@@ -193,6 +200,16 @@ describe("browsing a library version", () => {
     await userEvent.click(screen.getByRole("link", { name: /Show the root of v1\.3\.0/ }));
     await waitFor(() => expect(router.state.location.search.path).toBeUndefined());
     expect(await screen.findByRole("heading", { name: /Browsing/ })).toBeVisible();
+  });
+
+  it("pages the root listing on request and adds what arrives to the tree", async () => {
+    const { calls } = mount("/libraries/acme/payments?version=v1.4.0", true);
+    const more = await screen.findByRole("treeitem", { name: "Show more files" });
+    expect(screen.queryByRole("treeitem", { name: /Acme Payments/ })).toBeNull();
+    await userEvent.click(more);
+    expect(await screen.findByRole("treeitem", { name: /Acme Payments/ })).toBeVisible();
+    expect(screen.queryByRole("treeitem", { name: "Show more files" })).toBeNull();
+    expect(calls.filter((u) => u.searchParams.get("cursor") === "c1")).toHaveLength(1);
   });
 
   it("falls back to the default version for an unknown one, with a notice", async () => {

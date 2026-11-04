@@ -1,19 +1,22 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { articlesPageQueryOptions } from "../api/browse-queries";
-import { type ArticleSummary, ancestorsOf, buildRows } from "../model/browse";
+import { type ArticleSummary, ancestorsOf, buildRows, parseTags } from "../model/browse";
 
 interface Scope {
   status: "loading" | "idle" | "error";
   /** `null`: everything under this folder is loaded; a string: the next page. */
   cursor: string | null;
+  /** The last path listed so far; listings are sorted by path, so everything before it is loaded. */
+  last?: string | undefined;
 }
 
 interface TreeArgs {
   owner: string;
   repo: string;
   ref: string;
-  tags: readonly string[];
+  /** The `tags` search param (comma-separated), so the hook's identity only changes with it. */
+  tags: string | undefined;
   /** The open article: its folders start expanded. */
   selected: string | undefined;
 }
@@ -23,8 +26,9 @@ interface TreeArgs {
  * folder's listing when it is first expanded, and each listing pages on request. Mount it with a
  * `key` of version and tags so a change starts from nothing.
  */
-export function useTree({ owner, repo, ref, tags, selected }: TreeArgs) {
+export function useTree({ owner, repo, ref, tags: tagsParam, selected }: TreeArgs) {
   const queryClient = useQueryClient();
+  const tags = useMemo(() => parseTags(tagsParam), [tagsParam]);
   const [articles, setArticles] = useState<ReadonlyMap<string, ArticleSummary>>(new Map());
   const [scopes, setScopes] = useState<Readonly<Record<string, Scope>>>({});
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
@@ -41,7 +45,10 @@ export function useTree({ owner, repo, ref, tags, selected }: TreeArgs) {
       if (current?.status === "loading") return;
       const cursor = current?.cursor;
       if (current?.status === "idle" && cursor === null) return;
-      setScopes((s) => ({ ...s, [prefix]: { status: "loading", cursor: cursor ?? null } }));
+      setScopes((s) => ({
+        ...s,
+        [prefix]: { status: "loading", cursor: cursor ?? null, last: current?.last },
+      }));
       try {
         const page = await queryClient.fetchQuery(
           articlesPageQueryOptions({ owner, repo, ref, tags, prefix, cursor }),
@@ -51,21 +58,36 @@ export function useTree({ owner, repo, ref, tags, selected }: TreeArgs) {
           for (const a of page.articles) next.set(a.path, a);
           return next;
         });
-        setScopes((s) => ({ ...s, [prefix]: { status: "idle", cursor: page.next_cursor } }));
+        const last = page.articles.at(-1)?.path ?? current?.last;
+        setScopes((s) => ({ ...s, [prefix]: { status: "idle", cursor: page.next_cursor, last } }));
       } catch {
-        setScopes((s) => ({ ...s, [prefix]: { status: "error", cursor: cursor ?? null } }));
+        setScopes((s) => ({
+          ...s,
+          [prefix]: { status: "error", cursor: cursor ?? null, last: current?.last },
+        }));
       }
     },
     [queryClient, owner, repo, ref, tags],
   );
 
   const root = scopes[""];
-  // A folder is complete when it, or any folder above it, has been listed to the end.
+  // A folder is complete when it, or any folder above it, has been listed to the end, or when the
+  // root listing has already run past it (the listing is sorted, so a folder is contiguous).
   const complete = useCallback(
-    (folder: string) =>
-      [...ancestorsOf(`${folder}/_`), ""].some(
-        (f) => scopes[f]?.status === "idle" && scopes[f]?.cursor === null,
-      ),
+    (folder: string) => {
+      const last = scopes[""]?.last;
+      const passed =
+        folder !== "" &&
+        last !== undefined &&
+        !last.startsWith(`${folder}/`) &&
+        last > `${folder}/`;
+      return (
+        passed ||
+        [...ancestorsOf(`${folder}/_`), ""].some(
+          (f) => scopes[f]?.status === "idle" && scopes[f]?.cursor === null,
+        )
+      );
+    },
     [scopes],
   );
 

@@ -180,7 +180,11 @@ export function FileTree({
             >
               <span aria-hidden="true" className="size-4 shrink-0" />
               <span className={cn("truncate", bad && "text-destructive")}>
-                {bad ? "Couldn't load more. Try again" : "Show more files"}
+                {bad
+                  ? "Couldn't load more. Try again"
+                  : row.scope
+                    ? `Show more in ${row.scope.split("/").pop()}`
+                    : "Show more files"}
               </span>
             </div>
           );

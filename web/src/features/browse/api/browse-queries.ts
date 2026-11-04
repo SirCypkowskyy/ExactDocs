@@ -43,9 +43,10 @@ export interface ListArgs {
 export const articlesPageQueryOptions = ({ owner, repo, ref, tags, prefix, cursor }: ListArgs) =>
   queryOptions({
     queryKey: browseKeys.articles(owner, repo, ref, tags.join(","), prefix, cursor ?? ""),
-    queryFn: ({ signal }) =>
+    // No abort signal: the tree fetches pages imperatively (`fetchQuery`) while the tag filter
+    // observes the same first page, and an observer leaving must not cancel the tree's request.
+    queryFn: () =>
       getJson<ArticleList>(`/v1/libraries/${seg(owner)}/${seg(repo)}/articles`, {
-        signal,
         query: {
           ref,
           path_prefix: prefix,
