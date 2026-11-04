@@ -24,7 +24,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `setup_required`, whatever the method (HEAD and OPTIONS included). `POST /api/v1/setup` creates the
   admin once (409 `already_set_up` afterwards). Only `/api/v1` is guarded: `/mcp` and
   `/.well-known/...` are not guarded by the setup yet; MCP access control comes with E2-03 (API
-  tokens), and sessions with E2-02.
+  tokens).
+- **Authentication**: every `/api/v1` operation needs a signed-in caller (401 `unauthenticated`
+  otherwise) except `POST /setup` and the three `/session` operations; a test pins that list, and
+  the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
+  `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
+  `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
+  `invalid_credentials`. `GET /session` returns `{"state": "setup_required" | "signed_out" |
+  "signed_in", "account": ...}` and never fails; `DELETE /session` ends the session on the server
+  and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
+  SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
+  7 days idle or 30 days in all. Unsafe requests with a foreign `Origin` are refused with 403
+  (also sign-in and sign-out). `/mcp` never looks at the cookie.
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.

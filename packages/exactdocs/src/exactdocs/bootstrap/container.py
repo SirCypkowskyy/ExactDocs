@@ -15,7 +15,10 @@ from exactdocs.catalog.adapters.driven.sqlite import (
 )
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
-from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
+from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccountRepository,
+    SqliteSessionRepository,
+)
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
@@ -49,6 +52,7 @@ class Container:
         )
         identity = IdentityModule.build(
             repository=SqliteAccountRepository(engine),
+            sessions=SqliteSessionRepository(engine),
             hasher=Argon2idPasswordHasher(),
             clock=SystemClock(),
         )

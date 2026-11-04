@@ -1,21 +1,40 @@
 """Identity use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
+import secrets
 from dataclasses import dataclass
+from datetime import timedelta
 from uuid import uuid7
+
+from pydantic import SecretStr
 
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
+    ResetPasswordCommand,
+    SessionGrant,
+    SessionState,
     SetupState,
 )
 from exactdocs.identity.errors import (
     AlreadySetUpError,
     InvalidCredentialsError,
     InvalidUsernameError,
+    NotSignedInError,
+    UnknownAccountError,
 )
-from exactdocs.identity.models import Account, AccountId, Role, Username
-from exactdocs.identity.ports.driven import AccountRepository, PasswordHasher
+from exactdocs.identity.models import (
+    ABSOLUTE_TIMEOUT,
+    IDLE_TIMEOUT,
+    Account,
+    AccountId,
+    Role,
+    Session,
+    Username,
+    hash_token,
+)
+from exactdocs.identity.ports.driven import AccountRepository, PasswordHasher, SessionRepository
+from exactdocs.identity.ports.driving import Authenticate, IdentifyCaller
 from exactdocs_kernel import Clock
 
 
@@ -77,3 +96,123 @@ class AuthenticateUseCase:
         if not await self.hasher.verify(account.password_hash, password):
             raise InvalidCredentialsError
         return AccountSummary.from_model(account)
+
+
+TOKEN_BYTES = 32  # 256 bits of randomness
+# Using a session only writes `last_used_at` when it is older than this: a read-only request
+# should not cost a database write each time, and it is tiny next to the 7-day idle timeout.
+TOUCH_INTERVAL = timedelta(hours=1)
+
+
+@dataclass(frozen=True, slots=True)
+class SignInUseCase:
+    """Implements ``ports.driving.SignIn``."""
+
+    authenticate: Authenticate
+    sessions: SessionRepository
+    clock: Clock
+
+    async def __call__(self, query: AuthenticateQuery) -> SessionGrant:
+        """Start a session for the account the credentials belong to."""
+        account = await self.authenticate(query)
+        now = self.clock.now()
+        await self.sessions.delete_expired(
+            idle_before=now - IDLE_TIMEOUT, created_before=now - ABSOLUTE_TIMEOUT
+        )
+        token = secrets.token_urlsafe(TOKEN_BYTES)  # a new one every time: no session fixation
+        await self.sessions.add(
+            Session(
+                token_hash=hash_token(token),
+                account_id=AccountId(account.id),
+                created_at=now,
+                last_used_at=now,
+            )
+        )
+        return SessionGrant(
+            token=SecretStr(token),
+            account=account,
+            max_age=int(ABSOLUTE_TIMEOUT.total_seconds()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SignOutUseCase:
+    """Implements ``ports.driving.SignOut``."""
+
+    sessions: SessionRepository
+
+    async def __call__(self, token: str) -> None:
+        """Delete the session on the server, so a copied cookie stops working too."""
+        await self.sessions.delete(hash_token(token))
+
+
+@dataclass(frozen=True, slots=True)
+class IdentifyCallerUseCase:
+    """Implements ``ports.driving.IdentifyCaller``."""
+
+    sessions: SessionRepository
+    accounts: AccountRepository
+    clock: Clock
+
+    async def __call__(self, token: str | None) -> AccountSummary:
+        """Return the owner of a live session, or raise ``NotSignedInError``."""
+        if not token:
+            raise NotSignedInError
+        token_hash = hash_token(token)
+        # The lookup compares hashes of random tokens, so there is no secret to learn from its
+        # timing: an attacker cannot steer which hash a guess produces.
+        session = await self.sessions.get(token_hash)
+        if session is None:
+            raise NotSignedInError
+        now = self.clock.now()
+        account = (
+            None if session.is_expired(now) else await self.accounts.get_by_id(session.account_id)
+        )
+        if account is None:
+            await self.sessions.delete(token_hash)  # expired, or its account is gone
+            raise NotSignedInError
+        if now - session.last_used_at >= TOUCH_INTERVAL:
+            await self.sessions.touch(token_hash, now)
+        return AccountSummary.from_model(account)
+
+
+@dataclass(frozen=True, slots=True)
+class GetSessionStateUseCase:
+    """Implements ``ports.driving.GetSessionState``."""
+
+    accounts: AccountRepository
+    identify_caller: IdentifyCaller
+
+    async def __call__(self, token: str | None) -> SessionState:
+        """Report the setup, signed-out or signed-in state for the token."""
+        if not await self.accounts.any_exists():
+            return SessionState(state="setup_required")
+        try:
+            account = await self.identify_caller(token)
+        except NotSignedInError:
+            return SessionState(state="signed_out")
+        return SessionState(state="signed_in", account=account)
+
+
+@dataclass(frozen=True, slots=True)
+class ResetPasswordUseCase:
+    """Implements ``ports.driving.ResetPassword``."""
+
+    accounts: AccountRepository
+    sessions: SessionRepository
+    hasher: PasswordHasher
+
+    async def __call__(self, command: ResetPasswordCommand) -> None:
+        """Set the new password, then end all the account's sessions.
+
+        In this order, so nobody can sign in with the old password once the sessions are gone.
+        """
+        try:
+            account = await self.accounts.get(Username(command.username))
+        except InvalidUsernameError:
+            account = None
+        if account is None:
+            raise UnknownAccountError
+        password_hash = await self.hasher.hash(command.password.get_secret_value())
+        await self.accounts.set_password_hash(account.id, password_hash)
+        await self.sessions.delete_for_account(account.id)

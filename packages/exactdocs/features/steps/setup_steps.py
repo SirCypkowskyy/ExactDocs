@@ -38,12 +38,6 @@ def step_list(context: Context) -> None:
     context.response = context.client.get("/api/v1/libraries")
 
 
-@then("a client can list the libraries over the REST API")
-def step_can_list(context: Context) -> None:
-    response = context.client.get("/api/v1/libraries")
-    assert response.status_code == HTTPStatus.OK, response.text
-
-
 @when('a client sets the instance up with the username "{username}" and the password "{password}"')
 def step_setup(context: Context, username: str, password: str) -> None:
     body = {"username": username, "password": password}

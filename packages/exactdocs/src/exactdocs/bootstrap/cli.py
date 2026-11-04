@@ -3,6 +3,7 @@
 import asyncio
 import getpass
 import sys
+from collections.abc import Coroutine
 from typing import Annotated
 
 import uvicorn
@@ -19,6 +20,7 @@ from exactdocs.identity.dtos import (
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
     CreateFirstAdminCommand,
+    ResetPasswordCommand,
 )
 from exactdocs_kernel import DomainError
 
@@ -63,17 +65,43 @@ def create(
     ] = False,
 ) -> None:
     """Create the first admin account (only while no account exists)."""
+    name, password = _read_credentials(username, password_stdin=password_stdin)
+    created = _run(_create_first_admin(Settings(), name, password))
+    sys.stdout.write(f"Created admin {created!r}.\n")
+
+
+@admin.command
+def reset_password(
+    *,
+    username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
+    password_stdin: Annotated[
+        bool, Parameter(help="Read the new password from one line of stdin instead of prompting.")
+    ] = False,
+) -> None:
+    """Set a new password for an account and sign it out everywhere (lost-password recovery)."""
+    name, password = _read_credentials(username, password_stdin=password_stdin, new=True)
+    _run(_reset_password(Settings(), name, password))
+    sys.stdout.write(f"Password of {name!r} changed; all its sessions ended.\n")
+
+
+def _read_credentials(
+    username: str | None, *, password_stdin: bool, new: bool = False
+) -> tuple[str, str]:
     try:
         name = username if username is not None else input("Username: ")
-        password = _read_password(from_stdin=password_stdin)
+        return name, _read_password(from_stdin=password_stdin, new=new)
     except EOFError, KeyboardInterrupt:
         message = (
             "exactdocs: no username or password to read; run it in a terminal, "
             "or pass --username and --password-stdin"
         )
         raise SystemExit(message) from None
+
+
+def _run[T](work: Coroutine[object, object, T]) -> T:
+    """Run a command's work, turning bad input and domain errors into a one-line exit."""
     try:
-        created = asyncio.run(_create_first_admin(Settings(), name, password))
+        return asyncio.run(work)
     except ValidationError as exc:
         # Pydantic's message would echo the rejected password; say only what is wrong.
         fields = ", ".join(str(error["loc"][0]) for error in exc.errors())
@@ -85,10 +113,9 @@ def create(
     except DomainError as exc:
         message = f"exactdocs: {exc}"
         raise SystemExit(message) from exc
-    sys.stdout.write(f"Created admin {created!r}.\n")
 
 
-def _read_password(*, from_stdin: bool) -> str:
+def _read_password(*, from_stdin: bool, new: bool = False) -> str:
     if from_stdin:
         line = sys.stdin.readline()
         if not line:
@@ -96,7 +123,7 @@ def _read_password(*, from_stdin: bool) -> str:
         return line.rstrip("\r\n")
     if not sys.stdin.isatty():
         raise EOFError  # getpass would echo the password it reads from a pipe
-    password = getpass.getpass("Password: ")
+    password = getpass.getpass("New password: " if new else "Password: ")
     if getpass.getpass("Repeat password: ") != password:
         message = "exactdocs: the passwords differ"
         raise SystemExit(message)
@@ -108,6 +135,13 @@ async def _create_first_admin(settings: Settings, username: str, password: str) 
     async with container.running():
         command = CreateFirstAdminCommand(username=username, password=SecretStr(password))
         return (await container.identity.create_first_admin(command)).username
+
+
+async def _reset_password(settings: Settings, username: str, password: str) -> None:
+    container = _build(settings)
+    async with container.running():
+        command = ResetPasswordCommand(username=username, password=SecretStr(password))
+        await container.identity.reset_password(command)
 
 
 async def _serve_stdio(settings: Settings) -> None:

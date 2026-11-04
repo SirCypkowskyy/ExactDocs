@@ -1,4 +1,4 @@
-from exactdocs_kernel import ConflictError, DomainError, ValidationError
+from exactdocs_kernel import ConflictError, NotFoundError, UnauthenticatedError, ValidationError
 
 
 class InvalidUsernameError(ValidationError):
@@ -22,10 +22,26 @@ class AlreadySetUpError(ConflictError):
         super().__init__("the instance is already set up: an account exists")
 
 
-class InvalidCredentialsError(DomainError):
+class InvalidCredentialsError(UnauthenticatedError):
     """Wrong password or unknown user; deliberately the same error for both."""
 
     code = "invalid_credentials"
 
     def __init__(self) -> None:
         super().__init__("invalid username or password")
+
+
+class NotSignedInError(UnauthenticatedError):
+    """No session, or one that is unknown, expired or ended; deliberately not told apart."""
+
+    def __init__(self) -> None:
+        super().__init__("sign in to use this")
+
+
+class UnknownAccountError(NotFoundError):
+    """No account has this username. Only operators (the local command line) learn this."""
+
+    code = "unknown_account"
+
+    def __init__(self) -> None:
+        super().__init__("no account has this username")

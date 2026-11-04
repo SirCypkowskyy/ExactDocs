@@ -21,7 +21,6 @@ Feature: First-run setup
     Then the response status is 201
     And the admin "ada" can sign in with the password "correct horse battery staple"
     And the setup endpoint is no longer available
-    And a client can list the libraries over the REST API
 
   Scenario: A password that is too short is refused and nothing is created
     Given a fresh instance

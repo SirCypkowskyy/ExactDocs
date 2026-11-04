@@ -1,6 +1,6 @@
 """Data crossing the identity boundary (into and out of driving ports). Immutable, validated."""
 
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -45,3 +45,25 @@ class AuthenticateQuery(_Dto):
 
     username: str
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
+
+
+class ResetPasswordCommand(_Dto):
+    """A new password for an existing account (the operator's recovery path)."""
+
+    username: str
+    password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+
+
+class SessionGrant(_Dto):
+    """A new session. ``token`` is the only copy of the secret; hand it to the browser."""
+
+    token: SecretStr
+    account: AccountSummary
+    max_age: int  # seconds until the session cannot be used any more, even if never idle
+
+
+class SessionState(_Dto):
+    """What the UI needs to know first: is setup due, is anyone signed in, and who."""
+
+    state: Literal["setup_required", "signed_out", "signed_in"]
+    account: AccountSummary | None = None

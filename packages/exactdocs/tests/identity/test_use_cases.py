@@ -4,14 +4,17 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from exactdocs.identity.adapters.driven.memory import InMemoryAccountRepository
+from exactdocs.identity.adapters.driven.memory import (
+    InMemoryAccountRepository,
+    InMemorySessionRepository,
+)
 from exactdocs.identity.dtos import AuthenticateQuery, CreateFirstAdminCommand
 from exactdocs.identity.errors import (
     AlreadySetUpError,
     InvalidCredentialsError,
     InvalidUsernameError,
 )
-from exactdocs.identity.models import Account, Username
+from exactdocs.identity.models import Account, AccountId, Username
 from exactdocs.identity.module import IdentityModule
 
 HORSE = "correct horse battery staple"
@@ -50,6 +53,12 @@ class RacedRepository:
     async def get(self, username: Username) -> Account | None:
         return await self.inner.get(username)
 
+    async def get_by_id(self, account_id: AccountId) -> Account | None:
+        return await self.inner.get_by_id(account_id)
+
+    async def set_password_hash(self, account_id: AccountId, password_hash: str) -> None:
+        await self.inner.set_password_hash(account_id, password_hash)
+
     async def any_exists(self) -> bool:
         return False
 
@@ -66,7 +75,12 @@ def repository() -> InMemoryAccountRepository:
 
 @pytest.fixture
 def identity(repository: InMemoryAccountRepository, hasher: FakeHasher) -> IdentityModule:
-    return IdentityModule.build(repository=repository, hasher=hasher, clock=FixedClock())
+    return IdentityModule.build(
+        repository=repository,
+        sessions=InMemorySessionRepository(),
+        hasher=hasher,
+        clock=FixedClock(),
+    )
 
 
 def command(username: str = "ada", password: str = HORSE) -> CreateFirstAdminCommand:
@@ -118,7 +132,10 @@ async def test_a_lost_race_to_the_repository_is_refused_too(
     # `any_exists` said no, but another process stored an account before ours: `add_first` decides.
     await identity.create_first_admin(command())
     racing = IdentityModule.build(
-        repository=RacedRepository(repository), hasher=hasher, clock=FixedClock()
+        repository=RacedRepository(repository),
+        sessions=InMemorySessionRepository(),
+        hasher=hasher,
+        clock=FixedClock(),
     )
 
     with pytest.raises(AlreadySetUpError):

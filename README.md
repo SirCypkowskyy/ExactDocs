@@ -50,6 +50,12 @@ curl -X POST http://localhost:3000/api/v1/setup -H 'content-type: application/js
 `admin create` opens the database directly (so it works before the server is up, and against the
 same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
 Passwords are stored as argon2id hashes.
+
+The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
+ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
+Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
+`admin create`): it sets a new password and signs the admin out everywhere.
+
 Then add your first library in the UI or from the CLI, which talks to the server's REST API:
 
 ```bash
@@ -122,6 +128,7 @@ Articles can be tagged (front matter, path rules or by hand) and filtered by tag
 | `EXACTDOCS_SECRET_KEY` | generated in the data directory | Encrypts stored git credentials |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
+| `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
 | `EXACTDOCS_EMBEDDING_URL`, `_MODEL`, `_API_KEY` | – | Optional OpenAI-compatible / Ollama / TEI embeddings endpoint; enables hybrid search |
 | `EXACTDOCS_RERANKER_URL`, `_MODEL`, `_API_KEY` | – | Optional reranker endpoint (Cohere-compatible, Jina, TEI) |

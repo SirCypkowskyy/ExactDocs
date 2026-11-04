@@ -5,6 +5,339 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/setup": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Setup",
+        "operationId": "identity-setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFirstAdminCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get Session",
+        "operationId": "identity-get_session",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Create Session",
+        "operationId": "identity-create_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthenticateQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Delete Session",
+        "operationId": "identity-delete_session",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries": {
       "get": {
         "tags": [
@@ -12,6 +345,11 @@
         ],
         "summary": "List All",
         "operationId": "catalog-list_all",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "parameters": [
           {
             "name": "limit",
@@ -55,6 +393,16 @@
           },
           "400": {
             "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -113,6 +461,11 @@
         ],
         "summary": "Get One",
         "operationId": "catalog-get_one",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "parameters": [
           {
             "name": "owner",
@@ -146,6 +499,16 @@
           },
           "400": {
             "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -204,6 +567,11 @@
         ],
         "summary": "Get Version",
         "operationId": "catalog-get_version",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "parameters": [
           {
             "name": "owner",
@@ -254,6 +622,16 @@
               }
             }
           },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "403": {
             "description": "Refused: the instance has no admin account yet (`setup_required`).",
             "content": {
@@ -297,59 +675,48 @@
         }
       }
     },
-    "/api/v1/libraries/{owner}/{repo}/articles": {
+    "/api/v1/search": {
       "get": {
         "tags": [
-          "catalog"
+          "retrieval"
         ],
-        "summary": "List Version Articles",
-        "operationId": "catalog-list_version_articles",
+        "summary": "Search",
+        "operationId": "retrieval-search",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "parameters": [
           {
-            "name": "owner",
-            "in": "path",
+            "name": "library",
+            "in": "query",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Owner"
+              "minLength": 1,
+              "title": "Library"
             }
           },
           {
-            "name": "repo",
-            "in": "path",
+            "name": "version",
+            "in": "query",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Repo"
+              "minLength": 1,
+              "title": "Version"
             }
           },
           {
-            "name": "ref",
+            "name": "query",
             "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ref"
-            }
-          },
-          {
-            "name": "path_prefix",
-            "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
-              "description": "Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything.",
-              "default": "",
-              "title": "Path Prefix"
-            },
-            "description": "Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything."
+              "minLength": 1,
+              "title": "Query"
+            }
           },
           {
             "name": "limit",
@@ -357,27 +724,11 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 200,
+              "maximum": 50,
               "minimum": 1,
-              "default": 50,
+              "default": 5,
               "title": "Limit"
             }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
-            }
           }
         ],
         "responses": {
@@ -386,7 +737,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ArticleList"
+                  "$ref": "#/components/schemas/SearchDocsResult"
                 }
               }
             }
@@ -401,196 +752,8 @@
               }
             }
           },
-          "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The thing does not exist or is not visible to the caller.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with the current state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/libraries/{owner}/{repo}/article": {
-      "get": {
-        "tags": [
-          "catalog"
-        ],
-        "summary": "Get One Article",
-        "operationId": "catalog-get_one_article",
-        "parameters": [
-          {
-            "name": "owner",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Owner"
-            }
-          },
-          {
-            "name": "repo",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Repo"
-            }
-          },
-          {
-            "name": "path",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Path"
-            }
-          },
-          {
-            "name": "ref",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ref"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Article"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request cannot be processed (error code in `error`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The thing does not exist or is not visible to the caller.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with the current state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/setup": {
-      "post": {
-        "tags": [
-          "identity"
-        ],
-        "summary": "Setup",
-        "operationId": "identity-setup",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateFirstAdminCommand"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AccountSummary"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request cannot be processed (error code in `error`).",
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -649,6 +812,11 @@
         ],
         "summary": "Get Job",
         "operationId": "ingestion-get_job",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "parameters": [
           {
             "name": "job_id",
@@ -673,6 +841,16 @@
           },
           "400": {
             "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -731,6 +909,11 @@
         ],
         "summary": "List Library Jobs",
         "operationId": "ingestion-list_library_jobs",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "parameters": [
           {
             "name": "owner",
@@ -800,113 +983,8 @@
               }
             }
           },
-          "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The thing does not exist or is not visible to the caller.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with the current state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/search": {
-      "get": {
-        "tags": [
-          "retrieval"
-        ],
-        "summary": "Search",
-        "operationId": "retrieval-search",
-        "parameters": [
-          {
-            "name": "library",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Library"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Version"
-            }
-          },
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Query"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 50,
-              "minimum": 1,
-              "default": 5,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchDocsResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request cannot be processed (error code in `error`).",
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -986,153 +1064,28 @@
         "title": "AccountSummary",
         "description": "An account as the outside world sees it (never the password hash)."
       },
-      "Article": {
+      "AuthenticateQuery": {
         "properties": {
-          "path": {
+          "username": {
             "type": "string",
-            "title": "Path"
+            "title": "Username"
           },
-          "title": {
+          "password": {
             "type": "string",
-            "title": "Title"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags"
-          },
-          "size": {
-            "type": "integer",
-            "title": "Size"
-          },
-          "library": {
-            "type": "string",
-            "title": "Library"
-          },
-          "ref": {
-            "type": "string",
-            "title": "Ref"
-          },
-          "commit_sha": {
-            "type": "string",
-            "title": "Commit Sha"
-          },
-          "manifest_id": {
-            "type": "string",
-            "title": "Manifest Id"
-          },
-          "front_matter": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Front Matter"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
+            "maxLength": 1024,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "path",
-          "title",
-          "tags",
-          "size",
-          "library",
-          "ref",
-          "commit_sha",
-          "manifest_id",
-          "front_matter",
-          "content"
+          "username",
+          "password"
         ],
-        "title": "Article",
-        "description": "One article with its Markdown and the commit it comes from."
-      },
-      "ArticleList": {
-        "properties": {
-          "library": {
-            "type": "string",
-            "title": "Library"
-          },
-          "ref": {
-            "type": "string",
-            "title": "Ref"
-          },
-          "commit_sha": {
-            "type": "string",
-            "title": "Commit Sha"
-          },
-          "manifest_id": {
-            "type": "string",
-            "title": "Manifest Id"
-          },
-          "articles": {
-            "items": {
-              "$ref": "#/components/schemas/ArticleSummary"
-            },
-            "type": "array",
-            "title": "Articles"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor",
-            "description": "Pass as `cursor` to get the next page; null on the last page."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "library",
-          "ref",
-          "commit_sha",
-          "manifest_id",
-          "articles",
-          "next_cursor"
-        ],
-        "title": "ArticleList",
-        "description": "A page of articles of one manifest, sorted by path."
-      },
-      "ArticleSummary": {
-        "properties": {
-          "path": {
-            "type": "string",
-            "title": "Path"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags"
-          },
-          "size": {
-            "type": "integer",
-            "title": "Size"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "path",
-          "title",
-          "tags",
-          "size"
-        ],
-        "title": "ArticleSummary",
-        "description": "An article as listed in a tree: no content."
+        "title": "AuthenticateQuery",
+        "description": "A username and password to check."
       },
       "ChunkingOut": {
         "properties": {
@@ -1724,6 +1677,36 @@
         "title": "SearchDocsResult",
         "description": "Excerpts ordered from most to least relevant."
       },
+      "SessionState": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "setup_required",
+              "signed_out",
+              "signed_in"
+            ],
+            "title": "State"
+          },
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "SessionState",
+        "description": "What the UI needs to know first: is setup due, is anyone signed in, and who."
+      },
       "TagRuleOut": {
         "properties": {
           "pattern": {
@@ -1779,6 +1762,14 @@
         ],
         "title": "VersionOut",
         "description": "One imported version: the ref, what kind of ref it is, and the commit it stands for."
+      }
+    },
+    "securitySchemes": {
+      "SessionCookie": {
+        "type": "apiKey",
+        "description": "The HttpOnly cookie set by `POST /api/v1/session`.",
+        "in": "cookie",
+        "name": "exactdocs_session"
       }
     }
   }
