@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, Info } from "lucide-react";
+import { ArrowUpRight, Info, Settings } from "lucide-react";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { libraryQueryOptions } from "../api/browse-queries";
@@ -140,18 +140,28 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
 
   return (
     <main className="px-4 py-6 sm:px-6 sm:py-8 2xl:mx-auto 2xl:max-w-[96rem]">
-      <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+      <div className="flex items-center justify-between gap-4">
+        <nav aria-label="Breadcrumb" className="min-w-0 text-sm text-muted-foreground">
+          <Link
+            to="/"
+            className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8"
+          >
+            Libraries
+          </Link>
+          <span aria-hidden="true"> / </span>
+          <span aria-current="page" className="font-mono">
+            {library.id}
+          </span>
+        </nav>
         <Link
-          to="/"
-          className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8"
+          to="/libraries/$owner/$repo/settings"
+          params={{ owner, repo }}
+          className="-mr-2 inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8"
         >
-          Libraries
+          <Settings aria-hidden="true" className="size-4" />
+          Settings
         </Link>
-        <span aria-hidden="true"> / </span>
-        <span aria-current="page" className="font-mono">
-          {library.id}
-        </span>
-      </nav>
+      </div>
       <h1
         ref={heading}
         tabIndex={-1}

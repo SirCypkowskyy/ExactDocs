@@ -1,9 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getJson } from "@/shared/lib/http";
+import { LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import type { Job, LatestJobs, LibrariesResponse } from "../model/library";
 
 export const librariesKeys = {
-  all: ["libraries"] as const,
+  all: LIBRARIES_KEY,
   list: () => [...librariesKeys.all, "list"] as const,
   latestJobs: () => [...librariesKeys.all, "latest-jobs"] as const,
   job: (id: string) => [...librariesKeys.all, "job", id] as const,

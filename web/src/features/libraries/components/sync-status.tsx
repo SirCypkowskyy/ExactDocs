@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Check, ChevronRight, CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
@@ -41,6 +42,7 @@ function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
 
 export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) {
   const finished = job.finished_at ?? job.created_at;
+  const [, owner = "", repo = ""] = job.library.split("/");
   return (
     <div className="mt-3 rounded-md bg-secondary px-3 py-3 text-sm">
       <p className="text-muted-foreground">
@@ -53,6 +55,13 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
         {job.error ?? "No reason was recorded."}
       </pre>
       <SkippedFiles job={job} open={open} />
+      <Link
+        to="/libraries/$owner/$repo/settings"
+        params={{ owner, repo }}
+        className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium underline decoration-mark/40 underline-offset-4 outline-none ring-1 ring-inset ring-border hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+      >
+        Sync again from settings
+      </Link>
     </div>
   );
 }

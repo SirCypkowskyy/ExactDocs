@@ -1,15 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Input } from "@/shared/ui/input";
-import { repositoryRefsQueryOptions } from "../api/add-library";
 import {
   decodeChoice,
   encodeChoice,
   filterRefs,
   type RefChoice,
   type RepositoryRefs,
-} from "../model/add-library";
+  repositoryRefsQueryOptions,
+} from "@/shared/lib/refs";
+import { Input } from "./input";
 
 const FILTER_FROM = 15;
 const selectClass =

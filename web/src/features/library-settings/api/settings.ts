@@ -1,0 +1,38 @@
+import type { QueryClient } from "@tanstack/react-query";
+import { sendJson } from "@/shared/lib/http";
+import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
+import type {
+  AddedVersion,
+  RemovalResult,
+  SettingsLibrary,
+  SyncedLibrary,
+} from "../model/settings";
+
+const seg = encodeURIComponent;
+const lib = (owner: string, repo: string) => `/v1/libraries/${seg(owner)}/${seg(repo)}` as const;
+/** A ref may hold slashes (`release/2`): the route takes the rest of the path, so keep them. */
+const refPath = (ref: string) => ref.split("/").map(seg).join("/");
+
+export const saveDetails = (
+  owner: string,
+  repo: string,
+  patch: { title?: string; description?: string },
+) => sendJson<SettingsLibrary>("PATCH", lib(owner, repo), patch);
+
+export const addVersion = (owner: string, repo: string, ref: string) =>
+  sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, { ref });
+
+export const syncLibrary = (owner: string, repo: string) =>
+  sendJson<SyncedLibrary>("POST", `${lib(owner, repo)}/sync`);
+
+export const removeVersion = (owner: string, repo: string, ref: string) =>
+  sendJson<RemovalResult>("DELETE", `${lib(owner, repo)}/versions/${refPath(ref)}`);
+
+export const removeLibrary = (owner: string, repo: string) =>
+  sendJson<RemovalResult>("DELETE", lib(owner, repo));
+
+/** Everything that shows a library's versions, text or sync state must reload after a change. */
+export function refreshLibraries(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: LIBRARIES_KEY });
+  void queryClient.invalidateQueries({ queryKey: BROWSE_KEY });
+}

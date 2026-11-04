@@ -2,10 +2,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check } from "lucide-react";
 import { type FormEvent, useCallback, useRef, useState } from "react";
+import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
+import { RefPicker } from "@/shared/ui/ref-picker";
 import { addLibrary, checkRepository } from "../api/add-library";
 import { librariesKeys } from "../api/libraries-query";
 import {
@@ -17,15 +19,12 @@ import {
   explainCheckError,
   filledRules,
   lines,
-  type RefChoice,
-  refToSend,
   type TagRuleDraft,
   validateForm,
   validateUrl,
 } from "../model/add-library";
 import { AdvancedOptions } from "./file-selection";
 import { ImportProgress } from "./import-progress";
-import { RefPicker } from "./ref-picker";
 
 const ALERT_ID = "add-alert";
 const HOSTS: Record<string, string> = {
