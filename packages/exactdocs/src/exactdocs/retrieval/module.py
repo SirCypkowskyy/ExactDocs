@@ -4,6 +4,7 @@ from typing import Self
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    Libraries,
     SearchableVersions,
     SearchIndex,
 )
@@ -14,6 +15,7 @@ from exactdocs.retrieval.ports.driving import (
     IndexManifest,
     ReadChunk,
     RemoveChunks,
+    ResolveLibraryId,
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
@@ -23,6 +25,7 @@ from exactdocs.retrieval.use_cases import (
     IndexManifestUseCase,
     ReadChunkUseCase,
     RemoveChunksUseCase,
+    ResolveLibraryIdUseCase,
     SearchDocsUseCase,
 )
 from exactdocs_kernel import Clock, SystemClock
@@ -36,6 +39,7 @@ class RetrievalModule:
     index_manifest: IndexManifest
     get_chunk_sets: GetChunkSets
     read_chunk: ReadChunk
+    resolve_library_id: ResolveLibraryId
     discard_pending_chunks: DiscardPendingChunks
     collect_chunks: CollectChunks
     remove_chunks: RemoveChunks
@@ -45,6 +49,7 @@ class RetrievalModule:
         cls,
         *,
         searchable: SearchableVersions,
+        libraries: Libraries,
         manifests: ActiveManifests,
         chunks: ChunkRepository,
         search: SearchIndex,
@@ -57,6 +62,7 @@ class RetrievalModule:
             index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks),
             read_chunk=ReadChunkUseCase(searchable, manifests, chunks),
+            resolve_library_id=ResolveLibraryIdUseCase(libraries, searchable, search, chunks),
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
             remove_chunks=RemoveChunksUseCase(manifests, chunks),

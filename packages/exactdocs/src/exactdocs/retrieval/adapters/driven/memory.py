@@ -5,6 +5,7 @@ from datetime import datetime
 
 from exactdocs.retrieval.errors import ChunkSetMismatchError
 from exactdocs.retrieval.models import (
+    CatalogLibrary,
     ChunkId,
     ChunkSet,
     ChunkSetKey,
@@ -14,6 +15,7 @@ from exactdocs.retrieval.models import (
     SearchHit,
     StoredChunk,
     TagFilter,
+    VersionCounts,
     highlights,
     identifier_tokens,
     search_terms,
@@ -65,6 +67,11 @@ class InMemoryChunkRepository:
         """Return the chunks of the manifest that exist, by ID; missing IDs are left out."""
         found = {i: await self.get(manifest_id, i) for i in chunk_ids}
         return {i: c for i, c in found.items() if c is not None}
+
+    async def counts(self, manifest_id: str) -> VersionCounts:
+        """Count the manifest's articles and chunks."""
+        rows = self.rows.get(manifest_id, {}).values()
+        return VersionCounts(articles=len({r.article_path for r in rows}), chunks=len(rows))
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
         """Return every indexed manifest that has a row for this chunk ID (any status)."""
@@ -141,3 +148,14 @@ def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> Sea
     return SearchHit(
         chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryLibraries:
+    """Implements ``ports.driven.Libraries`` with a fixed list."""
+
+    libraries: Sequence[CatalogLibrary] = ()
+
+    async def all(self) -> Sequence[CatalogLibrary]:
+        """Return the libraries that have a default version."""
+        return [lib for lib in self.libraries if lib.default_version is not None]

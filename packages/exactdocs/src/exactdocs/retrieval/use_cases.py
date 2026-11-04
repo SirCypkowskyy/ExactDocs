@@ -12,9 +12,12 @@ from exactdocs.retrieval.dtos import (
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    LibraryMatchOut,
     ReadChunkQuery,
     RemoveChunksCommand,
     RemovedChunks,
+    ResolveLibraryIdQuery,
+    ResolveLibraryIdResult,
     SearchDocsQuery,
     SearchDocsResult,
     SearchResultOut,
@@ -27,6 +30,7 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
+    Candidate,
     Chunk,
     ChunkId,
     ChunkSet,
@@ -37,11 +41,15 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SearchText,
     TagFilter,
+    TagMatch,
     article_chunk_rows,
+    name_match,
+    rank_matches,
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    Libraries,
     SearchableVersions,
     SearchIndex,
 )
@@ -314,4 +322,53 @@ class RemoveChunksUseCase:
         known = await self.manifests.statuses(asked)
         return RemovedChunks.from_model(
             await self.chunks.remove([i for i in asked if i not in known])
+        )
+
+
+# Only the best name matches are looked at: each costs a search. Results are capped to the same.
+MAX_RESOLVED = 10
+# How many matching chunks count as "documents it"; enough to tell libraries apart, cheap to get.
+QUERY_HITS_CAP = 5
+
+
+@dataclass(frozen=True, slots=True)
+class ResolveLibraryIdUseCase:
+    """Implements ``ports.driving.ResolveLibraryId``."""
+
+    libraries: Libraries
+    versions: SearchableVersions
+    search: SearchIndex
+    chunks: ChunkRepository
+
+    async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
+        """Match the name, then let the default versions' hits for ``query`` re-rank the matches."""
+        text = SearchText(value=query.query)
+        named = [
+            (lib, found)
+            for lib in await self.libraries.all()
+            if (found := name_match(query.library_name, lib)) is not None
+        ]
+        # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
+        named.sort(key=lambda m: (m[1], m[0].id))
+        ranked: list[Candidate] = []
+        counts = {}
+        for lib, found in named[:MAX_RESOLVED]:
+            version = await self.versions.find(lib.id, None)
+            if version is None:  # nothing imported that can be read
+                continue
+            hits = await self.search.search(
+                version.manifest_id,
+                text.value,
+                TagFilter(tags=(), match=TagMatch.ANY),
+                QUERY_HITS_CAP,
+            )
+            counts[lib.id] = await self.chunks.counts(version.manifest_id)
+            ranked.append(Candidate(library=lib, match=found, hits=len(hits)))
+        return ResolveLibraryIdResult(
+            matches=[
+                LibraryMatchOut.from_candidate(
+                    c, counts[c.library.id].articles, counts[c.library.id].chunks
+                )
+                for c in rank_matches(ranked)
+            ]
         )

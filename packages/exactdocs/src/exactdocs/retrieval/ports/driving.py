@@ -13,6 +13,8 @@ from exactdocs.retrieval.dtos import (
     ReadChunkQuery,
     RemoveChunksCommand,
     RemovedChunks,
+    ResolveLibraryIdQuery,
+    ResolveLibraryIdResult,
     SearchDocsQuery,
     SearchDocsResult,
 )
@@ -90,5 +92,18 @@ class RemoveChunks(Protocol):
     """
 
     async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
+        """Run the use case."""
+        ...
+
+
+class ResolveLibraryId(Protocol):
+    """Find libraries by name, like context7's ``resolve-library-id``.
+
+    Matches the name against library IDs, titles and descriptions in memory, then ranks the best
+    candidates by how many chunks of their default version match ``query``. Never searches a
+    version other than the default one.
+    """
+
+    async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
         """Run the use case."""
         ...
