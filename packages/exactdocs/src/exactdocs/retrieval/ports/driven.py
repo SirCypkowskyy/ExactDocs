@@ -17,6 +17,7 @@ from exactdocs.retrieval.models import (
     Removed,
     SearchableVersion,
     SearchHit,
+    SectionRef,
     StoredChunk,
     TagFilter,
     VersionCounts,
@@ -127,8 +128,11 @@ class ChunkRepository(Protocol):
         """
         ...
 
-    async def article(self, manifest_id: str, article_path: str) -> Sequence[StoredChunk]:
-        """Return all chunks of one article of the manifest in order; empty if it has none."""
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article of the manifest in order, without their text.
+
+        Empty if the manifest has no such article.
+        """
         ...
 
     async def counts(self, manifest_id: str) -> VersionCounts:

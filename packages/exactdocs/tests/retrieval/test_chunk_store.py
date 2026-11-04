@@ -186,12 +186,12 @@ class World:
                         chunks=[
                             ChunkIn(
                                 heading_path=headings,
-                                occurrence_index=0,
+                                occurrence_index=[h for h, _ in sections[:n]].count(headings),
                                 content=content,
                                 content_hash=f"h-{content}",
                                 anchor=f"a-{headings[-1]}",
                             )
-                            for headings, content in sections
+                            for n, (headings, content) in enumerate(sections)
                         ],
                     )
                     for path, sections in articles.items()
@@ -391,6 +391,7 @@ async def test_a_stale_chunk_points_to_its_section_after_the_text_changed(world:
         chunk_id=new.chunk_ids["guide.md"][0],
         heading_path=("Guide", "Setup"),
         anchor="a-Setup",
+        text_changed=True,
     )
 
 
@@ -434,6 +435,129 @@ async def test_a_stale_chunk_follows_a_renamed_article(world: World) -> None:
         new.chunk_ids["docs/guide.md"][1],
     )
     assert world.catalog.rename_lookups == 1  # bounded: one lookup
+
+
+async def test_an_inserted_duplicate_heading_does_not_steal_the_old_section(
+    world: World,
+) -> None:
+    old = await world.index_sections(
+        "m1", "main", {"g.md": [(["G", "Example"], "old text")]}, status=ManifestStatus.SUPERSEDED
+    )
+    new = await world.index_sections(
+        "m2",
+        "main",
+        {"g.md": [(["G", "Example"], "new text"), (["G", "Example"], "old text")]},
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["g.md"][0])
+
+    assert moved is not None
+    assert moved.chunk_id == new.chunk_ids["g.md"][1]  # the same text, not the same occurrence
+    assert not moved.text_changed
+
+
+async def test_identical_sections_resolve_to_the_same_headings_first(world: World) -> None:
+    same = (["G", "Notes"], "nothing")
+    old = await world.index_sections(
+        "m1",
+        "main",
+        {"g.md": [(["G", "A"], "a"), (["G", "B"], "b"), (["G", "C"], "c"), same]},
+        status=ManifestStatus.SUPERSEDED,
+    )
+    new = await world.index_sections(
+        "m2",
+        "main",
+        {
+            "g.md": [
+                (["G", "Notes"], "other"),
+                (["G", "A"], "a2"),
+                (["H"], "nothing"),
+                (["G", "X"], "x"),
+                same,
+            ]
+        },
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["g.md"][3])  # was at position 3
+
+    assert moved is not None
+    assert moved.chunk_id == new.chunk_ids["g.md"][4]  # not the nearer "H" with the same text
+
+
+async def test_identical_text_under_other_headings_resolves_to_the_nearest(world: World) -> None:
+    old = await world.index_sections(
+        "m1", "main", {"g.md": [(["X"], "a"), (["Y"], "same")]}, status=ManifestStatus.SUPERSEDED
+    )
+    new = await world.index_sections(
+        "m2",
+        "main",
+        {"g.md": [(["P"], "same"), (["Q"], "z"), (["R"], "w"), (["S"], "v"), (["T"], "same")]},
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["g.md"][1])  # was at 1: 0 is nearer than 4
+
+    assert moved is not None
+    assert moved.chunk_id == new.chunk_ids["g.md"][0]
+
+
+async def test_equally_near_identical_sections_name_only_the_article(world: World) -> None:
+    old = await world.index_sections(
+        "m1", "main", {"g.md": [(["X"], "a"), (["Y"], "same")]}, status=ManifestStatus.SUPERSEDED
+    )
+    await world.index_sections(
+        "m2",
+        "main",
+        {"g.md": [(["P"], "same"), (["Q"], "z"), (["R"], "same")]},  # positions 0 and 2, was 1
+        status=ManifestStatus.ACTIVE,
+    )
+
+    assert await world.stale_location(old.chunk_ids["g.md"][1]) == MovedSection(article_path="g.md")
+
+
+async def test_a_section_moved_under_other_headings_is_not_marked_as_changed(
+    world: World,
+) -> None:
+    old = await world.index_sections("m1", "main", _OLD, status=ManifestStatus.SUPERSEDED)
+    await world.index_sections(
+        "m2",
+        "main",
+        {"guide.md": [(["Guide", "Advanced", "Setup"], "install it")]},
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["guide.md"][0])
+
+    assert moved is not None
+    assert moved.text_changed is False
+
+
+async def test_the_message_marks_a_changed_text_and_caps_every_segment(world: World) -> None:
+    long = "x" * 500
+    headings = [f"h{i}-{long}" for i in range(30)]
+    old = await world.index_sections(
+        "m1", "main", {"g.md": [(headings, "a")]}, status=ManifestStatus.SUPERSEDED
+    )
+    await world.index_sections(
+        "m2", "main", {"g.md": [(headings, "b")]}, status=ManifestStatus.ACTIVE
+    )
+
+    with pytest.raises(StaleChunkError) as stale:
+        await world.read(old.chunk_ids["g.md"][0])
+
+    message = str(stale.value)
+    assert "text changed" in message
+    assert "h8-" not in message  # at most 8 segments
+    assert len(message) < 1200
+    assert "...'" in message  # a cut field still closes its quote
+
+
+def test_a_huge_requested_chunk_id_is_capped_in_the_message() -> None:
+    error = StaleChunkError("z" * 5000, "/a/b", "main")
+
+    assert len(str(error)) < 600
 
 
 async def test_a_stale_chunk_whose_heading_is_gone_names_only_the_article(world: World) -> None:

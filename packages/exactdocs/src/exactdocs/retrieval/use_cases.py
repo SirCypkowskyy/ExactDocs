@@ -56,6 +56,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SearchableVersion,
     SearchText,
+    SectionRef,
     TagFilter,
     TagMatch,
     article_chunk_rows,
@@ -336,10 +337,14 @@ class ReadChunkUseCase:
                 return ChunkOut.from_stored(version, stored)
         # Note: manifests the catalog already collected (E9-03) are unknown to it, so after
         # collection an old ID reports not_found, not stale, until tombstones keep them (E9-03).
+        # Those must keep the old path, headings, occurrence and content hash too, or the new
+        # location (E7-09) is lost with the manifest.
         statuses = await self.manifests.statuses(ids)
         superseded = [i for i, s in statuses.items() if s is ManifestStatus.SUPERSEDED]
         if superseded:
-            moved = await self._moved(version, ChunkId(query.chunk_id), superseded[0])
+            # Any superseded holder gives the same old chunk (the ID hashes its content); the
+            # smallest ID keeps the choice deterministic.
+            moved = await self._moved(version, ChunkId(query.chunk_id), min(superseded))
             raise StaleChunkError(query.chunk_id, first.library, ref, moved)
         raise ChunkNotFoundError(query.chunk_id)  # only pending manifests hold it: not served yet
 
@@ -348,9 +353,9 @@ class ReadChunkUseCase:
     ) -> MovedSection | None:
         """Find the stale chunk's section in the active manifest: two reads, one rename lookup.
 
-        The article is the old path, or where the rename map put it. In it the section is the one
-        with the same headings and occurrence (its text may have changed), else the one with the
-        same content (its headings may have changed), else only the article is named.
+        The article is the old path, or where the rename map put it. The rename map covers one hop
+        (the active manifest against the version before it), so an ID several re-syncs old whose
+        article moved earlier gets no location. The section is then picked by ``_pick``.
         """
         old = await self.chunks.get(old_manifest, chunk_id)
         if version is None or old is None:
@@ -358,33 +363,48 @@ class ReadChunkUseCase:
         path = old.row.article_path
         current = await self.chunks.article(version.manifest_id, path)
         if not current and self.renames is not None:
-            path = (
-                await self.renames.new_path(
-                    DocTarget(library=version.library, version=version.version), path
-                )
-                or path
-            )
-            current = await self.chunks.article(version.manifest_id, path) if path else []
+            target = DocTarget(library=version.library, version=version.version)
+            # No rename known: keep the old path. Its article is empty, so the result is no
+            # location rather than a guess.
+            path = await self.renames.new_path(target, path) or path
+            current = await self.chunks.article(version.manifest_id, path)
         if not current:
             return None  # the article is gone
-        was = old.chunk
-        match = next(
-            (
-                c
-                for c in current
-                if (c.chunk.heading_path, c.chunk.occurrence_index)
-                == (was.heading_path, was.occurrence_index)
-            ),
-            None,
-        ) or next((c for c in current if c.chunk.content_hash == was.content_hash), None)
+        match = _pick(current, old.chunk, old.row.position)
         if match is None:
             return MovedSection(article_path=path)
         return MovedSection(
             article_path=path,
-            chunk_id=match.row.chunk_id,
-            heading_path=match.chunk.heading_path,
-            anchor=match.chunk.anchor,
+            chunk_id=match.chunk_id,
+            heading_path=match.heading_path,
+            anchor=match.anchor,
+            text_changed=match.content_hash != old.chunk.content_hash,
         )
+
+
+def _nearest(sections: Sequence[SectionRef], position: int) -> SectionRef | None:
+    """Return the section nearest to ``position``; ``None`` when two are equally near."""
+    ranked = sorted(sections, key=lambda s: abs(s.position - position))
+    if len(ranked) > 1 and abs(ranked[0].position - position) == abs(ranked[1].position - position):
+        return None
+    return ranked[0] if ranked else None
+
+
+def _pick(current: Sequence[SectionRef], was: Chunk, position: int) -> SectionRef | None:
+    """Pick the section of ``current`` that ``was`` became, or ``None`` if unsure.
+
+    In order: same headings and same text; same headings and occurrence (text edited); same text
+    anywhere. Several equal candidates go to the nearest position, and a tie names no section:
+    an ambiguous answer is better than a wrong ID. The occurrence alone is not trusted with the
+    text unchecked, since an inserted duplicate heading shifts it onto another section.
+    """
+    same_headings = [s for s in current if s.heading_path == was.heading_path]
+    same_text = [s for s in current if s.content_hash == was.content_hash]
+    if both := [s for s in same_headings if s in same_text]:
+        return _nearest(both, position)
+    if edited := [s for s in same_headings if s.occurrence_index == was.occurrence_index]:
+        return edited[0]
+    return _nearest(same_text, position)
 
 
 @dataclass(frozen=True, slots=True)

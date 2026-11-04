@@ -16,6 +16,7 @@ from exactdocs.retrieval.models import (
     Removed,
     SearchableVersion,
     SearchHit,
+    SectionRef,
     StoredChunk,
     TagFilter,
     VersionCounts,
@@ -80,13 +81,26 @@ class InMemoryChunkRepository:
         }
         return {key: c for key, c in found.items() if c is not None}
 
-    async def article(self, manifest_id: str, article_path: str) -> Sequence[StoredChunk]:
-        """Return all chunks of one article of the manifest in order."""
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article of the manifest in order, without their text."""
         rows = sorted(
             (r for r in self.rows.get(manifest_id, {}).values() if r.article_path == article_path),
             key=lambda r: r.position,
         )
-        return [await self.get(manifest_id, r.chunk_id) for r in rows]  # ty: ignore[invalid-return-type]
+        found: list[SectionRef] = []
+        for row in rows:
+            chunk = self.chunk_sets[row.chunk_set].chunks[row.position]
+            found.append(
+                SectionRef(
+                    chunk_id=row.chunk_id,
+                    position=row.position,
+                    heading_path=chunk.heading_path,
+                    occurrence_index=chunk.occurrence_index,
+                    content_hash=chunk.content_hash,
+                    anchor=chunk.anchor,
+                )
+            )
+        return found
 
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks."""
