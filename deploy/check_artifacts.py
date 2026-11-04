@@ -81,8 +81,13 @@ def wheel(path: Path) -> int:
 
 def image(ref: str) -> int:
     """Check a docker image: size and model files anywhere in the filesystem."""
+    # Apparent bytes of the files inside: `docker image inspect` .Size is the compressed size
+    # under the containerd image store (115 MB in CI vs 352 MB with overlay2), so don't use it.
     size = int(
-        subprocess.check_output(["docker", "image", "inspect", ref, "--format", "{{.Size}}"])
+        subprocess.check_output(
+            ["docker", "run", "--rm", "--user", "0", "--entrypoint", "du", ref, "-sxb", "/"],
+            text=True,
+        ).split()[0]
     )
     predicate = [a for s in MODEL_SUFFIXES for a in ("-o", "-name", f"*{s}")][1:]
     found = subprocess.check_output(
