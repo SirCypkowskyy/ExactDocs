@@ -1,4 +1,3 @@
-import type { KeyboardEvent } from "react";
 import { highlightPieces, type SearchHit } from "../model/search";
 
 export const retry =
@@ -53,19 +52,6 @@ export function Crumbs({ hit }: { hit: Pick<SearchHit, "heading_path" | "article
     </span>
   );
 }
-
-export const onArrows = (focusInput: () => void) => (event: KeyboardEvent<HTMLElement>) => {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const links = [...event.currentTarget.querySelectorAll<HTMLElement>("a[data-result]")];
-  const at = links.indexOf(document.activeElement as HTMLElement);
-  if (at < 0) return;
-  event.preventDefault();
-  if (event.key === "ArrowUp" && at === 0) focusInput();
-  else
-    links[
-      Math.min(Math.max(at + (event.key === "ArrowDown" ? 1 : -1), 0), links.length - 1)
-    ]?.focus();
-};
 
 const bar = "block rounded bg-muted-foreground/[0.14]";
 

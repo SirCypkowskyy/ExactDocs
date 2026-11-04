@@ -3,7 +3,7 @@ import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
-import { hasVersionBox } from "./search-box";
+import { hasVersionBox } from "./keyboard";
 
 const GLOBAL_INPUT_ID = "global-search-input";
 export const GLOBAL_RESULTS_ID = "global-search-results";
@@ -12,12 +12,6 @@ const DEBOUNCE_MS = 300;
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
-
-/** The visible global box (the header's from `sm`, the page's below it) takes focus. */
-export const focusGlobalInput = () => {
-  const boxes = [...document.querySelectorAll<HTMLInputElement>("input[data-global-search]")];
-  (boxes.find((box) => box.offsetParent !== null) ?? boxes[0])?.focus();
-};
 
 interface Props {
   /** Focus the box on mount (the phone's `/search` page). */

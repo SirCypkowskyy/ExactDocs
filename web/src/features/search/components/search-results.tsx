@@ -12,7 +12,8 @@ import {
   type SearchHit,
   type SearchResults as SearchResultData,
 } from "../model/search";
-import { Crumbs, onArrows, retry, Skeleton, Snippet } from "./hit-parts";
+import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { onArrows } from "./keyboard";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
 
 function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {

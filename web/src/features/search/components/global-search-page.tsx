@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { HttpError } from "@/shared/lib/http";
@@ -13,8 +13,9 @@ import {
   statusLine,
   totalMatches,
 } from "../model/global";
-import { focusGlobalInput, GLOBAL_RESULTS_ID, GlobalSearchBox } from "./global-search-box";
-import { Crumbs, onArrows, retry, Skeleton, Snippet } from "./hit-parts";
+import { GLOBAL_RESULTS_ID, GlobalSearchBox } from "./global-search-box";
+import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { focusGlobalInput, onArrows } from "./keyboard";
 
 /** Chips shown before "+N more"; the selected library always stays visible. */
 const VISIBLE_FACETS = 8;
@@ -70,7 +71,8 @@ function FacetLink({
 function Facets({ data, q, library }: { data: GlobalResults; q: string; library?: string }) {
   const total = data.libraries.reduce((sum, f) => sum + f.matches, 0);
   const shown = data.libraries.filter((f, i) => i < VISIBLE_FACETS || f.library === library);
-  const rest = data.libraries.filter((f) => !shown.includes(f));
+  const shownIds = new Set(shown.map((f) => f.library));
+  const rest = data.libraries.filter((f) => !shownIds.has(f.library));
   return (
     <nav aria-label="Libraries with matches" className="space-y-2">
       <ul className="flex flex-wrap gap-x-2 gap-y-2">
@@ -203,15 +205,18 @@ function Empty({
   );
 }
 
-/** Results of the global search: hits from every library, a library facet with counts. */
-export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; library?: string }) {
-  const heading = useId();
-  const q = normalizeQuery(raw);
-  const result = useQuery({
-    ...globalSearchQueryOptions({ q: q ?? "", library }),
-    enabled: q !== undefined,
-  });
+type GlobalQuery = UseQueryResult<GlobalResults>;
 
+/** What sits under the title: the prompt, the skeleton, the error, the empty state or the hits. */
+function Body({
+  q,
+  library,
+  result,
+}: {
+  q: string | undefined;
+  library: string | undefined;
+  result: GlobalQuery;
+}) {
   const data = result.data;
   const stale = result.isPlaceholderData;
   const settled = data !== undefined && !stale;
@@ -281,7 +286,20 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
       </div>
     );
   }
+  return body;
+}
 
+/** Results of the global search: hits from every library, a library facet with counts. */
+export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; library?: string }) {
+  const heading = useId();
+  const q = normalizeQuery(raw);
+  const result = useQuery({
+    ...globalSearchQueryOptions({ q: q ?? "", library }),
+    enabled: q !== undefined,
+  });
+
+  const data = result.data;
+  const settled = data !== undefined && !result.isPlaceholderData;
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-10">
       {/* A phone's header holds only an icon; the box sits here, focused. */}
@@ -304,7 +322,9 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
         <p role="status" className="sr-only">
           {settled && q ? statusLine(data.results.length, q, library, data.coverage.complete) : ""}
         </p>
-        <div className="mt-5">{body}</div>
+        <div className="mt-5">
+          <Body q={q} library={library} result={result} />
+        </div>
       </section>
     </main>
   );
