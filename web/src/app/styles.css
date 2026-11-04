@@ -1,28 +1,35 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/source-serif-4";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --radius: 0.5rem;
+  --background: oklch(0.985 0.005 250);
+  --foreground: oklch(0.24 0.035 255);
+  --card: oklch(0.995 0.003 250);
+  --card-foreground: oklch(0.24 0.035 255);
+  --popover: oklch(0.995 0.003 250);
+  --popover-foreground: oklch(0.24 0.035 255);
+  --primary: oklch(0.27 0.045 255);
+  --primary-foreground: oklch(0.985 0.005 250);
+  --secondary: oklch(0.95 0.01 250);
+  --secondary-foreground: oklch(0.27 0.045 255);
+  --muted: oklch(0.95 0.01 250);
+  --muted-foreground: oklch(0.45 0.025 255);
+  --accent: oklch(0.93 0.015 230);
+  --accent-foreground: oklch(0.27 0.045 255);
+  --destructive: oklch(0.5 0.17 27);
+  --border: oklch(0.88 0.012 255);
+  --input: oklch(0.82 0.015 255);
+  --ring: oklch(0.52 0.11 215);
+  /* The ink field behind the sign-in and setup pages, and the marker that stands for "exact". */
+  --field: oklch(0.25 0.04 255);
+  --field-foreground: oklch(0.96 0.01 250);
+  --field-muted: oklch(0.78 0.02 250);
+  --mark: oklch(0.5 0.09 215);
+  color-scheme: light;
 }
 
 .dark {
@@ -69,6 +76,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-field: var(--field);
+  --color-field-foreground: var(--field-foreground);
+  --color-field-muted: var(--field-muted);
+  --color-mark: var(--mark);
+  --font-serif: "Source Serif 4 Variable", "Iowan Old Style", Georgia, serif;
 }
 
 @layer base {
@@ -77,5 +89,38 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* One calm entrance for the auth pages; reduced-motion users get the content at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .rise {
+    animation: rise 320ms cubic-bezier(0.23, 1, 0.32, 1) backwards;
+    animation-delay: calc(var(--i, 0) * 60ms);
+  }
+  .fade-in {
+    animation: fade-in 180ms ease-out;
+  }
+  .spin {
+    animation: spin 700ms linear infinite;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
