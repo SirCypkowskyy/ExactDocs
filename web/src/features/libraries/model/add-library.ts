@@ -5,7 +5,7 @@ export type CheckedRepository = components["schemas"]["CheckedRepository"];
 export type RepositoryRefs = components["schemas"]["RepositoryRefs"];
 export type AddedLibrary = components["schemas"]["AddedLibrary"];
 export type AddLibraryCommand = components["schemas"]["AddLibraryCommand"];
-export type ProblemCode = components["schemas"]["ProblemCode"];
+type ProblemCode = components["schemas"]["ProblemCode"];
 export type FileProblem = components["schemas"]["FileProblemSummary"];
 
 export const MAX_TAG_RULES = 64;
@@ -230,7 +230,7 @@ const SKIP_REASONS: Partial<Record<ProblemCode, string>> = {
   bad_file_name: "File names that aren't valid UTF-8",
 };
 
-export const skipReason = (code: string) => SKIP_REASONS[code as ProblemCode];
+const skipReason = (code: string) => SKIP_REASONS[code as ProblemCode];
 
 export interface SkipGroup {
   code: string;

@@ -48,7 +48,7 @@
       },
       {
         "from": "features",
-        "allow": ["shared"]
+        "allow": ["shared", "test"]
       },
       {
         "from": "shared",
