@@ -1,0 +1,467 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { HttpError } from "@/shared/lib/http";
+import { TestRouter } from "@/shared/lib/test-router";
+import { LibrarySettingsPage } from "./index";
+import {
+  changedFields,
+  explainAddVersion,
+  explainRemove,
+  explainSync,
+  syncHeadline,
+  validateDetails,
+} from "./model/settings";
+
+const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+const SHA2 = "ffffffffffffffffffffffffffffffffffffffff";
+const library = {
+  id: "/acme/payments",
+  title: "Payments",
+  description: "Card payments.",
+  source_url: "https://github.com/acme/payments",
+  host: "github",
+  default_branch: "main",
+  settings: { include_paths: [], exclude_paths: [], tag_rules: [], chunking: {} },
+  default_version: "v1.2.0",
+  versions: [
+    {
+      ref: "v1.2.0",
+      kind: "tag",
+      commit_sha: SHA,
+      imported_at: "2026-11-01T10:00:00Z",
+      is_default: true,
+    },
+    {
+      ref: "main",
+      kind: "branch",
+      commit_sha: SHA,
+      imported_at: "2026-11-01T10:00:00Z",
+      is_default: false,
+    },
+  ],
+};
+const REFS = {
+  default_branch: "main",
+  branches: [{ name: "main", commit_sha: SHA }],
+  tags: [
+    { name: "v1.3.0", commit_sha: SHA },
+    { name: "v1.2.0", commit_sha: SHA },
+  ],
+  truncated: false,
+};
+const failure = (status: number, error: string, detail = "server words") => ({
+  status,
+  body: { error, detail, fields: [], close_matches: [] },
+});
+
+type Reply = { status: number; body: unknown };
+interface Routes {
+  patch?: (body: Record<string, unknown>) => Reply;
+  addVersion?: (body: Record<string, unknown>) => Reply;
+  sync?: () => Reply;
+  removeVersion?: (ref: string) => Reply;
+  removeLibrary?: () => Reply;
+}
+
+function serve(routes: Routes = {}) {
+  const calls: { method: string; url: string; body: unknown }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, body });
+      const reply = (r: Reply) => Response.json(r.body, { status: r.status });
+      if (url.includes("/v1/repositories/refs")) return Response.json(REFS);
+      if (method === "PATCH") {
+        return reply(routes.patch?.(body) ?? { status: 200, body: { ...library, ...body } });
+      }
+      if (method === "POST" && url.endsWith("/versions")) {
+        return reply(
+          routes.addVersion?.(body) ?? {
+            status: 202,
+            body: {
+              library_id: "/acme/payments",
+              ref: body.ref,
+              ref_kind: "tag",
+              commit_sha: SHA,
+              job_id: "j9",
+            },
+          },
+        );
+      }
+      if (method === "POST" && url.endsWith("/sync")) {
+        return reply(
+          routes.sync?.() ?? { status: 200, body: { library_id: "/acme/payments", versions: [] } },
+        );
+      }
+      if (method === "DELETE" && url.includes("/versions/")) {
+        const ref = decodeURIComponent(url.split("/versions/")[1] ?? "");
+        return reply(
+          routes.removeVersion?.(ref) ?? {
+            status: 200,
+            body: {
+              library: "/acme/payments",
+              ref,
+              default_version: "main",
+              collection_job_id: "c1",
+            },
+          },
+        );
+      }
+      if (method === "DELETE") {
+        return reply(
+          routes.removeLibrary?.() ?? {
+            status: 200,
+            body: {
+              library: "/acme/payments",
+              ref: null,
+              default_version: null,
+              collection_job_id: null,
+            },
+          },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }),
+  );
+  return calls;
+}
+
+const jobs = {
+  Import: ({ added, finish }: { added: { ref: string }; finish: React.ReactNode }) => (
+    <div>
+      <p>Importing {added.ref}</p>
+      {finish}
+    </div>
+  ),
+  Line: ({ jobId, label }: { jobId: string; label: string }) => (
+    <p>
+      job {jobId} for {label}
+    </p>
+  ),
+};
+
+function renderPage(lib = library) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <TestRouter
+        pages={{
+          "/": () => <p>Libraries home</p>,
+          "/libraries/$owner/$repo": () => <p>Browse</p>,
+          "/libraries/$owner/$repo/settings": () => (
+            <LibrarySettingsPage owner="acme" repo="payments" library={lib as never} jobs={jobs} />
+          ),
+        }}
+        start="/libraries/acme/payments/settings"
+      />
+    </QueryClientProvider>,
+  );
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("settings model", () => {
+  it("validates the title and the description", () => {
+    expect(validateDetails({ title: "  ", description: "" }).title).toMatch(/Give/);
+    expect(validateDetails({ title: "x".repeat(201), description: "" }).title).toMatch(/200/);
+    expect(validateDetails({ title: "ok", description: "y".repeat(1001) }).description).toMatch(
+      /1000/,
+    );
+    expect(validateDetails({ title: "ok", description: "" })).toEqual({
+      title: undefined,
+      description: undefined,
+    });
+  });
+
+  it("sends only what changed", () => {
+    const saved = { title: "A", description: "B" };
+    expect(changedFields(saved, { title: " A ", description: "B" })).toEqual({});
+    expect(changedFields(saved, { title: "C", description: "B" })).toEqual({ title: "C" });
+    expect(changedFields(saved, { title: "A", description: "" })).toEqual({ description: "" });
+  });
+
+  it("maps every refusal to words", () => {
+    const e = (status: number, code: string) =>
+      new HttpError(status, "/v1/x", { error: code, detail: "d", fields: [] });
+    expect(explainAddVersion(e(409, "version_exists"), "v1").field).toBe("ref");
+    expect(explainAddVersion(e(409, "version_importing"), "v1").message).toMatch(/being imported/);
+    expect(explainAddVersion(e(409, "commit_already_imported"), "v1").detail).toBe("d");
+    expect(explainAddVersion(e(422, "unknown_ref"), "v9").message).toMatch(
+      /no branch, tag or commit/,
+    );
+    expect(explainAddVersion(e(422, "ambiguous_ref"), "ab").message).toMatch(/more than one/);
+    expect(explainAddVersion(e(404, "not_found"), "v1").message).toMatch(/no longer exists/);
+    expect(explainAddVersion(e(401, "x"), "v1").link?.href).toBe("/sign-in");
+    expect(explainAddVersion(new TypeError("net"), "v1").message).toMatch(/Can't reach/);
+    expect(explainSync(e(409, "version_importing")).message).toMatch(/still importing/);
+    expect(explainSync(e(422, "repository_unreachable")).detail).toBe("d");
+    expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
+      /never cancels/,
+    );
+  });
+
+  it("headlines a re-sync", () => {
+    const v = (status: string) => ({ ref: "r", status }) as never;
+    expect(syncHeadline({ library_id: "x", versions: [v("queued"), v("queued")] })).toBe(
+      "2 versions are updating.",
+    );
+    expect(syncHeadline({ library_id: "x", versions: [v("up_to_date"), v("pinned")] })).toBe(
+      "Everything is up to date.",
+    );
+    expect(syncHeadline({ library_id: "x", versions: [v("failed")] })).toMatch(
+      /could not be checked/,
+    );
+  });
+});
+
+describe("details form", () => {
+  it("saves a changed title and sends nothing else", async () => {
+    const calls = serve();
+    renderPage();
+    const title = await screen.findByLabelText("Title");
+    await userEvent.clear(title);
+    await userEvent.type(title, "Payments SDK");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ title: "Payments SDK" }),
+    );
+  });
+
+  it("does not send an untouched form or an empty title", async () => {
+    const calls = serve();
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+    await userEvent.clear(screen.getByLabelText("Title"));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Give the library a title.")).toBeInTheDocument();
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("puts a server refusal next to the field", async () => {
+    serve({
+      patch: () => ({
+        status: 422,
+        body: {
+          error: "validation_error",
+          detail: "x",
+          fields: [{ loc: ["body", "title"], msg: "Title must be one line", type: "value_error" }],
+          close_matches: [],
+        },
+      }),
+    });
+    renderPage();
+    const title = await screen.findByLabelText("Title");
+    await userEvent.type(title, "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Title must be one line")).toBeInTheDocument();
+    expect(title).toHaveFocus();
+  });
+});
+
+describe("adding a version", () => {
+  async function open() {
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    return screen.findByLabelText("Version to import");
+  }
+
+  it("adds a picked tag and shows its import", async () => {
+    const calls = serve();
+    renderPage();
+    const picker = await open();
+    await userEvent.selectOptions(picker, "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    expect(await screen.findByText("Importing v1.3.0")).toBeInTheDocument();
+    expect(calls.find((c) => c.url.endsWith("/versions") && c.method === "POST")?.body).toEqual({
+      ref: "v1.3.0",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByText("Importing v1.3.0")).not.toBeInTheDocument();
+  });
+
+  it("uses the default branch when the picker is left alone", async () => {
+    const calls = serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText("Importing main");
+    expect(calls.find((c) => c.url.endsWith("/versions"))?.body).toEqual({ ref: "main" });
+  });
+
+  it.each([
+    ["version_exists", 409, /already a version/],
+    ["version_importing", 409, /being imported right now/],
+    ["commit_already_imported", 409, /already imported under another version/],
+    ["unknown_ref", 422, /no branch, tag or commit/],
+  ])("explains %s next to the picker", async (code, status, text) => {
+    serve({ addVersion: () => failure(status, code) });
+    renderPage();
+    const picker = await open();
+    await userEvent.selectOptions(picker, "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Version to import")).toHaveFocus());
+  });
+
+  it("keeps a typed ref when the list of branches cannot load", async () => {
+    const calls = serve();
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+      String(url).includes("/repositories/refs")
+        ? Promise.resolve(new Response("{}", { status: 500 }))
+        : real(url, init),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    await userEvent.type(await screen.findByLabelText("Branch, tag or commit"), "v2.0.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText("Importing v2.0.0");
+    expect(
+      calls.some(
+        (c) => c.url.endsWith("/versions") && (c.body as { ref: string }).ref === "v2.0.0",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("re-sync", () => {
+  const synced = (versions: unknown[], status = 202) => ({
+    status,
+    body: { library_id: "/acme/payments", versions },
+  });
+  const v = (over: Record<string, unknown>) => ({
+    ref: "main",
+    ref_kind: "branch",
+    status: "queued",
+    previous_commit_sha: SHA,
+    commit_sha: SHA2,
+    job_id: "j5",
+    ...over,
+  });
+
+  it("shows each version's outcome and the job of a queued one", async () => {
+    serve({
+      sync: () =>
+        synced([v({}), v({ ref: "v1.2.0", ref_kind: "tag", status: "pinned", job_id: null })]),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText("1 version is updating.")).toBeInTheDocument();
+    expect(screen.getByText("job j5 for main")).toBeInTheDocument();
+    expect(screen.getByText("Pinned, never changes")).toBeInTheDocument();
+  });
+
+  it("says so when nothing moved", async () => {
+    serve({ sync: () => synced([v({ status: "up_to_date", job_id: null })], 200) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText("Everything is up to date.")).toBeInTheDocument();
+  });
+
+  it("explains a branch that is gone", async () => {
+    serve({ sync: () => synced([v({ status: "failed" })]) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/branch is gone from the repository/)).toBeInTheDocument();
+  });
+
+  it("explains 409 and 422", async () => {
+    serve({ sync: () => failure(409, "version_importing") });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/still importing/)).toBeInTheDocument();
+
+    serve({ sync: () => failure(422, "repository_unreachable", "failed job j7: unreachable") });
+    await userEvent.click(screen.getByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/couldn't be read/)).toBeInTheDocument();
+    expect(screen.getByText("failed job j7: unreachable")).toBeInTheDocument();
+  });
+});
+
+describe("removing a version", () => {
+  async function ask(name = "Remove version main") {
+    const trigger = await screen.findByRole("button", { name });
+    await userEvent.click(trigger);
+    return { trigger, dialog: await screen.findByRole("alertdialog") };
+  }
+
+  it("needs the version typed in full, then removes it", async () => {
+    const calls = serve();
+    renderPage();
+    const { dialog } = await ask();
+    const confirm = within(dialog).getByRole("button", { name: "Remove version" });
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    const input = within(dialog).getByLabelText(/Type main to confirm/);
+    expect(input).toHaveFocus();
+    await userEvent.click(confirm);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    await userEvent.type(input, "mai");
+    await userEvent.click(confirm);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    await userEvent.type(input, "n");
+    expect(confirm).toHaveAttribute("aria-disabled", "false");
+    await userEvent.click(confirm);
+    expect(
+      await screen.findByText(/Removed main\. The default version is now main\./),
+    ).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "DELETE")?.url).toMatch(/\/versions\/main$/);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Versions" })).toHaveFocus();
+  });
+
+  it("returns focus to the button it came from on cancel", async () => {
+    serve();
+    renderPage();
+    const { trigger, dialog } = await ask();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("keeps the dialog and says why while an import runs", async () => {
+    serve({ removeVersion: () => failure(409, "import_in_progress") });
+    renderPage();
+    const { dialog } = await ask();
+    await userEvent.type(within(dialog).getByLabelText(/Type main/), "main");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove version" }));
+    expect(await within(dialog).findByText(/never cancels a job/)).toBeInTheDocument();
+  });
+
+  it("treats a version that is already gone as removed", async () => {
+    serve({ removeVersion: () => failure(404, "not_found") });
+    renderPage();
+    const { dialog } = await ask();
+    await userEvent.type(within(dialog).getByLabelText(/Type main/), "main");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove version" }));
+    expect(await screen.findByText("main was already removed.")).toBeInTheDocument();
+  });
+});
+
+describe("removing the library", () => {
+  it("needs the ID typed, removes, and leaves for the list", async () => {
+    const calls = serve();
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove library…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/Text that other libraries share is kept/)).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText(/to confirm/), "/acme/payments");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove library" }));
+    expect(await screen.findByText("Libraries home")).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "DELETE")?.url).toMatch(
+      /\/v1\/libraries\/acme\/payments$/,
+    );
+  });
+
+  it("explains 409 and stays", async () => {
+    serve({ removeLibrary: () => failure(409, "import_in_progress") });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove library…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.type(within(dialog).getByLabelText(/to confirm/), "/acme/payments");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove library" }));
+    expect(await within(dialog).findByText(/never cancels a job/)).toBeInTheDocument();
+    expect(screen.queryByText("Libraries home")).not.toBeInTheDocument();
+  });
+});

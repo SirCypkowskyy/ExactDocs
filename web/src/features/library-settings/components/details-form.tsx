@@ -6,6 +6,7 @@ import { FormAlert } from "@/shared/ui/form-alert";
 import { refreshLibraries, saveDetails } from "../api/settings";
 import {
   changedFields,
+  type DetailsDraft,
   explainSave,
   MAX_DESCRIPTION,
   MAX_TITLE,
@@ -23,8 +24,10 @@ interface Props {
 /** Title and description. Only the fields that changed are sent. */
 export function DetailsForm({ owner, repo, library }: Props) {
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState(library.title);
-  const [description, setDescription] = useState(library.description);
+  // Only what the person typed is state; an untouched field shows what the library has.
+  const [edits, setEdits] = useState<Partial<DetailsDraft>>({});
+  const title = edits.title ?? library.title;
+  const description = edits.description ?? library.description;
   const [errors, setErrors] = useState<{
     title?: string | undefined;
     description?: string | undefined;
@@ -68,8 +71,8 @@ export function DetailsForm({ owner, repo, library }: Props) {
     save.mutate();
   }
 
-  const edit = (set: (v: string) => void, field: "title" | "description") => (value: string) => {
-    set(value);
+  const edit = (field: "title" | "description") => (value: string) => {
+    setEdits((e) => ({ ...e, [field]: value }));
     setSaved(false);
     setErrors((e) => ({ ...e, [field]: undefined }));
   };
@@ -85,7 +88,7 @@ export function DetailsForm({ owner, repo, library }: Props) {
         value={title}
         error={errors.title}
         hint="Shown in the library list and as the page heading."
-        onChange={(e) => edit(setTitle, "title")(e.target.value)}
+        onChange={(e) => edit("title")(e.target.value)}
       />
       <TextareaField
         id="description"
@@ -93,7 +96,7 @@ export function DetailsForm({ owner, repo, library }: Props) {
         value={description}
         error={errors.description}
         hint={`Shown on the library page. Up to ${MAX_DESCRIPTION} characters, and it can be empty.`}
-        onChange={(e) => edit(setDescription, "description")(e.target.value)}
+        onChange={(e) => edit("description")(e.target.value)}
       />
       <p className="text-sm text-muted-foreground">
         A field you change here stays as you wrote it when the library is imported again. Until then

@@ -409,7 +409,7 @@ describe("add library flow", () => {
     expect(await screen.findByRole("heading", { name: /Import failed/ })).toBeInTheDocument();
     expect(screen.getByText("git fetch failed: HTTP 403")).toBeInTheDocument();
     expect(screen.getByText("Details from the server")).toBeInTheDocument();
-    expect(screen.getByText(/sync it again from the libraries page/)).toBeInTheDocument();
+    expect(screen.getByText(/sync it again from the library's/)).toBeInTheDocument();
     // "Add another" would walk straight into library_id_taken.
     expect(screen.queryByRole("button", { name: "Add another" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to libraries" })).toBeInTheDocument();

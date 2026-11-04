@@ -117,13 +117,35 @@ function Meter({ id, job, state, known }: MeterProps) {
   );
 }
 
-function Failure({ job, variant }: { job: Job | undefined; variant: "library" | "version" }) {
+function Failure({
+  job,
+  variant,
+  id,
+}: {
+  job: Job | undefined;
+  variant: "library" | "version";
+  id: string;
+}) {
+  const [, owner = "", repo = ""] = id.split("/");
   return (
     <div className="mt-5">
       <p>
-        {variant === "library"
-          ? "The library was created, but this version did not finish importing, so it has no articles yet. Fix the cause below, then sync it again from the library's settings page."
-          : "This version did not finish importing, so it was not added. Fix the cause below, then add it again."}
+        {variant === "library" ? (
+          <>
+            The library was created, but this version did not finish importing, so it has no
+            articles yet. Fix the cause below, then sync it again from the library's{" "}
+            <Link
+              to="/libraries/$owner/$repo/settings"
+              params={{ owner, repo }}
+              className="rounded underline decoration-mark/40 underline-offset-4 outline-none hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              settings page
+            </Link>
+            .
+          </>
+        ) : (
+          "This version did not finish importing, so it was not added. Fix the cause below, then add it again."
+        )}
       </p>
       <p className="mt-4 text-sm font-medium">Details from the server</p>
       <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
@@ -224,7 +246,7 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant 
           {!finished && <Meter id={id} job={job} state={state} known={known} />}
         </div>
       )}
-      {state === "failed" && <Failure job={job} variant={variant} />}
+      {state === "failed" && <Failure job={job} variant={variant} id={id} />}
       {finished && <SkippedList summary={summary} />}
     </>
   );
