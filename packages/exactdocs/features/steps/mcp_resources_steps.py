@@ -87,7 +87,7 @@ def step_listed(context: Context, size: int) -> None:
     assert context.pages[0].resources
     for page in context.pages:
         assert len(page.resources) <= size
-        # `ref` is required of `exactdocs://` articles only; first-party resources (skill://) have none
+        # only `exactdocs://` articles carry a ref; first-party resources (skill://) do not
         for resource in page.resources:
             if str(resource.uri).startswith("exactdocs://"):
                 assert f"?ref={DEFAULT_REF}" in str(resource.uri), resource.uri
