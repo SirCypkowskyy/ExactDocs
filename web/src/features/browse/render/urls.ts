@@ -39,7 +39,7 @@ const BLOB = {
 } as const;
 
 type Kind = keyof typeof RAW;
-const known = (host: string): host is Kind => host in RAW;
+const known = (host: string): host is Kind => Object.hasOwn(RAW, host);
 
 /** The file's bytes at the commit, for an `<img>`; undefined for a host that has no such URL. */
 export function rawUrl(
@@ -79,7 +79,7 @@ export type LinkTarget =
 export function classifyLink(articlePath: string, href: string): LinkTarget {
   const target = href.trim();
   if (target.startsWith("#")) return { kind: "hash", href: target };
-  if (/^(https?:|mailto:)/i.test(target)) return { kind: "external", href: target };
+  if (/^(https?:\/\/|mailto:)/i.test(target)) return { kind: "external", href: target };
   if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) return { kind: "none" };
   const path = repoPath(articlePath, target);
   if (!path) return { kind: "none" };

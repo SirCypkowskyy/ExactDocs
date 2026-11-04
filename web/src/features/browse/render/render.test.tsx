@@ -56,12 +56,12 @@ describe("admonitions", () => {
     const titles = notes.map((n) => n.querySelector(".doc-callout-title, summary")?.textContent);
     expect(titles).toEqual([
       "Note",
-      "Use the sandbox",
-      "Rate limits",
+      "Tip: Use the sandbox",
+      "Warning: Rate limits",
       "Danger",
-      "Collapsed by default",
-      "Open by default",
-      "Unknown kinds are notes",
+      "Note: Collapsed by default",
+      "Tip: Open by default",
+      "Note: Unknown kinds are notes",
       "Note",
       "Tip",
       "Important",
@@ -161,7 +161,7 @@ describe("untrusted input", () => {
   });
   it("renders a heading's markup as text", () => {
     const container = dom();
-    const heading = container.querySelector("#heading");
+    const heading = container.querySelector("#doc-heading");
     expect(heading?.textContent).toContain("<img src=x onerror=alert(15)>");
     expect(heading?.querySelector("img")).toBeNull();
   });
@@ -211,7 +211,7 @@ describe("links and images", () => {
       />,
     );
     expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toBe("A diagram");
+    expect(container.textContent).toBe("Image not shown: A diagram");
   });
   it("links another article through the app's own link", () => {
     const { container } = render(

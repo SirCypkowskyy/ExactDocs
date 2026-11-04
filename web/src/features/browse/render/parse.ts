@@ -143,13 +143,19 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 export function inertMdx(source: string): string {
   const out: string[] = [];
+  const lines = source.split("\n");
   let fence: string | undefined;
   let block: string[] | undefined;
   const flush = () => {
-    if (block) out.push("````jsx", ...block, "````");
+    if (block) out.push("````mdx", ...block, "````");
     block = undefined;
   };
-  for (const line of source.split("\n")) {
+  // The next non-blank line after `i`: a block of MDX goes on across blank lines to another one.
+  const nextStartsMdx = (i: number) => {
+    const next = lines.slice(i + 1).find((l) => l.trim() !== "");
+    return next !== undefined && MDX_BLOCK.test(next) && !FENCE.test(next);
+  };
+  lines.forEach((line, i) => {
     const marker = FENCE.exec(line)?.[1];
     if (fence) {
       if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
@@ -159,28 +165,17 @@ export function inertMdx(source: string): string {
       fence = marker;
       out.push(line);
     } else if (line.trim() === "") {
-      flush();
-      out.push(line);
+      if (block && nextStartsMdx(i)) block.push(line);
+      else {
+        flush();
+        out.push(line);
+      }
     } else if (block || MDX_BLOCK.test(line)) {
       block = [...(block ?? []), line];
     } else {
       out.push(line);
     }
-  }
+  });
   flush();
   return out.join("\n");
 }
-
-// Task lists: `- [ ] todo` / `- [x] done`. The marker leaves the text and the item remembers it.
-md.core.ruler.after("inline", "task_items", (state) => {
-  const tokens = state.tokens;
-  for (let i = 0; i + 2 < tokens.length; i++) {
-    const [item, paragraph, inline] = [tokens[i], tokens[i + 1], tokens[i + 2]];
-    if (item?.type !== "list_item_open" || paragraph?.type !== "paragraph_open") continue;
-    const first = inline?.children?.[0];
-    const m = first?.type === "text" ? /^\[( |x|X)\]\s/.exec(first.content) : null;
-    if (!(m && first)) continue;
-    item.meta = { task: m[1] === " " ? "todo" : "done" };
-    first.content = first.content.slice(m[0].length);
-  }
-});

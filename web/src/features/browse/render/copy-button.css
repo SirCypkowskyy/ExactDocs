@@ -1,0 +1,32 @@
+/* The copy button, used over code blocks and over the Source view. */
+.doc-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2.75rem;
+  padding-inline: 0.625rem;
+  border-radius: var(--radius-md);
+  color: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  outline: none;
+  transition:
+    background-color 150ms,
+    color 150ms,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.doc-copy:active {
+  transform: scale(0.97);
+}
+.doc-copy:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+@media (hover: hover) {
+  .doc-copy {
+    min-height: 2rem;
+  }
+  .doc-copy:hover {
+    background: var(--accent);
+    color: var(--foreground);
+  }
+}

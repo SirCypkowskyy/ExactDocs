@@ -74,7 +74,7 @@ describe("ArticleView", () => {
     view();
     expect(await screen.findByRole("heading", { name: /Install/ })).toHaveAttribute(
       "id",
-      "install",
+      "doc-install",
     );
     expect(screen.getByRole("note")).toHaveTextContent("Mind the gap.");
     expect(await screen.findByRole("img", { name: "Shot" })).toHaveAttribute(
@@ -89,7 +89,7 @@ describe("ArticleView", () => {
     view();
     await screen.findByRole("heading", { name: /Install/ });
     expect(screen.queryByRole("img", { name: "Shot" })).toBeNull();
-    expect(screen.getByText("Shot")).toBeInTheDocument();
+    expect(screen.getByText("Image not shown: Shot")).toBeInTheDocument();
   });
 
   it("keeps the file as stored one click away", async () => {

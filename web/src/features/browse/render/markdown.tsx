@@ -10,6 +10,7 @@ import {
 import type { Token } from "markdown-it";
 import { Fragment, type ReactNode, useEffect, useMemo } from "react";
 import { CodeBlock } from "./code-block";
+import { type Budget, createBudget } from "./limits";
 import { anchorsOf, inertMdx, md, type Variant, variantOf } from "./parse";
 import "./prose.css";
 import { classifyLink } from "./urls";
@@ -34,9 +35,8 @@ interface Node {
   children: Node[];
 }
 
-let keys = 0;
-
-function tree(tokens: readonly Token[]): Node[] {
+/** Tokens to a tree. An admonition's body is parsed here too, once, with the rest of the document. */
+function tree(tokens: readonly Token[], count = { next: 0 }): Node[] {
   const root: Node[] = [];
   const stack: Node[][] = [root];
   for (const token of tokens) {
@@ -44,8 +44,14 @@ function tree(tokens: readonly Token[]): Node[] {
       stack.pop();
       continue;
     }
-    const node: Node = { key: keys++, token, children: token.children ? tree(token.children) : [] };
+    const inner = token.children
+      ? token.children
+      : token.type === "admonition"
+        ? md.parse(token.content, {})
+        : [];
+    const node: Node = { key: count.next++, token, children: [] };
     (stack.at(-1) ?? root).push(node);
+    node.children = tree(inner, count);
     if (token.nesting === 1) stack.push(node.children);
   }
   return root;
@@ -72,7 +78,11 @@ function Callout({
   const head = (
     <>
       <Icon aria-hidden="true" className="size-4 shrink-0" />
-      <span>{title || titled(kind)}</span>
+      <span>
+        {/* A title replaces the type's name: screen readers still hear which kind of note it is. */}
+        {title ? <span className="sr-only">{titled(variant)}: </span> : null}
+        {title || titled(kind)}
+      </span>
     </>
   );
   return collapsible ? (
@@ -91,10 +101,22 @@ function Callout({
 const attr = (token: Token, name: string) => String(token.attrGet(name) ?? "");
 const fenceLanguage = (info: string) => /[\w+#-]+/.exec(info.split(/\s/, 1)[0] ?? "")?.[0];
 
+/** The text of a subtree, for a table's name. */
+const textOf = (node: Node): string =>
+  node.token.type === "text" || node.token.type === "code_inline"
+    ? node.token.content
+    : node.children.map(textOf).join("");
+
+/** Headings get `doc-<anchor>` ids: the anchor itself (the chunk's) is only ever a URL fragment. */
+const idOf = (anchor: string) => `doc-${anchor}`;
+
 interface Ctx {
   where: Where;
   /** The anchors of the article's headings; none inside an admonition (it is not part of the chunks). */
   anchors: ReturnType<typeof anchorsOf> | null;
+  budget: Budget;
+  /** The anchor the URL points at, if any. */
+  target: string;
 }
 
 function many(nodes: readonly Node[], ctx: Ctx): ReactNode[] {
@@ -142,7 +164,7 @@ function image(token: Token, { where }: Ctx) {
   return (
     <span className="doc-noimage">
       <ImageOff aria-hidden="true" className="size-4 shrink-0" />
-      <span>{alt || "Image"}</span>
+      <span>Image not shown: {alt || "Image"}</span>
     </span>
   );
 }
@@ -154,8 +176,13 @@ function heading(node: Node, ctx: Ctx) {
   const Tag = `h${Math.min(level + 2, 6)}` as "h3";
   const repeatsTitle =
     level === 1 && found?.text.toLowerCase() === ctx.where.title.trim().toLowerCase();
+  const aimed = Boolean(found?.anchor) && found?.anchor === ctx.target;
   return (
-    <Tag id={found?.anchor || undefined} className={`doc-h doc-h${level}`} hidden={repeatsTitle}>
+    <Tag
+      id={found?.anchor ? idOf(found.anchor) : undefined}
+      className={`doc-h doc-h${level}${aimed ? " doc-target" : ""}`}
+      hidden={repeatsTitle}
+    >
       {many(node.children, ctx)}
       {found?.anchor ? (
         <a href={`#${found.anchor}`} className="doc-anchor" aria-label={`Link to ${found.text}`}>
@@ -210,7 +237,7 @@ function one(node: Node, ctx: Ctx): ReactNode {
           collapsible={meta.collapsible}
           open={meta.open}
         >
-          {many(tree(md.parse(token.content, {})), { where: ctx.where, anchors: null })}
+          {many(node.children, { ...ctx, anchors: null })}
         </Callout>
       );
     }
@@ -235,20 +262,25 @@ function one(node: Node, ctx: Ctx): ReactNode {
       );
     }
     case "fence":
-      return <CodeBlock code={token.content} language={fenceLanguage(token.info)} />;
+      return (
+        <CodeBlock code={token.content} language={fenceLanguage(token.info)} budget={ctx.budget} />
+      );
     case "code_block":
       return <CodeBlock code={token.content} />;
     case "html_block":
-      return <CodeBlock code={token.content} language="html" />;
+      return <CodeBlock code={token.content} language="html" budget={ctx.budget} />;
     case "hr":
       return <hr />;
-    case "table_open":
+    case "table_open": {
+      const first = node.children[0]?.children[0]?.children[0];
+      const name = first ? textOf(first).trim() : "";
       return (
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a table wider than the screen scrolls
-        <section className="doc-table" aria-label="Table" tabIndex={0}>
+        <section className="doc-table" aria-label={name ? `Table: ${name}` : "Table"} tabIndex={0}>
           <table>{kids()}</table>
         </section>
       );
+    }
     case "thead_open":
       return <thead>{kids()}</thead>;
     case "tbody_open":
@@ -269,21 +301,33 @@ function one(node: Node, ctx: Ctx): ReactNode {
 /**
  * An article as elements. Nothing from the repository is parsed as HTML or run: raw HTML and
  * MDX components show as text or code, links keep to http(s) and mailto, and an image is loaded
- * only from the repository itself.
+ * only from the repository itself. `hash` is the URL's fragment (a chunk anchor, as in a search
+ * result): the heading it names is scrolled to and marked.
  */
-export function Markdown({ source, mdx, where }: { source: string; mdx: boolean; where: Where }) {
+export function Markdown({
+  source,
+  mdx,
+  where,
+  hash = "",
+}: {
+  source: string;
+  mdx: boolean;
+  where: Where;
+  hash?: string;
+}) {
   const parsed = useMemo(() => {
     const tokens = md.parse(mdx ? inertMdx(source) : source, {});
-    return { nodes: tree(tokens), anchors: anchorsOf(tokens) };
+    return { nodes: tree(tokens), anchors: anchorsOf(tokens), budget: createBudget() };
   }, [source, mdx]);
-  // A link to `#section` opens the article on it, once the text is there.
-  useEffect(() => {
+  const target = useMemo(() => {
     try {
-      const id = decodeURIComponent(window.location.hash.slice(1));
-      if (id) document.getElementById(id)?.scrollIntoView();
+      return decodeURIComponent(hash.replace(/^#/, ""));
     } catch {
-      // a malformed fragment points at nothing
+      return ""; // a malformed fragment points at nothing
     }
-  }, []);
-  return <div className="doc">{many(parsed.nodes, { where, anchors: parsed.anchors })}</div>;
+  }, [hash]);
+  useEffect(() => {
+    if (target) document.getElementById(idOf(target))?.scrollIntoView();
+  }, [target]);
+  return <div className="doc">{many(parsed.nodes, { where, target, ...parsed })}</div>;
 }

@@ -1,5 +1,6 @@
 import type { LanguageFn } from "highlight.js";
 import hljs from "highlight.js/lib/core";
+import { MAX_BLOCK } from "./limits";
 
 // Each grammar is its own chunk, fetched the first time a block of that language is shown.
 const GRAMMARS: Record<string, () => Promise<{ default: LanguageFn }>> = {
@@ -43,7 +44,7 @@ const ALIASES: Record<string, string> = {
   json5: "json",
   jsonc: "json",
   md: "markdown",
-  mdx: "markdown",
+  mdx: "javascript",
   py: "python",
   python3: "python",
   rb: "ruby",
@@ -59,13 +60,13 @@ const ALIASES: Record<string, string> = {
 /** The grammar that highlights a fence's language, or undefined when there is none (plain text). */
 export function grammarOf(language: string): string | undefined {
   const name = language.toLowerCase();
-  const grammar = ALIASES[name] ?? name;
-  return grammar in GRAMMARS ? grammar : undefined;
+  const grammar = (Object.hasOwn(ALIASES, name) ? ALIASES[name] : undefined) ?? name;
+  return Object.hasOwn(GRAMMARS, grammar) ? grammar : undefined;
 }
 
 /** highlight.js's markup for `code`: escaped text and `<span class="hljs-…">` only. */
 export async function highlight(code: string, language: string): Promise<string | undefined> {
-  const grammar = grammarOf(language);
+  const grammar = code.length > MAX_BLOCK ? undefined : grammarOf(language);
   const load = grammar && GRAMMARS[grammar];
   if (!(grammar && load)) return undefined;
   if (!hljs.getLanguage(grammar)) hljs.registerLanguage(grammar, (await load()).default);

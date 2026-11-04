@@ -1,59 +1,81 @@
-import { Check, Copy } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { CopyButton } from "./copy-button";
+import { type Budget, inTurn } from "./limits";
 import { tokensOf } from "./tokens";
 
-function CopyButton({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1600);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  const Icon = copied ? Check : Copy;
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard
-          ?.writeText(code)
-          .then(() => setCopied(true))
-          .catch(() => {});
-      }}
-      className="doc-copy"
-    >
-      <Icon aria-hidden="true" className="size-3.5" />
-      <span className="min-w-[3.25rem] text-left">{copied ? "Copied" : "Copy"}</span>
-      <span className="sr-only">code</span>
-    </button>
-  );
-}
+const LABELS: Record<string, string> = {
+  ts: "TypeScript",
+  typescript: "TypeScript",
+  tsx: "TSX",
+  js: "JavaScript",
+  javascript: "JavaScript",
+  jsx: "JSX",
+  py: "Python",
+  python: "Python",
+  sh: "Shell",
+  bash: "Shell",
+  shell: "Shell",
+  zsh: "Shell",
+  json: "JSON",
+  yaml: "YAML",
+  yml: "YAML",
+  toml: "TOML",
+  html: "HTML",
+  css: "CSS",
+  sql: "SQL",
+  diff: "Diff",
+  go: "Go",
+  rust: "Rust",
+  rs: "Rust",
+  md: "Markdown",
+  mdx: "MDX",
+};
 
-/** A fenced block: the language, a copy button, and the code, coloured once its grammar has loaded. */
-export function CodeBlock({ code, language }: { code: string; language?: string | undefined }) {
+/** The name shown above a block: a known language in full, anything else as written, nothing for none. */
+const languageLabel = (language: string | undefined) =>
+  language
+    ? Object.hasOwn(LABELS, language.toLowerCase())
+      ? LABELS[language.toLowerCase()]
+      : language
+    : "Text";
+
+/**
+ * A fenced block: the language, a copy button, and the code, coloured when the browser is idle and
+ * its grammar has loaded. A block that is too long, or past the article's budget, stays plain.
+ */
+export function CodeBlock({
+  code,
+  language,
+  budget,
+}: {
+  code: string;
+  language?: string | undefined;
+  budget?: Budget | undefined;
+}) {
   const [marked, setMarked] = useState<{ code: string; nodes: ReactNode[] }>();
+  const pre = useRef<HTMLPreElement>(null);
   useEffect(() => {
-    if (!language) return;
+    if (!language || (budget && !budget.take(code.length))) return;
     let live = true;
-    import("./highlight")
-      .then((m) => m.highlight(code, language))
-      .then((markup) => {
-        if (live && markup) setMarked({ code, nodes: tokensOf(markup) });
-      })
-      .catch(() => {}); // the plain text stays
+    inTurn(async () => {
+      if (!live) return;
+      const markup = await import("./highlight").then((m) => m.highlight(code, language));
+      if (live && markup) setMarked({ code, nodes: tokensOf(markup) });
+    }).catch(() => {}); // the plain text stays
     return () => {
       live = false;
     };
-  }, [code, language]);
+  }, [code, language, budget]);
   const text = code.replace(/\n$/, "");
   return (
     <figure className="doc-code">
       <figcaption>
-        <span>{language || "text"}</span>
-        <CopyButton code={text} />
+        <span>{languageLabel(language)}</span>
+        <CopyButton text={text} target={pre} />
       </figcaption>
       {/* A scrollable region has to be reachable by keyboard. */}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable code */}
-      <pre tabIndex={0}>
+      <pre ref={pre} tabIndex={0}>
         <code>{marked?.code === code ? marked.nodes : text}</code>
       </pre>
     </figure>
