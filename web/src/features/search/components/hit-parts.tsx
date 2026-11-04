@@ -54,15 +54,44 @@ export function Crumbs({ hit }: { hit: Pick<SearchHit, "heading_path" | "article
   );
 }
 
-export const onArrows = (inputId: string) => (event: KeyboardEvent<HTMLElement>) => {
+export const onArrows = (focusInput: () => void) => (event: KeyboardEvent<HTMLElement>) => {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
   const links = [...event.currentTarget.querySelectorAll<HTMLElement>("a[data-result]")];
   const at = links.indexOf(document.activeElement as HTMLElement);
   if (at < 0) return;
   event.preventDefault();
-  if (event.key === "ArrowUp" && at === 0) document.getElementById(inputId)?.focus();
+  if (event.key === "ArrowUp" && at === 0) focusInput();
   else
     links[
       Math.min(Math.max(at + (event.key === "ArrowDown" ? 1 : -1), 0), links.length - 1)
     ]?.focus();
 };
+
+const bar = "block rounded bg-muted-foreground/[0.14]";
+
+/** Same shape as the real list (optional chip row, count line, rows), so nothing moves when it lands. */
+export function Skeleton({ chips = false }: { chips?: boolean }) {
+  return (
+    <div aria-hidden="true" className="pending-in motion-safe:animate-pulse">
+      {chips && (
+        <div className="mb-5 flex gap-2">
+          {["a", "b", "c"].map((id) => (
+            <span key={id} className={`${bar} h-11 w-24 rounded-md lg:h-8`} />
+          ))}
+        </div>
+      )}
+      <span className={`${bar} mb-4 h-5 w-28`} />
+      <ul className="divide-y divide-border">
+        {["a", "b", "c", "d"].map((id) => (
+          <li key={id} className="space-y-2 py-3">
+            <span className={`${bar} h-5 w-2/5`} />
+            <span className={`${bar} h-3 w-1/4`} />
+            <span className={`${bar} h-3.5 w-full`} />
+            <span className={`${bar} h-3.5 w-4/5`} />
+            <span className={`${bar} h-3 w-1/6`} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

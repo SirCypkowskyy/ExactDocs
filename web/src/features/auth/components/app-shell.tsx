@@ -1,5 +1,7 @@
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import { Search } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "@/shared/lib/utils";
 import { useSession } from "../hooks/use-session";
 import { SignOutButton } from "./sign-out-button";
 
@@ -17,7 +19,7 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
 
   return (
     <div className="min-h-dvh">
-      <header className="flex flex-wrap items-center gap-x-1 border-b border-border px-4 py-2 sm:gap-x-2 sm:px-6">
+      <header className="flex flex-wrap items-center gap-y-2 gap-x-1 border-b border-border px-4 py-2 sm:gap-x-2 sm:px-6">
         <Link to="/" className="mr-2 font-serif text-lg font-semibold tracking-tight sm:mr-4">
           ExactDocs
         </Link>
@@ -34,14 +36,21 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
             Account
           </Link>
         </nav>
-        {/* A phone gets the box on its own row; from sm up it sits between the tabs and the account. */}
         {search && (
-          <div className="order-last flex w-full sm:order-none sm:ml-auto sm:w-auto sm:flex-1 sm:justify-end">
-            {search}
-          </div>
+          <>
+            {/* A phone gets a 44px door to /search (its box sits at the top of that page); from sm up the box lives here. */}
+            <Link
+              to="/search"
+              aria-label="Search all libraries"
+              className="ml-auto inline-flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-[color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] sm:hidden [@media(hover:hover)]:hover:text-foreground"
+            >
+              <Search aria-hidden="true" className="size-5" />
+            </Link>
+            <div className="hidden sm:ml-auto sm:flex sm:flex-1 sm:justify-end">{search}</div>
+          </>
         )}
         {/* On a phone the Account page holds sign-out, which keeps this to one row. */}
-        <div className={`${search ? "" : "ml-auto "}hidden items-center gap-3 sm:flex`}>
+        <div className={cn("hidden items-center gap-3 sm:flex", !search && "ml-auto")}>
           <span className="max-w-[12rem] truncate text-sm text-muted-foreground">
             {session?.account?.username}
           </span>

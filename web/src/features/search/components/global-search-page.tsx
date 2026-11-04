@@ -1,54 +1,109 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
+import { HttpError } from "@/shared/lib/http";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
-import { type GlobalHit, type GlobalResults, splitLibrary } from "../model/global";
-import { resultsNoun } from "../model/search";
-import { GLOBAL_INPUT_ID } from "./global-search-box";
-import { Crumbs, onArrows, retry, Snippet } from "./hit-parts";
-import { RESULTS_ID } from "./search-box";
+import {
+  countLine,
+  type GlobalHit,
+  type GlobalResults,
+  splitLibrary,
+  statusLine,
+  totalMatches,
+} from "../model/global";
+import { focusGlobalInput, GLOBAL_RESULTS_ID, GlobalSearchBox } from "./global-search-box";
+import { Crumbs, onArrows, retry, Skeleton, Snippet } from "./hit-parts";
+
+/** Chips shown before "+N more"; the selected library always stays visible. */
+const VISIBLE_FACETS = 8;
 
 const chip =
-  "inline-flex min-h-11 max-w-full cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8";
+  "inline-flex h-11 max-w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-3 text-sm outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-8";
+
+const chipTone = (selected: boolean) =>
+  selected
+    ? "bg-mark text-primary-foreground"
+    : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent";
+
+/** `owner/repo` with the owner softer and the repo firm; the owner gives way first when it is long. */
+function LibraryName({ id }: { id: string }) {
+  const { owner, repo } = splitLibrary(id);
+  return (
+    <span className="flex min-w-0 items-baseline">
+      <span className="min-w-0 max-w-[40%] shrink truncate opacity-70">{owner}/</span>
+      <span className="min-w-0 max-w-[60%] shrink-0 truncate font-medium">{repo}</span>
+    </span>
+  );
+}
+
+function FacetLink({
+  f,
+  q,
+  library,
+}: {
+  f: GlobalResults["libraries"][number];
+  q: string;
+  library?: string;
+}) {
+  const selected = library === f.library;
+  return (
+    <li className="min-w-0 max-w-full">
+      <Link
+        to="/search"
+        search={{ q, library: f.library }}
+        title={f.library}
+        aria-label={`${f.library}, ${f.matches} ${f.matches === 1 ? "match" : "matches"}`}
+        aria-current={selected ? "page" : undefined}
+        className={cn(chip, chipTone(selected))}
+      >
+        <LibraryName id={f.library} />
+        <span aria-hidden="true" className="shrink-0 tabular-nums opacity-80">
+          {f.matches}
+        </span>
+      </Link>
+    </li>
+  );
+}
 
 function Facets({ data, q, library }: { data: GlobalResults; q: string; library?: string }) {
   const total = data.libraries.reduce((sum, f) => sum + f.matches, 0);
-  const item = (selected: boolean) =>
-    cn(
-      chip,
-      selected
-        ? "bg-mark text-primary-foreground"
-        : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent",
-    );
+  const shown = data.libraries.filter((f, i) => i < VISIBLE_FACETS || f.library === library);
+  const rest = data.libraries.filter((f) => !shown.includes(f));
   return (
-    <nav aria-label="Libraries with matches">
-      <ul className="flex flex-wrap gap-2">
+    <nav aria-label="Libraries with matches" className="space-y-2">
+      <ul className="flex flex-wrap gap-x-2 gap-y-2">
         <li>
           <Link
             to="/search"
             search={{ q }}
-            aria-current={library ? undefined : "true"}
-            className={item(!library)}
+            aria-label={`All libraries, ${total} matches`}
+            aria-current={library ? undefined : "page"}
+            className={cn(chip, chipTone(!library))}
           >
-            All libraries <span className="tabular-nums opacity-80">{total}</span>
+            All libraries{" "}
+            <span aria-hidden="true" className="tabular-nums opacity-80">
+              {total}
+            </span>
           </Link>
         </li>
-        {data.libraries.map((f) => (
-          <li key={f.library} className="min-w-0">
-            <Link
-              to="/search"
-              search={{ q, library: f.library }}
-              aria-current={library === f.library ? "true" : undefined}
-              className={item(library === f.library)}
-            >
-              <span className="font-mono [overflow-wrap:anywhere]">{f.library}</span>
-              <span className="tabular-nums opacity-80">{f.matches}</span>
-            </Link>
-          </li>
+        {shown.map((f) => (
+          <FacetLink key={f.library} f={f} q={q} {...(library && { library })} />
         ))}
       </ul>
+      {rest.length > 0 && (
+        <details>
+          <summary className="inline-flex h-11 cursor-pointer items-center rounded-md px-1 text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring lg:h-8 [@media(hover:hover)]:hover:text-foreground">
+            +{rest.length} more libraries
+          </summary>
+          <ul className="mt-1 flex flex-wrap gap-x-2 gap-y-2">
+            {rest.map((f) => (
+              <FacetLink key={f.library} f={f} q={q} {...(library && { library })} />
+            ))}
+          </ul>
+        </details>
+      )}
     </nav>
   );
 }
@@ -57,9 +112,12 @@ function Hit({ hit }: { hit: GlobalHit }) {
   const { owner, repo } = splitLibrary(hit.library);
   return (
     <li className="relative px-2 py-3 transition-colors duration-150 [@media(hover:hover)]:hover:bg-accent/70">
-      <p className="mb-0.5 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
-        {hit.library} <span aria-hidden="true">·</span> <span className="sr-only">version </span>
-        {hit.version}
+      <p className="mb-0.5 text-[13px] font-medium text-foreground/80 [overflow-wrap:anywhere]">
+        {owner}/{repo}{" "}
+        <span className="font-mono text-xs font-normal text-muted-foreground">
+          <span className="sr-only">version </span>
+          {hit.version}
+        </span>
       </p>
       <Link
         data-result=""
@@ -79,35 +137,62 @@ function Hit({ hit }: { hit: GlobalHit }) {
   );
 }
 
-function Notes({ data }: { data: GlobalResults }) {
+function Notes({ data, library }: { data: GlobalResults; library: string | undefined }) {
+  const all = data.libraries_searched + data.libraries_omitted;
   return (
     <>
       {!data.coverage.complete && (
         <p className="mt-4 text-sm text-muted-foreground">
-          Showing the best {data.results.length}. More sections match: use a library above or a more
-          specific word.
+          Showing the best {data.results.length}. More sections match:{" "}
+          {library ? "use a more specific word." : "use a library above or a more specific word."}
         </p>
       )}
       {data.libraries_omitted > 0 && (
         <p className="mt-2 text-sm text-muted-foreground">
-          {data.libraries_omitted} {data.libraries_omitted === 1 ? "library was" : "libraries were"}{" "}
-          not searched (searched {data.libraries_searched}).
+          Searched {data.libraries_searched} of {all} libraries; the other {data.libraries_omitted}{" "}
+          are not searched here.{" "}
+          <Link to="/" className="underline underline-offset-2 hover:text-foreground">
+            Browse them on the Libraries page
+          </Link>
+          .
         </p>
       )}
     </>
   );
 }
 
-function Empty({ q, library }: { q: string; library: string | undefined }) {
+function Empty({
+  q,
+  library,
+  unavailable = false,
+}: {
+  q: string;
+  library: string | undefined;
+  unavailable?: boolean;
+}) {
   return (
     <div className="max-w-xl">
       <h2 className="font-serif text-2xl font-semibold tracking-tight">
-        {library ? `No results in ${library}` : "No results"}
+        {unavailable
+          ? "Library not available"
+          : library
+            ? `No results in ${library}`
+            : "No results"}
       </h2>
       <p className="mt-2 text-muted-foreground">
-        Nothing {library ? "there" : "in any library's default version"} matches{" "}
-        <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>. Try
-        fewer or different words.
+        {unavailable ? (
+          <>
+            <span className="font-mono text-foreground [overflow-wrap:anywhere]">{library}</span>{" "}
+            can't be searched: it was removed, or it has no imported version.
+          </>
+        ) : (
+          <>
+            Nothing {library ? "there" : "in any library's default version"} matches{" "}
+            <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>. Try
+            fewer or different words.
+            {!library && " To search another version, open the library and use its search box."}
+          </>
+        )}
       </p>
       {library && (
         <Link to="/search" search={{ q }} className={cn(retry, "mt-4")}>
@@ -118,7 +203,7 @@ function Empty({ q, library }: { q: string; library: string | undefined }) {
   );
 }
 
-/** Results of the header's search: hits from every library, a library facet with counts. */
+/** Results of the global search: hits from every library, a library facet with counts. */
 export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; library?: string }) {
   const heading = useId();
   const q = normalizeQuery(raw);
@@ -130,35 +215,53 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
   const data = result.data;
   const stale = result.isPlaceholderData;
   const settled = data !== undefined && !stale;
+  const refused =
+    result.error instanceof HttpError && result.error.status >= 400 && result.error.status < 500;
 
-  let body: ReactNode = (
-    <p className="text-muted-foreground" aria-hidden={q === undefined ? undefined : true}>
-      {q === undefined
-        ? "Type a word, an identifier or an error message to search every library."
-        : "Searching…"}
-    </p>
-  );
-  if (q !== undefined && result.isError && !stale) {
+  let body: ReactNode = <Skeleton chips />;
+  if (q === undefined) {
     body = (
-      <div role="alert" className="max-w-xl">
-        <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
-        <p className="mt-2 text-muted-foreground">
-          Couldn't search. Check your connection or try again.
-        </p>
-        <button type="button" className={cn(retry, "mt-3")} onClick={() => void result.refetch()}>
-          Try again
-        </button>
-      </div>
+      <p className="max-w-xl text-muted-foreground">
+        Searches the default version of every library.{" "}
+        <span className="hidden lg:inline">
+          Press <kbd className="rounded bg-secondary px-1.5 font-mono text-xs">/</kbd> to start
+          typing.
+        </span>
+      </p>
     );
-  } else if (q !== undefined && data) {
+  } else if (result.isError && !stale) {
+    body =
+      refused && library ? (
+        <Empty q={q} library={library} unavailable />
+      ) : (
+        <div role="alert" className="max-w-xl">
+          <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
+          <p className="mt-2 text-muted-foreground">
+            Couldn't search. Check your connection or try again.
+          </p>
+          <button type="button" className={cn(retry, "mt-3")} onClick={() => void result.refetch()}>
+            Try again
+          </button>
+        </div>
+      );
+  } else if (data) {
     body = (
       <div className="space-y-5">
         {data.libraries.length > 0 && <Facets data={data} q={q} {...(library && { library })} />}
         {data.results.length > 0 ? (
           // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
-          <div onKeyDown={onArrows(GLOBAL_INPUT_ID)}>
-            <p aria-hidden="true" className="mb-2 text-sm font-medium">
-              {resultsNoun(data.results.length, data.coverage.complete)}
+          <div onKeyDown={onArrows(focusGlobalInput)}>
+            <p aria-hidden="true" className="mb-2 flex items-center text-sm">
+              <span className="font-medium">
+                {countLine(
+                  data.results.length,
+                  totalMatches(data, library),
+                  data.coverage.complete,
+                )}
+              </span>
+              <span className="ml-3 hidden text-xs text-muted-foreground lg:inline">
+                <kbd className="font-mono">↓</kbd> to move through results
+              </span>
             </p>
             <ul
               className={cn(
@@ -170,7 +273,7 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
                 <Hit key={`${hit.library}:${hit.chunk_id}`} hit={hit} />
               ))}
             </ul>
-            <Notes data={data} />
+            <Notes data={data} library={library} />
           </div>
         ) : (
           settled && <Empty q={q} library={library} />
@@ -181,8 +284,10 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-10">
+      {/* A phone's header holds only an icon; the box sits here, focused. */}
+      <GlobalSearchBox autoFocus className="mb-6 sm:hidden" />
       <section
-        id={RESULTS_ID}
+        id={GLOBAL_RESULTS_ID}
         aria-labelledby={heading}
         aria-busy={result.isFetching}
         className="min-w-0"
@@ -197,9 +302,7 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
           )}
         </h1>
         <p role="status" className="sr-only">
-          {settled
-            ? `${data.results.length === 0 ? "No results" : resultsNoun(data.results.length, data.coverage.complete)} for “${q}”${library ? ` in ${library}` : " in all libraries"}`
-            : ""}
+          {settled && q ? statusLine(data.results.length, q, library, data.coverage.complete) : ""}
         </p>
         <div className="mt-5">{body}</div>
       </section>

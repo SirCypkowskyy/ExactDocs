@@ -12,7 +12,7 @@ import {
   type SearchHit,
   type SearchResults as SearchResultData,
 } from "../model/search";
-import { Crumbs, onArrows, retry, Snippet } from "./hit-parts";
+import { Crumbs, onArrows, retry, Skeleton, Snippet } from "./hit-parts";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
 
 function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
@@ -43,26 +43,6 @@ function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
         </ul>
       )}
     </li>
-  );
-}
-
-/** Same rows as the real list (count line, title, path, two text lines, tags), so nothing moves when it lands. */
-function Skeleton() {
-  return (
-    <div aria-hidden="true" className="pending-in motion-safe:animate-pulse">
-      <span className="mb-4 block h-5 w-28 rounded bg-muted-foreground/[0.14]" />
-      <ul className="divide-y divide-border">
-        {["a", "b", "c", "d"].map((id) => (
-          <li key={id} className="space-y-2 py-3">
-            <span className="block h-5 w-2/5 rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3 w-1/4 rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3.5 w-full rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3.5 w-4/5 rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3 w-1/6 rounded bg-muted-foreground/[0.14]" />
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
 
@@ -122,7 +102,7 @@ function HitList({
   const count = data.results.length;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
-    <div onKeyDown={onArrows(INPUT_ID)}>
+    <div onKeyDown={onArrows(() => document.getElementById(INPUT_ID)?.focus())}>
       <p aria-hidden="true" className="mb-4 flex h-5 items-center text-sm text-muted-foreground">
         <span className="font-medium text-foreground">
           {resultsNoun(count, data.coverage.complete)}

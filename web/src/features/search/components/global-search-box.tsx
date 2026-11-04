@@ -2,21 +2,35 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
-import { RESULTS_ID } from "./search-box";
+import { cn } from "@/shared/lib/utils";
+import { hasVersionBox } from "./search-box";
 
-export const GLOBAL_INPUT_ID = "global-search-input";
+const GLOBAL_INPUT_ID = "global-search-input";
+export const GLOBAL_RESULTS_ID = "global-search-results";
 const DEBOUNCE_MS = 300;
 
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
+/** The visible global box (the header's from `sm`, the page's below it) takes focus. */
+export const focusGlobalInput = () => {
+  const boxes = [...document.querySelectorAll<HTMLInputElement>("input[data-global-search]")];
+  (boxes.find((box) => box.offsetParent !== null) ?? boxes[0])?.focus();
+};
+
+interface Props {
+  /** Focus the box on mount (the phone's `/search` page). */
+  autoFocus?: boolean;
+  className?: string;
+}
+
 /**
- * The header's search box: searches the default version of every library. Enter opens `/search`;
- * once there, typing updates `?q=` after a pause. `/` focuses it unless the page has its own
- * (per-version) box, Escape clears it, ArrowDown moves into the results.
+ * Searches the default version of every library. Enter opens `/search`; once there, typing updates
+ * `?q=` after a pause. `/` focuses it unless the page has its own per-version box, Escape clears
+ * it, ArrowDown moves into the results.
  */
-export function GlobalSearchBox() {
+export function GlobalSearchBox({ autoFocus = false, className }: Props) {
   const navigate = useNavigate();
   const onSearch = useLocation({ select: (l) => l.pathname === "/search" });
   const urlQ = useLocation({
@@ -25,19 +39,27 @@ export function GlobalSearchBox() {
   });
   const input = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(urlQ ?? "");
+  // `sent` is what this box last wrote to the URL. A different `q` came from elsewhere (Back, a
+  // link, the other box) and replaces the draft; the URL lagging behind the input must not.
+  const [sent, setSent] = useState(urlQ);
   const [seen, setSeen] = useState(urlQ);
-  // A different `q` in the URL (Back, a link, leaving /search) replaces the draft.
   if (urlQ !== seen) {
     setSeen(urlQ);
-    if (urlQ !== normalizeQuery(draft)) setDraft(urlQ ?? "");
+    if (urlQ !== sent) {
+      setSent(urlQ);
+      setDraft(urlQ ?? "");
+    }
   }
 
   const go = (value: string, replace: boolean) => {
     const q = normalizeQuery(value);
-    if (q === urlQ || (!q && !onSearch)) return;
+    if (q === sent || (!q && !onSearch)) return;
+    setSent(q);
     void navigate({ to: "/search", search: q ? { q } : {}, replace });
   };
-  const settle = useEffectEvent((value: string) => onSearch && go(value, true));
+  const settle = useEffectEvent((value: string) => {
+    if (onSearch) go(value, true);
+  });
   useEffect(() => {
     const timer = setTimeout(() => settle(draft), DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -46,7 +68,7 @@ export function GlobalSearchBox() {
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (isTyping(event.target) || document.getElementById("search-input")) return;
+      if (isTyping(event.target) || hasVersionBox()) return;
       event.preventDefault();
       input.current?.focus();
       input.current?.select();
@@ -57,7 +79,7 @@ export function GlobalSearchBox() {
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
-      const first = document.querySelector<HTMLElement>(`#${RESULTS_ID} a[data-result]`);
+      const first = document.querySelector<HTMLElement>(`#${GLOBAL_RESULTS_ID} a[data-result]`);
       if (first) {
         event.preventDefault();
         first.focus();
@@ -72,14 +94,14 @@ export function GlobalSearchBox() {
   }
 
   return (
-    <search className="min-w-0 flex-1 sm:max-w-sm">
+    <search aria-label="All libraries" className={cn("min-w-0 flex-1 lg:max-w-md", className)}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           go(draft, false);
         }}
       >
-        <label htmlFor={GLOBAL_INPUT_ID} className="sr-only">
+        <label htmlFor={`${GLOBAL_INPUT_ID}-${autoFocus ? "page" : "header"}`} className="sr-only">
           Search all libraries
         </label>
         <div className="relative">
@@ -89,7 +111,10 @@ export function GlobalSearchBox() {
           />
           <input
             ref={input}
-            id={GLOBAL_INPUT_ID}
+            id={`${GLOBAL_INPUT_ID}-${autoFocus ? "page" : "header"}`}
+            data-global-search=""
+            // biome-ignore lint/a11y/noAutofocus: the phone's search page exists to type into this box
+            autoFocus={autoFocus}
             type="search"
             autoComplete="off"
             spellCheck={false}
@@ -103,7 +128,8 @@ export function GlobalSearchBox() {
             className="h-11 w-full min-w-0 rounded-md bg-card pr-16 pl-9 text-base outline-none ring-1 ring-inset ring-input transition-shadow duration-150 [appearance:none] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:text-sm [&::-webkit-search-cancel-button]:hidden"
           />
           {draft === "" ? (
-            <kbd className="pointer-events-none absolute top-1/2 right-3 hidden h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded bg-secondary px-1 font-mono text-xs text-muted-foreground lg:inline-flex">
+            // Hidden while the page has its own box: that one answers `/`, not this.
+            <kbd className="pointer-events-none absolute top-1/2 right-3 hidden h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded bg-secondary px-1 font-mono text-xs text-muted-foreground lg:inline-flex [body:has(#search-input)_&]:hidden">
               /
             </kbd>
           ) : (

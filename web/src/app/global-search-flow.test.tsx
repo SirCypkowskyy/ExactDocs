@@ -29,7 +29,17 @@ const facets = [
   { library: "/fixture/docs-repo", version: "v2.0.0", commit_sha: SHA, matches: 1 },
 ];
 
-function mount(path: string) {
+interface Options {
+  status?: number;
+  omitted?: number;
+  complete?: boolean;
+  empty?: boolean;
+}
+
+const headerBox = async () =>
+  (await screen.findAllByRole("searchbox", { name: "Search all libraries" }))[0] as HTMLElement;
+
+function mount(path: string, options: Options = {}) {
   const calls: URL[] = [];
   vi.stubGlobal(
     "fetch",
@@ -43,18 +53,22 @@ function mount(path: string) {
         });
       }
       if (url.pathname.endsWith("/v1/search")) {
+        if (options.status) {
+          return Response.json({ error: "x", detail: "x", fields: [] }, { status: options.status });
+        }
         const only = url.searchParams.get("library");
         const results = [hit("/acme/payments", 1), hit("/fixture/docs-repo", 2)].filter(
           (h) => !only || h.library === only,
         );
+        if (options.empty) results.length = 0;
         return Response.json({
           notice: "",
           retrieval_mode: "bm25",
           reranked: false,
-          coverage: { candidates: results.length, reranked: 0, complete: true },
+          coverage: { candidates: results.length, reranked: 0, complete: options.complete ?? true },
           libraries_searched: 2,
-          libraries_omitted: 0,
-          libraries: facets,
+          libraries_omitted: options.omitted ?? 0,
+          libraries: options.empty ? [] : facets,
           results,
         });
       }
@@ -68,7 +82,11 @@ function mount(path: string) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { router, searches: () => calls.filter((u) => u.pathname.endsWith("/v1/search")) };
+  return {
+    router,
+    history: () => window.history.length,
+    searches: () => calls.filter((u) => u.pathname.endsWith("/v1/search")),
+  };
 }
 
 describe("searching all libraries", () => {
@@ -76,7 +94,7 @@ describe("searching all libraries", () => {
 
   it("opens /search from the header box and keeps the query in the URL", async () => {
     const { router, searches } = mount("/account");
-    const box = await screen.findByRole("searchbox", { name: "Search all libraries" });
+    const box = await headerBox();
     await userEvent.type(box, "token{Enter}");
     expect(await screen.findAllByRole("link", { name: /Tokens/ })).toHaveLength(2);
     expect(router.state.location.search).toMatchObject({ q: "token" });
@@ -86,8 +104,8 @@ describe("searching all libraries", () => {
 
   it("narrows to one library while the counts stay", async () => {
     const { router, searches } = mount("/search?q=token");
-    const facet = await screen.findByRole("link", { name: /\/fixture\/docs-repo\s*1/ });
-    expect(screen.getByRole("link", { name: /All libraries\s*4/ })).toBeVisible();
+    const facet = await screen.findByRole("link", { name: "/fixture/docs-repo, 1 match" });
+    expect(screen.getByRole("link", { name: "All libraries, 4 matches" })).toBeVisible();
     await userEvent.click(facet);
     await waitFor(() =>
       expect(searches().at(-1)?.searchParams.get("library")).toBe("/fixture/docs-repo"),
@@ -95,7 +113,7 @@ describe("searching all libraries", () => {
     await waitFor(() => expect(screen.getAllByRole("link", { name: /Tokens/ })).toHaveLength(1));
     expect(router.state.location.search).toMatchObject({ library: "/fixture/docs-repo" });
     const nav = screen.getByRole("navigation", { name: "Libraries with matches" });
-    expect(within(nav).getByRole("link", { name: /\/acme\/payments\s*3/ })).toBeVisible();
+    expect(within(nav).getByRole("link", { name: "/acme/payments, 3 matches" })).toBeVisible();
   });
 
   it("links a result to its library and version at the anchor", async () => {
@@ -106,5 +124,97 @@ describe("searching all libraries", () => {
     expect(router.state.location.pathname).toBe("/libraries/acme/payments");
     expect(router.state.location.search).toMatchObject({ version: "v2.0.0", path: "docs/auth.md" });
     expect(router.state.location.hash).toBe("refresh");
+  });
+
+  it("clears with Escape, and a new query drops the library", async () => {
+    const { router } = mount("/search?q=token&library=/fixture/docs-repo");
+    const box = await headerBox();
+    expect(box).toHaveValue("token");
+    await userEvent.type(box, "s{Enter}");
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "tokens" }));
+    await userEvent.clear(box);
+    await userEvent.type(box, "{Escape}");
+    await userEvent.type(box, "{Escape}");
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    expect(await screen.findByText(/Searches the default version of every library/)).toBeVisible();
+  });
+
+  it("types without being overwritten, then Back restores the earlier query", async () => {
+    const { router } = mount("/search?q=token");
+    const box = await headerBox();
+    await userEvent.type(box, "s{Enter}");
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "tokens" }));
+    await userEvent.type(box, "x");
+    expect(box).toHaveValue("tokensx");
+    router.history.back();
+    await waitFor(() => expect(box).toHaveValue("token"));
+  });
+
+  it("gives `/` to the header box, and to the version box on a library page", async () => {
+    mount("/account");
+    const box = await headerBox();
+    await userEvent.keyboard("/");
+    expect(box).toHaveFocus();
+  });
+
+  it("explains an omitted library and an incomplete list, and drops the facet hint when narrowed", async () => {
+    mount("/search?q=token", { omitted: 2, complete: false });
+    expect(await screen.findByText(/Searched 2 of 4 libraries/)).toBeVisible();
+    expect(screen.getByRole("link", { name: /Browse them on the Libraries page/ })).toBeVisible();
+    expect(screen.getByText(/use a library above/)).toBeVisible();
+    expect(screen.getByText("Top 2 of 4")).toBeVisible();
+  });
+
+  it("drops the library hint when already narrowed", async () => {
+    mount("/search?q=token&library=/acme/payments", { complete: false });
+    expect(await screen.findByText(/use a more specific word\./)).toBeVisible();
+    expect(screen.queryByText(/use a library above/)).toBeNull();
+  });
+
+  it("announces one sentence once settled, and marks the current facet", async () => {
+    mount("/search?q=token&library=/acme/payments");
+    await screen.findAllByRole("link", { name: /Tokens/ });
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "1 result for “token” in /acme/payments",
+      ),
+    );
+    expect(screen.getByRole("link", { name: "/acme/payments, 3 matches" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("shows an empty state, with and without a library", async () => {
+    mount("/search?q=zzz", { empty: true });
+    expect(await screen.findByRole("heading", { name: "No results" })).toBeVisible();
+    expect(screen.getByText(/open the library and use its search box/)).toBeVisible();
+  });
+
+  it("treats a 404 for an unknown library as an empty state, not a failure", async () => {
+    mount("/search?q=token&library=/gone/lib", { status: 404 });
+    expect(await screen.findByRole("heading", { name: "Library not available" })).toBeVisible();
+    expect(within(screen.getByRole("main")).queryByRole("alert")).toBeNull();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", { name: "Search all libraries" }),
+    ).toBeVisible();
+  });
+
+  it("keeps Try again for server errors", async () => {
+    mount("/search?q=token", { status: 500 });
+    expect(
+      await screen.findByRole("button", { name: "Try again" }, { timeout: 4000 }),
+    ).toBeVisible();
+  });
+
+  it("ArrowDown in the header box moves into the global results", async () => {
+    mount("/search?q=token");
+    const box = await headerBox();
+    await screen.findAllByRole("link", { name: /Tokens/ });
+    box.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement?.closest("#global-search-results")).not.toBeNull();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(box).toHaveFocus();
   });
 });

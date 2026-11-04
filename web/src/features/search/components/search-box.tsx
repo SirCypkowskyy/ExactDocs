@@ -10,6 +10,9 @@ export const INPUT_ID = "search-input";
 export const RESULTS_ID = "search-results";
 const DEBOUNCE_MS = 300;
 
+/** True while a version's own search box is on the page; it owns the `/` key then. */
+export const hasVersionBox = () => document.getElementById(INPUT_ID) !== null;
+
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
@@ -80,7 +83,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
 
   return (
     <div className="space-y-3">
-      <search>
+      <search aria-label={ctx.ref}>
         <form
           onSubmit={(event) => {
             event.preventDefault();

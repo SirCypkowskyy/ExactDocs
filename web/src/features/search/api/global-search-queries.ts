@@ -16,7 +16,9 @@ export interface GlobalArgs {
 export const globalSearchQueryOptions = ({ q, library }: GlobalArgs) => {
   const text = normalizeQuery(q) ?? "";
   return queryOptions({
-    queryKey: [...BROWSE_KEY, "search-all", text, library ?? ""] as const,
+    // Under BROWSE_KEY, so every import, refresh and delete that invalidates it drops these hits too
+    // (that invalidation is the freshness contract). "*search-all*" cannot be a GitHub owner.
+    queryKey: [...BROWSE_KEY, "*search-all*", text, library ?? ""] as const,
     queryFn: ({ signal }) => {
       const query: QueryOf<"/api/v1/search"> = {
         q: text,
