@@ -6,7 +6,11 @@ from pydantic import ValidationError
 
 from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemorySearchIndex
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchDocsQuery
-from exactdocs.retrieval.errors import EmptySearchTextError, VersionNotIndexedError
+from exactdocs.retrieval.errors import (
+    EmptySearchTextError,
+    UnavailableModeError,
+    VersionNotIndexedError,
+)
 from exactdocs.retrieval.models import (
     DocTarget,
     ManifestStatus,
@@ -312,3 +316,19 @@ def test_search_tags_are_normalized_like_ingestion_stores_them() -> None:
 def test_a_search_tag_that_cannot_be_a_tag_is_refused() -> None:
     with pytest.raises(ValidationError):
         SearchDocsQuery(library=LIB, query="x", tags=["not a tag!"])
+
+
+@pytest.mark.parametrize("mode", [None, "", "bm25", "BM25"])
+async def test_the_only_mode_is_accepted_however_it_is_asked_for(
+    retrieval: RetrievalModule, mode: str | None
+) -> None:
+    result = await retrieval.search_docs(SearchDocsQuery(library=LIB, query="token", mode=mode))
+
+    assert result.retrieval_mode is RetrievalMode.BM25
+
+
+async def test_an_unavailable_mode_is_refused_and_the_error_lists_the_available_ones(
+    retrieval: RetrievalModule,
+) -> None:
+    with pytest.raises(UnavailableModeError, match="available modes: bm25"):
+        await retrieval.search_docs(SearchDocsQuery(library=LIB, query="token", mode="hybrid"))
