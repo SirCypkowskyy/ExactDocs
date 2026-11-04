@@ -3,8 +3,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self
 
+from exactdocs.ingestion.errors import VersionImportingError
 from exactdocs.ingestion.models import (
+    ACTIVE_JOB_STATES,
+    IMPORT_KINDS,
     ArticleChunk,
+    ImportedRef,
     ImportedVersion,
     ImportSource,
     Job,
@@ -27,7 +31,12 @@ class InMemoryJobRepository:
         return cls({job.id: job for job in jobs})
 
     async def add(self, job: Job) -> None:
-        """Store a new job."""
+        """Store a new job; a second unfinished import of one (library, ref) is refused."""
+        if job.kind in IMPORT_KINDS and job.state in ACTIVE_JOB_STATES and job.version:
+            for other in self.jobs.values():
+                same = (other.library, other.version) == (job.library, job.version)
+                if same and other.kind in IMPORT_KINDS and other.state in ACTIVE_JOB_STATES:
+                    raise VersionImportingError(job.library, job.version or "")
         self.jobs[job.id] = job
 
     async def save(self, job: Job) -> None:
@@ -81,13 +90,12 @@ class InMemoryLibrarySources:
     """Implements ``ports.driven.LibrarySources``. For tests."""
 
     sources: dict[str, ImportSource] = field(default_factory=dict)
-    versions: dict[str, dict[str, str]] = field(default_factory=dict)
-    """``{library: {ref: commit SHA}}``."""
+    versions: dict[str, list[ImportedRef]] = field(default_factory=dict)
 
-    async def imported_versions(self, library: str) -> Mapping[str, str]:
-        """Return the library's ``{ref: commit SHA}``; raises ``NotFoundError`` if unknown."""
+    async def imported_versions(self, library: str) -> Sequence[ImportedRef]:
+        """Return the library's versions; raises ``NotFoundError`` if unknown."""
         await self.get(library)
-        return self.versions.get(library, {})
+        return self.versions.get(library, [])
 
     async def get(self, library: str) -> ImportSource:
         """Return the library's source; raises ``NotFoundError`` for an unknown library."""

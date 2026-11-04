@@ -27,6 +27,7 @@ from exactdocs.ingestion.ports.driving import (
     RemoveLibrary,
     RemoveVersion,
     RunNextJob,
+    SyncLibrary,
 )
 
 __all__ = [
@@ -55,5 +56,6 @@ __all__ = [
     "RemoveLibrary",
     "RemoveVersion",
     "RunNextJob",
+    "SyncLibrary",
     "VersionPublisher",
 ]

@@ -49,7 +49,7 @@ def _commit(context: Context, ref: str) -> str:
     return context.fixture_git("rev-parse", f"{ref}^{{commit}}", cwd=context.fixture_repo.path)
 
 
-def _articles(context: Context, ref: str) -> list[dict]:
+def articles_of(context: Context, ref: str) -> list[dict]:
     """Every article of a version, over the paged listing."""
     found, cursor = [], None
     while True:
@@ -126,11 +126,11 @@ def step_given_imported(context: Context, target: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")
     import_version(context, ref, include_paths=["docs/"])
     assert context.job["state"] == "succeeded", context.job
-    context.served = {ref: [a["path"] for a in _articles(context, ref)]}
-    context.commits = {ref: _version_commit(context, ref)}
+    context.served = {ref: [a["path"] for a in articles_of(context, ref)]}
+    context.commits = {ref: version_commit(context, ref)}
 
 
-def _version_commit(context: Context, ref: str) -> str:
+def version_commit(context: Context, ref: str) -> str:
     response = context.client.get(f"/api/v1/libraries{LIBRARY}/versions/{ref}")
     assert response.status_code == HTTPStatus.OK, response.text
     return response.json()["commit_sha"]
@@ -197,7 +197,7 @@ def step_lists_all(context: Context, target: str) -> None:
         "ls-tree", "-r", "--name-only", ref, "--", "docs", cwd=context.fixture_repo.path
     ).splitlines()
     expected = sorted(p for p in tree if p.endswith((".md", ".mdx")) and p not in UNREADABLE)
-    assert [a["path"] for a in _articles(context, ref)] == expected
+    assert [a["path"] for a in articles_of(context, ref)] == expected
 
 
 def _search_all(context: Context, ref: str) -> list[tuple[str, str]]:
@@ -250,27 +250,27 @@ def step_accents(context: Context, path: str, target: str) -> None:
 @then('"{target}" still serves the previous commit')
 def step_previous(context: Context, target: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")
-    assert _version_commit(context, ref) == context.commits[ref] != context.moved_to
-    assert [a["path"] for a in _articles(context, ref)] == context.served[ref]
+    assert version_commit(context, ref) == context.commits[ref] != context.moved_to
+    assert [a["path"] for a in articles_of(context, ref)] == context.served[ref]
     assert context.job["error"], context.job
 
 
 @then('"{target}" has the article "{path}"')
 def step_has(context: Context, target: str, path: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")
-    assert path in [a["path"] for a in _articles(context, ref)]
+    assert path in [a["path"] for a in articles_of(context, ref)]
 
 
 @then('"{target}" has no article "{path}"')
 def step_has_not(context: Context, target: str, path: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")
-    assert path not in [a["path"] for a in _articles(context, ref)]
+    assert path not in [a["path"] for a in articles_of(context, ref)]
 
 
 @then('"{target}" lists the same articles and chunks as before')
 def step_same(context: Context, target: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")
-    assert [a["path"] for a in _articles(context, ref)] == context.served[ref]
+    assert [a["path"] for a in articles_of(context, ref)] == context.served[ref]
     assert _search_all(context, ref) == context.chunks_before != []
 
 

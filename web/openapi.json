@@ -2348,6 +2348,127 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/sync": {
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Sync",
+        "description": "Re-sync the library's branch versions: import the ones whose tip moved.\n\nOnly changed articles are re-chunked. Tags and commits are never moved (`pinned`). Read\neach version's `status`, not the HTTP status, for what happened to it: `up_to_date`,\n`queued`, `importing` (an import of it is already queued or running), `failed` (the\nbranch is gone upstream, or its import could not be queued). Queued imports answer 202,\nanything else 200. 409 `version_importing` when a running import left nothing queued;\n422 with the remote's error code when the remote cannot be read (deliberate, E9-02 owns\ndistinct codes): the failed jobs recorded for it are named in the message.",
+        "operationId": "ingestion-sync",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing was queued: every version is up to date.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncedLibrary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Imports of the moved branches are queued.",
+            "headers": {
+              "Location": {
+                "description": "The import job (`/api/v1/jobs/{job_id}`) when one was queued, else the library's jobs (`/api/v1/libraries/{owner}/{repo}/jobs`).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/latest": {
       "get": {
         "tags": [
@@ -3550,6 +3671,16 @@
             "type": "array",
             "title": "Problems"
           },
+          "chunked": {
+            "type": "integer",
+            "title": "Chunked",
+            "description": "Chunk sets cut by an import: one per distinct new file content."
+          },
+          "reused": {
+            "type": "integer",
+            "title": "Reused",
+            "description": "Articles whose chunk set an earlier import had stored (files, not blobs)."
+          },
           "error": {
             "anyOf": [
               {
@@ -3603,6 +3734,8 @@
           "done",
           "total",
           "problems",
+          "chunked",
+          "reused",
           "error",
           "created_at",
           "started_at",
@@ -4416,6 +4549,89 @@
         ],
         "title": "Span",
         "description": "A `[start, end)` range of characters."
+      },
+      "SyncStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "up_to_date",
+          "importing",
+          "pinned",
+          "failed"
+        ],
+        "title": "SyncStatus",
+        "description": "What a re-sync did with one version."
+      },
+      "SyncedLibrary": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/SyncedVersion"
+            },
+            "type": "array",
+            "title": "Versions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "versions"
+        ],
+        "title": "SyncedLibrary",
+        "description": "The outcome per version; ``queued`` ones have an import to poll by ``job_id``."
+      },
+      "SyncedVersion": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "ref_kind": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SyncStatus"
+          },
+          "previous_commit_sha": {
+            "type": "string",
+            "title": "Previous Commit Sha",
+            "description": "The commit the version served before."
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha",
+            "description": "The branch tip now; for a tag or a commit, the commit it is pinned to."
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id",
+            "description": "The queued import; the import already in progress (`importing`); the failed job that records why the branch is gone (`failed`); or the no-op job that cleared an earlier failure."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref",
+          "ref_kind",
+          "status",
+          "previous_commit_sha",
+          "commit_sha",
+          "job_id"
+        ],
+        "title": "SyncedVersion",
+        "description": "What the re-sync did with one version of the library."
       },
       "TagRuleIn": {
         "properties": {

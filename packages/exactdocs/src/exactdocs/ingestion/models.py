@@ -372,9 +372,11 @@ class FileProblem:
 class Job:
     """A long task for one library (optionally one version) and how far it got.
 
-    ``total`` is 0 until the job knows its size. ``commit_sha`` is the commit the job's
-    ``version`` was pinned to when it was queued, ``ref_kind`` what ``version`` is (a tag, a
-    branch or a bare commit) as resolved then. Every transition returns a new job.
+    ``total`` is 0 until the job knows its size. ``chunked`` and ``reused`` count the articles an
+    import cut into chunks and those whose chunks an earlier import had already stored.
+    ``commit_sha`` is the commit the job's ``version`` was pinned to when it was queued,
+    ``ref_kind`` what ``version`` is (a tag, a branch or a bare commit) as resolved then.
+    Every transition returns a new job.
     """
 
     id: JobId
@@ -389,6 +391,8 @@ class Job:
     problems: tuple[FileProblem, ...] = ()
     notes: int = 0
     """How many of ``problems`` are notes on imported files (derived, not stored)."""
+    chunked: int = 0
+    reused: int = 0
     error: str | None = None
     created_at: datetime
     started_at: datetime | None = None
@@ -427,6 +431,10 @@ class Job:
         if not 0 <= done <= total:
             raise InvalidProgressError(done, total)
         return replace(self, done=done, total=total)
+
+    def chunking(self, *, chunked: int, reused: int) -> Self:
+        """Record how many articles were chunked now and how many reused stored chunks."""
+        return replace(self, chunked=chunked, reused=reused)
 
     def with_problem(self, path: str, code: ProblemCode, reason: str) -> Self:
         """Record a problem with a file; the job goes on.
@@ -478,6 +486,8 @@ class Job:
             done=0,
             total=0,
             problems=(),
+            chunked=0,
+            reused=0,
             notes=0,
             error=None,
             started_at=None,
@@ -1063,3 +1073,31 @@ class Collected:
     """What one collector deleted."""
 
     deleted: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedRef:
+    """A version a library has: its ref, what kind of ref it is and the commit it serves."""
+
+    ref: str
+    kind: RefKind
+    commit_sha: str
+
+
+ACTIVE_JOB_STATES = frozenset({JobState.QUEUED, JobState.RUNNING})
+"""A job in one of these states is unfinished: at most one import per (library, ref) may be."""
+
+
+class SyncStatus(StrEnum):
+    """What a re-sync did with one version."""
+
+    QUEUED = "queued"
+    """The branch moved: an import of the new tip was queued."""
+    UP_TO_DATE = "up_to_date"
+    """The branch did not move: nothing was queued."""
+    IMPORTING = "importing"
+    """An import of this branch is already queued or running: nothing was queued for it."""
+    PINNED = "pinned"
+    """A tag or a commit never moves: it is not synced."""
+    FAILED = "failed"
+    """The branch is gone upstream: the version keeps what it served; the failure is on a job."""

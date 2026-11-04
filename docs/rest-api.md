@@ -75,6 +75,26 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
   Like `/repositories/check`, both accept `file://`, localhost and private addresses (see
   SECURITY.md).
+- **Re-syncing**: `POST /libraries/{owner}/{repo}/sync` (no body) asks the remote where each
+  *branch* version of the library is now and queues an import pinned to the new commit for each
+  one that moved. The import reuses the chunks of every unchanged file (by git blob SHA); the
+  job reports `chunked` (chunk sets cut: one per distinct new file content) and `reused`
+  (articles whose chunk set was stored before). Files are still fetched, read and parsed again
+  (#164 tracks skipping that). The new manifest is activated in place of the old one: the version
+  keeps its ID, and chunk IDs of changed sections answer `409 stale_chunk`.
+  The body lists every version with a `status`; read it rather than the HTTP status:
+  `queued` (with the `job_id`), `up_to_date`, `importing` (an import of that branch is already
+  queued or running: it is left alone and the others still sync), `pinned` (tags and commits never
+  move) or `failed` (the branch no longer exists upstream, or its import could not be queued; the
+  version keeps serving). **202 Accepted** with `Location` (the import job, or the library's jobs
+  when several were queued) when anything was queued, else **200**. At most one import per
+  library and ref is unfinished at any time (a unique index), so concurrent syncs cannot queue it
+  twice. Errors: 404 `not_found`; 409 `version_importing` when an import is running and nothing
+  could be queued; and, when the remote cannot be read, the repository error of
+  `/repositories/check` (422 `repository_unreachable`, ...). The 422 is deliberate (distinct
+  codes are E9-02): the versions keep what they served, and a failed job is recorded per branch
+  (once per distinct reason) and named in the message. A later sync that finds the branch up to
+  date after a failure records a succeeded no-op job, so the error no longer shows.
 
 ## Job problems
 
@@ -109,8 +129,7 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   not take it from a release). Errors: 404 `not_found` (unknown library), 422 `unknown_ref` /
   `ambiguous_ref` (also 422 for a malformed library ID), 409 `version_exists` (the library already
   has that ref; re-importing is a sync, not this call), 409 `version_importing` (an import of that
-  ref is queued or running; the check is not atomic, so two simultaneous requests may both pass
-  and the later import replaces the first's version, wasting one import), and 409
+  ref is queued or running; enforced atomically, so two simultaneous requests queue one import), and 409
   `commit_already_imported` (a commit SHA that is already a version under another ref, named in
   the message; a tag and a branch at the same commit stay two versions).
 - **Removing**: `DELETE /libraries/{owner}/{repo}/versions/{ref}` and `DELETE /libraries/{owner}/{repo}`

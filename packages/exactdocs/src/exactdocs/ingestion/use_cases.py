@@ -7,9 +7,10 @@ import os
 import stat
 import time
 import uuid
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -33,6 +34,9 @@ from exactdocs.ingestion.dtos import (
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RepositoryRefs,
+    SyncedLibrary,
+    SyncedVersion,
+    SyncLibraryCommand,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
@@ -43,19 +47,23 @@ from exactdocs.ingestion.errors import (
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
+    SyncFailedError,
     UnknownJobKindError,
     VersionExistsError,
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
+    ACTIVE_JOB_STATES,
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     IMPORT_KINDS,
+    REFRESH_JOB,
     ArticleChunk,
     ImportedArticle,
+    ImportedRef,
     ImportedVersion,
     ImportSource,
     Job,
@@ -72,6 +80,7 @@ from exactdocs.ingestion.models import (
     Removed,
     RepositoryUrl,
     ResolvedRef,
+    SyncStatus,
     TagRule,
     article_tags,
     git_blob_sha,
@@ -263,6 +272,10 @@ class _Progress:
     reported: bool = False
     saved_at: float = field(default_factory=time.monotonic)
 
+    async def chunking(self, *, chunked: int, reused: int) -> None:
+        self.job = self.job.chunking(chunked=chunked, reused=reused)
+        await self._save_if_due()
+
     async def report(self, *, done: int, total: int) -> None:
         self.job = self.job.progressed(done=done, total=total)
         first, self.reported = not self.reported, True
@@ -409,27 +422,181 @@ class AddVersionUseCase:
         already has (re-syncing is a different action), a ref whose import is still queued or
         running, and a commit SHA that is already a version under another ref (a tag and a
         branch at one commit stay two versions: the branch moves on).
-        ponytail: the in-progress check is not atomic; two simultaneous requests can both pass,
-        and the second import then replaces the first's manifest (harmless: one wasted import).
+        The in-progress check is made again, atomically, by the job repository when the job is
+        stored, so two simultaneous requests cannot both queue an import of one ref.
         """
         library = command.library
         source = await self.sources.get(library)
-        existing = await self.sources.imported_versions(library)
+        existing = {v.ref: v for v in await self.sources.imported_versions(library)}
         resolved = resolve_ref(await self.remote.list_refs(source.url), command.ref)
         if resolved.name in existing:
             raise VersionExistsError(library, resolved.name)
         if resolved.kind is RefKind.COMMIT:
-            for ref, commit_sha in existing.items():
-                if commit_sha == resolved.commit_sha:
-                    raise CommitImportedError(library, commit_sha, ref)
-        unfinished = {JobState.QUEUED, JobState.RUNNING}
-        if any(
-            job.kind == IMPORT_JOB and job.version == resolved.name and job.state in unfinished
-            for job in await self.jobs.list_for_library(library)
-        ):
+            for ref, version in existing.items():
+                if version.commit_sha == resolved.commit_sha:
+                    raise CommitImportedError(library, version.commit_sha, ref)
+        if resolved.name in _busy_refs(await self.jobs.list_for_library(library)):
             raise VersionImportingError(library, resolved.name)
         job = await _enqueue_import(self.enqueue_job, library, resolved)
         return AddedVersion.of(library, resolved, job)
+
+
+def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
+    """Return the library's unfinished import jobs by ref."""
+    return {
+        job.version: job
+        for job in jobs
+        if job.kind in IMPORT_KINDS and job.state in ACTIVE_JOB_STATES and job.version
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class SyncLibraryUseCase:
+    """Implements ``ports.driving.SyncLibrary``."""
+
+    remote: GitRemote
+    sources: LibrarySources
+    jobs: JobRepository
+    clock: Clock
+    enqueue_job: EnqueueJob
+
+    async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
+        """Ask the remote where each branch is now, queue an import for the ones that moved.
+
+        The import is the one of adding a version: pinned to the new commit, it fetches it,
+        reuses the chunks of every unchanged blob and activates the new manifest in place of the
+        old one (the version keeps its ID). A tag or a commit is never moved: it is reported as
+        pinned. A branch whose import is queued or running is reported as importing and left
+        alone (the job repository refuses a second one atomically); ``VersionImportingError`` is
+        raised only when that left nothing queued.
+        If the remote cannot be read, or a branch is gone, the failure is recorded on a failed
+        job of that version (once per distinct reason), so users see it next to the version that
+        keeps serving. When a branch that last failed is up to date again, a succeeded job
+        with no work says so. A version removed while this runs may still get such a record.
+        """
+        library = command.library
+        source = await self.sources.get(library)
+        versions = await self.sources.imported_versions(library)
+        branches = {v.ref: v for v in versions if v.kind is RefKind.BRANCH}
+        jobs = await self.jobs.list_for_library(library)  # newest first
+        busy = _busy_refs(jobs)
+        newest: dict[str, Job] = {}
+        for job in jobs:
+            if job.version:
+                newest.setdefault(job.version, job)
+        tips: dict[str, str] = {}
+        if branches:
+            try:
+                refs = await self.remote.list_refs(source.url)
+            except DomainError as error:
+                recorded = [
+                    (await self._failed(library, v, _describe(error), newest.get(v.ref))).id
+                    for v in branches.values()
+                    if v.ref not in busy
+                ]
+                raise SyncFailedError(error, recorded) from error
+            tips = {t.name: t.commit_sha for t in ref_tips(refs) if t.kind is RefKind.BRANCH}
+        # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
+        synced = [await self._sync(library, v, tips, busy, newest) for v in versions]
+        importing = [v for v in synced if v.status is SyncStatus.IMPORTING]
+        if importing and not any(v.status is SyncStatus.QUEUED for v in synced):
+            raise VersionImportingError(library, importing[0].ref)
+        return SyncedLibrary(library_id=library, versions=synced)
+
+    async def _sync(
+        self,
+        library: str,
+        current: ImportedRef,
+        tips: Mapping[str, str],
+        busy: Mapping[str, Job],
+        newest: Mapping[str, Job],
+    ) -> SyncedVersion:
+        def outcome(
+            status: SyncStatus, commit_sha: str, job_id: str | None = None
+        ) -> SyncedVersion:
+            return SyncedVersion(
+                ref=current.ref,
+                ref_kind=current.kind,
+                status=status,
+                previous_commit_sha=current.commit_sha,
+                commit_sha=commit_sha,
+                job_id=job_id,
+            )
+
+        if current.kind is not RefKind.BRANCH:
+            return outcome(SyncStatus.PINNED, current.commit_sha)
+        if current.ref in busy:
+            return outcome(SyncStatus.IMPORTING, current.commit_sha, busy[current.ref].id)
+        tip = tips.get(current.ref)
+        if tip is None:
+            failed = await self._failed(
+                library, current, "the branch no longer exists", newest.get(current.ref)
+            )
+            return outcome(SyncStatus.FAILED, current.commit_sha, failed.id)
+        if tip == current.commit_sha:
+            noop = await self._confirm(library, current, tip, newest.get(current.ref))
+            return outcome(SyncStatus.UP_TO_DATE, tip, noop)
+        return await self._moved(library, current, tip, outcome)
+
+    async def _confirm(
+        self, library: str, current: ImportedRef, tip: str, last: Job | None
+    ) -> str | None:
+        """Record a succeeded no-op job when the branch last failed: its error is over."""
+        if last is None or last.state is not JobState.FAILED:
+            return None
+        now = self.clock.now()
+        noop = self._job(library, current, now, commit_sha=tip).started(now).succeeded(now)
+        await self.jobs.add(noop)
+        return noop.id
+
+    async def _moved(
+        self,
+        library: str,
+        current: ImportedRef,
+        tip: str,
+        outcome: Callable[[SyncStatus, str, str | None], SyncedVersion],
+    ) -> SyncedVersion:
+        try:
+            job = await self.enqueue_job(
+                EnqueueJobCommand(
+                    kind=REFRESH_JOB,  # fails, not resurrects, if the version is removed meanwhile
+                    library=library,
+                    version=current.ref,
+                    commit_sha=tip,
+                    ref_kind=RefKind.BRANCH,
+                )
+            )
+        except VersionImportingError:  # another request queued it since the check above
+            return outcome(SyncStatus.IMPORTING, current.commit_sha, None)
+        except Exception:
+            # The imports queued for other branches stay queued; this one is reported, not lost.
+            log.exception("could not queue the sync of %s in %s", current.ref, library)
+            return outcome(SyncStatus.FAILED, current.commit_sha, None)
+        return outcome(SyncStatus.QUEUED, tip, job.id)
+
+    def _job(
+        self, library: str, current: ImportedRef, now: datetime, *, commit_sha: str | None = None
+    ) -> Job:
+        return Job.queued(
+            job_id=JobId(str(uuid.uuid7())),
+            kind=REFRESH_JOB,
+            library=library,
+            version=current.ref,
+            commit_sha=commit_sha,
+            ref_kind=current.kind,
+            now=now,
+        )
+
+    async def _failed(
+        self, library: str, current: ImportedRef, reason: str, last: Job | None
+    ) -> Job:
+        """Record a failed job, unless the version's newest job already says the same."""
+        if last is not None and last.state is JobState.FAILED and last.error == reason:
+            return last
+        now = self.clock.now()
+        job = self._job(library, current, now).failed(reason, now)
+        await self.jobs.add(job)
+        return job
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,6 +698,7 @@ class ImportVersionUseCase:
                 for problem in parsed.problems:  # the article is imported; the note is listed
                     await progress.problem(shown, ProblemCode.FRONT_MATTER, problem)
             await progress.report(done=done, total=len(paths))
+        # ponytail: every file is parsed again on a re-sync, only chunking is reused; see #164.
         blobs = list(dict.fromkeys(blob_sha for _, blob_sha, _ in loaded))
         chunks: dict[str, tuple[ArticleChunk, ...]] = {}
         for start in range(0, len(blobs), KNOWN_BATCH):
@@ -539,6 +707,8 @@ class ImportVersionUseCase:
         for _, blob_sha, parsed in loaded:
             if blob_sha not in chunks:
                 unknown.setdefault(blob_sha, parsed)
+        reused = sum(sha in chunks for _, sha, _ in loaded)
+        await progress.chunking(chunked=len(unknown), reused=reused)
         chunks |= await asyncio.to_thread(self._cut, unknown)
         return [
             ImportedArticle(

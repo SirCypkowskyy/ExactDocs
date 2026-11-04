@@ -16,11 +16,16 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    text,
     update,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from exactdocs.ingestion.errors import VersionImportingError
 from exactdocs.ingestion.models import (
+    ACTIVE_JOB_STATES,
+    IMPORT_KINDS,
     FileProblem,
     Job,
     JobId,
@@ -48,6 +53,8 @@ jobs = Table(
     # ponytail: a JSON list rewritten on every progress save, fine for the few files that fail;
     # a table of problems if a job may skip thousands.
     Column("problems", Text, nullable=False),
+    Column("chunked", Integer, nullable=False, server_default="0"),
+    Column("reused", Integer, nullable=False, server_default="0"),
     Column("error", Text),
     # UTC ISO-8601 with microseconds, so text order is time order
     Column("created_at", Text, nullable=False),
@@ -55,6 +62,14 @@ jobs = Table(
     Column("finished_at", Text),
     Index("ingestion_jobs_library", "library", "created_at"),
     Index("ingestion_jobs_state", "state"),
+    # At most one unfinished import per (library, ref): the atomic form of "version_importing".
+    Index(
+        "ingestion_jobs_active_import",
+        "library",
+        "version",
+        unique=True,
+        sqlite_where=text("state IN ('queued', 'running') AND kind IN ('import', 'refresh')"),
+    ),
 )
 
 
@@ -65,9 +80,14 @@ class SqliteJobRepository:
     engine: AsyncEngine
 
     async def add(self, job: Job) -> None:
-        """Store a new job."""
-        async with self.engine.begin() as connection:
-            await connection.execute(insert(jobs).values(**_values(job)))
+        """Store a new job; the unique index refuses a second unfinished import of a ref."""
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(insert(jobs).values(**_values(job)))
+        except IntegrityError as error:
+            if job.kind in IMPORT_KINDS and job.state in ACTIVE_JOB_STATES and job.version:
+                raise VersionImportingError(job.library, job.version) from error
+            raise
 
     async def save(self, job: Job) -> None:
         """Replace the stored job that has the same ID."""
@@ -165,6 +185,8 @@ def _values(job: Job) -> Mapping[str, Any]:
         "problems": json.dumps(
             [{"path": p.path, "code": p.code, "reason": p.reason} for p in job.problems]
         ),
+        "chunked": job.chunked,
+        "reused": job.reused,
         "error": job.error,
         "created_at": _text(job.created_at),
         "started_at": _text(job.started_at),
@@ -213,6 +235,8 @@ def _job(row: Row) -> Job:
         total=row.total,
         problems=problems,
         notes=sum(p.code is ProblemCode.FRONT_MATTER for p in problems),
+        chunked=row.chunked,
+        reused=row.reused,
         error=row.error,
         created_at=created_at,
         started_at=_moment(row.started_at),

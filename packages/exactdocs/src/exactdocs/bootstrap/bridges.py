@@ -52,11 +52,13 @@ from exactdocs.ingestion.models import (
     PARSER_VERSION,
     ArticleChunk,
     Collected,
+    ImportedRef,
     ImportedVersion,
     ImportSource,
     NewLibrary,
     PathSelection,
     ProposedId,
+    RefKind,
     Removed,
     RepositoryUrl,
     TagRule,
@@ -243,10 +245,13 @@ class CatalogLibrarySources:
             tag_rules=TagRule.many([(r.pattern, r.tag) for r in settings.tag_rules]),
         )
 
-    async def imported_versions(self, library: str) -> Mapping[str, str]:
-        """Return ``{ref: commit SHA}`` of the library's imported versions."""
+    async def imported_versions(self, library: str) -> list[ImportedRef]:
+        """Return the library's imported versions with their kind and commit."""
         detail = await self.get_library(GetLibraryQuery(id=library))
-        return {v.ref: v.commit_sha for v in detail.versions}
+        return [
+            ImportedRef(ref=v.ref, kind=RefKind(v.kind.value), commit_sha=v.commit_sha)
+            for v in detail.versions
+        ]
 
 
 @dataclass(frozen=True, slots=True)

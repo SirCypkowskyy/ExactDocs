@@ -16,6 +16,7 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     REFRESH_JOB,
+    ImportedRef,
     ImportSource,
     JobKind,
 )
@@ -47,6 +48,7 @@ from exactdocs.ingestion.ports.driving import (
     RemoveLibrary,
     RemoveVersion,
     RunNextJob,
+    SyncLibrary,
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
@@ -64,6 +66,7 @@ from exactdocs.ingestion.use_cases import (
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
     RunNextJobUseCase,
+    SyncLibraryUseCase,
 )
 from exactdocs_kernel import Clock, NotFoundError
 
@@ -75,9 +78,9 @@ class _NoLibrarySources:
         message = f"library {library!r} not found"
         raise NotFoundError(message)
 
-    async def imported_versions(self, library: str) -> Mapping[str, str]:
+    async def imported_versions(self, library: str) -> list[ImportedRef]:
         await self.get(library)
-        return {}
+        return []
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,6 +99,7 @@ class IngestionModule:
     remove_library: RemoveLibrary
     remove_version: RemoveVersion
     run_next_job: RunNextJob
+    sync_library: SyncLibrary
 
     @classmethod
     def build(
@@ -118,11 +122,10 @@ class IngestionModule:
         clean-up after an interrupted run (a kind without one needs none).
         """
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
+        none = _NoLibrarySources()
         return cls(
             add_library=AddLibraryUseCase(remote, library_ids, libraries, enqueue_job),
-            add_version=AddVersionUseCase(
-                remote, sources or _NoLibrarySources(), jobs, enqueue_job
-            ),
+            add_version=AddVersionUseCase(remote, sources or none, jobs, enqueue_job),
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),
@@ -133,6 +136,7 @@ class IngestionModule:
             remove_library=RemoveLibraryUseCase(jobs, removals, index, enqueue_job),
             remove_version=RemoveVersionUseCase(jobs, removals, index, enqueue_job),
             run_next_job=RunNextJobUseCase(jobs, clock, handlers),
+            sync_library=SyncLibraryUseCase(remote, sources or none, jobs, clock, enqueue_job),
         )
 
 

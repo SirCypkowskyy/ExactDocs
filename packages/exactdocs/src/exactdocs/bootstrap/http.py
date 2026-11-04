@@ -145,6 +145,7 @@ def create_app(container: Container) -> FastAPI:
             add_version=container.ingestion.add_version,
             remove_version=container.ingestion.remove_version,
             remove_library=container.ingestion.remove_library,
+            sync_library=container.ingestion.sync_library,
         )
     )
     v1.include_router(protected)

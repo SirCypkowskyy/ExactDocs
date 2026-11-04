@@ -9,6 +9,7 @@ from typing import Protocol
 from exactdocs.ingestion.models import (
     ArticleChunk,
     Collected,
+    ImportedRef,
     ImportedVersion,
     ImportSource,
     Job,
@@ -28,7 +29,11 @@ class JobRepository(Protocol):
     """Persistence for jobs."""
 
     async def add(self, job: Job) -> None:
-        """Store a new job."""
+        """Store a new job.
+
+        Raises ``VersionImportingError`` when it is an unfinished import of a (library, ref)
+        that already has one: the repository enforces this atomically.
+        """
         ...
 
     async def save(self, job: Job) -> None:
@@ -73,6 +78,10 @@ class JobProgress(Protocol):
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
         """Record a problem with a file (skipped or imported with a note); the job goes on."""
+        ...
+
+    async def chunking(self, *, chunked: int, reused: int) -> None:
+        """``chunked`` articles were cut into chunks, ``reused`` took the chunks stored before."""
         ...
 
 
@@ -174,8 +183,8 @@ class NewLibraries(Protocol):
 class LibrarySources(Protocol):
     """Where a library's articles come from (the catalog, in ingestion's words)."""
 
-    async def imported_versions(self, library: str) -> Mapping[str, str]:
-        """Return ``{ref: commit SHA}`` of the library's versions; raises ``NotFoundError``.
+    async def imported_versions(self, library: str) -> Sequence[ImportedRef]:
+        """Return the library's versions (ref, kind, commit SHA); raises ``NotFoundError``.
 
         ``library`` is a canonical (lower-case) ID.
         """
