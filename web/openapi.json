@@ -735,6 +735,9 @@
         "operationId": "ingestion-add",
         "security": [
           {
+            "ApiToken": []
+          },
+          {
             "SessionCookie": []
           }
         ],
@@ -1591,6 +1594,9 @@
         "description": "List the tags and branches of a repository (the URL is never echoed back).",
         "operationId": "ingestion-list_refs",
         "security": [
+          {
+            "ApiToken": []
+          },
           {
             "SessionCookie": []
           }
