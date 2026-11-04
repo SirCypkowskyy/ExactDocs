@@ -58,7 +58,9 @@ describe("the session guard", () => {
   });
 
   it("returns to sign-in when the session ends while a page is open", async () => {
-    const { client, router } = mount("/account", () => json(signedIn));
+    const { client, router } = mount("/account", (url) =>
+      json(url.endsWith("/tokens") ? { tokens: [] } : signedIn),
+    );
     expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
     await act(async () => client.setQueryData(["session"], signedOut));
     await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
@@ -67,7 +69,9 @@ describe("the session guard", () => {
 
   it("signs out from the account page and lands on sign-in without a return address", async () => {
     const { router } = mount("/account", (_url, init) =>
-      init?.method === "DELETE" ? new Response(null, { status: 204 }) : json(signedIn),
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : json(_url.endsWith("/tokens") ? { tokens: [] } : signedIn),
     );
     await screen.findByRole("heading", { name: "Account" });
     const { default: userEvent } = await import("@testing-library/user-event");
