@@ -12,10 +12,21 @@ from fastapi.testclient import TestClient
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.adapters.driven.sqlite import SqliteAccountRepository
+from exactdocs.identity.models import Account, AccountId, Role, Username
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.models import Job, JobId, JobKind
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+NOT_A_HASH = "not-a-hash"
+# Ends the setup state (the API refuses everything before an account exists); never signs in.
+PLACEHOLDER_ADMIN = Account(
+    id=AccountId("00000000000000000000000000000001"),
+    username=Username("admin"),
+    password_hash=NOT_A_HASH,
+    role=Role.ADMIN,
+    created_at=START,
+)
 
 
 def _queued(context: Context, job_id: str, library: str) -> Job:
@@ -40,6 +51,8 @@ def step_running(context: Context) -> None:
     context.client = stack.enter_context(
         TestClient(create_app(context.container), base_url="http://localhost")
     )
+    accounts = SqliteAccountRepository(context.container.engine)
+    context.client.portal.call(accounts.add_first, PLACEHOLDER_ADMIN)
 
 
 @given('a job over {total:d} files of "{library}" that has finished {done:d}')

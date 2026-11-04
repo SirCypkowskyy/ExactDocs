@@ -15,6 +15,8 @@ from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.dtos import GetJobQuery
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
 
+pytestmark = pytest.mark.usefixtures("demo_catalog")  # also ends the setup state
+
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 

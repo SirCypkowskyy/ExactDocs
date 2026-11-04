@@ -417,6 +417,16 @@
               }
             }
           },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "The thing does not exist or is not visible to the caller.",
             "content": {
@@ -518,6 +528,16 @@
           },
           "400": {
             "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
             "content": {
               "application/json": {
                 "schema": {

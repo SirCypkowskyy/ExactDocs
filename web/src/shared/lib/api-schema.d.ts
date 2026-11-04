@@ -72,6 +72,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/jobs/{job_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Job */
+        readonly get: operations["ingestion-get_job"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/jobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Library Jobs */
+        readonly get: operations["ingestion-list_library_jobs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/search": {
         readonly parameters: {
             readonly query?: never;
@@ -174,11 +208,72 @@ export interface components {
             readonly type: string;
         };
         /**
+         * FileProblemSummary
+         * @description A file the job skipped and the reason.
+         */
+        readonly FileProblemSummary: {
+            /** Path */
+            readonly path: string;
+            /** Reason */
+            readonly reason: string;
+        };
+        /**
          * HostKind
          * @description Where the repository is hosted; `git` is any other HTTPS/SSH git server.
          * @enum {string}
          */
         readonly HostKind: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
+        /**
+         * JobList
+         * @description A page of the jobs of one library, newest first.
+         */
+        readonly JobList: {
+            /** Jobs */
+            readonly jobs: readonly components["schemas"]["JobSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+        };
+        /**
+         * JobState
+         * @description Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished.
+         * @enum {string}
+         */
+        readonly JobState: "queued" | "running" | "succeeded" | "failed";
+        /**
+         * JobSummary
+         * @description A job and how far it got. ``total`` is 0 until the job knows its size.
+         */
+        readonly JobSummary: {
+            /** Id */
+            readonly id: string;
+            /** Kind */
+            readonly kind: string;
+            /** Library */
+            readonly library: string;
+            /** Version */
+            readonly version: string | null;
+            readonly state: components["schemas"]["JobState"];
+            /** Done */
+            readonly done: number;
+            /** Total */
+            readonly total: number;
+            /** Problems */
+            readonly problems: readonly components["schemas"]["FileProblemSummary"][];
+            /** Error */
+            readonly error: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Started At */
+            readonly started_at: string | null;
+            /** Finished At */
+            readonly finished_at: string | null;
+        };
         /**
          * LibraryDetail
          * @description Everything known about one library.
@@ -545,6 +640,144 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AccountSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-get_job": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly job_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-list_library_jobs": {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+                readonly cursor?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobList"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
