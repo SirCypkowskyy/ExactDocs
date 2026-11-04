@@ -27,7 +27,7 @@ function Snippet({ hit }: { hit: SearchHit }) {
     <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-line text-foreground/90 [overflow-wrap:anywhere]">
       {highlightPieces(hit.snippet, hit.highlights).map((piece) =>
         piece.hit ? (
-          <mark key={piece.at} className="rounded-sm bg-mark/[0.18] px-0.5 text-foreground">
+          <mark key={piece.at} className="rounded-sm bg-mark/[0.22] px-0.5 text-foreground">
             {piece.text}
           </mark>
         ) : (

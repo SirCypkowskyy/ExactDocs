@@ -36,7 +36,7 @@ export function TagChips({ ctx, onTags, onMatch }: TagChipsProps) {
 
   return (
     <div className="min-w-0">
-      <div className="mb-1.5 flex items-center justify-between gap-2 text-sm font-medium text-muted-foreground">
+      <div className="mb-1.5 flex min-h-9 lg:min-h-7 items-center justify-between gap-2 text-sm font-medium text-muted-foreground">
         <span id="search-tags-label">Filter by tag</span>
         {selected.length > 1 && (
           // A segmented switch: "any" widens the search, "all" narrows it.
