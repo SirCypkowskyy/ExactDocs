@@ -4,7 +4,9 @@ from typing import Protocol
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
+    AddedVersion,
     AddLibraryCommand,
+    AddVersionCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     EnqueueJobCommand,
@@ -87,6 +89,18 @@ class AddLibrary(Protocol):
     """
 
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
+        """Run the use case."""
+        ...
+
+
+class AddVersion(Protocol):
+    """Pin a ref of an existing library to a commit and queue its import.
+
+    Raises ``NotFoundError`` for an unknown library, ``VersionExistsError`` when it already has
+    that ref, and what ``AddLibrary`` raises for the ref. Nothing is queued unless all checks out.
+    """
+
+    async def __call__(self, command: AddVersionCommand) -> AddedVersion:
         """Run the use case."""
         ...
 

@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self
 
-from exactdocs.ingestion.models import Job, JobId, JobState
+from exactdocs.ingestion.models import ImportSource, Job, JobId, JobState
+from exactdocs_kernel import NotFoundError
 
 
 @dataclass(slots=True)
@@ -55,3 +56,17 @@ class InMemoryJobRepository:
                 self.jobs[job.id] = started
                 return started
         return None
+
+
+@dataclass(slots=True)
+class InMemoryLibrarySources:
+    """Implements ``ports.driven.LibrarySources``. For tests."""
+
+    sources: dict[str, ImportSource] = field(default_factory=dict)
+
+    async def get(self, library: str) -> ImportSource:
+        """Return the library's source; raises ``NotFoundError`` for an unknown library."""
+        if library not in self.sources:
+            message = f"library {library!r} not found"
+            raise NotFoundError(message)
+        return self.sources[library]

@@ -250,6 +250,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/versions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add Another Version
+         * @description Import another version of the library with the library's own settings.
+         *
+         *     The import is queued: `Location` is its job. A ref the library already has is a 409.
+         */
+        readonly post: operations["ingestion-add_another_version"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/jobs/latest": {
         readonly parameters: {
             readonly query?: never;
@@ -357,10 +379,39 @@ export interface components {
             readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][];
         };
         /**
+         * AddVersionBody
+         * @description The request body of adding a version; the library is in the path.
+         */
+        readonly AddVersionBody: {
+            /**
+             * Ref
+             * @description A tag, a branch or a full or short commit SHA.
+             */
+            readonly ref: string;
+        };
+        /**
          * AddedLibrary
          * @description The new library, the commit its ref was pinned to, and the queued import.
          */
         readonly AddedLibrary: {
+            /** Library Id */
+            readonly library_id: string;
+            /**
+             * Ref
+             * @description The tag or branch name, or the full SHA of a commit.
+             */
+            readonly ref: string;
+            readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /** Job Id */
+            readonly job_id: string;
+        };
+        /**
+         * AddedVersion
+         * @description The commit the ref was pinned to, and the queued import.
+         */
+        readonly AddedVersion: {
             /** Library Id */
             readonly library_id: string;
             /**
@@ -2494,6 +2545,87 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RepositoryRefs"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-add_another_version": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddVersionBody"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AddedVersion"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

@@ -142,6 +142,7 @@ def create_app(container: Container) -> FastAPI:
             check_repository=container.ingestion.check_repository,
             list_repository_refs=container.ingestion.list_repository_refs,
             add_library=container.ingestion.add_library,
+            add_version=container.ingestion.add_version,
         )
     )
     v1.include_router(protected)

@@ -123,6 +123,7 @@ class Container:
             remote=remote,
             library_ids=CatalogLibraryIds(catalog.get_library),
             libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
+            sources=CatalogLibrarySources(catalog.get_library),
             handlers=handlers,
             recovery_hooks=recovery_hooks,
         )

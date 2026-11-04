@@ -99,6 +99,16 @@ class LibraryIdTakenError(ConflictError):
         self.library_id = library_id
 
 
+class VersionExistsError(ConflictError):
+    """The library already has a version for this ref."""
+
+    code = "version_exists"
+
+    def __init__(self, library: str, ref: str) -> None:
+        super().__init__(f"library {library!r} already has the version {ref!r}")
+        self.library, self.ref = library, ref
+
+
 class GitNotInstalledError(DomainError):
     """The system ``git`` binary is missing, and ExactDocs cannot read repositories without it."""
 

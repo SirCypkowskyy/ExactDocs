@@ -30,6 +30,7 @@ from exactdocs.ingestion.ports.driven import (
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
+    AddVersion,
     CheckRepository,
     EnqueueJob,
     GetJob,
@@ -41,6 +42,7 @@ from exactdocs.ingestion.ports.driving import (
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
+    AddVersionUseCase,
     CheckRepositoryUseCase,
     DiscardInterruptedImportUseCase,
     EnqueueJobUseCase,
@@ -60,6 +62,7 @@ class IngestionModule:
     """The ingestion's driving ports, ready to be exposed by driving adapters."""
 
     add_library: AddLibrary
+    add_version: AddVersion
     check_repository: CheckRepository
     enqueue_job: EnqueueJob
     get_job: GetJob
@@ -78,6 +81,7 @@ class IngestionModule:
         remote: GitRemote,
         library_ids: LibraryIds,
         libraries: NewLibraries,
+        sources: LibrarySources,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
     ) -> Self:
@@ -89,6 +93,7 @@ class IngestionModule:
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         return cls(
             add_library=AddLibraryUseCase(remote, library_ids, libraries, enqueue_job),
+            add_version=AddVersionUseCase(remote, sources, enqueue_job),
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),
