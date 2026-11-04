@@ -90,6 +90,14 @@ async def test_signing_in_gives_a_token_that_identifies_the_admin(world: World) 
     assert grant.max_age == ABSOLUTE_TIMEOUT.total_seconds()
 
 
+async def test_signing_in_again_drops_the_previous_session(world: World) -> None:
+    old = await sign_in(world)
+
+    grant = await world.identity.sign_in(credentials(), old)
+
+    assert set(world.sessions.sessions) == {hash_token(grant.token.get_secret_value())}
+
+
 async def test_the_token_is_random_long_and_never_stored_or_shown(world: World) -> None:
     first, second = await sign_in(world), await sign_in(world)
 

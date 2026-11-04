@@ -1,7 +1,7 @@
 """REST adapter for identity: the first-run setup, the browser session and "who is the caller"."""
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Literal, TypedDict
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import APIKeyCookie
@@ -23,6 +23,16 @@ from exactdocs.identity.ports.driving import (
 SESSION_COOKIE = "exactdocs_session"
 # Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
 COOKIE_PATH = "/api"
+
+
+class _CookieAttrs(TypedDict):
+    path: str
+    httponly: bool
+    samesite: Literal["lax"]
+
+
+# Shared by `set_cookie` and `delete_cookie`: a deletion only works if the attributes match.
+COOKIE_ATTRS: _CookieAttrs = {"path": COOKIE_PATH, "httponly": True, "samesite": "lax"}
 
 # `auto_error=False`: a missing cookie reaches `IdentifyCaller`, which raises the API's own 401.
 _session_cookie = APIKeyCookie(
@@ -62,7 +72,10 @@ def build_router(
     """Expose the routes that need no session: ``/setup`` and ``/session`` (sign in, state, out).
 
     ``secure_cookies`` forces the ``Secure`` attribute; without it the cookie is ``Secure``
-    whenever the request came in over HTTPS.
+    whenever the request came in over HTTPS. The cookie is HttpOnly (script never reads it) and
+    SameSite=Lax (not sent on cross-site POST/DELETE; Origin is checked too). Its ``max_age`` is
+    the 30-day absolute limit; the 7-day idle expiry is enforced on the server only, so the browser
+    may keep a cookie the server already rejects.
     """
     router = APIRouter(tags=["identity"])
 
@@ -82,15 +95,13 @@ def build_router(
     async def create_session(
         query: AuthenticateQuery, request: Request, response: Response
     ) -> SessionState:
-        grant = await sign_in(query)
+        grant = await sign_in(query, request.cookies.get(SESSION_COOKIE))
         response.set_cookie(
             SESSION_COOKIE,
             grant.token.get_secret_value(),
             max_age=grant.max_age,
-            path=COOKIE_PATH,
-            httponly=True,  # script can never read it
-            samesite="lax",  # not sent on cross-site POST/DELETE; Origin is checked too
             secure=secure(request),
+            **COOKIE_ATTRS,
         )
         response.headers["Cache-Control"] = "no-store"
         return SessionState(state="signed_in", account=grant.account)
@@ -100,12 +111,6 @@ def build_router(
         # Always succeeds, signed in or not: signing out twice is not an error.
         if token := request.cookies.get(SESSION_COOKIE):
             await sign_out(token)
-        response.delete_cookie(
-            SESSION_COOKIE,
-            path=COOKIE_PATH,
-            httponly=True,
-            samesite="lax",
-            secure=secure(request),
-        )
+        response.delete_cookie(SESSION_COOKIE, secure=secure(request), **COOKIE_ATTRS)
 
     return router

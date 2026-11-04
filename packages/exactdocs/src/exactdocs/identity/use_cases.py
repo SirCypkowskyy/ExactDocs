@@ -101,6 +101,7 @@ class AuthenticateUseCase:
 TOKEN_BYTES = 32  # 256 bits of randomness
 # Using a session only writes `last_used_at` when it is older than this: a read-only request
 # should not cost a database write each time, and it is tiny next to the 7-day idle timeout.
+# Consequence: idle expiry is accurate to this interval, not to the second.
 TOUCH_INTERVAL = timedelta(hours=1)
 
 
@@ -112,10 +113,18 @@ class SignInUseCase:
     sessions: SessionRepository
     clock: Clock
 
-    async def __call__(self, query: AuthenticateQuery) -> SessionGrant:
-        """Start a session for the account the credentials belong to."""
+    async def __call__(
+        self, query: AuthenticateQuery, previous_token: str | None = None
+    ) -> SessionGrant:
+        """Start a session for the account the credentials belong to.
+
+        The session the request arrived with (``previous_token``) is deleted, so signing in
+        again does not leave a stale row behind.
+        """
         account = await self.authenticate(query)
         now = self.clock.now()
+        if previous_token:
+            await self.sessions.delete(hash_token(previous_token))
         await self.sessions.delete_expired(
             idle_before=now - IDLE_TIMEOUT, created_before=now - ABSOLUTE_TIMEOUT
         )

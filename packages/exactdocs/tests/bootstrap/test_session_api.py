@@ -179,6 +179,26 @@ async def test_each_sign_in_is_a_new_session(client: httpx.AsyncClient) -> None:
     assert (await client.get("/api/v1/libraries", headers=cookie_of(first))).status_code == 200
 
 
+async def test_signing_in_again_ends_the_session_the_request_carried(
+    client: httpx.AsyncClient,
+) -> None:
+    old = await sign_in(client)  # the client now holds `old` as its cookie
+    new = await sign_in(client)
+
+    assert (await client.get("/api/v1/libraries", headers=cookie_of(new))).status_code == 200
+    assert (await client.get("/api/v1/libraries", headers=cookie_of(old))).status_code == 401
+
+
+async def test_an_oversized_username_is_refused_before_it_is_looked_at(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/v1/session", json={"username": "a" * 5000, "password": HORSE}
+    )
+
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize(
     ("method", "body"), [("POST", LOGIN), ("DELETE", None)], ids=["sign-in", "sign-out"]
 )
@@ -255,3 +275,5 @@ async def test_mcp_ignores_the_session_cookie(
     assert with_cookie.status_code == without.status_code == 200
     assert with_cookie.text == without.text
     assert token not in with_cookie.text
+    assert "set-cookie" not in with_cookie.headers
+    assert "exactdocs_session" not in with_cookie.text

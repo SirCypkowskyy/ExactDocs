@@ -4,7 +4,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from exactdocs.identity.models import Account
+from exactdocs.identity.models import MAX_USERNAME_LENGTH, Account
 
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 1024  # bounds the work a request can make the hasher do
@@ -43,7 +43,7 @@ class CreateFirstAdminCommand(_Dto):
 class AuthenticateQuery(_Dto):
     """A username and password to check."""
 
-    username: str
+    username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)  # cap the input before normalising
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
 
 

@@ -40,8 +40,10 @@ class Authenticate(Protocol):
 class SignIn(Protocol):
     """Check credentials and start a session; raises ``InvalidCredentialsError`` on a mismatch."""
 
-    async def __call__(self, query: AuthenticateQuery) -> SessionGrant:
-        """Run the use case."""
+    async def __call__(
+        self, query: AuthenticateQuery, previous_token: str | None = None
+    ) -> SessionGrant:
+        """Run the use case; ``previous_token`` (the caller's current session) is ended."""
         ...
 
 

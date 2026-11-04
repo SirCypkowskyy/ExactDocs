@@ -35,7 +35,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
   7 days idle or 30 days in all. Unsafe requests with a foreign `Origin` are refused with 403
-  (also sign-in and sign-out). `/mcp` never looks at the cookie.
+  (also sign-in and sign-out). `/mcp` never looks at the cookie. Signing in again with a live
+  cookie ends that old session. The cookie's `Max-Age` is the 30-day limit; idle expiry is
+  server-side only and accurate to about an hour (last use is written at most hourly), so do not
+  test exact 7-day boundaries from a client.
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
