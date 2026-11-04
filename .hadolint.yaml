@@ -1,0 +1,6 @@
+# hadolint configuration for deploy/Dockerfile (CI: "Docker image" job, and the release).
+ignored:
+  # Debian packages are not pinned to a version: the base image is pinned by digest, and the
+  # runtime must pick up security fixes of git/openssh/tini with every rebuild, not stay on a
+  # version Debian may have removed.
+  - DL3008

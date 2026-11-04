@@ -17,3 +17,7 @@ deploy/runners
 reports
 *.md
 !packages/*/README.md
+# the wheels contain only src/ (see deploy/Dockerfile): tests and acceptance features stay out
+packages/*/tests
+packages/*/features
+packages/*/alembic.ini

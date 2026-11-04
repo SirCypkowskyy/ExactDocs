@@ -60,6 +60,27 @@ runs after every release, weekly, and on demand (`gh workflow run ghcr-retention
 dry-run=true` shows what would be deleted). Change `KEEP_DEV` / `KEEP_STABLE` in the workflow to
 adjust. PyPI releases are never deleted.
 
+## Image scan
+
+Every PR (CI job *Docker image*) and every release scans the built image with
+[Trivy](https://trivy.dev) and lints `deploy/Dockerfile` with hadolint (CI only; its one accepted
+rule, with the reason, is in `.hadolint.yaml`). The scan **fails on a CRITICAL or HIGH
+vulnerability that has a fix** (`--ignore-unfixed`); the table is in the job log and in the
+`trivy-report` artifact. A release is not pushed while the scan fails.
+
+When it fails:
+
+1. Rebuild with fresh base layers: bump the base images (Dependabot's `docker` PRs for `/deploy`
+   move tag and digest together; merging one is usually the fix). Debian packages are not
+   pinned, so a rebuild also picks up a fixed `git` or `openssh-client`.
+2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.
+3. Only if the finding does not apply to ExactDocs and cannot be fixed yet, accept it: add the ID
+   to `.trivyignore` with a comment above it saying why, the date and who accepted it, in the PR
+   that needs it. The reviewer decides; remove the entry once a fixed version ships.
+
+Unfixed findings are not listed by the gate; check them occasionally with
+`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/aquasecurity/trivy image <image>`.
+
 ## What the release workflow does
 
 `.github/workflows/release.yml`, on the self-hosted GB10 runners:
@@ -69,8 +90,10 @@ adjust. PyPI releases are never deleted.
 3. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
 4. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
-5. **image**: multi-arch (`linux/amd64` emulated, `linux/arm64` native) build, push, SBOM +
-   provenance attestations, keyless **cosign** signature.
+5. **image**: builds the image natively and scans it (see *Image scan*), then multi-arch
+   (`linux/amd64`, `linux/arm64`) build, push, SBOM + provenance attestations, keyless **cosign**
+   signature. Only the runtime stage's `apt-get` runs under QEMU for amd64; the Python stages
+   cross-build natively.
 6. **github-release**: creates or updates the release with the distributions.
 
 ## One-time setup
