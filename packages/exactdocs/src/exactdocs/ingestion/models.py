@@ -21,7 +21,12 @@ from urllib.parse import unquote, urlsplit
 import yaml
 from markdown_it import MarkdownIt
 
-from exactdocs.ingestion.errors import InvalidProgressError, InvalidRepositoryUrlError, UrlProblem
+from exactdocs.ingestion.errors import (
+    InvalidChunkingConfigError,
+    InvalidProgressError,
+    InvalidRepositoryUrlError,
+    UrlProblem,
+)
 
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
@@ -102,6 +107,12 @@ _FrontMatterLoader.yaml_implicit_resolvers = {
     for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 _MARKDOWN = MarkdownIt("commonmark")
+
+
+def malformed_front_matter_length(body: str) -> int:
+    """Length of the broken front-matter block ``parse_article`` left at the start of ``body``."""
+    match = _FRONT_MATTER.match(body)
+    return match.end() if match else 0
 
 
 def strip_invisible(text: str) -> str:
@@ -494,18 +505,19 @@ class ChunkingConfig:
 
     def __post_init__(self) -> None:
         if not 1 <= self.split_depth <= MAX_HEADING_LEVEL:
-            msg = "split_depth must be between 1 and 6"
-            raise ValueError(msg)
+            raise InvalidChunkingConfigError
 
 
-def chunking_config_hash(config: ChunkingConfig) -> str:
+def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     """Return the hash that keys chunk sets: the effective config plus both version constants.
+
+    ``engine`` names the library an adapter cuts with and its version, so upgrading it re-chunks.
 
     A fix to the parser or the chunker changes it, so stored articles are re-chunked instead of
     reusing a chunk set made by older code.
     """
     payload = json.dumps(
-        [PARSER_VERSION, CHUNKER_VERSION, config.split_depth], separators=(",", ":")
+        [PARSER_VERSION, CHUNKER_VERSION, config.split_depth, engine], separators=(",", ":")
     )
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 

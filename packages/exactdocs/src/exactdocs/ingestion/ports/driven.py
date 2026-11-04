@@ -104,5 +104,9 @@ class Chunker(Protocol):
         ...
 
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
-        """Return the chunks in reading order; their contents joined are ``article.body``."""
+        """Return the chunks in reading order; their contents joined are ``article.body``.
+
+        An empty body has no chunks. This is CPU-bound and synchronous: the import use case
+        should call it through ``asyncio.to_thread``. There is no size cap yet.
+        """
         ...

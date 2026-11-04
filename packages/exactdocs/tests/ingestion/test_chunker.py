@@ -5,11 +5,13 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import markdown_it
 import pytest
 from markdown_it import MarkdownIt
 
 from exactdocs.ingestion import models
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
+from exactdocs.ingestion.errors import InvalidChunkingConfigError
 from exactdocs.ingestion.models import ChunkingConfig, parse_article
 from exactdocs.ingestion.ports import Chunker
 
@@ -21,7 +23,7 @@ ARTICLES = sorted(
         *(TESTS / "fixtures").rglob("commits/**/*.md*"),
     ]
 )
-_NEWLINE = re.compile(r"\r\n|[\r\u0085\u2028\u2029\u2424\n]")
+_NEWLINE = re.compile(r"\r\n|\r|\n")  # what Markdown counts as a line end, nothing else
 
 
 @pytest.fixture(params=ADAPTERS, ids=["markdown"])
@@ -44,8 +46,10 @@ def _check_never_split(chunker: Chunker, body: str) -> None:
     """Chunks are the body in pieces, and no fence or table crosses a chunk border."""
     article = parse_article("a.md", body)
     chunks = chunker.chunk(article)
-    if article.body.strip():
-        assert "".join(c.content for c in chunks) == article.body
+    assert "".join(c.content for c in chunks) == article.body
+    assert sum(len(_NEWLINE.findall(c.content)) for c in chunks) == len(
+        _NEWLINE.findall(article.body)
+    )
     starts, line = [], 0
     for chunk in chunks:
         starts.append(line)
@@ -166,8 +170,8 @@ def test_empty_article_has_no_chunks(chunker: Chunker) -> None:
 
 def _document(kinds: tuple[str, ...]) -> tuple[str, list[tuple[int, str]]]:
     """A document made of the given blocks, and its real headings as (level, text)."""
-    table = "| a | b |\n| - | - |\n| 1 | 2 |\n\n"
-    fence = "```py\n# looks like a heading\n\n\n## so does this\n```\n\n"
+    table = "| a | b |\n| - | - |\n| 1\u2028 | 2 |\n\n"
+    fence = "```py\n# looks like a heading\nx\u2029y\n\n## so does this\n```\n\n"
     headings, parts = [], []
     for i, kind in enumerate(kinds):
         if kind == "heading":
@@ -175,7 +179,7 @@ def _document(kinds: tuple[str, ...]) -> tuple[str, list[tuple[int, str]]]:
             headings.append((level, text))
             parts.append(f"{'#' * level} {text}\n\n")
         else:
-            parts.append({"text": "paragraph\n\n", "fence": fence, "table": table}[kind])
+            parts.append({"text": "para\u2028graph\n\n", "fence": fence, "table": table}[kind])
     return "".join(parts), headings
 
 
@@ -185,6 +189,10 @@ def test_every_small_document_keeps_every_invariant(chunker: Chunker) -> None:
         for combination in itertools.product(kinds, repeat=size):
             body, headings = _document(combination)
             _check_never_split(chunker, body)
+            for chunk in chunker.chunk(parse_article("a.md", body)):
+                # independent of Markdown parsing: fences come in pairs, tables in whole
+                assert chunk.content.count("```") % 2 == 0, body
+                assert chunk.content.count("| a | b |") == chunk.content.count("| 1\u2028 | 2 |")
 
             expected, stack = [], []
             for level, text in headings:
@@ -192,3 +200,76 @@ def test_every_small_document_keeps_every_invariant(chunker: Chunker) -> None:
                 expected.append(tuple(t for _, t in stack))
             chunks = chunker.chunk(parse_article("a.md", body))
             assert [c.heading_path for c in chunks if c.heading_path] == expected, body
+
+
+def test_unicode_line_separators_do_not_shift_the_cuts(chunker: Chunker) -> None:
+    body = (
+        "# A\n\n```\nx\u2028y\u2029z\n```\n\n## B\n\n| a | b |\n|---|---|\n| 1\u2028 | 2 |\n"
+        "| 3 | 4 |\n\n## C\n"
+    )
+    chunks = chunker.chunk(parse_article("a.md", body))
+
+    assert [c.heading_path for c in chunks] == [("A",), ("A", "B"), ("A", "C")]
+    assert chunks[0].content.endswith("```\n\n")
+    assert chunks[1].content.endswith("| 3 | 4 |\n\n")
+
+
+def test_anchors_are_unique_like_github_slugger(chunker: Chunker) -> None:
+    chunks = chunker.chunk(parse_article("a.md", "# A\n\n## b-1\n\n## b\n\n## b\n"))
+
+    assert [c.anchor for c in chunks] == ["a", "b-1", "b", "b-2"]
+
+
+def test_headings_that_start_no_chunk_still_take_an_anchor() -> None:
+    body = "# A\n\n> # Foo\n\n## Foo\n\n### Deep\n\n## Deep\n"
+    shallow = MarkdownChunker(ChunkingConfig(split_depth=2))
+
+    assert [(c.heading_path, c.anchor) for c in shallow.chunk(parse_article("a.md", body))] == [
+        (("A",), "a"),
+        (("A", "Foo"), "foo-1"),
+        (("A", "Deep"), "deep-1"),
+    ]
+
+
+def test_a_multi_line_heading_reads_as_one_line(chunker: Chunker) -> None:
+    chunks = chunker.chunk(parse_article("a.md", "Foo\nbar\n===\n\nHard  \nbreak\n---\n"))
+
+    assert [(c.heading_path, c.anchor) for c in chunks] == [
+        (("Foo bar",), "foo-bar"),
+        (("Foo bar", "Hard break"), "hard-break"),
+    ]
+
+
+def test_malformed_front_matter_is_text_before_the_first_heading(chunker: Chunker) -> None:
+    article = parse_article("a.md", "---\ntitle: [\n---\n# A\n\nx\n")
+    assert article.problems
+
+    chunks = chunker.chunk(article)
+
+    assert [(c.heading_path, c.content) for c in chunks] == [
+        ((), "---\ntitle: [\n---\n"),
+        (("A",), "# A\n\nx\n"),
+    ]
+
+
+def test_a_blank_body_is_one_chunk_and_an_empty_one_has_none(chunker: Chunker) -> None:
+    assert [c.content for c in chunker.chunk(parse_article("a.md", "\n\n"))] == ["\n\n"]
+    assert chunker.chunk(parse_article("a.md", "")) == ()
+
+
+def test_code_language_is_the_bare_language_name(chunker: Chunker) -> None:
+    body = "```{.python}\n1\n```\n\n```js{1,3}\n2\n```\n\n```c++\n3\n```\n"
+
+    assert chunker.chunk(parse_article("a.md", body))[0].code_languages == ("python", "js", "c++")
+
+
+def test_config_hash_covers_the_markdown_engine_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    default = MarkdownChunker().config_hash
+    monkeypatch.setattr(markdown_it, "__version__", "0.0.1")
+
+    assert MarkdownChunker().config_hash != default
+
+
+def test_split_depth_out_of_range_is_a_domain_error() -> None:
+    with pytest.raises(InvalidChunkingConfigError):
+        ChunkingConfig(split_depth=7)
