@@ -40,7 +40,8 @@ class SwitchableGit:
 
     def fetch(self, *args: object, **kwargs: object):
         if self.failing:
-            raise RepositoryUnreachableError
+            reason = "connection refused"
+            raise RepositoryUnreachableError(reason)
         return self.git.fetch(*args, **kwargs)  # ty: ignore[invalid-argument-type]
 
 
@@ -163,6 +164,7 @@ def step_fail(context: Context, ref: str) -> None:
     )
     _wait(context, job.id)
     assert context.job["state"] == "failed", context.job
+    assert "unreachable" in context.job["error"], context.job
 
 
 @then("the import succeeds and reports every file as processed")
