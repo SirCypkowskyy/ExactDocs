@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute, iter_route_contexts
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from starlette.exceptions import HTTPException
 from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -52,6 +52,13 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
     fields: list[FieldError] = []
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def message(self) -> str:
+        """Alias of ``detail`` under the name context7's errors use (``{error, message}``)."""
+        return self.detail
+
     close_matches: list[str] = Field(
         default=[],
         description=(

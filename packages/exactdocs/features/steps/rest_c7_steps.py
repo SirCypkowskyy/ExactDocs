@@ -38,8 +38,10 @@ def step_search(context: Context, name: str, query: str) -> None:
 def step_equals(context: Context) -> None:
     assert context.response.status_code == HTTPStatus.OK, context.response.text
     call_tool(context, "query-docs", context.c7_args)
-    assert context.response.text == context.mcp_result.content[1].text
-    assert context.response.text.startswith("### "), context.response.text[:200]
+    notice, _, payload = context.response.text.partition("\n\n")
+    assert notice == NOTICE
+    assert payload == context.mcp_result.content[1].text
+    assert payload.startswith("### "), payload[:200]
 
 
 @then("the response carries the untrusted-content notice")

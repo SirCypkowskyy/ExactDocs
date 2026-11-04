@@ -66,8 +66,17 @@ async def test_docs_text_equals_the_query_docs_payload(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.text == mcp_result.content[1].text
+    assert response.text == f"{NOTICE}\n\n{mcp_result.content[1].text}"
     assert response.headers["x-exactdocs-notice"] == NOTICE == mcp_result.content[0].text
+
+
+async def test_an_at_version_id_answers_like_the_slash_form(client: httpx.AsyncClient) -> None:
+    ask = {"query": "protect routes"}
+    slash = await client.get("/api/v1/c7/docs", params={**ask, "libraryId": f"{LIBRARY}/{REF}"})
+    at = await client.get("/api/v1/c7/docs", params={**ask, "libraryId": f"{LIBRARY}@{REF}"})
+
+    assert at.status_code == 200
+    assert at.text == slash.text
 
 
 async def test_search_lists_the_same_libraries_as_resolve_library_id(
@@ -152,6 +161,8 @@ async def test_a_caller_without_a_token_is_refused(container: Container) -> None
 async def test_errors_use_the_api_envelope(client: httpx.AsyncClient) -> None:
     missing = await client.get("/api/v1/c7/docs", params={"libraryId": "/a/b", "query": "x"})
     assert (missing.status_code, missing.json()["error"]) == (404, "not_found")
+    # context7 clients read `message`; it says what `detail` says.
+    assert missing.json()["message"] == missing.json()["detail"]
 
     bad = await client.get("/api/v1/c7/docs", params={"libraryId": "nope", "query": "x"})
     assert (bad.status_code, bad.json()["error"]) == (422, "validation_error")

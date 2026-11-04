@@ -172,17 +172,24 @@ All tools are read-only, and everything returned is marked as external content.
 ### context7 over REST
 
 The same two operations for integrations that do not speak MCP, with context7's parameter
-names and shapes (same use cases, budget and API tokens as the tools above):
+names and shapes (same use cases, budget and API tokens as the tools above). Only the paths
+differ; there is no `/api/v2` alias:
 
-- `GET /api/v1/c7/search?libraryName=&query=` is `resolve-library-id`: JSON `{results: [{id, title,
-  description, branch, versions, ...}], searchFilterApplied}`.
-- `GET /api/v1/c7/docs?libraryId=&query=&language=&type=txt|json` is `query-docs`: `type=txt`
-  (default) returns the tool's text byte for byte; `type=json` returns `infoSnippets`
-  (one per chunk, `codeSnippets` is always empty).
+| context7 | ExactDocs | Same as |
+|---|---|---|
+| `GET /api/v2/libs/search?libraryName=&query=` | `GET /api/v1/c7/search?libraryName=&query=` | `resolve-library-id` |
+| `GET /api/v2/context?libraryId=&query=&language=&type=` | `GET /api/v1/c7/docs?libraryId=&query=&language=&type=` | `query-docs` |
 
-Both mark their content as untrusted: JSON carries `notice`, the text carries it in the
-`X-ExactDocs-Notice` header. Errors use the API's `{error, detail}` envelope, not context7's
-`{error, message}`.
+- Search returns JSON `{results: [{id, title, description, branch, versions, ...}],
+  searchFilterApplied}`.
+- Docs with `type=txt` (default) returns the notice, a blank line, then the tool's text byte for
+  byte; `type=json` returns `infoSnippets` (one per chunk; `codeSnippets` is always empty).
+- `libraryId` takes `/owner/repo`, `/owner/repo/<ref>` and context7's `/owner/repo@<ref>`.
+- `language` moves chunks with code in it first (it does not filter). context7's `fast` is
+  accepted and ignored: nothing here is reranked by an LLM.
+- Both mark their content as untrusted: JSON carries `notice`, the text starts with it and also
+  carries it in the `X-ExactDocs-Notice` header.
+- Errors are `{error, detail, message}`: `message` repeats `detail` for context7 clients.
 
 ## Retrieval
 

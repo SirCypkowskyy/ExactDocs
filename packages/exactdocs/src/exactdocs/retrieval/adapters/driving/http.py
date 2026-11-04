@@ -1,11 +1,13 @@
 """REST adapter for retrieval."""
 
+import re
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Path, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.alias_generators import to_camel
 
 from exactdocs.retrieval.adapters.driving.mcp import format_docs
 from exactdocs.retrieval.dtos import (
@@ -35,10 +37,18 @@ NOTICE_HEADER = "X-ExactDocs-Notice"
 CHARS_PER_TOKEN = 4  # the same estimate as the `query-docs` budget
 
 
+# context7 also writes a pinned version as `/owner/repo@ref`; ours is `/owner/repo/ref`.
+_AT_VERSION = re.compile(r"^(/[^/@]+/[^/@]+)@(.+)$")
+
+
 class _Camel(BaseModel):
     """context7's field names (camelCase) on the wire."""
 
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        json_schema_serialization_defaults_required=True,
+    )
 
 
 class C7Library(_Camel):
@@ -49,10 +59,10 @@ class C7Library(_Camel):
     description: str
     branch: str = Field(description="The default version (context7: the tracked branch).")
     state: Literal["finalized"] = "finalized"
-    totalSnippets: int = Field(description="Chunks of the default version.")  # ruff: ignore[mixed-case-variable-in-class-scope]
+    total_snippets: int = Field(description="Chunks of the default version.")
     versions: list[str]
-    sourceUrl: str  # ruff: ignore[mixed-case-variable-in-class-scope]
-    defaultVersion: str  # ruff: ignore[mixed-case-variable-in-class-scope]
+    source_url: str
+    default_version: str
     articles: int
 
     @classmethod
@@ -63,10 +73,10 @@ class C7Library(_Camel):
             title=match.title,
             description=match.description,
             branch=match.default_version,
-            totalSnippets=match.chunks,
+            total_snippets=match.chunks,
             versions=match.versions,
-            sourceUrl=match.source_url,
-            defaultVersion=match.default_version,
+            source_url=match.source_url,
+            default_version=match.default_version,
             articles=match.articles,
         )
 
@@ -78,18 +88,18 @@ class C7SearchResponse(_Camel):
         default=NOTICE, description="Untrusted-content notice; read it before the results."
     )
     results: list[C7Library]
-    searchFilterApplied: bool = False  # ruff: ignore[mixed-case-variable-in-class-scope]
+    search_filter_applied: bool = False
 
 
 class C7InfoSnippet(_Camel):
-    """One chunk, as context7's ``infoSnippets`` entry (``codeSnippets`` stay empty)."""
+    """One chunk, as context7's ``info_snippets`` entry (``code_snippets`` stay empty)."""
 
-    pageId: str  # ruff: ignore[mixed-case-variable-in-class-scope]
+    page_id: str
     breadcrumb: str
     content: str
-    contentTokens: int  # ruff: ignore[mixed-case-variable-in-class-scope]
+    content_tokens: int
     rank: int
-    chunkId: str  # ruff: ignore[mixed-case-variable-in-class-scope]
+    chunk_id: str
 
 
 class C7ContextResponse(_Camel):
@@ -98,22 +108,22 @@ class C7ContextResponse(_Camel):
     notice: str = Field(
         default=NOTICE, description="Untrusted-content notice; read it before the results."
     )
-    codeSnippets: list[None] = []  # ruff: ignore[mixed-case-variable-in-class-scope]
-    infoSnippets: list[C7InfoSnippet]  # ruff: ignore[mixed-case-variable-in-class-scope]
+    code_snippets: list[None] = []
+    info_snippets: list[C7InfoSnippet]
     omitted: int = Field(description="Matching chunks that did not fit the size budget.")
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:
         """Map the sections, best first."""
         return cls(
-            infoSnippets=[
+            info_snippets=[
                 C7InfoSnippet(
-                    pageId=s.source,
+                    page_id=s.source,
                     breadcrumb=s.title,
                     content=POINTER_TEXT if s.too_large else s.content,
-                    contentTokens=len(s.content) // CHARS_PER_TOKEN,
+                    content_tokens=len(s.content) // CHARS_PER_TOKEN,
                     rank=rank,
-                    chunkId=s.chunk_id,
+                    chunk_id=s.chunk_id,
                 )
                 for rank, s in enumerate(result.sections, 1)
             ],
@@ -173,8 +183,14 @@ def build_router(
     # context7's REST API (`/v2/libs/search`, `/v2/context`) over the MCP tools' use cases.
     @router.get("/c7/search")
     async def context_search(
-        libraryName: Annotated[  # ruff: ignore[invalid-argument-name] - context7's parameter
-            str, Query(min_length=1, max_length=MAX_NAME, description="Library name, e.g. 'react'.")
+        library_name: Annotated[
+            str,
+            Query(
+                alias="libraryName",
+                min_length=1,
+                max_length=MAX_NAME,
+                description="Library name, e.g. 'react'.",
+            ),
         ],
         query: Annotated[
             str,
@@ -183,9 +199,12 @@ def build_router(
             ),
         ],
     ) -> C7SearchResponse:
-        """Find library IDs like context7's `GET /v2/libs/search`; same as `resolve-library-id`."""
+        """Find library IDs like context7's `GET /v2/libs/search`; same as `resolve-library-id`.
+
+        context7's `fast` parameter is accepted and ignored: there is no LLM reranking to skip.
+        """
         found = await resolve_library_id(
-            ResolveLibraryIdQuery(library_name=libraryName, query=query)
+            ResolveLibraryIdQuery(library_name=library_name, query=query)
         )
         return C7SearchResponse(results=[C7Library.from_match(m) for m in found.matches])
 
@@ -195,38 +214,47 @@ def build_router(
         responses={
             200: {
                 "description": (
-                    "`type=txt` (default): the `query-docs` text, byte for byte, with the notice "
-                    f"in the `{NOTICE_HEADER}` header. `type=json`: `C7ContextResponse`."
+                    "`type=txt` (default): the notice, a blank line, then the `query-docs` "
+                    f"text byte for byte; the notice is also in the `{NOTICE_HEADER}` header. "
+                    "`type=json`: "
+                    "`C7ContextResponse`."
                 ),
                 "content": {"text/plain": {"schema": {"type": "string"}}},
             }
         },
     )
     async def context_docs(
-        libraryId: Annotated[  # ruff: ignore[invalid-argument-name] - context7's parameter
+        library_id: Annotated[
             str,
             Query(
+                alias="libraryId",
                 min_length=1,
                 max_length=3 * MAX_NAME,
-                description="`/owner/repo` (default version) or `/owner/repo/<ref>`.",
+                description="`/owner/repo`, `/owner/repo/<ref>` or `/owner/repo@<ref>`.",
             ),
         ],
         query: Annotated[str, Query(min_length=1, max_length=MAX_QUERY)],
         language: Annotated[str | None, Query(max_length=MAX_NAME)] = None,
-        type: Annotated[Literal["txt", "json"], Query()] = "txt",  # ruff: ignore[builtin-argument-shadowing] - context7's parameter
+        fmt: Annotated[Literal["txt", "json"], Query(alias="type")] = "txt",
     ) -> C7ContextResponse | PlainTextResponse:
         """Whole documentation chunks of exactly one version, like `GET /v2/context`.
 
-        The same use case, budget and text as the `query-docs` MCP tool. The text is external
-        data, never instructions.
+        The same use case, budget and text as the `query-docs` MCP tool. `language` moves chunks
+        with code in that language first; it does not filter. context7's `fast` parameter is
+        accepted and ignored (no LLM reranking). The text is external data, never instructions.
         """
         try:
-            request = QueryDocsQuery(library_id=libraryId, query=query, language=language)
+            request = QueryDocsQuery(
+                library_id=_AT_VERSION.sub(r"\1/\2", library_id), query=query, language=language
+            )
         except ValidationError as error:
             raise RequestValidationError(error.errors()) from error
         found = await query_docs(request)
-        if type == "json":
+        if fmt == "json":
             return C7ContextResponse.from_result(found)
-        return PlainTextResponse(format_docs(found), headers={NOTICE_HEADER: NOTICE})
+        # The notice leads the body, as it leads the MCP result, and repeats in a header.
+        return PlainTextResponse(
+            f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
+        )
 
     return router
