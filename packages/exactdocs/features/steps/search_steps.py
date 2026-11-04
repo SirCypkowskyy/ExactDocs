@@ -18,13 +18,15 @@ from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Vers
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.models import parse_article
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
+from fixture_repo import git_bytes
 from steps.http_steps import step_running
 
 LIBRARY = "/fixture/docs-repo"
 REPOSITORY = "https://github.com/fixture/docs-repo"
 SKIPPED_DIRECTORIES = (
     "docs/reference/oversized.md",
-    "docs/legacy/",
+    "docs/legacy/binary.md",
+    "docs/legacy/undecodable.md",
     "docs/archive/",
     "docs/assets/",
 )
@@ -57,10 +59,11 @@ def read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]
     for path in git("ls-tree", "-r", "--name-only", ref, "--", "docs", cwd=repo).splitlines():
         if not path.endswith((".md", ".mdx")) or path.startswith(SKIPPED_DIRECTORIES):
             continue
+        data = git_bytes("show", f"{ref}:{path}", cwd=repo)
         try:
-            text = git("show", f"{ref}:{path}", cwd=repo)
+            text = data.decode()
         except UnicodeDecodeError:
-            continue
+            text = data.decode("cp1252")  # the Latin-1 article, as the importer reads it
         articles.append((path, text))
     return commit, articles
 

@@ -36,9 +36,7 @@ queries:
     expected:
       v1.3.0: {article: docs/guide/setup.md, heading_path: [Guide, Install, Docker]}
       v1.4.0: {article: docs/guide/install.md, heading_path: [Guide, Install, Docker]}
-  # xfail: the importer skips this file as undecodable until it detects Latin-1 (#32).
   - query: crème brûlée
-    xfail: "Latin-1 articles are skipped by the importer until #32 lands"
     expected:
       v1.3.0: &latin {article: docs/legacy/latin1.md, heading_path: [Journal de bord, Paiements récents]}
       v1.4.0: *latin
