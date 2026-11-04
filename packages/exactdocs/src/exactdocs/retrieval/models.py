@@ -10,6 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 from itertools import groupby
 from typing import NewType
+from urllib.parse import quote, urlsplit
 
 from exactdocs.retrieval.errors import DuplicateChunkError, EmptySearchTextError
 
@@ -31,16 +32,6 @@ class SearchText:
     def __post_init__(self) -> None:
         if not self.value.strip():
             raise EmptySearchTextError
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Excerpt:
-    """Original documentation text, never a summary, with where it came from."""
-
-    text: str
-    source_url: str
-    target: DocTarget
-    commit_sha: str | None = None
 
 
 def _is_mark(char: str) -> bool:
@@ -283,3 +274,100 @@ def article_chunk_rows(
         )
         for i, id_ in enumerate(ids)
     ]
+
+
+class TagMatch(StrEnum):
+    """How a tag filter combines its tags."""
+
+    ANY = "any"
+    ALL = "all"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TagFilter:
+    """Which chunks may be ranked: those whose article has any / all of ``tags``.
+
+    No tags keeps everything. The filter is applied before ranking, so the top ``limit`` are
+    the best of the matching chunks, not the matching part of the best chunks.
+    """
+
+    tags: tuple[str, ...] = ()
+    match: TagMatch = TagMatch.ANY
+
+    def keeps(self, chunk_tags: Collection[str]) -> bool:
+        """Tell whether a chunk with these tags passes."""
+        wanted = set(self.tags)
+        if self.match is TagMatch.ALL:
+            return wanted <= set(chunk_tags)
+        return not wanted or bool(wanted & set(chunk_tags))
+
+
+class RetrievalMode(StrEnum):
+    """How a search found its results. One result shape serves every mode."""
+
+    BM25 = "bm25"
+
+
+class SourceHost(StrEnum):
+    """Where the documented repository is hosted; ``git`` is any other server."""
+
+    GITHUB = "github"
+    GITLAB = "gitlab"
+    BITBUCKET = "bitbucket"
+    GITEA = "gitea"
+    GIT = "git"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SearchableVersion:
+    """A library version a search may run on: exactly this version's active manifest."""
+
+    library: str
+    version: str
+    manifest_id: str
+    commit_sha: str
+    repository_url: str
+    host: SourceHost
+
+
+_SCP_URL = re.compile(r"[\w.-]+@(?P<host>[\w.-]+):(?P<path>[^:].*)")
+_BLOB_PATHS = {
+    SourceHost.GITHUB: "blob",
+    SourceHost.GITLAB: "-/blob",
+    SourceHost.BITBUCKET: "src",
+    SourceHost.GITEA: "src/commit",
+}
+
+
+def _web_base(repository_url: str) -> str | None:
+    """Return the repository's web page (`https://host/owner/repo`), or ``None`` without one."""
+    url = repository_url.strip()
+    if scp := _SCP_URL.fullmatch(url):
+        scheme, host, path = "https", scp["host"], scp["path"]
+    else:
+        parts = urlsplit(url)
+        if parts.scheme not in {"http", "https", "ssh"} or not parts.hostname:
+            return None
+        web = parts.scheme in {"http", "https"}
+        scheme = parts.scheme if web else "https"
+        host = parts.hostname + (f":{parts.port}" if web and parts.port else "")
+        path = parts.path
+    path = path.strip("/").removesuffix(".git")
+    return f"{scheme}://{host}/{path}" if path else None
+
+
+def source_link(version: SearchableVersion, article_path: str, anchor: str) -> str | None:
+    """Link to the section at the version's commit, or ``None`` for hosts we cannot build one for.
+
+    Pinned to the commit SHA, so the link keeps showing the text the search returned.
+    """
+    blob = _BLOB_PATHS.get(version.host)
+    base = _web_base(version.repository_url)
+    if blob is None or base is None:
+        return None
+    link = f"{base}/{blob}/{version.commit_sha}/{quote(article_path)}"
+    if not anchor:
+        return link
+    # Bitbucket prefixes the anchors of rendered Markdown headings.
+    prefix = "markdown-header-" if version.host is SourceHost.BITBUCKET else ""
+    return f"{link}#{quote(prefix + anchor)}"

@@ -11,7 +11,6 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
-    InMemoryExcerptIndex,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
@@ -32,7 +31,7 @@ from exactdocs.retrieval.errors import (
     DuplicateChunkError,
     VersionNotIndexedError,
 )
-from exactdocs.retrieval.models import DocTarget, ManifestStatus
+from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
 from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE
@@ -52,6 +51,10 @@ class FakeCatalog:
 
     async def find_indexed(self, target: DocTarget) -> DocTarget | None:
         return DocTarget(library=target.library.lower(), version=target.version)
+
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
+        del library, ref
+        return None
 
     async def active_id(self, target: DocTarget) -> str | None:
         return next(
@@ -139,7 +142,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
             versions=catalog,
-            index=InMemoryExcerptIndex(),
+            searchable=catalog,
             manifests=catalog,
             chunks=chunks,
             search=search,

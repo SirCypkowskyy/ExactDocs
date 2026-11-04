@@ -17,7 +17,6 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
-    InMemoryExcerptIndex,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
@@ -28,7 +27,14 @@ from exactdocs.retrieval.dtos import (
     CollectChunksCommand,
     IndexManifestCommand,
 )
-from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchHit
+from exactdocs.retrieval.models import (
+    DocTarget,
+    ManifestStatus,
+    SearchableVersion,
+    SearchHit,
+    TagFilter,
+    TagMatch,
+)
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
 
@@ -42,6 +48,10 @@ class Gone:
 
     async def find_indexed(self, target: DocTarget) -> DocTarget | None:
         return target
+
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
+        del library, ref
+        return None
 
     async def active_id(self, target: DocTarget) -> str | None:
         del target
@@ -94,7 +104,13 @@ class World:
     engine: str
 
     async def index(
-        self, manifest_id: str, ref: str, articles: dict, *, tags: list[str] | None = None
+        self,
+        manifest_id: str,
+        ref: str,
+        articles: dict,
+        *,
+        tags: list[str] | None = None,
+        tagged: dict[str, list[str]] | None = None,
     ) -> None:
         await self.retrieval.index_manifest(
             IndexManifestCommand(
@@ -103,16 +119,27 @@ class World:
                 ref=ref,
                 config_hash="cfg",
                 articles=[
-                    ArticleChunksIn(path=path, blob_sha=blob, tags=tags or [], chunks=chunks)
+                    ArticleChunksIn(
+                        path=path,
+                        blob_sha=blob,
+                        tags=(tagged or {}).get(path, tags or []),
+                        chunks=chunks,
+                    )
                     for path, (blob, chunks) in articles.items()
                 ],
             )
         )
 
     async def find(
-        self, manifest_id: str, query: str, tags: tuple[str, ...] = ()
+        self,
+        manifest_id: str,
+        query: str,
+        tags: tuple[str, ...] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> list[SearchHit]:
-        return list(await self.search.search(manifest_id, query, tags, 10))
+        return list(
+            await self.search.search(manifest_id, query, TagFilter(tags=tags, match=match), 10)
+        )
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -122,7 +149,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
             versions=Gone(),
-            index=InMemoryExcerptIndex(),
+            searchable=Gone(),
             manifests=Gone(),
             chunks=chunks,
             search=search,
@@ -248,10 +275,34 @@ async def test_the_tag_filter_keeps_chunks_with_any_of_the_tags(world: World) ->
     assert len(await world.find("m14", "tokens", ("reference", "guide"))) == 1
 
 
+async def test_the_all_filter_keeps_chunks_with_every_tag(world: World) -> None:
+    await world.index("m14", "v1.4.0", V14, tags=["api", "auth"])
+
+    both = await world.find("m14", "tokens", ("api", "auth"), TagMatch.ALL)
+    assert len(both) == 1
+    assert await world.find("m14", "tokens", ("api", "billing"), TagMatch.ALL) == []
+    assert len(await world.find("m14", "tokens", ("api", "billing"), TagMatch.ANY)) == 1
+
+
+async def test_the_top_k_is_computed_after_filtering(world: World) -> None:
+    # Ten untagged chunks outrank the one tagged chunk. With limit 1 the tagged one must still
+    # come back, which only happens when the filter runs before the cut.
+    articles = {
+        f"guide/loud{i}.md": (f"blob-loud{i}", [section(f"Retry {i}", "retry retry retry retry")])
+        for i in range(10)
+    } | {"guide/quiet.md": ("blob-quiet", [section("Quiet", "retry once")])}
+    await world.index("m", "v1.4.0", articles, tagged={"guide/quiet.md": ["quiet"]})
+
+    for match in TagMatch:
+        found = await world.search.search("m", "retry", TagFilter(tags=("quiet",), match=match), 1)
+        assert len(found) == 1
+        assert found[0].snippet == "retry once"
+
+
 async def test_a_limit_and_an_unknown_manifest(world: World) -> None:
     await world.index("m14", "v1.4.0", V14)
 
-    assert len(await world.search.search("m14", "retried", (), 1)) == 1
+    assert len(await world.search.search("m14", "retried", TagFilter(), 1)) == 1
     assert await world.find("nope", "retried") == []
 
 

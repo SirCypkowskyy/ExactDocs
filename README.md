@@ -112,7 +112,7 @@ For a local setup without a network port: `uvx exactdocs serve --stdio` (no toke
 | `list_libraries()` | Libraries and imported versions you can access |
 | `list_articles(library, version?, path_prefix?, tags?)` | The article tree of a version |
 | `read_article(library, version?, path)` | A full article, verbatim |
-| `search_docs(library, version?, query, tags?, mode?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
+| `search_docs(library, ref?, query, tags?, tags_match?, limit?)` | Search one version; results carry neighbors (`prev`/`next` chunk) and the retrieval mode used |
 | `read_chunk(chunk_id)` | Fetch a neighboring section of a search result |
 
 Library IDs are `/owner/repo`; without a version, a library's **default version** is used (the highest imported stable semver tag, else the default branch, else the most recently imported version, unless pinned), and every response

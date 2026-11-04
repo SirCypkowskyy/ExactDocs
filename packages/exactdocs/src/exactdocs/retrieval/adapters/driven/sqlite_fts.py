@@ -1,5 +1,5 @@
 import json
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -9,6 +9,8 @@ from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
     SearchHit,
+    TagFilter,
+    TagMatch,
     highlights,
     identifier_tokens,
     search_terms,
@@ -56,13 +58,19 @@ _SEARCH = """
     WHERE retrieval_search MATCH :match
     ORDER BY r.score DESC, r.chunk_id
 """
-_SEARCH_ALL = text(_SEARCH.format(tags=""))
-_SEARCH_TAGGED = text(
-    _SEARCH.format(
-        tags="AND EXISTS (SELECT 1 FROM json_each(mc.tags)"
+# The tag condition sits in WHERE, so it is applied before ORDER BY ... LIMIT.
+_TAG_CONDITIONS = {
+    None: "",
+    TagMatch.ANY: (
+        "AND EXISTS (SELECT 1 FROM json_each(mc.tags)"
         " WHERE value IN (SELECT value FROM json_each(:tags)))"
-    )
-)
+    ),
+    TagMatch.ALL: (
+        "AND NOT EXISTS (SELECT 1 FROM json_each(:tags) wanted"
+        " WHERE wanted.value NOT IN (SELECT value FROM json_each(mc.tags)))"
+    ),
+}
+_SEARCHES = {match: text(_SEARCH.format(tags=sql)) for match, sql in _TAG_CONDITIONS.items()}
 
 
 def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, object]:
@@ -117,7 +125,7 @@ class SqliteSearchIndex:
                 await connection.execute(_INSERT, rows)
 
     async def search(
-        self, manifest_id: str, query: str, tag_filter: Collection[str], limit: int
+        self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[SearchHit]:
         """Return the manifest's best matches; the manifest's rows decide what is visible."""
         match = _match(query)
@@ -131,12 +139,11 @@ class SqliteSearchIndex:
             "manifest": manifest_id,
             "limit": limit,
         }
-        if tag_filter:
-            params["tags"] = json.dumps(list(tag_filter))
+        if tag_filter.tags:
+            params["tags"] = json.dumps(list(tag_filter.tags))
+        statement = _SEARCHES[tag_filter.match if tag_filter.tags else None]
         async with self.engine.connect() as connection:
-            found = (
-                await connection.execute(_SEARCH_TAGGED if tag_filter else _SEARCH_ALL, params)
-            ).all()
+            found = (await connection.execute(statement, params)).all()
         terms = search_terms(query)
         return [
             SearchHit(

@@ -11,6 +11,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogIndexedVersions,
     CatalogLibraryIds,
     CatalogNewLibraries,
+    CatalogSearchableVersions,
 )
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
@@ -34,7 +35,6 @@ from exactdocs.ingestion.errors import GitNotInstalledError, ImportNotAvailableE
 from exactdocs.ingestion.models import IMPORT_JOB, Job
 from exactdocs.ingestion.ports.driven import GitRemote, JobProgress
 from exactdocs.retrieval import RetrievalModule
-from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
@@ -88,7 +88,9 @@ class Container:
         )
         retrieval = RetrievalModule.build(
             versions=CatalogIndexedVersions(catalog.resolve_version),
-            index=InMemoryExcerptIndex(),
+            searchable=CatalogSearchableVersions(
+                catalog.resolve_version, catalog.get_library, catalog.get_active_manifest
+            ),
             manifests=CatalogActiveManifests(
                 catalog.get_active_manifest, catalog.get_manifest_states
             ),

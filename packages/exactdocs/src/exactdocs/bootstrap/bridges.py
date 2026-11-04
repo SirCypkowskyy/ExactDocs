@@ -26,7 +26,7 @@ from exactdocs.catalog.ports.driving import (
     ResolveVersion,
 )
 from exactdocs.ingestion.models import NewLibrary, ProposedId
-from exactdocs.retrieval.models import DocTarget, ManifestStatus
+from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion, SourceHost
 from exactdocs_kernel import NotFoundError
 
 
@@ -47,6 +47,40 @@ class CatalogIndexedVersions:
         if resolved.ref != target.version:
             return None
         return DocTarget(library=resolved.library, version=resolved.ref)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSearchableVersions:
+    """Implements ``retrieval.ports.driven.SearchableVersions`` using the catalog."""
+
+    resolve_version: ResolveVersion
+    get_library: GetLibrary
+    get_active_manifest: GetActiveManifest
+
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
+        """Resolve the exact ref (the default version without one) and name its active manifest."""
+        try:
+            resolved = await self.resolve_version(
+                ResolveVersionQuery(id=library if ref is None else f"{library}/{ref}")
+            )
+            if ref is not None and resolved.ref != ref:  # a short SHA does not count
+                return None
+            active = await self.get_active_manifest(
+                GetActiveManifestQuery(library=resolved.library, ref=resolved.ref)
+            )
+            detail = await self.get_library(GetLibraryQuery(id=resolved.library))
+        except NotFoundError:
+            return None
+        if active.manifest_id is None:
+            return None
+        return SearchableVersion(
+            library=resolved.library,
+            version=resolved.ref,
+            manifest_id=active.manifest_id,
+            commit_sha=resolved.commit_sha,
+            repository_url=detail.source_url,
+            host=SourceHost(detail.host.value),
+        )
 
 
 @dataclass(frozen=True, slots=True)

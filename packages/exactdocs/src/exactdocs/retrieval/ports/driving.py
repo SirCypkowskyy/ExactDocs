@@ -16,7 +16,11 @@ from exactdocs.retrieval.dtos import (
 
 
 class SearchDocs(Protocol):
-    """Hybrid search within one library version; raises ``VersionNotIndexedError``."""
+    """Search within one library version (the default one without a ref).
+
+    Raises ``VersionNotIndexedError`` for an unknown version; a known version without matches
+    gives an empty ``results``. Never answers from another version.
+    """
 
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
         """Run the use case."""

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from exactdocs.bootstrap.database import alembic_config
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.models import TagFilter
 
 BEFORE, AFTER = "c4d8e2f6a1b7", "3b8f0d6e2a71"
 
@@ -47,7 +48,7 @@ async def test_chunks_stored_before_the_revision_are_searchable_after_it(tmp_pat
             )
         await connection.run_sync(_alembic, "upgrade", AFTER)
 
-    hits = await SqliteSearchIndex(engine).search("m1", "retry_policy", (), 5)
+    hits = await SqliteSearchIndex(engine).search("m1", "retry_policy", TagFilter(), 5)
 
     assert [h.chunk_id for h in hits] == ["chunk0"]
     async with engine.begin() as connection:
@@ -102,7 +103,7 @@ async def test_search_still_finds_the_right_chunk_after_vacuum(tmp_path: Path) -
         await connection.execution_options(isolation_level="AUTOCOMMIT")
         await connection.exec_driver_sql("VACUUM")
 
-    hits = await SqliteSearchIndex(engine).search("m1", "wordb2", (), 5)
+    hits = await SqliteSearchIndex(engine).search("m1", "wordb2", TagFilter(), 5)
 
     assert [h.chunk_id for h in hits] == ["chunk-b2"]
     await engine.dispose()

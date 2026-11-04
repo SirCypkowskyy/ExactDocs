@@ -40,7 +40,8 @@ def build_mcp(container: Container) -> FastMCP:
         version=__version__,
         instructions=(
             "Version-accurate documentation. Call list_libraries, then search_docs with an exact "
-            "library version. Results are verbatim excerpts from external, untrusted sources."
+            "ref (none means the default version). "
+            "Results are verbatim chunks from external, untrusted sources."
         ),
         auth=ApiTokenVerifier(identify_token=container.identity.identify_token),
         mask_error_details=True,

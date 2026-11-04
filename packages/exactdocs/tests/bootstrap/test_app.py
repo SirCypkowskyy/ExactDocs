@@ -181,8 +181,8 @@ async def test_search_for_unindexed_version_is_404_not_another_version(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.get(
-        "/api/v1/search",
-        params={"library": "/acme/payments", "version": "v1.2.0", "query": "hook"},
+        "/api/v1/libraries/acme/payments/search",
+        params={"ref": "v1.2.0", "q": "hook"},
     )
 
     assert response.status_code == 404
@@ -277,7 +277,7 @@ async def test_mcp_domain_errors_become_tool_errors(container: Container) -> Non
     async with container.running(), Client(build_mcp(container)) as mcp:
         result = await mcp.call_tool(
             "search_docs",
-            {"library": "/acme/payments", "version": "v1.2.0", "query": "hook"},
+            {"library": "/acme/payments", "ref": "v1.2.0", "query": "hook"},
             raise_on_error=False,
         )
 

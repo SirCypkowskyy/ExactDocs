@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from exactdocs.retrieval.dtos import (
     ChunkOut,
     CollectChunksCommand,
+    CoverageOut,
     DiscardPendingChunksCommand,
     GetChunkQuery,
     IndexedManifestOut,
@@ -12,6 +13,7 @@ from exactdocs.retrieval.dtos import (
     RemovedChunks,
     SearchDocsQuery,
     SearchDocsResult,
+    SearchResultOut,
 )
 from exactdocs.retrieval.errors import ChunkNotFoundError, VersionNotIndexedError
 from exactdocs.retrieval.models import (
@@ -23,14 +25,16 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
+    RetrievalMode,
     SearchText,
+    TagFilter,
     article_chunk_rows,
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
-    ExcerptIndex,
     IndexedVersions,
+    SearchableVersions,
     SearchIndex,
 )
 from exactdocs_kernel import Clock
@@ -74,17 +78,38 @@ async def _confirmed_removals(
 class SearchDocsUseCase:
     """Implements ``ports.driving.SearchDocs``."""
 
-    versions: IndexedVersions
-    index: ExcerptIndex
+    versions: SearchableVersions
+    search: SearchIndex
+    chunks: ChunkRepository
 
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
-        """Search one exact version; never fall back to another version."""
-        target = DocTarget(library=query.library, version=query.version)
-        indexed = await self.versions.find_indexed(target)
-        if indexed is None:
-            raise VersionNotIndexedError(target.library, target.version)
-        excerpts = await self.index.search(indexed, SearchText(value=query.query), query.limit)
-        return SearchDocsResult.from_models(excerpts)
+        """Search the active manifest of one exact version; never fall back to another version."""
+        text = SearchText(value=query.query)
+        version = await self.versions.find(query.library, query.ref)
+        if version is None:
+            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+        tag_filter = TagFilter(tags=tuple(dict.fromkeys(query.tags)), match=query.tags_match)
+        # One more than asked for tells whether the answer was cut short.
+        found = await self.search.search(
+            version.manifest_id, text.value, tag_filter, query.limit + 1
+        )
+        results = []
+        for hit in found[: query.limit]:
+            # ponytail: one lookup per hit (at most 50); a batch `get_many` if it ever shows.
+            stored = await self.chunks.get(version.manifest_id, hit.chunk_id)
+            if stored is not None:  # gone since the search: the manifest was collected
+                results.append(SearchResultOut.from_models(version, stored, hit))
+        return SearchDocsResult(
+            library=version.library,
+            version=version.version,
+            commit_sha=version.commit_sha,
+            retrieval_mode=RetrievalMode.BM25,
+            reranked=False,
+            coverage=CoverageOut(
+                candidates=len(found), reranked=0, complete=len(found) <= query.limit
+            ),
+            results=results,
+        )
 
 
 @dataclass(frozen=True, slots=True)

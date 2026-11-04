@@ -1,11 +1,18 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
-from collections.abc import Iterable
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from exactdocs.retrieval.models import Excerpt, Removed, StoredChunk
+from exactdocs.retrieval.models import (
+    Removed,
+    RetrievalMode,
+    SearchableVersion,
+    SearchHit,
+    StoredChunk,
+    TagMatch,
+    source_link,
+)
 
 
 class _Dto(BaseModel):
@@ -13,44 +20,85 @@ class _Dto(BaseModel):
 
 
 class SearchDocsQuery(_Dto):
-    """Search within exactly one library version."""
+    """Search within exactly one library version; no ``ref`` means the default version."""
 
-    library: str = Field(min_length=1)
-    version: str = Field(min_length=1)
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    ref: str | None = Field(
+        default=None, description="Exact imported ref; default version if empty."
+    )
     query: str = Field(min_length=1)
+    tags: list[str] = Field(default_factory=list, description="Only chunks of articles so tagged.")
+    tags_match: TagMatch = Field(
+        default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
+    )
     limit: int = Field(default=5, ge=1, le=50)
 
 
-class ExcerptOut(_Dto):
-    """One verbatim excerpt with its provenance."""
+class SearchResultOut(_Dto):
+    """One verbatim result with where it lives and how to read around it."""
 
-    text: str
-    source_url: str
-    library: str
-    version: str
-    commit_sha: str | None
+    chunk_id: str
+    article_path: str
+    heading_path: list[str]
+    anchor: str
+    position: int = Field(description="0-based index of the chunk in its article.")
+    total: int = Field(description="Number of chunks of the article.")
+    prev_chunk_id: str | None
+    next_chunk_id: str | None
+    commit_sha: str
+    source_url: str | None = Field(
+        description="Link to the section at the commit; null when the host is unknown."
+    )
+    tags: list[str]
+    score: float = Field(description="Higher is better; only comparable within one search.")
+    snippet: str = Field(description="Verbatim text of the chunk, possibly cut at either end.")
+    highlights: list[tuple[int, int]] = Field(
+        description="`[start, end)` offsets into `snippet` of the words that matched."
+    )
 
     @classmethod
-    def from_model(cls, excerpt: Excerpt) -> Self:
-        """Map a domain value object to its boundary representation."""
+    def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
+        """Combine a hit with its chunk row and the version it was found in."""
+        row, chunk = stored.row, stored.chunk
         return cls(
-            text=excerpt.text,
-            source_url=excerpt.source_url,
-            library=excerpt.target.library,
-            version=excerpt.target.version,
-            commit_sha=excerpt.commit_sha,
+            chunk_id=row.chunk_id,
+            article_path=row.article_path,
+            heading_path=list(chunk.heading_path),
+            anchor=chunk.anchor,
+            position=row.position,
+            total=row.total,
+            prev_chunk_id=row.prev_chunk_id,
+            next_chunk_id=row.next_chunk_id,
+            commit_sha=version.commit_sha,
+            source_url=source_link(version, row.article_path, chunk.anchor),
+            tags=list(row.tags),
+            score=hit.score,
+            snippet=hit.snippet,
+            highlights=list(hit.highlights),
         )
 
 
+class CoverageOut(_Dto):
+    """How much of the index the answer stands on."""
+
+    candidates: int = Field(description="Matching chunks the search looked at.")
+    reranked: int = Field(description="Of those, how many a reranker reordered.")
+    complete: bool = Field(description="False when more matches exist than `limit` allowed.")
+
+
 class SearchDocsResult(_Dto):
-    """Excerpts ordered from most to least relevant."""
+    """Results of one search, best first, with the version and the way they were found."""
 
-    excerpts: list[ExcerptOut]
-
-    @classmethod
-    def from_models(cls, excerpts: Iterable[Excerpt]) -> Self:
-        """Map domain value objects, keeping their order."""
-        return cls(excerpts=[ExcerptOut.from_model(e) for e in excerpts])
+    library: str
+    version: str
+    commit_sha: str
+    retrieval_mode: RetrievalMode
+    reranked: bool
+    coverage: CoverageOut
+    fallback_reason: str | None = Field(
+        default=None, description="Why a better mode was not used, when one was asked for."
+    )
+    results: list[SearchResultOut]
 
 
 class ChunkIn(_Dto):
