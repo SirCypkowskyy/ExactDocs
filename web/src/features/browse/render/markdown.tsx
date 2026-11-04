@@ -1,4 +1,12 @@
-import { ImageOff, Info, Lightbulb, OctagonAlert, TriangleAlert } from "lucide-react";
+import {
+  ImageOff,
+  Info,
+  Lightbulb,
+  OctagonAlert,
+  Square,
+  SquareCheck,
+  TriangleAlert,
+} from "lucide-react";
 import type { Token } from "markdown-it";
 import { Fragment, type ReactNode, useEffect, useMemo } from "react";
 import { CodeBlock } from "./code-block";
@@ -216,13 +224,12 @@ function one(node: Node, ctx: Ctx): ReactNode {
       const task = token.meta?.task as "todo" | "done" | undefined;
       if (!task) return <li>{kids()}</li>;
       return (
-        <li className="doc-task">
-          <input
-            type="checkbox"
-            checked={task === "done"}
-            disabled
-            aria-label={task === "done" ? "Done" : "Not done"}
-          />
+        <li className={task === "done" ? "doc-task doc-task-done" : "doc-task"}>
+          {task === "done" ? (
+            <SquareCheck role="img" aria-label="Done" />
+          ) : (
+            <Square role="img" aria-label="Not done" />
+          )}
           <div>{kids()}</div>
         </li>
       );

@@ -1,12 +1,12 @@
 /*
- * A long document, set for reading: one 68ch measure for text; code, tables and callouts may run
+ * A long document, set for reading: one 60ch measure (about 75 characters a line) for text; code, tables and callouts may run
  * to the full column. Plain CSS on the app's tokens (styles.css), no @apply.
  */
 .doc {
-  --measure: 68ch;
+  --measure: 60ch;
   --callout: var(--mark);
   font-size: 1.0625rem;
-  line-height: 1.7;
+  line-height: 1.68;
   color: var(--foreground);
   overflow-wrap: break-word;
   hyphens: manual;
@@ -144,7 +144,7 @@
   box-shadow: 0 0 0 2px var(--ring);
 }
 .doc :not(pre) > code {
-  padding: 0.1em 0.4em;
+  padding: 0.1em 0.3em;
   border-radius: var(--radius-sm);
   background: var(--secondary);
   font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -247,6 +247,10 @@
   text-align: start;
   vertical-align: top;
 }
+.doc-table code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
 .doc-table th {
   background: var(--secondary);
   font-weight: 600;
@@ -283,7 +287,7 @@
 }
 .doc-code pre {
   margin: 0;
-  padding: 0.5rem 1rem 1rem;
+  padding: 0.125rem 1rem 1rem;
   overflow-x: auto;
   font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   font-size: 0.875rem;

@@ -55,11 +55,11 @@ print(f&quot;created {payment.id}&quot;)</code></pre>
 </li>
 <li>Fulfil the order.</li>
 </ol>
-<ul><li class="doc-task"><input type="checkbox" disabled="" aria-label="Done" checked=""/><div>Create a test key</div>
+<ul><li class="doc-task doc-task-done"><svg/><div>Create a test key</div>
 </li>
-<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Go live</div>
+<li class="doc-task"><svg/><div>Go live</div>
 </li>
-<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Tell the team</div>
+<li class="doc-task"><svg/><div>Tell the team</div>
 </li>
 </ul>
 <h5 id="pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
@@ -227,11 +227,11 @@ print(f&quot;created {payment.id}&quot;)</code></pre>
 </li>
 <li>Fulfil the order.</li>
 </ol>
-<ul><li class="doc-task"><input type="checkbox" disabled="" aria-label="Done" checked=""/><div>Create a test key</div>
+<ul><li class="doc-task doc-task-done"><svg/><div>Create a test key</div>
 </li>
-<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Go live</div>
+<li class="doc-task"><svg/><div>Go live</div>
 </li>
-<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Tell the team</div>
+<li class="doc-task"><svg/><div>Tell the team</div>
 </li>
 </ul>
 <h5 id="pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
