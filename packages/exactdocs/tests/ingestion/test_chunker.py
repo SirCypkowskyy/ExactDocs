@@ -289,9 +289,10 @@ def test_anchors_match_the_shared_vectors(case: dict, chunker: Chunker) -> None:
 
 
 def test_the_web_copy_of_the_anchor_vectors_is_identical() -> None:
-    """The web build sees only ``web/``, so its test reads a copy: keep it in step."""
+    """The web build sees only ``web/``, so its test reads a copy (Biome formats it): same data."""
     copy = TESTS.parents[2] / "web/src/features/browse/render/fixtures/heading_anchors.json"
-    assert copy.read_bytes() == (TESTS / "fixtures" / "heading_anchors.json").read_bytes(), (
+    original = json.loads((TESTS / "fixtures" / "heading_anchors.json").read_text("utf-8"))
+    assert json.loads(copy.read_text("utf-8")) == original, (
         "cp packages/exactdocs/tests/fixtures/heading_anchors.json "
-        "web/src/features/browse/render/fixtures/"
+        "web/src/features/browse/render/fixtures/ && (cd web && pnpm format)"
     )
