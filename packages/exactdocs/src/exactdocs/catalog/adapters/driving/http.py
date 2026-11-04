@@ -16,7 +16,9 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListTagsQuery,
+    RenamedPath,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     TagFilter,
     TagList,
@@ -29,13 +31,14 @@ from exactdocs.catalog.ports.driving import (
     ListArticles,
     ListLibraries,
     ListTags,
+    ResolveRenamedPath,
     ResolveVersion,
     UpdateLibrary,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
 
 
-def build_router(
+def build_router(  # ruff: ignore[complex-structure]
     *,
     list_libraries: ListLibraries,
     get_library: GetLibrary,
@@ -43,6 +46,7 @@ def build_router(
     list_articles: ListArticles,
     list_tags: ListTags,
     get_article: GetArticle,
+    resolve_renamed_path: ResolveRenamedPath,
     update_library: UpdateLibrary,
 ) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``."""
@@ -128,5 +132,27 @@ def build_router(
         ref: str | None = None,
     ) -> Article:
         return await get_article(GetArticleQuery(library=f"/{owner}/{repo}", ref=ref, path=path))
+
+    @router.get("/{owner}/{repo}/renamed-path")
+    async def get_renamed_path(
+        owner: str,
+        repo: str,
+        path: Annotated[
+            str,
+            Query(
+                min_length=1,
+                max_length=MAX_PATH,
+                description="The article's path in the version imported before `ref`.",
+            ),
+        ],
+        ref: str | None = None,
+    ) -> RenamedPath:
+        """Where git saw `path` go when `ref` was imported; 404 when it was not renamed."""
+        found = await resolve_renamed_path(
+            ResolveRenamedPathQuery(library=f"/{owner}/{repo}", ref=ref, old_path=path)
+        )
+        if found is None:
+            raise HTTPException(status_code=404)
+        return found
 
     return router

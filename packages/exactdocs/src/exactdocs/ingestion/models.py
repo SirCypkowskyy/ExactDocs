@@ -16,6 +16,7 @@ from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
 from itertools import pairwise, starmap
+from operator import itemgetter
 from pathlib import PurePosixPath
 from typing import Any, NewType, Self
 from urllib.parse import unquote, urlsplit
@@ -1161,6 +1162,26 @@ class ImportedArticle:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class GitRename:
+    """A file git sees as moved between two commits: ``old_path`` became ``new_path``."""
+
+    old_path: str
+    new_path: str
+    similarity: int
+    """Percent of the content kept (100: moved unchanged); git reports renames from 50."""
+
+    def __post_init__(self) -> None:
+        if not 0 < self.similarity <= MAX_SIMILARITY:
+            message = f"similarity must be 1..{MAX_SIMILARITY}, not {self.similarity}"
+            raise ValueError(message)
+
+
+MAX_SIMILARITY = 100
+MAX_RENAMES = 10_000
+"""Renames kept per version; git lists more only for a rewrite of the whole tree."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImportedVersion:
     """Every article of one library version at one commit, chunked with ``config_hash``."""
 
@@ -1172,6 +1193,9 @@ class ImportedVersion:
     articles: tuple[ImportedArticle, ...]
     refresh: bool = False
     """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
+    renamed_from: str | None = None
+    """The ref whose commit ``renames`` were detected against; ``None`` when none were."""
+    renames: tuple[GitRename, ...] = ()
 
 
 def git_blob_sha(data: bytes) -> str:
@@ -1203,6 +1227,35 @@ class ImportedRef:
     ref: str
     kind: RefKind
     commit_sha: str
+
+
+_NUMERIC_REF = re.compile(r"[vV]?(\d+(?:\.\d+)*)")
+
+
+def _numbers(ref: str) -> tuple[int, ...] | None:
+    match = _NUMERIC_REF.fullmatch(ref)
+    return tuple(map(int, match[1].split("."))) if match else None
+
+
+def previous_version(ref: str, imported: Sequence[ImportedRef]) -> ImportedRef | None:
+    """Pick the version whose commit renames are detected against when ``ref`` is imported.
+
+    A ref that is imported already (a re-sync) is compared with what it served before.
+    Otherwise it is the highest numeric tag (``v1.3.0``, ``2.1``) below a numeric ``ref``.
+    ``None`` when there is none: branches and commits have no order, and nothing is guessed.
+    """
+    same = next((v for v in imported if v.ref == ref), None)
+    if same is not None:
+        return same
+    wanted = _numbers(ref)
+    if wanted is None:
+        return None
+    older = [
+        (number, v)
+        for v in imported
+        if v.kind is RefKind.TAG and (number := _numbers(v.ref)) is not None and number < wanted
+    ]
+    return max(older, key=itemgetter(0))[1] if older else None
 
 
 ACTIVE_JOB_STATES = frozenset({JobState.QUEUED, JobState.RUNNING})

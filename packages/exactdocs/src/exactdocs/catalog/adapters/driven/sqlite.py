@@ -50,6 +50,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestRename,
     ManifestState,
     RefKind,
     StoredArticle,
@@ -129,6 +130,21 @@ manifest_entries = Table(
         ["blob_sha", "content_version"],
         ["catalog_article_contents.blob_sha", "catalog_article_contents.content_version"],
     ),
+)
+
+manifest_renames = Table(
+    "catalog_manifest_renames",
+    metadata,
+    Column(
+        "manifest_id",
+        Text,
+        ForeignKey("catalog_manifests.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("old_path", Text, primary_key=True),
+    Column("from_ref", Text, nullable=False),
+    Column("new_path", Text, nullable=False),
+    Column("similarity", Integer, nullable=False),
 )
 
 _SETTINGS = TypeAdapter(LibrarySettings)  # settings are stored as one JSON document
@@ -358,6 +374,41 @@ class SqliteManifestRepository:
                         for e in manifest.entries
                     ],
                 )
+
+            if manifest.renames:
+                await connection.execute(
+                    insert(manifest_renames),
+                    [
+                        {
+                            "manifest_id": manifest.id,
+                            "old_path": r.old_path,
+                            "from_ref": r.from_ref.value,
+                            "new_path": r.new_path,
+                            "similarity": r.similarity,
+                        }
+                        for r in manifest.renames
+                    ],
+                )
+
+    async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
+        """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(manifest_renames).where(
+                        manifest_renames.c.manifest_id == manifest_id,
+                        manifest_renames.c.old_path == old_path,
+                    )
+                )
+            ).first()
+        if row is None:
+            return None
+        return ManifestRename(
+            from_ref=VersionRef(row.from_ref),
+            old_path=row.old_path,
+            new_path=row.new_path,
+            similarity=row.similarity,
+        )
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
         """Return the manifest without its entries, or ``None``."""

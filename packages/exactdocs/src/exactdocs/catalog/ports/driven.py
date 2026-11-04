@@ -12,6 +12,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestRename,
     StoredArticle,
     TagSelection,
     Version,
@@ -73,7 +74,7 @@ class ManifestRepository(Protocol):
         *,
         version_must_exist: bool = False,
     ) -> None:
-        """Store a pending manifest with its entries and the texts it needs.
+        """Store a pending manifest with its entries, renames and the texts it needs.
 
         One transaction. A text whose key is already stored is left as it is (idempotent).
         With ``version_must_exist`` the version row is checked in the same transaction and
@@ -125,6 +126,10 @@ class ManifestRepository(Protocol):
 
     async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
         """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        ...
+
+    async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
+        """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
         ...
 
     async def get_article(

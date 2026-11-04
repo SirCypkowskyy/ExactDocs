@@ -1857,6 +1857,145 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/renamed-path": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Get Renamed Path",
+        "description": "Where git saw `path` go when `ref` was imported; 404 when it was not renamed.",
+        "operationId": "catalog-get_renamed_path",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "The article's path in the version imported before `ref`.",
+              "title": "Path"
+            },
+            "description": "The article's path in the version imported before `ref`."
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenamedPath"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/search": {
       "get": {
         "tags": [
@@ -4627,6 +4766,47 @@
         ],
         "title": "RemovalResult",
         "description": "A removal is done for readers when this is returned; the disk is freed by a job."
+      },
+      "RenamedPath": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "from_ref": {
+            "type": "string",
+            "title": "From Ref"
+          },
+          "old_path": {
+            "type": "string",
+            "title": "Old Path"
+          },
+          "new_path": {
+            "type": "string",
+            "title": "New Path"
+          },
+          "similarity": {
+            "type": "integer",
+            "title": "Similarity",
+            "description": "Percent of the content kept; 100 is a move unchanged."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "ref",
+          "from_ref",
+          "old_path",
+          "new_path",
+          "similarity"
+        ],
+        "title": "RenamedPath",
+        "description": "`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."
       },
       "RepositoryHost": {
         "type": "string",

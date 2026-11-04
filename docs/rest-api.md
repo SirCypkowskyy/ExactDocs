@@ -47,6 +47,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
   carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.
+- **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&path=` tells where git saw `path`
+  (an article of the version imported before `ref`) go when `ref` was imported
+  (`{"library", "ref", "from_ref", "old_path", "new_path", "similarity"}`, one hop). 404
+  `not_found` when it was not renamed or no renames are known; nothing is guessed.
 - **Refs containing `/`**: library IDs are `/{owner}/{repo}` in the path. A ref may only be the
   last path segment, declared `{ref:path}`; a route that needs a ref and an article path takes
   `?ref=` and `?path=`, because servers decode `%2F` before routing.

@@ -1,4 +1,4 @@
-"""Driven adapter for ``GitRemote``: the system ``git`` binary, run defensively.
+"""Driven adapter for the git ports (remote, gateway, renames): the system ``git``, run defensively.
 
 The URL comes from a user, so git is treated as a process that must not surprise us:
 
@@ -56,7 +56,7 @@ import sys
 import tempfile
 import time
 from asyncio.subprocess import DEVNULL, PIPE, Process
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,8 +75,11 @@ from exactdocs.ingestion.errors import (
     UrlProblem,
 )
 from exactdocs.ingestion.models import (
+    MAX_RENAMES,
+    MAX_SIMILARITY,
     AccessToken,
     Credential,
+    GitRename,
     PathSelection,
     RemoteRef,
     RemoteRefs,
@@ -95,10 +98,13 @@ MAX_FETCH_FILES = 100_000
 WATCH_SECONDS = 1.0
 STALE_MARGIN_SECONDS = 60.0
 MAX_FETCH_BYTES = 512 * 2**20
+RENAME_TIMEOUT_SECONDS = 60.0
+RENAME_LIMIT = 400
 _MAX_STEP_OUTPUT = 1024 * 1024
 _MAX_BRACE_EXPANSIONS = 64
 _PREFIX = "fetch-"
 _ROOT_README = ("/README.md", "/README.mdx")
+_ARTICLE_PATHSPEC = ("*.md", "*.mdx")  # models.ARTICLE_SUFFIXES: never fetch blobs of other files
 # What servers say when they will not serve a bare SHA (or the ref we named instead).
 _GONE = re.compile(r"not our ref|unadvertised object|couldn't find remote ref|no such remote ref")
 _CONFIG = """\
@@ -205,6 +211,8 @@ class GitCli:
     work_root: Path | None = None  # where fetches get their folders; the temp dir when None
     known_hosts: Path | None = None  # remembered SSH host keys; none are kept when None
     fetch_timeout: float = FETCH_TIMEOUT_SECONDS  # for a whole fetch, not per git call
+    rename_timeout: float = RENAME_TIMEOUT_SECONDS  # for a whole rename detection
+    rename_limit: int = RENAME_LIMIT  # git's `-l`: no similarity search above limit x limit pairs
     max_fetch_bytes: int = MAX_FETCH_BYTES  # of the fetched repository plus its work tree
     max_fetch_files: int = MAX_FETCH_FILES
     watch_interval: float = WATCH_SECONDS
@@ -317,6 +325,25 @@ class GitCli:
             finally:
                 shutil.rmtree(folder, ignore_errors=True)
 
+    def _stepper(
+        self, folder: Path, url: str, deadline: float, auth: _Auth | None
+    ) -> Callable[..., Awaitable[_Output]]:
+        """Return ``git(*args)``: one isolated step inside ``folder`` under the call's deadline."""
+        local = url.lower().startswith("file:")
+
+        async def git(*args: str, cap: int = _MAX_STEP_OUTPUT) -> _Output:
+            # every step may authenticate: checkout fetches the blobs it needs lazily
+            return await self._run(
+                ["-C", str(folder), *args],
+                cap=cap,
+                deadline=deadline,
+                trust_local=local,
+                watch=folder,
+                auth=auth,
+            )
+
+        return git
+
     async def _populate(
         self,
         folder: Path,
@@ -327,44 +354,66 @@ class GitCli:
         deadline: float,
         auth: _Auth | None = None,
     ) -> None:
-        local = url.lower().startswith("file:")
-
-        async def git(*args: str) -> _Output:
-            # every step may authenticate: checkout fetches the blobs it needs lazily
-            return await self._run(
-                ["-C", str(folder), *args],
-                cap=_MAX_STEP_OUTPUT,
-                deadline=deadline,
-                trust_local=local,
-                watch=folder,
-                auth=auth,
-            )
-
+        git = self._stepper(folder, url, deadline, auth)
         ssh = repository_url_is_ssh(url)
-        init = await git("init", "-q", "--template=")
-        if init.code:
-            raise _failure(init.stderr, ssh=ssh)
-        sparse = "\n".join(sparse_patterns(selection)) + "\n"
-        await asyncio.to_thread(_write_config, folder, url, sparse)
-        for target in (sha, *refs):
-            out = await git(
-                "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags",
-                "--no-recurse-submodules", "origin", target,
-            )  # fmt: skip
-            if out.code and not _GONE.search(out.stderr):
-                raise _failure(out.stderr, ssh=ssh)
-            if not out.code:
-                head = await git("rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}")
-                if head.stdout.decode().strip() == sha:
-                    break
-        else:
-            raise CommitUnavailableError
+        await _prepare(git, folder, url, "\n".join(sparse_patterns(selection)) + "\n", ssh=ssh)
+        await _fetch_commit(git, sha, refs, ssh=ssh)
         out = await git("checkout", "-q", "--detach", "--no-recurse-submodules", sha)
         if out.code:
             raise _failure(out.stderr, ssh=ssh)
         size, count = await asyncio.to_thread(_measure, folder)
         if size > self.max_fetch_bytes or count > self.max_fetch_files:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
+
+    async def renames(
+        self,
+        repository: RepositoryUrl,
+        old_sha: str,
+        new_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[GitRename]:
+        """Implement ``RenameSource.renames``.
+
+        Cost, measured on ``fastapi/fastapi`` 0.100.0 to 0.115.0 (about 1,400 Markdown files):
+        fetching both commits as ``--depth=1 --filter=blob:none`` takes about 1 s and 250 KB (trees
+        only), and ``diff-tree -M`` then fetches about 1 MB of blobs in one more second: only the
+        files that were added or deleted (Markdown ones, by pathspec) are read to score renames
+        with edits. Exact renames (same blob) need no blobs at all. Bounds: a fetch slot (shared
+        with imports), ``rename_timeout`` for everything, the folder size watchdog, and
+        ``rename_limit`` (git skips the similarity search when added x deleted files exceed
+        limit squared; exact renames are still found).
+        """
+        if (
+            repository.url.startswith("-")
+            or not repository.url.isprintable()
+            or not (_COMMIT.fullmatch(old_sha) and _COMMIT.fullmatch(new_sha))
+            or not all(_valid_ref(ref) for ref in refs)
+        ):
+            raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
+        async with self.fetch_slots:
+            if self.work_root is not None:
+                await asyncio.to_thread(self.work_root.mkdir, parents=True, exist_ok=True)
+            folder = Path(await asyncio.to_thread(_make_folder, self.work_root))
+            try:
+                url = repository.url
+                deadline = asyncio.get_running_loop().time() + self.rename_timeout
+                git = self._stepper(folder, url, deadline, _Auth.of(repository, credential))
+                ssh = repository_url_is_ssh(url)
+                await _prepare(git, folder, url, "", ssh=ssh)
+                for sha in (new_sha, old_sha):
+                    await _fetch_commit(git, sha, refs, ssh=ssh)
+                out = await git(
+                    "diff-tree", "-r", "-z", "--name-status", "--diff-filter=R", "-M",
+                    f"-l{self.rename_limit}", "--no-ext-diff", old_sha, new_sha,
+                    "--", *_ARTICLE_PATHSPEC,
+                )  # fmt: skip
+                if out.code:
+                    raise _failure(out.stderr, ssh=ssh)
+                return _parse_renames(out.stdout)
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
 
     async def _run(
         self,
@@ -498,11 +547,73 @@ class MissingGit:
         del repository, commit_sha, selection, refs, credential
         return _no_git()
 
+    async def renames(
+        self,
+        repository: RepositoryUrl,
+        old_sha: str,
+        new_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[GitRename]:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository, old_sha, new_sha, refs, credential
+        raise GitNotInstalledError
+
 
 @asynccontextmanager
 async def _no_git() -> AsyncGenerator[Path]:
     raise GitNotInstalledError
     yield  # pragma: no cover
+
+
+async def _prepare(
+    git: Callable[..., Awaitable[_Output]], folder: Path, url: str, sparse: str, *, ssh: bool
+) -> None:
+    """Make ``folder`` an empty repository that fetches commits without blobs from ``url``."""
+    init = await git("init", "-q", "--template=")
+    if init.code:
+        raise _failure(init.stderr, ssh=ssh)
+    await asyncio.to_thread(_write_config, folder, url, sparse)
+
+
+async def _fetch_commit(
+    git: Callable[..., Awaitable[_Output]], sha: str, refs: Sequence[str], *, ssh: bool
+) -> None:
+    """Fetch ``sha`` alone (depth 1, no blobs); ``refs`` are tried if the server refuses a SHA."""
+    for target in (sha, *refs):
+        out = await git(
+            "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags",
+            "--no-recurse-submodules", "origin", target,
+        )  # fmt: skip
+        if out.code and not _GONE.search(out.stderr):
+            raise _failure(out.stderr, ssh=ssh)
+        if not out.code:
+            head = await git("rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}")
+            if head.stdout.decode().strip() == sha:
+                return
+    raise CommitUnavailableError
+
+
+def _parse_renames(output: bytes) -> list[GitRename]:
+    """Parse ``diff-tree -z --name-status``: NUL-separated ``R<score>``, old path, new path."""
+    fields = output.split(b"\0")
+    renames: list[GitRename] = []
+    for index in range(0, len(fields) - 2, 3):
+        status, old, new = fields[index : index + 3]
+        if (
+            status.startswith(b"R")
+            and status[1:].isdigit()
+            and 0 < int(status[1:]) <= MAX_SIMILARITY
+        ):
+            renames.append(
+                GitRename(
+                    old_path=old.decode(errors="surrogateescape"),
+                    new_path=new.decode(errors="surrogateescape"),
+                    similarity=int(status[1:]),
+                )
+            )
+    return renames[:MAX_RENAMES]
 
 
 def _write_config(folder: Path, url: str, sparse: str) -> None:

@@ -47,7 +47,7 @@ from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecre
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault, SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError
-from exactdocs.ingestion.ports.driven import GitGateway, GitRemote
+from exactdocs.ingestion.ports.driven import GitGateway, GitRemote, RenameSource
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
@@ -123,13 +123,15 @@ class Container:
         *,
         remote: GitRemote | None = None,
         gateway: GitGateway | None = None,
+        renames: RenameSource | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
         Creates the data directory (``StartupError`` when it is unusable) but opens no
         connection; ``running()`` migrates the schema and releases the engine afterwards.
-        ``remote`` and ``gateway`` replace the system ``git`` for listing refs and for fetching
-        (tests). A missing ``git`` is logged here and
+        ``remote``, ``gateway`` and ``renames`` replace the system ``git`` for listing refs, for
+        fetching and for detecting renames (tests; a given ``gateway`` detects none unless
+        ``renames`` is given too). A missing ``git`` is logged here and
         reported as ``git_not_installed`` by everything that needs it, so the rest still runs.
         """
         engine = open_database(settings)  # creates the data dir first (or says why not)
@@ -144,6 +146,7 @@ class Container:
                 logger.warning("%s", exc)
                 git = MissingGit()
             remote = remote or git
+            renames = renames or (git if gateway is None else None)
             gateway = gateway or git
         try:
             secret_box = (
@@ -161,13 +164,6 @@ class Container:
         except ValueError as error:  # fixed texts: they never repeat a key
             raise StartupError(str(error)) from None
         vault = SqliteCredentialVault(engine, secret_box)
-        identity = IdentityModule.build(
-            repository=SqliteAccountRepository(engine),
-            sessions=SqliteSessionRepository(engine),
-            tokens=SqliteTokenRepository(engine),
-            hasher=Argon2idPasswordHasher(),
-            clock=SystemClock(),
-        )
         catalog, retrieval = _build_read_side(engine, settings)
         index = RetrievalChunkIndex(
             retrieval.index_manifest,
@@ -189,6 +185,7 @@ class Container:
             vault=vault,
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
+            renames=renames,
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),
@@ -219,7 +216,13 @@ class Container:
             settings=settings,
             engine=engine,
             catalog=catalog,
-            identity=identity,
+            identity=IdentityModule.build(
+                repository=SqliteAccountRepository(engine),
+                sessions=SqliteSessionRepository(engine),
+                tokens=SqliteTokenRepository(engine),
+                hasher=Argon2idPasswordHasher(),
+                clock=SystemClock(),
+            ),
             ingestion=ingestion,
             retrieval=retrieval,
             job_worker=job_worker,

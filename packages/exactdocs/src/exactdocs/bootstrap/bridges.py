@@ -23,6 +23,7 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenameIn,
     StoreManifestCommand,
     TagRuleIn,
 )
@@ -404,6 +405,16 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
         kind=CatalogRefKind(version.kind.value),
         commit_sha=version.commit_sha,
         must_exist=version.refresh,
+        renames=[
+            RenameIn(
+                from_ref=version.renamed_from,
+                old_path=r.old_path,
+                new_path=r.new_path,
+                similarity=r.similarity,
+            )
+            for r in version.renames
+            if version.renamed_from is not None
+        ],
         articles=[
             ArticleIn(
                 path=a.path,

@@ -28,7 +28,9 @@ from exactdocs.catalog.dtos import (
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenamedPath,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
@@ -110,6 +112,19 @@ class ListTags(Protocol):
     """
 
     async def __call__(self, query: ListTagsQuery) -> TagList:
+        """Run the use case."""
+        ...
+
+
+class ResolveRenamedPath(Protocol):
+    """Where did a path of the previous version go? One hop, as git detected it on import.
+
+    ``None`` when the version's manifest has no rename for ``old_path`` (or none were detected).
+    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` for an unknown target and
+    ``ArticleNotFoundError`` when the version has no active manifest.
+    """
+
+    async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
         """Run the use case."""
         ...
 

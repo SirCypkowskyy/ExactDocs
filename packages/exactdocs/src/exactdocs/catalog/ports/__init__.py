@@ -12,6 +12,7 @@ from exactdocs.catalog.ports.driving import (
     ListTags,
     RemoveLibrary,
     RemoveVersion,
+    ResolveRenamedPath,
     ResolveVersion,
     StoreManifest,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ManifestRepository",
     "RemoveLibrary",
     "RemoveVersion",
+    "ResolveRenamedPath",
     "ResolveVersion",
     "StoreManifest",
 ]

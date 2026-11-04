@@ -22,6 +22,8 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenameIn,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     StoreManifestCommand,
 )
@@ -29,6 +31,7 @@ from exactdocs.catalog.errors import (
     ArticleNotFoundError,
     ConflictingContentError,
     DuplicateArticlePathError,
+    DuplicateRenameError,
     InvalidArticlePathError,
     InvalidBlobShaError,
     InvalidCommitShaError,
@@ -504,3 +507,78 @@ async def test_removing_a_library_takes_its_versions_and_manifests(world: World)
     assert (removed.library, removed.manifest_ids) == ("/acme/payments", [kept])
     with pytest.raises(LibraryNotFoundError):
         await world.catalog.get_library(GetLibraryQuery(id="/acme/payments"))
+
+
+def renamed(ref: str, commit: str, *renames: RenameIn, kind: RefKind = RefKind.TAG) -> Any:
+    stored = command(ref, commit, article("guide/install.md", "new"), kind=kind)
+    return stored.model_copy(update={"renames": list(renames)})
+
+
+SETUP_TO_INSTALL = RenameIn(
+    from_ref="v1.3.0", old_path="guide/setup.md", new_path="guide/install.md", similarity=84
+)
+
+
+async def where_did(world: World, old_path: str, ref: str | None = "v1.4.0") -> Any:
+    return await world.catalog.resolve_renamed_path(
+        ResolveRenamedPathQuery(library="/Acme/Payments", ref=ref, old_path=old_path)
+    )
+
+
+async def test_a_path_renamed_since_the_previous_version_resolves_to_its_new_place(
+    world: World,
+) -> None:
+    stored = await world.catalog.store_manifest(renamed("v1.4.0", "bbb222", SETUP_TO_INSTALL))
+    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    found = await where_did(world, "guide/setup.md")
+
+    assert found is not None
+    assert (found.from_ref, found.ref, found.old_path, found.new_path, found.similarity) == (
+        "v1.3.0",
+        "v1.4.0",
+        "guide/setup.md",
+        "guide/install.md",
+        84,
+    )
+    assert await where_did(world, "guide/other.md") is None
+
+
+async def test_a_pending_manifests_renames_are_not_visible_and_a_new_import_replaces_them(
+    world: World,
+) -> None:
+    first = await world.catalog.store_manifest(renamed("v1.4.0", "bbb222", SETUP_TO_INSTALL))
+    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=first.manifest_id))
+    await world.catalog.store_manifest(renamed("v1.4.0", "ccc333"))  # pending, none found
+
+    assert await where_did(world, "guide/setup.md") is not None  # the active one speaks
+
+    again = await world.catalog.store_manifest(renamed("v1.4.0", "ccc333"))
+    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=again.manifest_id))
+
+    assert await where_did(world, "guide/setup.md") is None
+
+
+async def test_without_a_ref_the_default_version_is_asked(world: World) -> None:
+    await world.active("main", "ddd444", article("guide/install.md", "x"))
+
+    assert await where_did(world, "guide/setup.md", ref=None) is None
+
+
+async def test_an_unknown_version_or_one_without_a_manifest_is_an_error(world: World) -> None:
+    with pytest.raises(VersionNotFoundError):
+        await where_did(world, "guide/setup.md", ref="v9")
+    with pytest.raises(ArticleNotFoundError):  # `main` exists but was never imported here
+        await where_did(world, "guide/setup.md", ref="main")
+
+
+async def test_impossible_renames_are_refused_when_stored(world: World) -> None:
+    traversal = SETUP_TO_INSTALL.model_copy(update={"old_path": "../x.md"})
+    with pytest.raises(InvalidArticlePathError):
+        await world.catalog.store_manifest(renamed("v1.4.0", "bbb222", traversal))
+    with pytest.raises(DuplicateRenameError):
+        await world.catalog.store_manifest(
+            renamed("v1.4.0", "bbb222", SETUP_TO_INSTALL, SETUP_TO_INSTALL)
+        )
+    with pytest.raises(ValueError, match="less than or equal to 100"):
+        RenameIn(from_ref="v1", old_path="a.md", new_path="b.md", similarity=101)

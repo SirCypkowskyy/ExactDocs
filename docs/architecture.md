@@ -135,6 +135,22 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   period, then `CollectGarbage` deletes them and the contents no manifest uses. `RemoveVersion` and
   `RemoveLibrary` delete a version's manifests at once (no grace: nothing serves them), and
   ingestion's `collect` job then runs each domain's collector, catalog first.
+- **Renames between versions (E3-12):** on import, `RenameSource.renames` (the system-`git`
+  adapter) asks git which Markdown files moved between the previous version's commit and the new
+  one (`previous_version`: a re-synced ref compares with its own earlier commit, otherwise the
+  highest older numeric tag; branches, commits and pre-releases have no order and get none). The
+  rename map (`from_ref`, old path, new path, similarity) is stored with the new version's
+  manifest (`catalog_manifest_renames`, behind `ManifestRepository.find_rename` and the
+  `ResolveRenamedPath` port, REST `GET /libraries/{owner}/{repo}/renamed-path?ref=&path=`), so it
+  is replaced, collected and removed with it. It is one hop only (the previous version) and never
+  fails an import: any error means "no renames known". Cost, measured on `fastapi/fastapi`
+  0.100.0 to 0.115.0 (about 1,400 Markdown files, 12 renames, 4 of them exact): fetching the two
+  trees (`--depth=1 --filter=blob:none`, no checkout) takes about 1 s and 250 KB, and
+  `git diff-tree -M --diff-filter=R -- '*.md' '*.mdx'` then fetches only the added and deleted
+  Markdown files' blobs (about 1 MB, 1 s) to score renames with edits; exact renames need no blobs.
+  Bounds: one fetch slot (the import has released its own first), a 60 s deadline, the fetch
+  size watchdog, and git's rename limit (400: above 400 x 400 added x deleted files the scoring
+  is skipped and only exact renames are kept).
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.

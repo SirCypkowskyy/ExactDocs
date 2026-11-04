@@ -13,6 +13,7 @@ from exactdocs.ingestion.ports.driven import (
     NewLibraries,
     RecoveryHook,
     Removals,
+    RenameSource,
     SecretBox,
     VersionPublisher,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "Removals",
     "RemoveLibrary",
     "RemoveVersion",
+    "RenameSource",
     "RunNextJob",
     "SecretBox",
     "SyncLibrary",

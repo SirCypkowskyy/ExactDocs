@@ -35,6 +35,7 @@ from exactdocs.ingestion.ports.driven import (
     NewLibraries,
     RecoveryHook,
     Removals,
+    RenameSource,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -182,6 +183,7 @@ def import_job(
     vault: CredentialVault | None = None,
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES,
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
+    renames: RenameSource | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions."""
     importer = ImportVersionUseCase(
@@ -193,6 +195,7 @@ def import_job(
         vault or _NoCredentials(),
         max_article_bytes,
         max_import_bytes,
+        renames=renames,
     )
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)

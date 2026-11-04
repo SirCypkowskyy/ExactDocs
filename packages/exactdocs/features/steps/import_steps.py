@@ -45,6 +45,20 @@ class SwitchableGit:
         return self.git.fetch(*args, **kwargs)  # ty: ignore[invalid-argument-type]
 
 
+class SwitchableRenames:
+    """The real rename detection, until a scenario makes git unable to compare two commits."""
+
+    def __init__(self, git: GitCli) -> None:
+        self.git = git
+        self.failing = False
+
+    async def renames(self, *args: object, **kwargs: object):
+        if self.failing:
+            reason = "it took too long"
+            raise RepositoryUnreachableError(reason)
+        return await self.git.renames(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+
 def _commit(context: Context, ref: str) -> str:
     return context.fixture_git("rev-parse", f"{ref}^{{commit}}", cwd=context.fixture_repo.path)
 
@@ -110,7 +124,10 @@ def step_running(context: Context) -> None:
     asyncio.run(store_demo_catalog(settings))
     git = GitCli.locate()
     context.git = SwitchableGit(git)
-    context.container = Container.build(settings, remote=OfflineGit(git), gateway=context.git)
+    context.renames = SwitchableRenames(git)
+    context.container = Container.build(
+        settings, remote=OfflineGit(git), gateway=context.git, renames=context.renames
+    )
     context.library_added = False
     context.client = stack.enter_context(
         TestClient(

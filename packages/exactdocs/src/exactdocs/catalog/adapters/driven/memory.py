@@ -20,6 +20,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestRename,
     ManifestState,
     StoredArticle,
     TagSelection,
@@ -116,18 +117,16 @@ class InMemoryManifestRepository:
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
         """Return the manifest without its entries, or ``None``."""
         found = self.manifests.get(manifest_id)
-        return replace(found, entries=()) if found else None
+        return _light(found) if found else None
 
     async def get_many(self, manifest_ids: Collection[ManifestId]) -> Mapping[ManifestId, Manifest]:
         """Return the manifests (without entries) that exist, by ID; unknown IDs are left out."""
-        return {
-            i: replace(self.manifests[i], entries=()) for i in manifest_ids if i in self.manifests
-        }
+        return {i: _light(self.manifests[i]) for i in manifest_ids if i in self.manifests}
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
         """Return the version's active manifest without its entries, or ``None``."""
         found = self._active(library_id, ref)
-        return replace(found, entries=()) if found else None
+        return _light(found) if found else None
 
     async def list_entries(
         self,
@@ -149,6 +148,11 @@ class InMemoryManifestRepository:
         )
         later = sorted((e for e in inside if after is None or e.path > after), key=lambda e: e.path)
         return tuple(later[:limit])
+
+    async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
+        """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
+        found = self.manifests.get(manifest_id)
+        return next((r for r in found.renames if r.old_path == old_path), None) if found else None
 
     async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
         """Return up to ``limit`` article paths of the manifest, sorted."""
@@ -281,3 +285,8 @@ class InMemoryManifestRepository:
             ),
             None,
         )
+
+
+def _light(manifest: Manifest) -> Manifest:
+    """Return the manifest as ``get`` does: without entries and renames."""
+    return replace(manifest, entries=(), renames=())

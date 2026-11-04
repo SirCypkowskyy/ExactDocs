@@ -20,6 +20,7 @@ from exactdocs.catalog.models import (
     LibrarySettings,
     Manifest,
     ManifestEntry,
+    ManifestRename,
     ManifestState,
     RefKind,
     StoredArticle,
@@ -252,6 +253,15 @@ class ArticleIn(_Dto):
     content: str
 
 
+class RenameIn(_Dto):
+    """A file git saw moved: in version `from_ref`, `old_path` became `new_path` (an article)."""
+
+    from_ref: str = Field(min_length=1)
+    old_path: str = Field(min_length=1, max_length=MAX_PATH)
+    new_path: str = Field(min_length=1, max_length=MAX_PATH)
+    similarity: int = Field(ge=1, le=100, description="Percent of the content kept.")
+
+
 class StoreManifestCommand(_Dto):
     """Store the articles of `ref` at `commit_sha` as a new, pending manifest."""
 
@@ -263,6 +273,10 @@ class StoreManifestCommand(_Dto):
     must_exist: bool = Field(
         default=False,
         description="Refuse (VersionNotFoundError) unless the library already has this version.",
+    )
+    renames: list[RenameIn] = Field(
+        default=[],
+        description="Files moved since an earlier version; kept and replaced with the manifest.",
     )
 
 
@@ -474,6 +488,42 @@ class GetArticleQuery(_Dto):
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
+
+
+class ResolveRenamedPathQuery(_Dto):
+    """Ask where `old_path` of an earlier version is in `ref` (default version without one)."""
+
+    library: str = Field(min_length=1)
+    ref: str | None = None
+    old_path: str = Field(min_length=1, max_length=MAX_PATH)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class RenamedPath(_Dto):
+    """`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."""
+
+    library: str
+    ref: str
+    from_ref: str
+    old_path: str
+    new_path: str
+    similarity: int = Field(description="Percent of the content kept; 100 is a move unchanged.")
+
+    @classmethod
+    def from_model(cls, library: str, ref: str, rename: ManifestRename) -> Self:
+        """Map a domain value object."""
+        return cls(
+            library=library,
+            ref=ref,
+            from_ref=str(rename.from_ref),
+            old_path=rename.old_path,
+            new_path=rename.new_path,
+            similarity=rename.similarity,
+        )
 
 
 class ArticleInfo(_Dto):

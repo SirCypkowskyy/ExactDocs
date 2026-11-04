@@ -33,7 +33,9 @@ from exactdocs.catalog.dtos import (
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenamedPath,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
@@ -58,6 +60,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestRename,
     ParsedId,
     TagRule,
     Version,
@@ -243,6 +246,15 @@ class StoreManifestUseCase:
             kind=command.kind,
             commit_sha=command.commit_sha,
             created_at=self.clock.now(),
+            renames=tuple(
+                ManifestRename(
+                    from_ref=VersionRef(r.from_ref),
+                    old_path=r.old_path,
+                    new_path=r.new_path,
+                    similarity=r.similarity,
+                )
+                for r in command.renames
+            ),
             entries=tuple(
                 sorted(
                     (
@@ -327,6 +339,26 @@ class ListArticlesUseCase:
             articles=[ArticleSummary.from_model(e) for e in page],
             next_cursor=encode_cursor(page[-1].path) if len(entries) > query.limit else None,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ResolveRenamedPathUseCase:
+    """Implements ``ports.driving.ResolveRenamedPath``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
+        """Look the path up in the renames stored with the version's active manifest."""
+        ref = VersionRef(query.ref) if query.ref else None
+        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        manifest = await self.manifests.get_active(library.id, version.ref)
+        if manifest is None:
+            raise ArticleNotFoundError(str(library.id), str(version.ref), None)
+        rename = await self.manifests.find_rename(manifest.id, query.old_path)
+        if rename is None:
+            return None
+        return RenamedPath.from_model(str(library.id), str(version.ref), rename)
 
 
 @dataclass(frozen=True, slots=True)

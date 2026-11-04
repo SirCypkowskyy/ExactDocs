@@ -10,6 +10,7 @@ from exactdocs.ingestion.models import (
     ArticleChunk,
     Collected,
     Credential,
+    GitRename,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -154,6 +155,29 @@ class GitGateway(Protocol):
         ``RepositoryUnreachableError`` (including a timeout), ``RepositoryAuthRequiredError``,
         ``NotAGitRepositoryError``, ``CommitUnavailableError``, ``HostKeyChangedError`` or
         ``RepositoryTooLargeError``.
+        """
+        ...
+
+
+class RenameSource(Protocol):
+    """Ask git which files were moved between two commits, cheaply."""
+
+    async def renames(
+        self,
+        repository: RepositoryUrl,
+        old_sha: str,
+        new_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[GitRename]:
+        """Return the ``.md`` / ``.mdx`` files git sees as renamed from ``old_sha`` to ``new_sha``.
+
+        Only the two commits' trees are fetched (no history, no blobs); git then asks for the
+        few blobs that renames with edits need to be told apart. Everything is bounded: one
+        fetch slot, its own deadline, a size cap and git's rename limit. Raises what
+        ``GitGateway.fetch`` raises (callers treat any failure as "no renames known").
+        ``refs`` are tried only when the server refuses a request for a bare SHA.
         """
         ...
 

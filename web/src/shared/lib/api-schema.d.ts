@@ -201,6 +201,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/renamed-path": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Renamed Path
+         * @description Where git saw `path` go when `ref` was imported; 404 when it was not renamed.
+         */
+        readonly get: operations["catalog-get_renamed_path"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/search": {
         readonly parameters: {
             readonly query?: never;
@@ -1105,6 +1125,27 @@ export interface components {
              * @description The job that frees the content (`/jobs/{id}`); null if it was not queued.
              */
             readonly collection_job_id: string | null;
+        };
+        /**
+         * RenamedPath
+         * @description `old_path` of version `from_ref` is `new_path` in `ref`, as git saw it.
+         */
+        readonly RenamedPath: {
+            /** Library */
+            readonly library: string;
+            /** Ref */
+            readonly ref: string;
+            /** From Ref */
+            readonly from_ref: string;
+            /** Old Path */
+            readonly old_path: string;
+            /** New Path */
+            readonly new_path: string;
+            /**
+             * Similarity
+             * @description Percent of the content kept; 100 is a move unchanged.
+             */
+            readonly similarity: number;
         };
         /**
          * RepositoryHost
@@ -2728,6 +2769,87 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["Article"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-get_renamed_path": {
+        readonly parameters: {
+            readonly query: {
+                /** @description The article's path in the version imported before `ref`. */
+                readonly path: string;
+                readonly ref?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RenamedPath"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
