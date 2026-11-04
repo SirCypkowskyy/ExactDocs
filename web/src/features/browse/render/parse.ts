@@ -9,7 +9,7 @@ import MarkdownIt, { type Token } from "markdown-it";
 export const md = new MarkdownIt("commonmark").enable(["table", "strikethrough"]);
 
 /** Heading text without markup: ``The `x` *option*`` -> `The x option` (`_plain` in the chunker). */
-export function plainText(inline: Token): string {
+function plainText(inline: Token): string {
   let out = "";
   for (const child of inline.children ?? []) {
     if (child.type === "text" || child.type === "code_inline") out += child.content;
@@ -26,7 +26,7 @@ const DROP = /[^\p{L}\p{N}_\- ]/gu;
  * GitHub's slug (github-slugger), as `_anchor` in the chunker: lower-case, no punctuation, dashes
  * for spaces; a taken slug gets `-1`, `-2`... and every issued slug is remembered.
  */
-export function slug(text: string, used: Set<string>): string {
+function slug(text: string, used: Set<string>): string {
   const base = text.toLowerCase().replace(DROP, "").replaceAll(" ", "-");
   let anchor = base;
   for (let n = 1; used.has(anchor); n++) anchor = `${base}-${n}`;

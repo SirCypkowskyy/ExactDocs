@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, lazy, Suspense, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
-import { articleQueryOptions } from "../api/browse-queries";
+import { accessQueryOptions, articleQueryOptions } from "../api/browse-queries";
 import {
   type Article,
   commitUrl,
@@ -13,6 +13,10 @@ import {
   shortSha,
   type Version,
 } from "../model/browse";
+import { blobUrl, rawUrl } from "../render/urls";
+
+// The renderer (Markdown parser and all) is its own chunk: the tree and the overview do not wait for it.
+const Markdown = lazy(() => import("../render/markdown").then((m) => ({ default: m.Markdown })));
 
 interface ArticleViewProps {
   owner: string;
@@ -175,15 +179,108 @@ function NotInVersion({
   );
 }
 
-function Body({
+const toggle =
+  "inline-flex h-11 min-w-20 items-center justify-center rounded-[5px] px-3 text-sm font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 focus-visible:ring-ring lg:h-8";
+
+/** Rendered text or the file as stored: the source is always one click away. */
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: "rendered" | "source";
+  onChange: (view: "rendered" | "source") => void;
+}) {
+  return (
+    <fieldset className="m-0 inline-flex min-w-0 rounded-md border-0 bg-secondary p-0.5">
+      <legend className="sr-only">View</legend>
+      {(["rendered", "source"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={view === v}
+          onClick={() => onChange(v)}
+          className={`${toggle} cursor-pointer capitalize ${
+            view === v
+              ? "bg-card text-foreground ring-1 ring-border"
+              : "text-muted-foreground [@media(hover:hover)]:hover:text-foreground"
+          }`}
+        >
+          {v === "rendered" ? "Rendered" : "Source"}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
+/** Placeholder lines for the renderer's chunk; the article shell is already on screen. */
+function TextSkeleton() {
+  return (
+    <div aria-hidden="true" className="space-y-3 motion-safe:animate-pulse">
+      {["w-11/12", "w-full", "w-4/5", "w-2/3"].map((w) => (
+        <span key={w} className={`block h-4 rounded bg-muted-foreground/[0.14] ${w}`} />
+      ))}
+    </div>
+  );
+}
+
+function RenderedText({
   article,
+  owner,
+  repo,
   library,
   version,
+  tags,
 }: {
   article: Article;
+  owner: string;
+  repo: string;
   library: LibraryDetail;
   version: Version;
+  tags: string | undefined;
 }) {
+  const access = useQuery(accessQueryOptions(owner, repo));
+  // Until the library is known to be public, no image is requested from the host.
+  const isPublic = access.data?.private === false;
+  const doc = (path: string, hash: string) => ({
+    to: "/libraries/$owner/$repo" as const,
+    params: { owner, repo },
+    search: { version: version.ref, path, tags },
+    ...(hash.length > 1 ? { hash: hash.slice(1) } : {}),
+  });
+  return (
+    <Suspense fallback={<TextSkeleton />}>
+      <Markdown
+        source={article.content}
+        mdx={/\.mdx$/i.test(article.path)}
+        where={{
+          path: article.path,
+          title: article.title,
+          imageUrl: (p) =>
+            isPublic ? rawUrl(library.host, library.source_url, version.commit_sha, p) : undefined,
+          fileUrl: (p) => blobUrl(library.host, library.source_url, version.commit_sha, p),
+          docLink: (path, hash, children) => <Link {...doc(path, hash)}>{children}</Link>,
+        }}
+      />
+    </Suspense>
+  );
+}
+
+function Body({
+  article,
+  owner,
+  repo,
+  library,
+  version,
+  tags,
+}: {
+  article: Article;
+  owner: string;
+  repo: string;
+  library: LibraryDetail;
+  version: Version;
+  tags: string | undefined;
+}) {
+  const [view, setView] = useState<"rendered" | "source">("rendered");
   return (
     <article className="min-w-0 max-w-3xl">
       <p className="font-mono text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
@@ -206,16 +303,32 @@ function Body({
       <div className="mt-2">
         <CommitLinks library={library} version={version} fileUrl={article.source_url} />
       </div>
-      {/* Verbatim text, set as text: nothing from the repository is ever parsed as HTML (#51 renders it). */}
-      <section aria-label="Source text" className="mt-5">
-        <pre
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable text must be reachable by keyboard
-          tabIndex={0}
-          className="overflow-x-auto rounded-lg bg-secondary/60 p-4 font-mono text-[14px] leading-[1.7] break-words whitespace-pre-wrap outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-ring sm:p-6"
-        >
-          {article.content}
-        </pre>
-      </section>
+      <div className="mt-4">
+        <ViewToggle view={view} onChange={setView} />
+      </div>
+      {view === "rendered" ? (
+        <section aria-label="Article text" className="mt-6">
+          <RenderedText
+            article={article}
+            owner={owner}
+            repo={repo}
+            library={library}
+            version={version}
+            tags={tags}
+          />
+        </section>
+      ) : (
+        // The file as stored, set as text.
+        <section aria-label="Source text" className="mt-6">
+          <pre
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable text must be reachable by keyboard
+            tabIndex={0}
+            className="overflow-x-auto rounded-lg bg-secondary/60 p-4 font-mono text-[14px] leading-[1.7] break-words whitespace-pre-wrap outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-ring sm:p-6"
+          >
+            {article.content}
+          </pre>
+        </section>
+      )}
     </article>
   );
 }
@@ -259,5 +372,14 @@ export function ArticleView(props: ArticleViewProps) {
       </div>
     );
   }
-  return <Body article={query.data} library={library} version={version} />;
+  return (
+    <Body
+      article={query.data}
+      owner={owner}
+      repo={repo}
+      library={library}
+      version={version}
+      tags={props.tags}
+    />
+  );
 }

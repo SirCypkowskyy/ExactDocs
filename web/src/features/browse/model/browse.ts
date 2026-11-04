@@ -6,6 +6,7 @@ export type Version = components["schemas"]["VersionOut"];
 export type Article = components["schemas"]["Article"];
 export type ArticleSummary = components["schemas"]["ArticleSummary"];
 export type ArticleList = components["schemas"]["ArticleList"];
+export type LibraryAccess = components["schemas"]["LibraryAccess"];
 
 /** What the browse page keeps in the URL: refs and paths are never path segments. */
 export interface BrowseSearch {

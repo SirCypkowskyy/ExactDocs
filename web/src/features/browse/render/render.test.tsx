@@ -1,13 +1,13 @@
 import { render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { tokensOf } from "./code-block";
 import admonitions from "./fixtures/admonitions.md?raw";
 import rich from "./fixtures/rich.md?raw";
-import widget from "./fixtures/widget.mdx?raw";
+import widget from "./fixtures/widget.mdx.txt?raw";
 import xss from "./fixtures/xss.md?raw";
 import { grammarOf, highlight } from "./highlight";
 import { Markdown, type Where } from "./markdown";
+import { tokensOf } from "./tokens";
 import { classifyLink, rawUrl, repoPath } from "./urls";
 
 const SHA = "a".repeat(40);
@@ -16,7 +16,9 @@ const where = (over: Partial<Where> = {}): Where => ({
   title: "Payments quickstart",
   imageUrl: (p) => rawUrl("github", "https://github.com/acme/payments", SHA, p),
   fileUrl: () => undefined,
-  docHref: (p, h) => `/libraries/acme/payments?path=${encodeURIComponent(p)}${h}`,
+  docLink: (p, h, children) => (
+    <a href={`/libraries/acme/payments?path=${encodeURIComponent(p)}${h}`}>{children}</a>
+  ),
   ...over,
 });
 // Static markup: the code blocks are plain here, their colours arrive after a lazy grammar.
@@ -211,17 +213,13 @@ describe("links and images", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toBe("A diagram");
   });
-  it("opens another article without a page load", () => {
-    const opened: string[] = [];
+  it("links another article through the app's own link", () => {
     const { container } = render(
-      <Markdown
-        source="[x](./auth.md#keys)"
-        mdx={false}
-        where={where({ openDoc: (p, h) => opened.push(p + h) })}
-      />,
+      <Markdown source="[x](./auth.md#keys)" mdx={false} where={where()} />,
     );
-    container.querySelector("a")?.click();
-    expect(opened).toEqual(["docs/guide/auth.md#keys"]);
+    expect(container.querySelector("a")?.getAttribute("href")).toBe(
+      "/libraries/acme/payments?path=docs%2Fguide%2Fauth.md#keys",
+    );
   });
 });
 

@@ -458,4 +458,6 @@
 .doc-callout-body > :last-child {
   margin-bottom: 0;
 }
-.doc > .doc-h[hidden] + * { margin-top: 0; }
+.doc > .doc-h[hidden] + * {
+  margin-top: 0;
+}

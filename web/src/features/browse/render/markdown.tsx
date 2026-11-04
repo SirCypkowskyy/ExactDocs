@@ -16,16 +16,17 @@ export interface Where {
   imageUrl: (repoPath: string) => string | undefined;
   /** The page of a file that is not an article, at the commit. */
   fileUrl: (repoPath: string) => string | undefined;
-  /** The in-app address of another article of this version. */
-  docHref: (repoPath: string, hash: string) => string;
-  /** Open another article without a page load; without it the link is an ordinary one. */
-  openDoc?: ((repoPath: string, hash: string) => void) | undefined;
+  /** A link to another article of this version: the app's own `Link`, so it navigates without a page load. */
+  docLink: (repoPath: string, hash: string, children: ReactNode) => ReactNode;
 }
 
 interface Node {
+  key: number;
   token: Token;
   children: Node[];
 }
+
+let keys = 0;
 
 function tree(tokens: readonly Token[]): Node[] {
   const root: Node[] = [];
@@ -35,7 +36,7 @@ function tree(tokens: readonly Token[]): Node[] {
       stack.pop();
       continue;
     }
-    const node: Node = { token, children: token.children ? tree(token.children) : [] };
+    const node: Node = { key: keys++, token, children: token.children ? tree(token.children) : [] };
     (stack.at(-1) ?? root).push(node);
     if (token.nesting === 1) stack.push(node.children);
   }
@@ -89,10 +90,7 @@ interface Ctx {
 }
 
 function many(nodes: readonly Node[], ctx: Ctx): ReactNode[] {
-  return nodes.map((node, i) => (
-    // biome-ignore lint/suspicious/noArrayIndexKey: a parsed document never reorders
-    <Fragment key={`${node.token.type}-${i}`}>{one(node, ctx)}</Fragment>
-  ));
+  return nodes.map((node) => <Fragment key={node.key}>{one(node, ctx)}</Fragment>);
 }
 
 function link(node: Node, ctx: Ctx) {
@@ -109,18 +107,7 @@ function link(node: Node, ctx: Ctx) {
         </a>
       );
     case "doc":
-      return (
-        <a
-          href={where.docHref(target.path, target.hash)}
-          onClick={(e) => {
-            if (!where.openDoc || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
-            e.preventDefault();
-            where.openDoc(target.path, target.hash);
-          }}
-        >
-          {kids}
-        </a>
-      );
+      return where.docLink(target.path, target.hash, kids);
     case "file": {
       const url = where.fileUrl(target.path);
       return url ? (
