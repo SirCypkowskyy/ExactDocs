@@ -304,6 +304,46 @@ async def test_a_limit_and_an_unknown_manifest(world: World) -> None:
     assert await world.find("nope", "retried") == []
 
 
+async def test_one_search_over_several_manifests_names_the_manifest_of_each_hit(
+    world: World,
+) -> None:
+    await world.index("m13", "v1.3.0", V13)
+    await world.index("m14", "v1.4.0", V14)
+    await world.index("other", "v2", {"x.md": ("blob-x", [section("X", "retried retried")])})
+
+    found = await world.search.search_many(["m13", "m14"], "retried", TagFilter(), 10)
+
+    assert {f.manifest_id for f in found} == {"m13", "m14"}  # "other" was not asked for
+    assert [f.hit.score for f in found] == sorted((f.hit.score for f in found), reverse=True)
+    assert await world.search.search_many([], "retried", TagFilter(), 10) == []
+    assert len(await world.search.search_many(["m13", "m14"], "retried", TagFilter(), 1)) == 1
+
+
+async def test_a_chunk_set_shared_by_two_manifests_is_a_hit_for_each_with_one_score(
+    world: World,
+) -> None:
+    await world.index("a", "v1", V13)
+    await world.index("b", "v1", V13)
+
+    found = await world.search.search_many(["a", "b"], "retried", TagFilter(), 10)
+
+    assert sorted(f.manifest_id for f in found) == ["a", "b"]
+    assert found[0].hit.score == found[1].hit.score  # one set of statistics, not one per manifest
+
+
+async def test_counts_per_manifest_are_not_capped_and_leave_out_zeros(world: World) -> None:
+    many = {f"g/{i}.md": (f"blob-{i}", [section(f"Retry {i}", "retry")]) for i in range(12)}
+    await world.index("big", "v1", many, tagged={"g/0.md": ["x"]})
+    await world.index("m13", "v1.3.0", V13)
+
+    ask = ["big", "m13", "nope"]
+    assert await world.search.count_many(ask, "retry", TagFilter()) == {"big": 12}
+    assert await world.search.count_many(ask, "retried", TagFilter()) == {"m13": 1}
+    assert await world.search.count_many(ask, "retry", TagFilter(tags=("x",))) == {"big": 1}
+    assert await world.search.count_many([], "retry", TagFilter()) == {}
+    assert await world.search.count_many(ask, "()*", TagFilter()) == {}
+
+
 async def test_collecting_a_manifest_takes_its_index_entries_with_it(world: World) -> None:
     await world.index("m13", "v1.3.0", V13)
     await world.index("m14", "v1.4.0", V14)
