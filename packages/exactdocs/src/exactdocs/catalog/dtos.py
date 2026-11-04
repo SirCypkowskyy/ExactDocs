@@ -100,6 +100,9 @@ class LibrarySummary(_Dto):
     description: str
     versions: list[str]
     default_version: str | None
+    last_imported_at: datetime | None = Field(
+        description="When the newest version was imported; null while none is."
+    )
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -111,6 +114,7 @@ class LibrarySummary(_Dto):
             description=library.description,
             versions=sorted(str(v.ref) for v in library.versions),
             default_version=str(default.ref) if default else None,
+            last_imported_at=max((v.imported_at for v in library.versions), default=None),
         )
 
 

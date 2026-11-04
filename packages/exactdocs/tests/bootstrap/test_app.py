@@ -67,6 +67,14 @@ async def test_lists_demo_libraries(client: httpx.AsyncClient) -> None:
     }
 
 
+async def test_a_listed_library_says_when_it_was_last_imported(client: httpx.AsyncClient) -> None:
+    listed = (await client.get("/api/v1/libraries")).json()["libraries"]
+    detail = (await client.get("/api/v1/libraries/acme/payments")).json()
+
+    payments = next(lib for lib in listed if lib["id"] == "/acme/payments")
+    assert payments["last_imported_at"] == max(v["imported_at"] for v in detail["versions"])
+
+
 async def test_a_library_is_shown_with_its_default_version(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/libraries/Acme/Payments")
 

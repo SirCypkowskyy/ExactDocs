@@ -640,6 +640,11 @@ export interface components {
             readonly versions: readonly string[];
             /** Default Version */
             readonly default_version: string | null;
+            /**
+             * Last Imported At
+             * @description When the newest version was imported; null while none is.
+             */
+            readonly last_imported_at: string | null;
         };
         /**
          * RefOut

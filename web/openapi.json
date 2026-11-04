@@ -2822,6 +2822,19 @@
               }
             ],
             "title": "Default Version"
+          },
+          "last_imported_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Imported At",
+            "description": "When the newest version was imported; null while none is."
           }
         },
         "additionalProperties": false,
@@ -2831,7 +2844,8 @@
           "title",
           "description",
           "versions",
-          "default_version"
+          "default_version",
+          "last_imported_at"
         ],
         "title": "LibrarySummary",
         "description": "A library and its version refs, sorted."
