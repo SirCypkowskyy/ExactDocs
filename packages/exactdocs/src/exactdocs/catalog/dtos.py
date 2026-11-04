@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field
+
 from exactdocs.catalog.models import HostKind, Library, LibrarySettings, RefKind, Version
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
 

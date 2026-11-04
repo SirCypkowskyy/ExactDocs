@@ -108,6 +108,7 @@ async def test_libraries_are_listed_page_by_page_with_an_opaque_cursor(
     assert [lib.id for lib in second.libraries] == ["/acme/payments"]
     assert second.next_cursor is None
 
+
 async def test_an_id_without_a_ref_resolves_to_the_default_version_and_says_so(
     catalog: CatalogModule,
 ) -> None:

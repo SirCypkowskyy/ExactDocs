@@ -38,6 +38,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/versions/{ref}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Version */
+        readonly get: operations["catalog-get_version"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/search": {
         readonly parameters: {
             readonly query?: never;
@@ -59,6 +76,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ChunkingOut
+         * @description How articles are cut into chunks.
+         */
+        readonly ChunkingOut: {
+            /** Split Level */
+            readonly split_level: number;
+            /** Min Chars */
+            readonly min_chars: number;
+            /** Max Chars */
+            readonly max_chars: number | null;
+        };
         /**
          * ErrorResponse
          * @description The one error shape of the API: a stable machine ``error`` code and a human ``detail``.
@@ -103,8 +132,36 @@ export interface components {
             readonly type: string;
         };
         /**
+         * HostKind
+         * @description Where the repository is hosted; `git` is any other HTTPS/SSH git server.
+         * @enum {string}
+         */
+        readonly HostKind: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
+        /**
+         * LibraryDetail
+         * @description Everything known about one library.
+         */
+        readonly LibraryDetail: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Description */
+            readonly description: string;
+            /** Source Url */
+            readonly source_url: string;
+            readonly host: components["schemas"]["HostKind"];
+            /** Default Branch */
+            readonly default_branch: string | null;
+            readonly settings: components["schemas"]["LibrarySettingsOut"];
+            /** Versions */
+            readonly versions: readonly components["schemas"]["VersionOut"][];
+            /** Default Version */
+            readonly default_version: string | null;
+        };
+        /**
          * LibraryList
-         * @description A page of the libraries visible to the caller, sorted by name.
+         * @description A page of the libraries visible to the caller, sorted by ID.
          */
         readonly LibraryList: {
             /** Libraries */
@@ -116,14 +173,62 @@ export interface components {
             readonly next_cursor: string | null;
         };
         /**
+         * LibrarySettingsOut
+         * @description A library's import settings.
+         */
+        readonly LibrarySettingsOut: {
+            /** Include Paths */
+            readonly include_paths: readonly string[];
+            /** Exclude Paths */
+            readonly exclude_paths: readonly string[];
+            /** Tag Rules */
+            readonly tag_rules: readonly components["schemas"]["TagRuleOut"][];
+            readonly chunking: components["schemas"]["ChunkingOut"];
+        };
+        /**
          * LibrarySummary
-         * @description A library and its indexed versions, sorted ascending.
+         * @description A library and its version refs, sorted.
          */
         readonly LibrarySummary: {
-            /** Name */
-            readonly name: string;
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Description */
+            readonly description: string;
             /** Versions */
             readonly versions: readonly string[];
+            /** Default Version */
+            readonly default_version: string | null;
+        };
+        /**
+         * RefKind
+         * @description What a version was imported from.
+         * @enum {string}
+         */
+        readonly RefKind: "tag" | "branch" | "commit";
+        /**
+         * ResolvedVersion
+         * @description The version an ID resolved to; always states which one was used.
+         */
+        readonly ResolvedVersion: {
+            /** Ref */
+            readonly ref: string;
+            readonly kind: components["schemas"]["RefKind"];
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            readonly imported_at: string;
+            /**
+             * Is Default
+             * @description True for the version `/owner/repo` resolves to.
+             */
+            readonly is_default: boolean;
+            /** Library */
+            readonly library: string;
         };
         /**
          * SearchDocsResult
@@ -132,6 +237,37 @@ export interface components {
         readonly SearchDocsResult: {
             /** Excerpts */
             readonly excerpts: readonly components["schemas"]["ExcerptOut"][];
+        };
+        /**
+         * TagRuleOut
+         * @description Articles whose path matches `pattern` get `tag`.
+         */
+        readonly TagRuleOut: {
+            /** Pattern */
+            readonly pattern: string;
+            /** Tag */
+            readonly tag: string;
+        };
+        /**
+         * VersionOut
+         * @description One imported version: the ref, what kind of ref it is, and the commit it stands for.
+         */
+        readonly VersionOut: {
+            /** Ref */
+            readonly ref: string;
+            readonly kind: components["schemas"]["RefKind"];
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            readonly imported_at: string;
+            /**
+             * Is Default
+             * @description True for the version `/owner/repo` resolves to.
+             */
+            readonly is_default: boolean;
         };
     };
     responses: never;
@@ -219,7 +355,67 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["LibrarySummary"];
+                    readonly "application/json": components["schemas"]["LibraryDetail"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-get_version": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResolvedVersion"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

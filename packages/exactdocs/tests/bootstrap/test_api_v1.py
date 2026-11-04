@@ -111,8 +111,8 @@ async def test_list_endpoints_paginate_with_limit_and_opaque_cursor(
         await client.get("/api/v1/libraries", params={"limit": 1, "cursor": first["next_cursor"]})
     ).json()
 
-    assert [lib["name"] for lib in first["libraries"]] == ["/fastapi/fastapi"]
-    assert [lib["name"] for lib in second["libraries"]] == ["/reactjs/react.dev"]
+    assert [lib["id"] for lib in first["libraries"]] == ["/acme/ledger"]
+    assert [lib["id"] for lib in second["libraries"]] == ["/acme/payments"]
     assert second["next_cursor"] is None
 
 

@@ -129,7 +129,97 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LibrarySummary"
+                  "$ref": "#/components/schemas/LibraryDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/versions/{ref}": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Get Version",
+        "operationId": "catalog-get_version",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolvedVersion"
                 }
               }
             }
@@ -285,6 +375,38 @@
   },
   "components": {
     "schemas": {
+      "ChunkingOut": {
+        "properties": {
+          "split_level": {
+            "type": "integer",
+            "title": "Split Level"
+          },
+          "min_chars": {
+            "type": "integer",
+            "title": "Min Chars"
+          },
+          "max_chars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chars"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "split_level",
+          "min_chars",
+          "max_chars"
+        ],
+        "title": "ChunkingOut",
+        "description": "How articles are cut into chunks."
+      },
       "ErrorResponse": {
         "properties": {
           "error": {
@@ -389,6 +511,88 @@
         "title": "FieldError",
         "description": "One invalid request field."
       },
+      "HostKind": {
+        "type": "string",
+        "enum": [
+          "github",
+          "gitlab",
+          "bitbucket",
+          "gitea",
+          "git"
+        ],
+        "title": "HostKind",
+        "description": "Where the repository is hosted; `git` is any other HTTPS/SSH git server."
+      },
+      "LibraryDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "host": {
+            "$ref": "#/components/schemas/HostKind"
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/LibrarySettingsOut"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionOut"
+            },
+            "type": "array",
+            "title": "Versions"
+          },
+          "default_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "description",
+          "source_url",
+          "host",
+          "default_branch",
+          "settings",
+          "versions",
+          "default_version"
+        ],
+        "title": "LibraryDetail",
+        "description": "Everything known about one library."
+      },
       "LibraryList": {
         "properties": {
           "libraries": {
@@ -418,13 +622,59 @@
           "next_cursor"
         ],
         "title": "LibraryList",
-        "description": "A page of the libraries visible to the caller, sorted by name."
+        "description": "A page of the libraries visible to the caller, sorted by ID."
+      },
+      "LibrarySettingsOut": {
+        "properties": {
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths"
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths"
+          },
+          "tag_rules": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleOut"
+            },
+            "type": "array",
+            "title": "Tag Rules"
+          },
+          "chunking": {
+            "$ref": "#/components/schemas/ChunkingOut"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "include_paths",
+          "exclude_paths",
+          "tag_rules",
+          "chunking"
+        ],
+        "title": "LibrarySettingsOut",
+        "description": "A library's import settings."
       },
       "LibrarySummary": {
         "properties": {
-          "name": {
+          "id": {
             "type": "string",
-            "title": "Name"
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
           },
           "versions": {
             "items": {
@@ -432,16 +682,81 @@
             },
             "type": "array",
             "title": "Versions"
+          },
+          "default_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Version"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "name",
-          "versions"
+          "id",
+          "title",
+          "description",
+          "versions",
+          "default_version"
         ],
         "title": "LibrarySummary",
-        "description": "A library and its indexed versions, sorted ascending."
+        "description": "A library and its version refs, sorted."
+      },
+      "RefKind": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "branch",
+          "commit"
+        ],
+        "title": "RefKind",
+        "description": "What a version was imported from."
+      },
+      "ResolvedVersion": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RefKind"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "imported_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Imported At"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "description": "True for the version `/owner/repo` resolves to."
+          },
+          "library": {
+            "type": "string",
+            "title": "Library"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref",
+          "kind",
+          "commit_sha",
+          "imported_at",
+          "is_default",
+          "library"
+        ],
+        "title": "ResolvedVersion",
+        "description": "The version an ID resolved to; always states which one was used."
       },
       "SearchDocsResult": {
         "properties": {
@@ -460,6 +775,62 @@
         ],
         "title": "SearchDocsResult",
         "description": "Excerpts ordered from most to least relevant."
+      },
+      "TagRuleOut": {
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "title": "Pattern"
+          },
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pattern",
+          "tag"
+        ],
+        "title": "TagRuleOut",
+        "description": "Articles whose path matches `pattern` get `tag`."
+      },
+      "VersionOut": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RefKind"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "imported_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Imported At"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "description": "True for the version `/owner/repo` resolves to."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref",
+          "kind",
+          "commit_sha",
+          "imported_at",
+          "is_default"
+        ],
+        "title": "VersionOut",
+        "description": "One imported version: the ref, what kind of ref it is, and the commit it stands for."
       }
     }
   }
