@@ -195,25 +195,9 @@ jobs:
           build-args: VERSION=${{ needs.meta.outputs.version }}
           cache-from: type=gha,scope=exactdocs
       - name: Trivy scan
-        # Pinned by commit: a mutable tag of a security tool is a supply-chain risk.
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: ./.github/actions/trivy-gate
         with:
-          image-ref: exactdocs:scan
-          version: v0.70.0
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-          trivyignores: .trivyignore
-          format: table
-          output: trivy-report.txt
-      - name: Show the scan report
-        if: ${{ !cancelled() }}
-        run: cat trivy-report.txt
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: trivy-report
-          path: trivy-report.txt
+          image: exactdocs:scan
           retention-days: 30
       - id: build
         uses: docker/build-push-action@v7
