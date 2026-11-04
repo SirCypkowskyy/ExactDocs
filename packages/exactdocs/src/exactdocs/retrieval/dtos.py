@@ -1,56 +1,155 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
-from collections.abc import Iterable
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
-from exactdocs.retrieval.models import Excerpt, Removed, StoredChunk
+from exactdocs.retrieval.models import (
+    Removed,
+    RetrievalMode,
+    SearchableVersion,
+    SearchHit,
+    StoredChunk,
+    TagMatch,
+    source_link,
+)
 
 
 class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class SearchDocsQuery(_Dto):
-    """Search within exactly one library version."""
+MAX_QUERY = 1000
+MAX_TAGS = 20
+MAX_TAG = 100
+MAX_NAME = 256  # library and ref
 
-    library: str = Field(min_length=1)
-    version: str = Field(min_length=1)
-    query: str = Field(min_length=1)
+Tag = Annotated[str, StringConstraints(max_length=MAX_TAG)]
+
+
+class SearchDocsQuery(_Dto):
+    """Search within exactly one library version; no ``ref`` means the default version."""
+
+    library: str = Field(
+        pattern=r"^/[^/]+/[^/]+$",
+        max_length=MAX_NAME,
+        description="`/owner/repo`, any letter case; the version goes in `ref`.",
+    )
+    ref: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Exact imported ref; default version if empty.",
+    )
+    query: str = Field(min_length=1, max_length=MAX_QUERY)
+    tags: list[Tag] = Field(
+        default_factory=list,
+        max_length=MAX_TAGS,
+        description="Only chunks of articles so tagged. Case-insensitive; a comma separates tags.",
+    )
+    tags_match: TagMatch = Field(
+        default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
+    )
     limit: int = Field(default=5, ge=1, le=50)
 
-
-class ExcerptOut(_Dto):
-    """One verbatim excerpt with its provenance."""
-
-    text: str
-    source_url: str
-    library: str
-    version: str
-    commit_sha: str | None
-
+    @field_validator("ref", mode="before")
     @classmethod
-    def from_model(cls, excerpt: Excerpt) -> Self:
-        """Map a domain value object to its boundary representation."""
-        return cls(
-            text=excerpt.text,
-            source_url=excerpt.source_url,
-            library=excerpt.target.library,
-            version=excerpt.target.version,
-            commit_sha=excerpt.commit_sha,
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _normalize_tags(cls, value: object) -> object:
+        """Split on commas, strip, lowercase (as ingestion stores them), drop blanks and repeats."""
+        if not isinstance(value, list | tuple):
+            return value
+        if not all(isinstance(v, str) for v in value):
+            return value
+        return list(
+            dict.fromkeys(t for v in value for p in v.split(",") if (t := p.strip().lower()))
         )
 
 
-class SearchDocsResult(_Dto):
-    """Excerpts ordered from most to least relevant."""
+class Span(_Dto):
+    """A `[start, end)` range of characters."""
 
-    excerpts: list[ExcerptOut]
+    start: int
+    end: int
+
+
+class SearchResultOut(_Dto):
+    """One verbatim result with where it lives and how to read around it."""
+
+    chunk_id: str
+    article_path: str
+    heading_path: list[str]
+    anchor: str
+    position: int = Field(description="0-based index of the chunk in its article.")
+    total: int = Field(description="Number of chunks of the article.")
+    prev_chunk_id: str | None
+    next_chunk_id: str | None
+    commit_sha: str
+    source_url: str | None = Field(
+        description="Link to the section at the commit; null when the host is unknown."
+    )
+    tags: list[str]
+    score: float = Field(description="Higher is better; only comparable within one search.")
+    snippet: str = Field(description="Verbatim text of the chunk, possibly cut at either end.")
+    highlights: list[Span] = Field(description="Offsets into `snippet` of the words that matched.")
 
     @classmethod
-    def from_models(cls, excerpts: Iterable[Excerpt]) -> Self:
-        """Map domain value objects, keeping their order."""
-        return cls(excerpts=[ExcerptOut.from_model(e) for e in excerpts])
+    def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
+        """Combine a hit with its chunk row and the version it was found in."""
+        row, chunk = stored.row, stored.chunk
+        return cls(
+            chunk_id=row.chunk_id,
+            article_path=row.article_path,
+            heading_path=list(chunk.heading_path),
+            anchor=chunk.anchor,
+            position=row.position,
+            total=row.total,
+            prev_chunk_id=row.prev_chunk_id,
+            next_chunk_id=row.next_chunk_id,
+            commit_sha=version.commit_sha,
+            source_url=source_link(version, row.article_path, chunk.anchor),
+            tags=list(row.tags),
+            score=hit.score,
+            snippet=hit.snippet,
+            highlights=[Span(start=a, end=b) for a, b in hit.highlights],
+        )
+
+
+class CoverageOut(_Dto):
+    """How much of the index the answer stands on."""
+
+    candidates: int = Field(
+        description="Lower bound: matching chunks the search looked at, at most `limit` + 1."
+    )
+    # Constant (0) while BM25 is the only mode; the shape is mode-agnostic on purpose.
+    reranked: int = Field(description="Of those, how many a reranker reordered.")
+    complete: bool = Field(description="False when more matches exist than `limit` allowed.")
+
+
+class SearchDocsResult(_Dto):
+    """Results of one search, best first, with the version and the way they were found."""
+
+    library: str
+    version: str
+    commit_sha: str
+    retrieval_mode: RetrievalMode
+    reranked: bool
+    coverage: CoverageOut
+    # Always null until a mode that can fall back exists.
+    fallback_reason: str | None = Field(
+        default=None, description="Why a better mode was not used, when one was asked for."
+    )
+    results: list[SearchResultOut]
 
 
 class ChunkIn(_Dto):

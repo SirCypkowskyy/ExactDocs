@@ -146,12 +146,6 @@ def step_get_version(context: Context, target: str) -> None:
     context.response = context.client.get(f"/api/v1/libraries/{owner}/{repo}/versions/{ref}")
 
 
-@when('I search "{library}" version "{version}" for "{query}"')
-def step_search(context: Context, library: str, version: str, query: str) -> None:
-    params = {"library": library, "version": version, "query": query}
-    context.response = context.client.get("/api/v1/search", params=params)
-
-
 @then("the response status is {status:d}")
 def step_status(context: Context, status: int) -> None:
     assert context.response.status_code == status, context.response.text
@@ -185,11 +179,6 @@ def step_default_version(context: Context, library_id: str, ref: str) -> None:
 def step_version_used(context: Context, ref: str, library_id: str) -> None:
     body = context.response.json()
     assert (body["library"], body["ref"]) == (library_id, ref), body
-
-
-@then("I get {count:d} excerpts")
-def step_excerpts(context: Context, count: int) -> None:
-    assert len(context.response.json()["excerpts"]) == count
 
 
 @when("I fetch the OpenAPI description")

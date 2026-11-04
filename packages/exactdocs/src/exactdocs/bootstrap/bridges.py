@@ -26,8 +26,8 @@ from exactdocs.catalog.ports.driving import (
     ResolveVersion,
 )
 from exactdocs.ingestion.models import NewLibrary, ProposedId
-from exactdocs.retrieval.models import DocTarget, ManifestStatus
-from exactdocs_kernel import NotFoundError
+from exactdocs.retrieval.models import DocTarget, ManifestStatus, SearchableVersion, SourceHost
+from exactdocs_kernel import NotFoundError, ValidationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +47,40 @@ class CatalogIndexedVersions:
         if resolved.ref != target.version:
             return None
         return DocTarget(library=resolved.library, version=resolved.ref)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSearchableVersions:
+    """Implements ``retrieval.ports.driven.SearchableVersions`` using the catalog."""
+
+    get_library: GetLibrary
+    get_active_manifest: GetActiveManifest
+
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
+        """Resolve the exact ref (the default version without one) and name its active manifest.
+
+        The manifest answer carries the commit, so the ref, the manifest and the commit come
+        from one catalog call and cannot disagree.
+        """
+        try:
+            active = await self.get_active_manifest(
+                GetActiveManifestQuery(library=library, ref=ref)
+            )
+            if ref is not None and active.ref != ref:  # a short SHA does not count
+                return None
+            detail = await self.get_library(GetLibraryQuery(id=active.library))
+        except NotFoundError, ValidationError:  # e.g. a ref git would not accept
+            return None
+        if active.manifest_id is None:
+            return None
+        return SearchableVersion(
+            library=active.library,
+            version=active.ref,
+            manifest_id=active.manifest_id,
+            commit_sha=active.commit_sha,
+            repository_url=detail.source_url,
+            host=SourceHost(detail.host.value),
+        )
 
 
 @dataclass(frozen=True, slots=True)

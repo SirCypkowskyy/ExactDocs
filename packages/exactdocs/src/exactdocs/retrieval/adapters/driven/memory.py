@@ -1,47 +1,23 @@
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Self
 
 from exactdocs.retrieval.errors import ChunkSetMismatchError
 from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
     ChunkSetKey,
-    DocTarget,
-    Excerpt,
     IndexedManifest,
     ManifestChunk,
     Removed,
     SearchHit,
-    SearchText,
     StoredChunk,
+    TagFilter,
     highlights,
     identifier_tokens,
     search_terms,
 )
-
-
-@dataclass(slots=True)
-class InMemoryExcerptIndex:
-    """Implements ``ports.driven.ExcerptIndex`` with case-insensitive substring matching.
-
-    Placeholder until the SQLite (FTS5 + sqlite-vec) and pgvector adapters land.
-    """
-
-    excerpts: list[Excerpt] = field(default_factory=list)
-
-    @classmethod
-    def of(cls, excerpts: Iterable[Excerpt]) -> Self:
-        """Create an index pre-filled with ``excerpts``."""
-        return cls(list(excerpts))
-
-    async def search(self, target: DocTarget, text: SearchText, limit: int) -> Sequence[Excerpt]:
-        """Return excerpts of ``target`` that contain ``text``."""
-        needle = text.value.casefold()
-        hits = (e for e in self.excerpts if e.target == target and needle in e.text.casefold())
-        return [hit for _, hit in zip(range(limit), hits, strict=False)]
 
 
 @dataclass(slots=True)
@@ -78,6 +54,13 @@ class InMemoryChunkRepository:
         chunk = self.chunk_sets[row.chunk_set].chunks[row.position]
         version_id = self.manifests[manifest_id].version_id
         return StoredChunk(manifest_id=manifest_id, version_id=version_id, row=row, chunk=chunk)
+
+    async def get_many(
+        self, manifest_id: str, chunk_ids: Sequence[ChunkId]
+    ) -> Mapping[ChunkId, StoredChunk]:
+        """Return the chunks of the manifest that exist, by ID; missing IDs are left out."""
+        found = {i: await self.get(manifest_id, i) for i in chunk_ids}
+        return {i: c for i, c in found.items() if c is not None}
 
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
@@ -120,7 +103,7 @@ class InMemorySearchIndex:
         self.indexed.add(chunk_set.key)
 
     async def search(
-        self, manifest_id: str, query: str, tag_filter: Collection[str], limit: int
+        self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[SearchHit]:
         """Return this manifest's best matches, ties broken by chunk ID."""
         terms = search_terms(query)
@@ -128,7 +111,7 @@ class InMemorySearchIndex:
         for row in self.chunks.rows.get(manifest_id, {}).values():
             if row.chunk_set not in self.indexed or row.chunk_set not in self.chunks.chunk_sets:
                 continue
-            if tag_filter and not set(tag_filter) & set(row.tags):
+            if not tag_filter.keeps(row.tags):
                 continue
             chunk = self.chunks.chunk_sets[row.chunk_set].chunks[row.position]
             heading = Counter(identifier_tokens(" ".join(chunk.heading_path)).split())

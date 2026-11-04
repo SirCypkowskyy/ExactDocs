@@ -335,5 +335,6 @@ class GetActiveManifestUseCase:
         return ActiveManifest(
             library=str(library.id),
             ref=str(version.ref),
+            commit_sha=version.commit_sha if manifest is None else manifest.commit_sha,
             manifest_id=None if manifest is None else manifest.id,
         )

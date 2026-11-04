@@ -11,7 +11,6 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
-    InMemoryExcerptIndex,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
@@ -32,7 +31,7 @@ from exactdocs.retrieval.errors import (
     DuplicateChunkError,
     VersionNotIndexedError,
 )
-from exactdocs.retrieval.models import DocTarget, ManifestStatus
+from exactdocs.retrieval.models import ChunkId, DocTarget, ManifestStatus, SearchableVersion
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
 from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE
@@ -52,6 +51,10 @@ class FakeCatalog:
 
     async def find_indexed(self, target: DocTarget) -> DocTarget | None:
         return DocTarget(library=target.library.lower(), version=target.version)
+
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
+        del library, ref
+        return None
 
     async def active_id(self, target: DocTarget) -> str | None:
         return next(
@@ -84,6 +87,7 @@ class World:
     catalog: FakeCatalog
     clock: FakeClock
     count_chunk_sets: Callable[[], Awaitable[int]]
+    chunks: ChunkRepository
 
     async def index(
         self,
@@ -139,7 +143,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
             versions=catalog,
-            index=InMemoryExcerptIndex(),
+            searchable=catalog,
             manifests=catalog,
             chunks=chunks,
             search=search,
@@ -152,7 +156,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
         async def count() -> int:
             return len(memory.chunk_sets)
 
-        yield World(build(memory, InMemorySearchIndex(memory)), catalog, clock, count)
+        yield World(build(memory, InMemorySearchIndex(memory)), catalog, clock, count, memory)
         return
     container = Container.build(Settings())
     async with container.running():
@@ -165,7 +169,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
         sqlite = SqliteChunkRepository(container.engine)
         search = SqliteSearchIndex(container.engine)
-        yield World(build(sqlite, search), catalog, clock, count_rows)
+        yield World(build(sqlite, search), catalog, clock, count_rows, sqlite)
 
 
 async def test_an_article_that_did_not_change_keeps_its_chunk_ids_when_the_branch_moves(
@@ -224,6 +228,20 @@ async def test_a_chunk_is_read_from_the_active_manifest_only(world: World) -> No
     assert chunk.content == "text of two one"
     with pytest.raises(ChunkNotFoundError):  # the superseded manifest's IDs are stale now
         await world.read("main", old.chunk_ids["a.md"][0])
+
+
+async def test_many_chunks_come_back_by_id_and_unknown_ones_are_left_out(world: World) -> None:
+    done = await world.index("m1", "main", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+    other = await world.index("m2", "v2", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+    first, second = map(ChunkId, done.chunk_ids["a.md"])
+    foreign = ChunkId(other.chunk_ids["a.md"][0])
+
+    found = await world.chunks.get_many("m1", [second, first, ChunkId("nope"), foreign])
+
+    assert set(found) == {first, second}  # not "nope", not another manifest's chunk
+    assert found[first].chunk.content == "text of one one"
+    assert found[second].row.prev_chunk_id == first
+    assert await world.chunks.get_many("m1", []) == {}
 
 
 async def test_a_chunk_knows_its_place_tags_and_neighbours(world: World) -> None:

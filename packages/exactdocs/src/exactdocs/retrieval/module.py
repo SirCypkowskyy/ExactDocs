@@ -4,8 +4,8 @@ from typing import Self
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
-    ExcerptIndex,
     IndexedVersions,
+    SearchableVersions,
     SearchIndex,
 )
 from exactdocs.retrieval.ports.driving import (
@@ -40,7 +40,7 @@ class RetrievalModule:
         cls,
         *,
         versions: IndexedVersions,
-        index: ExcerptIndex,
+        searchable: SearchableVersions,
         manifests: ActiveManifests,
         chunks: ChunkRepository,
         search: SearchIndex,
@@ -49,7 +49,7 @@ class RetrievalModule:
         """Assemble the use cases around the given driven adapters."""
         clock = clock or SystemClock()
         return cls(
-            search_docs=SearchDocsUseCase(versions, index),
+            search_docs=SearchDocsUseCase(searchable, search, chunks),
             index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk=GetChunkUseCase(versions, manifests, chunks),
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),

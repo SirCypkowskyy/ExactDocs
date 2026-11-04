@@ -6,6 +6,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogIndexedVersions,
     CatalogLibraryIds,
+    CatalogSearchableVersions,
 )
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryLibraryRepository,
@@ -28,7 +29,7 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.module import CatalogModule
 from exactdocs.ingestion.models import ProposedId
-from exactdocs.retrieval.models import DocTarget, ManifestStatus
+from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
 
 PAYMENTS = Library(
     id=LibraryId("/acme/payments"),
@@ -146,3 +147,27 @@ async def test_a_state_the_catalog_adds_later_maps_to_other_so_it_is_kept() -> N
         "m1": ManifestStatus.OTHER,
         "m2": ManifestStatus.ACTIVE,
     }
+
+
+SEARCHABLE = CatalogSearchableVersions(CATALOG.get_library, CATALOG.get_active_manifest)
+
+
+async def test_a_searchable_version_needs_an_active_manifest_and_names_its_source() -> None:
+    assert await SEARCHABLE.find("/acme/payments", "abc1234") is None  # no active manifest
+
+    manifest_id = await _store("c")
+    await CATALOG.activate_manifest(ActivateManifestCommand(manifest_id=manifest_id))
+
+    found = await SEARCHABLE.find("/Acme/Payments", "v1.4.0")
+    assert found is not None
+    assert (found.library, found.version, found.manifest_id) == (
+        "/acme/payments",
+        "v1.4.0",
+        manifest_id,
+    )
+    assert (found.commit_sha, found.host) == ("c" * 40, SourceHost.GITHUB)
+    assert found.repository_url == "https://github.com/acme/payments"
+    assert await SEARCHABLE.find("/acme/payments", None) == found  # the default version
+    assert await SEARCHABLE.find("/acme/payments", "abc12340") is None  # not an exact ref
+    assert await SEARCHABLE.find("/vuejs/docs", None) is None
+    assert await SEARCHABLE.find("/acme/payments", "v 1") is None  # not a ref at all

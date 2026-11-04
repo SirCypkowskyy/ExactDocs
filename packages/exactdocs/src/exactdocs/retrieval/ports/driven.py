@@ -9,14 +9,14 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     DocTarget,
-    Excerpt,
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
     Removed,
+    SearchableVersion,
     SearchHit,
-    SearchText,
     StoredChunk,
+    TagFilter,
 )
 
 
@@ -36,11 +36,17 @@ class IndexedVersions(Protocol):
         ...
 
 
-class ExcerptIndex(Protocol):
-    """Search backend (BM25 + vectors + rerank) scoped to one library version."""
+class SearchableVersions(Protocol):
+    """Which version a search runs on, in retrieval's own terms (the catalog answers).
 
-    async def search(self, target: DocTarget, text: SearchText, limit: int) -> Sequence[Excerpt]:
-        """Return at most ``limit`` excerpts from ``target`` only, best first."""
+    Version is a hard filter: an unknown version is ``None``, never another version.
+    """
+
+    async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
+        """Return the exact ``ref`` (the default version when ``None``) and the manifest it serves.
+
+        ``None`` when there is no such version or it has no active manifest.
+        """
         ...
 
 
@@ -85,6 +91,12 @@ class ChunkRepository(Protocol):
         """Return one chunk of the manifest with its content, or ``None``."""
         ...
 
+    async def get_many(
+        self, manifest_id: str, chunk_ids: Sequence[ChunkId]
+    ) -> Mapping[ChunkId, StoredChunk]:
+        """Return the chunks of the manifest that exist, by ID, in one query."""
+        ...
+
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
@@ -111,14 +123,14 @@ class SearchIndex(Protocol):
         ...
 
     async def search(
-        self, manifest_id: str, query: str, tag_filter: Collection[str], limit: int
+        self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[SearchHit]:
         """Return at most ``limit`` chunks of this manifest, best first.
 
         ``query`` is plain text: quotes, ``NEAR``, ``*`` and ``(`` are ordinary characters, never
         syntax. Its words are alternatives (see ``identifier_tokens``). Snippets are verbatim text
-        of the chunk with offsets from ``highlights``. ``tag_filter`` keeps the
-        chunks whose article has any of these tags; empty keeps all. An unknown manifest or a
-        query without words gives no hits.
+        of the chunk with offsets from ``highlights``. ``tag_filter`` is applied
+        before ranking: the best ``limit`` of the chunks that pass, not the passing part of the
+        best ``limit``. An unknown manifest or a query without words gives no hits.
         """
         ...
