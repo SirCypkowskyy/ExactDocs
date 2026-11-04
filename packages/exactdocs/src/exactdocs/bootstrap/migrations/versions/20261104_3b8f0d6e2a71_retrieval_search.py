@@ -1,13 +1,13 @@
 """Chunks are searchable with BM25 through SQLite FTS5.
 
 Revision ID: 3b8f0d6e2a71
-Revises: 7c2e91d4a6b8
+Revises: c4d8e2f6a1b7
 """
 
 from alembic import op
 
 revision = "3b8f0d6e2a71"
-down_revision = "7c2e91d4a6b8"
+down_revision = "c4d8e2f6a1b7"
 branch_labels = None
 depends_on = None
 
