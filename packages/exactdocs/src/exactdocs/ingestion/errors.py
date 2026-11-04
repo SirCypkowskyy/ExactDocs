@@ -71,6 +71,24 @@ class RepositoryAuthRequiredError(ValidationError):
         super().__init__("the repository requires authentication")
 
 
+class CommitUnavailableError(ValidationError):
+    """The repository no longer serves the commit a version is pinned to (a force-pushed branch)."""
+
+    code = "commit_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("the repository does not serve the pinned commit any more")
+
+
+class RepositoryTooLargeError(ValidationError):
+    """What a fetch brought in is bigger than ExactDocs accepts."""
+
+    code = "repository_too_large"
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+
+
 class LibraryIdTakenError(ConflictError):
     """Another library already uses the ID this repository would get."""
 

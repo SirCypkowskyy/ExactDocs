@@ -1,0 +1,506 @@
+import asyncio
+import os
+import random
+import stat
+import time
+from pathlib import Path
+
+import pytest
+
+from exactdocs.ingestion.adapters.driven.git_cli import (
+    GitCli,
+    MissingGit,
+    sparse_patterns,
+    sweep_stale_fetches,
+)
+from exactdocs.ingestion.errors import (
+    CommitUnavailableError,
+    GitNotInstalledError,
+    InvalidRepositoryUrlError,
+    NotAGitRepositoryError,
+    RepositoryTooLargeError,
+    RepositoryUnreachableError,
+)
+from exactdocs.ingestion.models import PathSelection, ProposedId, RepositoryHost, RepositoryUrl
+from fixture_repo import DocsRepo, git
+
+
+def repository(url: str) -> RepositoryUrl:
+    return RepositoryUrl(url=url, host_kind=RepositoryHost.GIT, library_id=ProposedId("/x/y"))
+
+
+def sha(docs_repo: DocsRepo, ref: str) -> str:
+    return git("rev-parse", f"{ref}^{{commit}}", cwd=docs_repo.path)
+
+
+def files(folder: Path) -> set[str]:
+    return {
+        p.relative_to(folder).as_posix()
+        for p in folder.rglob("*")
+        if (p.is_file() or p.is_symlink()) and ".git" not in p.relative_to(folder).parts
+    }
+
+
+def leftovers(work: Path) -> list[Path]:
+    return list(work.iterdir())
+
+
+@pytest.fixture
+def work(tmp_path: Path) -> Path:
+    return tmp_path / "work"
+
+
+@pytest.fixture
+def gateway(work: Path) -> GitCli:
+    return GitCli.locate(work_root=work)
+
+
+@pytest.mark.parametrize("transport", ["file_url", "http_url"])
+async def test_fetches_one_commit_and_the_selected_paths_only(
+    gateway: GitCli, docs_repo: DocsRepo, transport: str, work: Path
+) -> None:
+    pinned = sha(docs_repo, "v1.4.0")
+    selection = PathSelection.of(["docs/guide/"])
+
+    async with gateway.fetch(repository(getattr(docs_repo, transport)), pinned, selection) as dir_:
+        assert dir_.parent == work
+        assert files(dir_) == {
+            "README.md",
+            *(f"docs/guide/{n}" for n in ("auth.md", "callouts.md", "configuration.md",
+                                          "install.md", "resilience.md")),
+        }  # fmt: skip
+        assert git("rev-parse", "HEAD", cwd=dir_) == pinned
+        assert git("rev-list", "--all", "--count", cwd=dir_) == "1"
+        local = git("cat-file", "--batch-all-objects", "--batch-check", cwd=dir_).split("\n")
+        blobs = [line for line in local if " blob " in line]
+        assert len(blobs) == 6  # the README and five guides, nothing else
+        content = (dir_ / "docs/guide/install.md").read_text("utf-8")
+        assert content == git("show", f"{pinned}:docs/guide/install.md", cwd=docs_repo.path) + "\n"
+    assert not dir_.exists()
+
+
+async def test_exclusions_win(gateway: GitCli, docs_repo: DocsRepo) -> None:
+    selection = PathSelection.of(["docs/"], ["docs/legacy/", "docs/reference/", "**/*.png"])
+
+    async with gateway.fetch(
+        repository(docs_repo.file_url), sha(docs_repo, "v1.3.0"), selection
+    ) as dir_:
+        found = files(dir_)
+
+    assert "docs/index.md" in found
+    assert not any(f.startswith(("docs/legacy/", "docs/reference/")) for f in found)
+    assert "docs/assets/logo.png" not in found
+
+
+async def test_the_folder_is_removed_when_the_body_fails(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path
+) -> None:
+    with pytest.raises(RuntimeError):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of()
+        ):
+            raise RuntimeError
+
+    assert leftovers(work) == []
+
+
+async def test_the_folder_is_removed_when_the_fetch_fails(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path
+) -> None:
+    with pytest.raises(CommitUnavailableError):
+        async with gateway.fetch(repository(docs_repo.file_url), "0" * 40, PathSelection.of()):
+            pass
+
+    assert leftovers(work) == []
+
+
+async def test_a_missing_repository_is_reported(gateway: GitCli, tmp_path: Path) -> None:
+    with pytest.raises(NotAGitRepositoryError):
+        async with gateway.fetch(
+            repository((tmp_path / "nope").as_uri()), "1" * 40, PathSelection.of()
+        ):
+            pass
+
+
+async def test_runs_out_of_time(docs_repo: DocsRepo, work: Path) -> None:
+    gateway = GitCli.locate(work_root=work)
+    gateway = GitCli(git=gateway.git, work_root=work, fetch_timeout=0.001)
+
+    with pytest.raises(RepositoryUnreachableError):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of()
+        ):
+            pass
+
+    assert leftovers(work) == []
+
+
+async def test_refuses_more_than_the_size_cap(docs_repo: DocsRepo, work: Path) -> None:
+    gateway = GitCli(git=GitCli.locate().git, work_root=work, max_fetch_bytes=1000)
+
+    with pytest.raises(RepositoryTooLargeError):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of(["docs/"])
+        ):
+            pass
+
+    assert leftovers(work) == []
+
+
+@pytest.mark.parametrize(
+    ("url", "commit"),
+    [("-x", "1" * 40), ("file:///a b\n", "1" * 40), ("file:///x", "main"), ("file:///x", "--all")],
+)
+async def test_refuses_what_could_be_an_option(gateway: GitCli, url: str, commit: str) -> None:
+    with pytest.raises(InvalidRepositoryUrlError):
+        async with gateway.fetch(repository(url), commit, PathSelection.of()):
+            pass
+
+
+async def test_hooks_never_run(gateway: GitCli, docs_repo: DocsRepo, tmp_path: Path) -> None:
+    """A hook in the *remote* is not copied, and ours has no hooks path to run from."""
+    marker = tmp_path / "ran"
+    hook = docs_repo.path / ".git" / "hooks" / "post-checkout"
+    hook.parent.mkdir(exist_ok=True)
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC)
+    try:
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of(["docs/"])
+        ) as dir_:
+            config = git("config", "--local", "--get", "core.hookspath", cwd=dir_)
+            assert config == os.devnull
+    finally:
+        hook.unlink()
+
+    assert not marker.exists()
+
+
+async def test_symlinks_become_plain_files(tmp_path: Path, gateway: GitCli) -> None:
+    origin = tmp_path / "origin"
+    git("init", "-q", "-b", "main", str(origin))
+    git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=origin)
+    (origin / "docs").mkdir()
+    (origin / "docs" / "a.md").write_text("# A\n")
+    (origin / "docs" / "evil.md").symlink_to("/etc/passwd")
+    git("add", "-A", cwd=origin)
+    git(
+        "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "x",
+        cwd=origin,
+    )  # fmt: skip
+
+    async with gateway.fetch(
+        repository(origin.as_uri()),
+        git("rev-parse", "HEAD", cwd=origin),
+        PathSelection.of(["docs/"]),
+    ) as dir_:
+        evil = dir_ / "docs" / "evil.md"
+        assert not evil.is_symlink()
+        assert evil.read_text() == "/etc/passwd"
+
+
+async def test_a_server_without_filter_support_still_serves_the_commit(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    git("config", "uploadpack.allowFilter", "false", cwd=docs_repo.path)
+    try:
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"), PathSelection.of(["docs/"])
+        ) as dir_:
+            assert "docs/index.md" in files(dir_)
+            assert git("rev-list", "--all", "--count", cwd=dir_) == "1"
+    finally:
+        git("config", "uploadpack.allowFilter", "true", cwd=docs_repo.path)
+
+
+async def test_a_server_that_refuses_bare_shas_is_asked_for_the_ref(
+    tmp_path: Path, docs_repo: DocsRepo
+) -> None:
+    # Protocol v2 servers serve any SHA, so the refusal is played by a wrapper around git.
+    pinned = sha(docs_repo, "v1.4.0")
+    wrapper = tmp_path / "git"
+    wrapper.write_text(
+        f'#!/bin/sh\ncase " $* " in *" fetch "*" {pinned} ") '
+        f'echo "fatal: remote error: upload-pack: not our ref {pinned}" >&2; exit 128;; esac\n'
+        f'exec {GitCli.locate().git} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    gateway = GitCli(git=str(wrapper), work_root=tmp_path / "work")
+    async with gateway.fetch(
+        repository(docs_repo.file_url), pinned, PathSelection.of(["docs/"]),
+        refs=("refs/tags/v1.4.0",),
+    ) as dir_:  # fmt: skip
+        assert git("rev-parse", "HEAD", cwd=dir_) == pinned
+    with pytest.raises(CommitUnavailableError):  # the ref names another commit
+        async with gateway.fetch(
+            repository(docs_repo.file_url), pinned, PathSelection.of(),
+            refs=("refs/heads/next",),
+        ):  # fmt: skip
+            pass
+    with pytest.raises(CommitUnavailableError):  # nothing to fall back to
+        async with gateway.fetch(repository(docs_repo.file_url), pinned, PathSelection.of()):
+            pass
+
+
+async def test_missing_git_refuses() -> None:
+    with pytest.raises(GitNotInstalledError):
+        async with MissingGit().fetch(repository("file:///x"), "1" * 40, PathSelection.of()):
+            pass
+
+
+def test_sparse_patterns_follow_the_selection() -> None:
+    selection = PathSelection.of(["docs/", "guide/*.md", "{a,b}/x", "[z]", "{}"], ["docs/archive/"])
+
+    assert sparse_patterns(selection) == [
+        "/docs/", "/guide/*.md", "/a/x", "/b/x", "/\\[z]",
+        "/README.md", "/README.mdx", "!/docs/archive/",
+    ]  # fmt: skip
+
+
+def test_no_include_means_every_file() -> None:
+    assert sparse_patterns(PathSelection.of()) == ["/*", "/README.md", "/README.mdx"]
+
+
+async def test_fetches_run_side_by_side(gateway: GitCli, docs_repo: DocsRepo) -> None:
+    async def one() -> int:
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of(["docs/"])
+        ) as dir_:
+            return len(files(dir_))
+
+    assert len(set(await asyncio.gather(*(one() for _ in range(3))))) == 1
+
+
+# --- review round: verbatim content, watchdog, deadline, refs, sparse patterns ---
+
+
+def commit_tree(tmp_path: Path, tree: dict[str, str | bytes]) -> tuple[Path, str]:
+    """Commit the files, then ``.gitattributes`` alone: the blobs are stored exactly as given."""
+    origin = tmp_path / "origin"
+    git("init", "-q", "-b", "main", str(origin))
+    git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=origin)
+    for name, content in sorted(tree.items(), key=lambda item: item[0] == ".gitattributes"):
+        target = origin / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content if isinstance(content, bytes) else content.encode())
+        if name != ".gitattributes":
+            git("add", name, cwd=origin)
+    git("add", ".gitattributes", cwd=origin, check=False)
+    git("-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "x", cwd=origin)
+    return origin, git("rev-parse", "HEAD", cwd=origin)
+
+
+async def test_content_stays_verbatim_whatever_gitattributes_say(
+    tmp_path: Path, gateway: GitCli
+) -> None:
+    tree: dict[str, str | bytes] = {
+        ".gitattributes": (
+            "*.crlf eol=crlf\n*.id ident\n*.u16 working-tree-encoding=UTF-16\n"
+            "*.lfs filter=lfs diff=lfs merge=lfs\n*.txt text eol=crlf\n"
+        ),
+        "docs/a.crlf": b"hi\nthere\n",
+        "docs/b.id": b"$Id$\n",
+        "docs/c.u16": "café\n".encode(),
+        "docs/d.lfs": b"not a pointer\n",
+        "docs/e.txt": b"lf only\n",
+    }
+    origin, pinned = commit_tree(tmp_path, tree)
+
+    async with gateway.fetch(repository(origin.as_uri()), pinned, PathSelection.of(["docs/"])) as d:
+        for name, content in tree.items():
+            if name.startswith("docs/"):
+                assert (d / name).read_bytes() == content, name
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "refs/heads/main:refs/heads/evil", "refs/heads/*", "refs/heads/a..b", "heads/main",
+        "refs/heads/x.lock", "refs/heads/", "refs/heads/.h", "refs/a b",
+        "refs/heads/a@{1}", "+refs/heads/main", "refs/heads//x",
+    ],
+)  # fmt: skip
+async def test_refuses_refs_that_are_not_plain_names(gateway: GitCli, ref: str) -> None:
+    with pytest.raises(InvalidRepositoryUrlError):
+        async with gateway.fetch(
+            repository("file:///x"), "1" * 40, PathSelection.of(), refs=(ref,)
+        ):
+            pass
+
+
+@pytest.mark.parametrize("commit", ["a" * 64, "A" * 40, "a" * 39])
+async def test_only_sha1_commits_are_accepted(gateway: GitCli, commit: str) -> None:
+    with pytest.raises(InvalidRepositoryUrlError):
+        async with gateway.fetch(repository("file:///x"), commit, PathSelection.of()):
+            pass
+
+
+def stalling_git(tmp_path: Path, script: str) -> str:
+    """A ``git`` that runs ``script`` instead of fetching (``$4`` is the work folder)."""
+    wrapper = tmp_path / "git"
+    wrapper.write_text(
+        f'#!/bin/sh\ncase " $* " in *" fetch "*) {script};; esac\nexec {GitCli.locate().git} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    return str(wrapper)
+
+
+@pytest.mark.parametrize(
+    ("script", "limits"),
+    [
+        ('head -c 20000 /dev/zero > "$4/.git/big"; sleep 30', {"max_fetch_bytes": 10_000}),
+        ('for i in 1 2 3 4 5 6; do : > "$4/.git/f$i"; done; sleep 30', {"max_fetch_files": 5}),
+    ],
+)
+async def test_the_watchdog_stops_a_fetch_that_grows_too_big(
+    tmp_path: Path, docs_repo: DocsRepo, script: str, limits: dict[str, int]
+) -> None:
+    gateway = GitCli(
+        git=stalling_git(tmp_path, script), work_root=tmp_path / "work", watch_interval=0.05,
+        max_fetch_bytes=limits.get("max_fetch_bytes", 10**9),
+        max_fetch_files=limits.get("max_fetch_files", 10**6),
+    )  # fmt: skip
+    started = time.monotonic()
+
+    with pytest.raises(RepositoryTooLargeError):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of()
+        ):
+            pass
+
+    assert time.monotonic() - started < 10
+    assert leftovers(tmp_path / "work") == []
+
+
+async def test_the_deadline_covers_all_git_calls_and_the_wait_for_a_slot(
+    tmp_path: Path, docs_repo: DocsRepo
+) -> None:
+    wrapper = tmp_path / "git"  # every call takes 0.4 s: none is over the limit, all together are
+    wrapper.write_text(f'#!/bin/sh\nsleep 0.4\nexec {GitCli.locate().git} "$@"\n')
+    wrapper.chmod(0o755)
+    gateway = GitCli(git=str(wrapper), work_root=tmp_path / "work", fetch_timeout=1.0)
+
+    with pytest.raises(RepositoryUnreachableError):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of()
+        ):
+            pass
+
+
+async def test_a_spent_deadline_spawns_nothing(tmp_path: Path) -> None:
+    marker = tmp_path / "spawned"
+    wrapper = tmp_path / "git"
+    wrapper.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    wrapper.chmod(0o755)
+    gateway = GitCli(git=str(wrapper))
+
+    with pytest.raises(RepositoryUnreachableError, match="too long"):
+        await gateway._run(["--version"], cap=10, deadline=asyncio.get_running_loop().time() - 1)  # ruff: ignore[private-member-access]
+
+    assert not marker.exists()
+
+
+async def test_fetches_leave_slots_for_checks(tmp_path: Path, docs_repo: DocsRepo) -> None:
+    gateway = GitCli(git=GitCli.locate().git, work_root=tmp_path / "work")
+    for _ in range(2):  # every fetch slot is taken
+        await gateway.fetch_slots.acquire()
+
+    refs = await asyncio.wait_for(gateway.list_refs(repository(docs_repo.file_url)), 10)
+
+    assert refs.default_branch == "main"
+
+
+def test_stale_fetch_folders_are_swept_and_nothing_else(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    old, young, other = work / "fetch-old", work / "fetch-young", work / "keep"
+    for folder in (old, young, other):
+        (folder / "x").mkdir(parents=True)
+    os.utime(old, (1, 1))
+    os.utime(other, (1, 1))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (work / "fetch-link").symlink_to(outside)
+
+    sweep_stale_fetches(work, older_than=60)
+
+    assert [p.name for p in sorted(work.iterdir())] == ["fetch-link", "fetch-young", "keep"]
+    assert outside.exists()
+
+
+def test_a_symlinked_work_dir_is_left_alone(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    (real / "fetch-old").mkdir(parents=True)
+    os.utime(real / "fetch-old", (1, 1))
+    (tmp_path / "work").symlink_to(real)
+
+    sweep_stale_fetches(tmp_path / "work", older_than=60)
+
+    assert (real / "fetch-old").exists()
+
+
+def test_brace_overflow_drops_an_exclusion_but_widens_an_include() -> None:
+    many = "{a,b,c,d,e,f,g,h,i}{a,b,c,d,e,f,g,h,i}/x.md"
+
+    assert sparse_patterns(PathSelection.of(["docs/"], [many])) == [
+        "/docs/", "/README.md", "/README.mdx",
+    ]  # fmt: skip
+    assert sparse_patterns(PathSelection.of([many])) == ["/*", "/README.md", "/README.mdx"]
+
+
+def test_an_include_that_matches_nothing_fetches_only_the_readme() -> None:
+    assert sparse_patterns(PathSelection.of(["{}"])) == ["/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of(["{}", "docs/"])) == [
+        "/docs/", "/README.md", "/README.mdx",
+    ]  # fmt: skip
+
+
+def test_special_characters_are_neutralised() -> None:
+    selection = PathSelection.of(["!bang/", "#hash.md", "sp ace/", "br[ack]et.md"])
+
+    assert sparse_patterns(selection)[:4] == [
+        "/!bang/", "/#hash.md", "/sp ace/", "/br\\[ack]et.md",
+    ]  # fmt: skip
+
+
+TREE = [
+    "README.md", "readme.md", "AGENTS.md", "docs/index.md", "docs/a.mdx", "docs/img.png",
+    "docs/guide/install.md", "docs/guide/deep/x.md", "docs/archive/old.md", "docs/API.MD",
+    "guide/g.md", "a/x.md", "b/x.md", "ab/x.md", "src/lib/readme.md", "src/lib/code.py",
+    "!bang/b.md", "#hash.md", "br[ack]et.md", "bracket.md", "sp ace/s.md", "notes.txt",
+]  # fmt: skip
+PIECES = [
+    "docs", "docs/", "docs/**", "docs/*.md", "docs/**/*.md", "**/x.md", "*/x.md", "{a,b}/x.md",
+    "{docs,guide}/", "docs/archive/", "**/readme.md", "*.md", "README.md", "src/", "!bang/",
+    "#hash.md", "br[ack]et.md", "sp ace/", "{}", "docs/{guide,archive}/**", "docs/guide/**/x.md",
+    "?/x.md", "a?/x.md", "docs/*.mdx",
+]  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def tree_repo(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str]:
+    return commit_tree(tmp_path_factory.mktemp("tree"), dict.fromkeys(TREE, "# t\n"))
+
+
+def selections() -> list[tuple[list[str], list[str]]]:
+    rng = random.Random(29)  # ruff: ignore[suspicious-non-cryptographic-random-usage]
+    cases: list[tuple[list[str], list[str]]] = [([], []), ([], ["docs/archive/"])]
+    cases += [([p], []) for p in PIECES]
+    cases += [
+        (rng.sample(PIECES, rng.randint(1, 3)), rng.sample(PIECES, rng.randint(0, 2)))
+        for _ in range(30)
+    ]
+    return cases
+
+
+@pytest.mark.parametrize(("include", "exclude"), selections())
+async def test_sparse_patterns_never_hide_a_file_the_selection_picks(
+    tree_repo: tuple[Path, str], gateway: GitCli, include: list[str], exclude: list[str]
+) -> None:
+    """Differential: what git checks out, filtered by ``selects``, equals what ``selects`` picks."""
+    origin, pinned = tree_repo
+    selection = PathSelection.of(include, exclude)
+
+    async with gateway.fetch(repository(origin.as_uri()), pinned, selection) as folder:
+        fetched = {p for p in files(folder) if selection.selects(p)}
+
+    assert fetched == {p for p in TREE if selection.selects(p)}

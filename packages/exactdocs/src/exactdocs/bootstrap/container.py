@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -28,7 +29,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteTokenRepository,
 )
 from exactdocs.ingestion import IngestionModule
-from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError, ImportNotAvailableError
@@ -40,6 +41,7 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
+WORK_DIR = "work"  # under the data dir: one folder per running git fetch
 
 
 async def _import_not_available(job: Job, progress: JobProgress, /) -> None:
@@ -71,7 +73,7 @@ class Container:
         """
         if remote is None:
             try:
-                remote = GitCli.locate()
+                remote = GitCli.locate(work_root=settings.data_dir / WORK_DIR)
             except GitNotInstalledError as exc:
                 logger.warning("%s", exc)
                 remote = MissingGit()
@@ -127,6 +129,8 @@ class Container:
         try:
             await migrate(self.engine)
             if jobs:
+                # Fetch folders a crash left behind. A data dir has exactly one job runner.
+                await asyncio.to_thread(sweep_stale_fetches, self.settings.data_dir / WORK_DIR)
                 async with self.job_worker.running():
                     yield
             else:

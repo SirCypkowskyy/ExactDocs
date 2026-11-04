@@ -164,7 +164,9 @@ on `PATH`; without it the server still starts, logs a warning and repository che
 `git_not_installed`). URLs may be `https://`, `http://`, `ssh://`, `user@host:path` or `file://`;
 credentials never go in the URL (they are refused, never echoed or logged), and
 `POST /api/v1/repositories/check` runs git with prompts, user git config and ssh keys switched off
-and a 15 s timeout.
+and a 15 s timeout. An import fetches only the pinned commit (no history, no unselected files) into
+a temporary folder under the data directory (`work/`), with hooks, submodules and symlinks off; git
+2.30 or newer is recommended, and a server without partial-clone support just sends more.
 
 ## Teams and access
 
