@@ -16,8 +16,8 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     REFRESH_JOB,
-    ImportedRef,
     Credential,
+    ImportedRef,
     ImportSource,
     JobKind,
 )

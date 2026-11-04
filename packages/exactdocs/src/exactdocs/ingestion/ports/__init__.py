@@ -59,7 +59,7 @@ __all__ = [
     "RemoveLibrary",
     "RemoveVersion",
     "RunNextJob",
-    "SyncLibrary",
     "SecretBox",
+    "SyncLibrary",
     "VersionPublisher",
 ]

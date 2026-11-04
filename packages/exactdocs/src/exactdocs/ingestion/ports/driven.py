@@ -9,8 +9,8 @@ from typing import Protocol
 from exactdocs.ingestion.models import (
     ArticleChunk,
     Collected,
-    ImportedRef,
     Credential,
+    ImportedRef,
     ImportedVersion,
     ImportSource,
     Job,

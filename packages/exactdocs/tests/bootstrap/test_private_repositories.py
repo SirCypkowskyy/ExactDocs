@@ -15,7 +15,8 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
-from exactdocs.ingestion.models import AccessToken
+from exactdocs.ingestion.dtos import EnqueueJobCommand
+from exactdocs.ingestion.models import REFRESH_JOB, AccessToken, RefKind
 from fixture_repo import DocsRepo
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
@@ -267,3 +268,36 @@ async def test_a_credential_row_of_another_host_makes_the_import_fail_closed(
     )
 
     assert (version.status_code, version.json()["error"]) == (422, "credentials_required")
+
+
+async def test_syncing_and_refreshing_a_private_library_use_its_stored_token(
+    client: httpx.AsyncClient, container: Container, docs_repo: DocsRepo
+) -> None:
+    body = {
+        "url": docs_repo.private_url,
+        "ref": "main",
+        "include_paths": ["docs/"],
+        "credential": {"kind": "token", "token": docs_repo.token},
+    }
+    added = (await client.post("/api/v1/libraries", json=body)).json()
+    assert (await _job(client, added["job_id"]))["state"] == "succeeded"
+    before = len(docs_repo.private_seen or [])
+
+    synced = await client.post("/api/v1/libraries/fixture/docs-repo/sync")
+
+    assert synced.status_code == 200, synced.text
+    assert [v["status"] for v in synced.json()["versions"]] == ["up_to_date"]
+    asked = (docs_repo.private_seen or [])[before:]
+    assert asked
+    assert all(auth and auth.startswith("Basic ") for _, auth in asked[-1:])  # `list_refs` got in
+    # a refresh job (what a moved branch queues) fetches with the same stored credential
+    job = await container.ingestion.enqueue_job(
+        EnqueueJobCommand(
+            kind=REFRESH_JOB,
+            library=added["library_id"],
+            version="main",
+            commit_sha=added["commit_sha"],
+            ref_kind=RefKind.BRANCH,
+        )
+    )
+    assert (await _job(client, job.id))["state"] == "succeeded"

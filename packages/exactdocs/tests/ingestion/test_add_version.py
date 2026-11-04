@@ -16,8 +16,8 @@ from exactdocs.ingestion.errors import (
 )
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
-    ImportedRef,
     Credential,
+    ImportedRef,
     ImportSource,
     JobId,
     PathSelection,
