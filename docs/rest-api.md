@@ -121,4 +121,4 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   Removing the last version keeps the library, without versions. An unknown library or version is
   404. While an import of that version (of any version, for a library) is queued or running the
   call is refused with 409 `import_in_progress`: removal never cancels a job, wait and retry.
-  Chunk IDs of a removed version answer `not_found`; they are not kept as tombstones yet (E7-03).
+  Chunk IDs of a removed version answer `not_found`; they are not kept as tombstones yet (E9-03 follow-up: the strict xfail in `test_chunk_store.py`). A library title derived from the default version (#33) is not re-derived by a removal.
