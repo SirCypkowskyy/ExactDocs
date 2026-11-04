@@ -101,7 +101,26 @@ route except the token routes themselves.
 
 Planned: tokens in the UI (**Settings → Tokens**) and `exactdocs token create`;
 `exactdocs config --client claude|cursor|vscode` (planned) will print a ready-to-paste snippet with a new token.
-For a local setup without a network port: `uvx exactdocs serve --stdio` (no token needed).
+
+#### Without a network port: stdio
+
+```json
+{
+  "mcpServers": {
+    "exactdocs": { "command": "uvx", "args": ["exactdocs", "serve", "--stdio"] }
+  }
+}
+```
+
+stdio needs no token and no running server, but it needs an **existing database**: run
+`exactdocs serve` (or `exactdocs admin create`) once first. Otherwise it exits with an error on
+stderr naming the expected path. It uses the same data directory (`EXACTDOCS_DATA_DIR`), opens the
+SQLite file read-only (safe next to a running server, which keeps importing), runs no worker and
+no migration, and exposes the same read-only tools. If the server has since been upgraded and
+migrated the database, upgrade the stdio command too. Manage libraries through the server. Run it as the same user as the server: with the server
+stopped, SQLite creates `exactdocs.db-wal` and `-shm` next to the database (the directory must be
+writable for that), and files owned by another user can stop the server from starting later.
+`--host`, `--port` and `--reload` are HTTP-only and rejected with `--stdio`.
 
 ## MCP tools
 

@@ -11,10 +11,10 @@ from cyclopts import App, Parameter
 from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.mcp import build_mcp
+from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import (
     MAX_PASSWORD_LENGTH,
@@ -34,14 +34,22 @@ app.command(admin)
 @app.command
 def serve(
     *,
-    stdio: Annotated[bool, Parameter(help="Serve MCP over stdio instead of HTTP.")] = False,
-    host: str | None = None,
-    port: int | None = None,
-    reload: bool = False,
+    stdio: Annotated[
+        bool,
+        Parameter(
+            help="Serve MCP over stdio instead of HTTP: read-only, needs an existing database."
+        ),
+    ] = False,
+    host: Annotated[str | None, Parameter(help="HTTP only: address to bind.")] = None,
+    port: Annotated[int | None, Parameter(help="HTTP only: port to listen on.")] = None,
+    reload: Annotated[bool, Parameter(help="HTTP only: restart on code changes.")] = False,
 ) -> None:
     """Run the server: web UI + REST API + MCP over HTTP, or MCP only over stdio."""
     settings = Settings()
     if stdio:
+        if host or port or reload:
+            message = "exactdocs: --host, --port and --reload are HTTP options; --stdio has none"
+            raise SystemExit(message)
         asyncio.run(_serve_stdio(settings))
         return
     _check_startup(settings)
@@ -145,9 +153,13 @@ async def _reset_password(settings: Settings, username: str, password: str) -> N
 
 
 async def _serve_stdio(settings: Settings) -> None:
-    container = _build(settings)
-    async with container.running(jobs=False):  # the HTTP server runs the jobs
-        await build_mcp(container).run_stdio_async(show_banner=False)
+    try:
+        container = ReadOnlyContainer.build(settings)
+        async with container.running():  # no worker, no migration: the HTTP server owns both
+            await build_stdio_mcp(container).run_stdio_async(show_banner=False)
+    except StartupError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
 
 
 def _build(settings: Settings) -> Container:
