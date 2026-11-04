@@ -3,11 +3,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from exactdocs.retrieval.dtos import (
+    ChunkIn,
     ChunkOut,
+    ChunkSetsOut,
     CollectChunksCommand,
     CoverageOut,
     DiscardPendingChunksCommand,
     GetChunkQuery,
+    GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     RemovedChunks,
@@ -196,6 +199,35 @@ class GetChunkUseCase:
         if stored is None or stored.version_id != f"{indexed.library}/{indexed.version}":
             raise ChunkNotFoundError(indexed.library, indexed.version, query.chunk_id)
         return ChunkOut.from_stored(indexed.library, indexed.version, stored)
+
+
+@dataclass(frozen=True, slots=True)
+class GetChunkSetsUseCase:
+    """Implements ``ports.driving.GetChunkSets``."""
+
+    chunks: ChunkRepository
+
+    async def __call__(self, query: GetChunkSetsQuery) -> ChunkSetsOut:
+        """Look the sets up by (blob, config); sets that were never stored are left out."""
+        found = await self.chunks.get_sets(
+            [(sha, query.config_hash) for sha in dict.fromkeys(query.blob_shas)]
+        )
+        return ChunkSetsOut(
+            chunks={
+                sha: [
+                    ChunkIn(
+                        heading_path=list(c.heading_path),
+                        occurrence_index=c.occurrence_index,
+                        content=c.content,
+                        content_hash=c.content_hash,
+                        anchor=c.anchor,
+                        code_languages=list(c.code_languages),
+                    )
+                    for c in chunk_set.chunks
+                ]
+                for (sha, _), chunk_set in found.items()
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)

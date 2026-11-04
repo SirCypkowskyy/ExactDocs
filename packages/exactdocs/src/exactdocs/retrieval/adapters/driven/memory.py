@@ -46,6 +46,10 @@ class InMemoryChunkRepository:
         self.rows[manifest.manifest_id] = {row.chunk_id: row for row in rows}
         return len(new)
 
+    async def get_sets(self, keys: Sequence[ChunkSetKey]) -> Mapping[ChunkSetKey, ChunkSet]:
+        """Return the stored chunk sets among ``keys``."""
+        return {key: self.chunk_sets[key] for key in keys if key in self.chunk_sets}
+
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
         """Return one chunk of the manifest with its content, or ``None``."""
         row = self.rows.get(manifest_id, {}).get(chunk_id)

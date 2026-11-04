@@ -21,6 +21,7 @@ from exactdocs.retrieval.dtos import (
     CollectChunksCommand,
     DiscardPendingChunksCommand,
     GetChunkQuery,
+    GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     RemovedChunks,
@@ -452,3 +453,21 @@ async def test_collection_drops_manifests_the_catalog_forgot_after_the_grace_per
 
     assert (removed.manifests, removed.chunk_sets) == (1, 1)
     assert await world.count_chunk_sets() == 2  # "kept" and "recent"
+
+
+async def test_stored_chunk_sets_come_back_by_blob_and_config_and_unknown_ones_are_left_out(
+    world: World,
+) -> None:
+    await world.index("m1", "main", {"a.md": "one", "b.md": "two"})
+
+    found = await world.retrieval.get_chunk_sets(
+        GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["two", "nope", "one", "one"])
+    )
+    other_config = await world.retrieval.get_chunk_sets(
+        GetChunkSetsQuery(config_hash="other", blob_shas=["one"])
+    )
+
+    assert set(found.chunks) == {"one", "two"}
+    assert [c.content for c in found.chunks["one"]] == ["text of one one", "text of one two"]
+    assert found.chunks["one"][0].code_languages == ["python"]
+    assert other_config.chunks == {}

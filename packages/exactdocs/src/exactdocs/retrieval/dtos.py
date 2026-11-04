@@ -209,6 +209,19 @@ class IndexedManifestOut(_Dto):
     )
 
 
+class GetChunkSetsQuery(_Dto):
+    """The chunk sets of these blobs under this chunking config."""
+
+    config_hash: str = Field(min_length=1)
+    blob_shas: list[str]
+
+
+class ChunkSetsOut(_Dto):
+    """The chunks of every requested blob that is stored, in reading order, by blob SHA."""
+
+    chunks: dict[str, list[ChunkIn]]
+
+
 class DiscardPendingChunksCommand(_Dto):
     """Discard the chunk rows of manifests the catalog still holds as pending.
 
