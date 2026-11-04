@@ -37,6 +37,14 @@ class SearchableVersions(Protocol):
         ...
 
 
+class DefaultVersions(Protocol):
+    """Every library's default version that has an active manifest, in one call."""
+
+    async def all(self) -> Sequence[SearchableVersion]:
+        """Return them sorted by library ID; libraries with nothing readable are left out."""
+        ...
+
+
 class Libraries(Protocol):
     """The libraries the catalog lists, in retrieval's own terms."""
 

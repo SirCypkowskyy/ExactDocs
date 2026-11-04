@@ -17,6 +17,8 @@ from exactdocs.catalog.dtos import (
     CollectGarbageCommand,
     CollectionResult,
     CreateLibraryCommand,
+    DefaultManifest,
+    DefaultManifests,
     DiscardedManifests,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
@@ -522,6 +524,37 @@ class GetActiveManifestUseCase:
             ref=str(version.ref),
             commit_sha=version.commit_sha if manifest is None else manifest.commit_sha,
             manifest_id=None if manifest is None else manifest.id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ListDefaultManifestsUseCase:
+    """Implements ``ports.driving.ListDefaultManifests``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self) -> DefaultManifests:
+        """Take every library's default version (one read) and its active manifest (batched)."""
+        defaults = [
+            (library, version)
+            for library in await self.repository.list_all()
+            if (version := library.default_version()) is not None
+        ]
+        active = await self.manifests.get_active_many([(lib.id, v.ref) for lib, v in defaults])
+        return DefaultManifests(
+            manifests=[
+                DefaultManifest(
+                    library=str(library.id),
+                    ref=str(version.ref),
+                    commit_sha=manifest.commit_sha,
+                    manifest_id=manifest.id,
+                    source_url=library.source_url,
+                    host=library.host,
+                )
+                for library, version in sorted(defaults, key=lambda d: d[0].id.value)
+                if (manifest := active.get((library.id, version.ref))) is not None
+            ]
         )
 
 

@@ -12,6 +12,7 @@ from exactdocs.catalog.dtos import (
     CollectGarbageCommand,
     CollectionResult,
     CreateLibraryCommand,
+    DefaultManifests,
     DiscardedManifests,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
@@ -185,6 +186,18 @@ class GetActiveManifest(Protocol):
     """Name the manifest that serves a version, for domains that hold manifest IDs."""
 
     async def __call__(self, query: GetActiveManifestQuery) -> ActiveManifest:
+        """Run the use case."""
+        ...
+
+
+class ListDefaultManifests(Protocol):
+    """Name the active manifest of every library's default version, in one call.
+
+    Libraries without a default version or without an active manifest are left out. The bulk
+    form of ``GetLibrary`` + ``GetActiveManifest`` for domains that search all libraries.
+    """
+
+    async def __call__(self) -> DefaultManifests:
         """Run the use case."""
         ...
 

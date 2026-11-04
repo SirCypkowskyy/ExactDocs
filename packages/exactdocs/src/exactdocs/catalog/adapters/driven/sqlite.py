@@ -25,6 +25,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -447,6 +448,25 @@ class SqliteManifestRepository:
             manifests.c.ref == ref.value,
             manifests.c.state == ManifestState.ACTIVE.value,
         )
+
+    async def get_active_many(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], Manifest]:
+        """Return the active manifests (without entries) of these versions, by (library, ref)."""
+        found: dict[tuple[LibraryId, VersionRef], Manifest] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(versions), 400):  # two bound variables per version
+                batch = [(lib.value, ref.value) for lib, ref in versions[start : start + 400]]
+                rows = await connection.execute(
+                    select(manifests).where(
+                        tuple_(manifests.c.library_id, manifests.c.ref).in_(batch),
+                        manifests.c.state == ManifestState.ACTIVE.value,
+                    )
+                )
+                for row in rows:
+                    manifest = _manifest(row)
+                    found[manifest.library, manifest.ref] = manifest
+        return found
 
     async def list_entries(
         self,

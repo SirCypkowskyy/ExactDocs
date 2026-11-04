@@ -227,6 +227,25 @@ async def test_get_many_copes_with_more_ids_than_a_query_can_bind(stores: Stores
     assert set(await stores.manifests.get_many(ids)) == {ManifestId("m1")}
 
 
+async def test_get_active_many_returns_active_manifests_only_and_copes_with_many_versions(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await store(stores, manifest("m2", "dev", "bbb222", entry(INSTALL, "b2")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)  # "dev" stays pending
+    asked = [
+        (PAYMENTS.id, VersionRef("main")),
+        (PAYMENTS.id, VersionRef("dev")),
+        *((PAYMENTS.id, VersionRef(f"ghost{i}")) for i in range(900)),
+    ]
+
+    found = await stores.manifests.get_active_many(asked)
+
+    assert {k: m.id for k, m in found.items()} == {(PAYMENTS.id, VersionRef("main")): "m1"}
+    assert all(m.entries == () for m in found.values())
+    assert await stores.manifests.get_active_many([]) == {}
+
+
 async def test_a_pending_manifest_is_invisible_until_it_is_activated(stores: Stores) -> None:
     await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
     await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b2")))

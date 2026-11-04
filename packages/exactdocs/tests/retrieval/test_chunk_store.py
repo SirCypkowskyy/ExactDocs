@@ -11,6 +11,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryDefaultVersions,
     InMemoryLibraries,
     InMemorySearchIndex,
 )
@@ -164,6 +165,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
+            defaults=InMemoryDefaultVersions(),
             libraries=InMemoryLibraries(),
             searchable=catalog,
             manifests=catalog,

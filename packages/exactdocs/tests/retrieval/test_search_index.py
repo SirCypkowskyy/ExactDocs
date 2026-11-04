@@ -17,11 +17,12 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryDefaultVersions,
     InMemoryLibraries,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_fts import _SEARCHES, SqliteSearchIndex
+from exactdocs.retrieval.adapters.driven.sqlite_fts import _SEARCH, SqliteSearchIndex, _statements
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -146,6 +147,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
         return RetrievalModule.build(
+            defaults=InMemoryDefaultVersions(),
             libraries=InMemoryLibraries(),
             searchable=Gone(),
             manifests=Gone(),
@@ -469,17 +471,17 @@ async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -
     assert first.snippet.startswith("timeout is")
 
 
-async def test_the_search_plan_materializes_the_ranking_and_joins_through_the_covering_index() -> (
-    None
-):
+async def test_the_search_plan_materializes_the_ranking_and_probes_manifests_by_chunk_set() -> None:
     """The join order is what keeps a search at milliseconds (a bad plan took seconds).
 
-    Plan shape on SQLite 3.35+: rank first (MATERIALIZE), probe the manifest rows by the covering
-    index, and only then fetch snippets for the survivors.
+    Plan shape on SQLite 3.35+: rank first (MATERIALIZE), probe the manifest rows by
+    (blob_sha, config_hash) through `ix_retrieval_manifest_chunks_set` (from the migrations), and
+    only then fetch snippets for the survivors. A probe per searched manifest instead would cost
+    O(hits x manifests); measured, an extra covering index made that plan win and was slower.
     """
     container = Container.build(Settings())
     async with container.running():
-        statement = _SEARCHES[None]
+        statement = _statements("EXPLAIN QUERY PLAN " + _SEARCH)[None]
         params = {
             "heading_weight": 1.0,
             "path_weight": 1.0,
@@ -490,13 +492,12 @@ async def test_the_search_plan_materializes_the_ranking_and_joins_through_the_co
             "limit": 5,
         }
         async with container.engine.connect() as connection:
-            plan = (
-                await connection.execute(text("EXPLAIN QUERY PLAN " + str(statement)), params)
-            ).all()
+            plan = (await connection.execute(statement, params)).all()
     steps = [row.detail for row in plan]
     assert any(step.startswith("MATERIALIZE ranked") for step in steps), steps
     probe = [s for s in steps if s.startswith("SEARCH mc USING")]
     assert probe
-    assert "ix_retrieval_manifest_chunks_join" in probe[0], steps
-    assert "manifest_id=?" in probe[0], steps
-    assert not any(s.startswith("SCAN r") for s in steps), steps
+    assert "ix_retrieval_manifest_chunks_set (blob_sha=? AND config_hash=?)" in probe[0], steps
+    # The snippets are fetched for the ranked survivors: r outside, then a lookup by rowid.
+    outer = [s for s in steps if s.startswith(("SCAN r", "SCAN retrieval_search"))]
+    assert outer[-2:] == ["SCAN r", "SCAN retrieval_search VIRTUAL TABLE INDEX 0:=M4"], steps

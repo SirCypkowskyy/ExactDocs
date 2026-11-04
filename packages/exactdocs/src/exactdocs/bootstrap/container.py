@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogCollector,
+    CatalogDefaultVersions,
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySources,
@@ -68,6 +69,7 @@ def _build_read_side(
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
         libraries=CatalogLibraries(catalog.list_libraries),
+        defaults=CatalogDefaultVersions(catalog.list_default_manifests),
         manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
         chunks=SqliteChunkRepository(engine),
         search=SqliteSearchIndex(engine),

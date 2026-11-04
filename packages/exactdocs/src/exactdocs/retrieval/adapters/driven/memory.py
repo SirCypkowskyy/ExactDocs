@@ -14,6 +14,7 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     Removed,
+    SearchableVersion,
     SearchHit,
     StoredChunk,
     TagFilter,
@@ -181,6 +182,17 @@ def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> Sea
     return SearchHit(
         chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryDefaultVersions:
+    """Implements ``ports.driven.DefaultVersions`` with a fixed list."""
+
+    versions: Sequence[SearchableVersion] = ()
+
+    async def all(self) -> Sequence[SearchableVersion]:
+        """Return the versions sorted by library."""
+        return sorted(self.versions, key=lambda v: v.library)
 
 
 @dataclass(frozen=True, slots=True)

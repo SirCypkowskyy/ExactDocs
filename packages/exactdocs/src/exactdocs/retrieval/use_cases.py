@@ -64,6 +64,7 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    DefaultVersions,
     Libraries,
     SearchableVersions,
     SearchIndex,
@@ -152,17 +153,15 @@ class SearchDocsUseCase:
         )
 
 
-# Libraries searched at once: bounds the catalog lookups and the size of the one FTS query.
+# Libraries searched at once: bounds the size of the one FTS query.
 MAX_SEARCHED_LIBRARIES = 500
-# Catalog lookups in flight at a time while the default versions are resolved.
-LOOKUP_BATCH = 20
 
 
 @dataclass(frozen=True, slots=True)
 class SearchAllLibrariesUseCase:
     """Implements ``ports.driving.SearchAllLibraries``."""
 
-    libraries: Libraries
+    defaults: DefaultVersions
     versions: SearchableVersions
     search: SearchIndex
     chunks: ChunkRepository
@@ -175,7 +174,9 @@ class SearchAllLibrariesUseCase:
         """
         text = SearchText(value=query.query)
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
-        searched, omitted = await self._default_versions()
+        every = await self.defaults.all()
+        searched = {v.manifest_id: v for v in every[:MAX_SEARCHED_LIBRARIES]}
+        omitted = len(every) - len(searched)
         scope = searched
         if query.library is not None:
             only = await self.versions.find(query.library, None)
@@ -232,18 +233,6 @@ class SearchAllLibrariesUseCase:
             libraries=facets,
             results=results,
         )
-
-    async def _default_versions(self) -> tuple[dict[str, SearchableVersion], int]:
-        """Return the readable default versions by manifest ID, and how many libraries were cut."""
-        named = sorted(lib.id for lib in await self.libraries.all())
-        kept = named[:MAX_SEARCHED_LIBRARIES]
-        searched: dict[str, SearchableVersion] = {}
-        # ponytail: two catalog calls per library; a bulk "default manifests" query if this shows.
-        for start in range(0, len(kept), LOOKUP_BATCH):
-            batch = kept[start : start + LOOKUP_BATCH]
-            found = await asyncio.gather(*(self.versions.find(lib, None) for lib in batch))
-            searched |= {v.manifest_id: v for v in found if v is not None}
-        return searched, len(named) - len(kept)
 
 
 @dataclass(frozen=True, slots=True)

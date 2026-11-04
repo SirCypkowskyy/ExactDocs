@@ -99,6 +99,15 @@ class ManifestRepository(Protocol):
         """Return the version's active manifest without its entries, or ``None``."""
         ...
 
+    async def get_active_many(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], Manifest]:
+        """Return the active manifests (without entries) of these versions, by (library, ref).
+
+        Versions without one are left out. Batched, so a caller may pass thousands of versions.
+        """
+        ...
+
     async def list_entries(
         self,
         manifest_id: ManifestId,

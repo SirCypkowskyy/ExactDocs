@@ -4,6 +4,7 @@ from typing import Self
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    DefaultVersions,
     Libraries,
     SearchableVersions,
     SearchIndex,
@@ -57,6 +58,7 @@ class RetrievalModule:
         *,
         searchable: SearchableVersions,
         libraries: Libraries,
+        defaults: DefaultVersions,
         manifests: ActiveManifests,
         chunks: ChunkRepository,
         search: SearchIndex,
@@ -67,7 +69,7 @@ class RetrievalModule:
         clock = clock or SystemClock()
         return cls(
             search_docs=SearchDocsUseCase(searchable, search, chunks),
-            search_all_libraries=SearchAllLibrariesUseCase(libraries, searchable, search, chunks),
+            search_all_libraries=SearchAllLibrariesUseCase(defaults, searchable, search, chunks),
             index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks),
             read_chunk=ReadChunkUseCase(searchable, manifests, chunks),

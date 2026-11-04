@@ -7,19 +7,19 @@ from pydantic import ValidationError
 
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryLibraries,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchAllQuery
 from exactdocs.retrieval.errors import EmptySearchTextError, VersionNotIndexedError
 from exactdocs.retrieval.models import (
-    CatalogLibrary,
     DocTarget,
     ManifestStatus,
     SearchableVersion,
     SourceHost,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.use_cases import LOOKUP_BATCH, MAX_SEARCHED_LIBRARIES
+from exactdocs.retrieval.use_cases import MAX_SEARCHED_LIBRARIES
 
 
 @dataclass(slots=True)
@@ -28,7 +28,11 @@ class Versions:
 
     known: dict[tuple[str, str], SearchableVersion] = field(default_factory=dict)
     defaults: dict[str, str] = field(default_factory=dict)
+    listed: list[SearchableVersion] = field(default_factory=list)
     calls: int = 0
+
+    async def all(self) -> list[SearchableVersion]:
+        return sorted(self.listed, key=lambda v: v.library)
 
     async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
         self.calls += 1
@@ -36,15 +40,15 @@ class Versions:
         return self.known.get((library, ref or ""))
 
 
-def lib(id_: str, default: str | None = "v1") -> CatalogLibrary:
-    return CatalogLibrary(
-        id=id_,
-        title=id_,
-        description="",
-        source_url="https://github.com/x/y",
-        default_version=default,
-        versions=(default,) if default else (),
-        version_count=1 if default else 0,
+def stub(i: int) -> SearchableVersion:
+    """A library listed with a default version but never indexed: it only takes a slot."""
+    return SearchableVersion(
+        library=f"/o/l{i:04d}",
+        version="v1",
+        manifest_id=f"stub{i}",
+        commit_sha="0" * 40,
+        repository_url="https://github.com/x/y",
+        host=SourceHost.GITHUB,
     )
 
 
@@ -62,14 +66,13 @@ def chunk(heading: str, content: str) -> ChunkIn:
 class Fixture:
     retrieval: RetrievalModule
     versions: Versions
-    libraries: list[CatalogLibrary]
 
     async def add(
         self, library: str, ref: str, articles: dict[str, list[ChunkIn]], *, default: bool = True
     ) -> None:
         manifest = f"{library}@{ref}"
         sha = f"{len(self.versions.known):040d}"
-        self.versions.known[library, ref] = SearchableVersion(
+        found = self.versions.known[library, ref] = SearchableVersion(
             library=library,
             version=ref,
             manifest_id=manifest,
@@ -79,8 +82,7 @@ class Fixture:
         )
         if default:
             self.versions.defaults[library] = ref
-            if not any(item.id == library for item in self.libraries):
-                self.libraries.append(lib(library, ref))
+            self.versions.listed.append(found)
         await self.retrieval.index_manifest(
             IndexManifestCommand(
                 manifest_id=manifest,
@@ -99,20 +101,15 @@ class Fixture:
 def world() -> Fixture:
     chunks = InMemoryChunkRepository()
     versions = Versions()
-    libraries = list[CatalogLibrary]()
-
-    class Live:
-        async def all(self) -> list[CatalogLibrary]:
-            return list(libraries)
-
     module = RetrievalModule.build(
-        libraries=Live(),
+        defaults=versions,
+        libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=_Manifests(),
         chunks=chunks,
         search=InMemorySearchIndex(chunks),
     )
-    return Fixture(module, versions, libraries)
+    return Fixture(module, versions)
 
 
 class _Manifests:
@@ -198,23 +195,15 @@ async def test_the_limit_cuts_the_results_not_the_counts(world: Fixture) -> None
     assert found.libraries[0].matches == 5
 
 
-async def test_libraries_without_a_readable_default_are_skipped(world: Fixture) -> None:
-    await world.add("/a/one", "v1", {"a.md": [chunk("T", "token")]})
-    world.libraries.append(lib("/ghost/lib"))  # the catalog lists it, no active manifest
+async def test_libraries_beyond_the_cap_are_counted_as_omitted_and_cost_no_lookup(
+    world: Fixture,
+) -> None:
+    world.versions.listed.extend(stub(i) for i in range(MAX_SEARCHED_LIBRARIES + 3))
 
     found = await world.retrieval.search_all_libraries(SearchAllQuery(query="token"))
 
-    assert found.libraries_searched == 1
-
-
-async def test_many_libraries_are_looked_up_in_batches_and_capped(world: Fixture) -> None:
-    world.libraries.extend(lib(f"/o/l{i:04d}") for i in range(MAX_SEARCHED_LIBRARIES + 3))
-
-    found = await world.retrieval.search_all_libraries(SearchAllQuery(query="token"))
-
-    assert world.versions.calls == MAX_SEARCHED_LIBRARIES
-    assert found.libraries_omitted == 3
-    assert MAX_SEARCHED_LIBRARIES % LOOKUP_BATCH == 0
+    assert world.versions.calls == 0  # the defaults come in one call
+    assert (found.libraries_searched, found.libraries_omitted) == (MAX_SEARCHED_LIBRARIES, 3)
 
 
 async def test_blank_text_and_bad_input_are_refused(world: Fixture) -> None:
@@ -229,7 +218,7 @@ async def test_a_library_beyond_the_cap_is_searched_and_no_longer_counted_as_omi
     world: Fixture,
 ) -> None:
     last = f"/o/l{MAX_SEARCHED_LIBRARIES + 2:04d}"
-    world.libraries.extend(lib(f"/o/l{i:04d}") for i in range(1, MAX_SEARCHED_LIBRARIES + 2))
+    world.versions.listed.extend(stub(i) for i in range(1, MAX_SEARCHED_LIBRARIES + 2))
     for library in ("/o/l0000", last):
         await world.add(library, "v1", {"a.md": [chunk("T", "token")]})
 
@@ -237,4 +226,4 @@ async def test_a_library_beyond_the_cap_is_searched_and_no_longer_counted_as_omi
 
     assert [r.library for r in found.results] == [last]
     assert {f.library for f in found.libraries} == {"/o/l0000", last}
-    assert (found.libraries_searched, found.libraries_omitted) == (2, 2)
+    assert (found.libraries_searched, found.libraries_omitted) == (MAX_SEARCHED_LIBRARIES + 1, 2)

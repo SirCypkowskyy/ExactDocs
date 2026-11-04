@@ -1,6 +1,7 @@
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
+    DefaultVersions,
     Libraries,
     SearchableVersions,
     SearchIndex,
@@ -22,6 +23,7 @@ __all__ = [
     "ActiveManifests",
     "ChunkRepository",
     "CollectChunks",
+    "DefaultVersions",
     "DiscardPendingChunks",
     "GetChunkSets",
     "IndexManifest",

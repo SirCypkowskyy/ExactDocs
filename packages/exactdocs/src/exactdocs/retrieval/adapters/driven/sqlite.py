@@ -106,11 +106,6 @@ manifest_chunks = Table(
     ),
     Index("ix_retrieval_manifest_chunks_article", "manifest_id", "article_path", "position"),
     Index("ix_retrieval_manifest_chunks_chunk_id", "chunk_id"),
-    # The search joins an FTS hit to its manifests by this key: covering, so one probe per
-    # (hit, manifest) however many manifests are searched.
-    Index(
-        "ix_retrieval_manifest_chunks_join", "blob_sha", "config_hash", "position", "manifest_id"
-    ),
 )
 
 
