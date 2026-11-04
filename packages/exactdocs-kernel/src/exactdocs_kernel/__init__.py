@@ -11,6 +11,7 @@ from exactdocs_kernel.errors import (
     UnauthenticatedError,
     ValidationError,
 )
+from exactdocs_kernel.notice import NOTICE
 from exactdocs_kernel.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -27,6 +28,7 @@ __all__ = [
     "MAX_LIMIT",
     "MAX_TAGS",
     "MAX_TAG_LENGTH",
+    "NOTICE",
     "Clock",
     "ConflictError",
     "DomainError",

@@ -19,7 +19,7 @@ from exactdocs.catalog.models import (
     TagSelection,
     Version,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_TAG_LENGTH, Page
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_TAG_LENGTH, NOTICE, Page
 
 
 class _Dto(BaseModel):
@@ -95,7 +95,7 @@ class ResolvedVersion(VersionOut):
 
 
 class LibrarySummary(_Dto):
-    """A library and its version refs, sorted."""
+    """A library and its version refs, sorted; `refs` carries each version's details."""
 
     id: str
     title: str
@@ -174,6 +174,10 @@ class ListLibrariesQuery(_Dto):
 
 class LibraryList(_Dto):
     """A page of the libraries visible to the caller, sorted by ID."""
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
 
     libraries: list[LibrarySummary]
     next_cursor: str | None = Field(
@@ -358,6 +362,10 @@ class ArticleSummary(_Dto):
 
 class ArticleList(_Dto):
     """A page of articles of one manifest, sorted by path."""
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
 
     library: str
     ref: str

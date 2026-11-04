@@ -20,7 +20,7 @@ from exactdocs.retrieval.models import (
     TagMatch,
     source_link,
 )
-from exactdocs_kernel import normalize_tag
+from exactdocs_kernel import NOTICE, normalize_tag
 
 
 class _Dto(BaseModel):
@@ -143,6 +143,9 @@ class CoverageOut(_Dto):
 class SearchDocsResult(_Dto):
     """Results of one search, best first, with the version and the way they were found."""
 
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the results."
+    )
     library: str
     version: str
     commit_sha: str
