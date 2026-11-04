@@ -20,10 +20,13 @@ from exactdocs_kernel.pagination import (
     encode_cursor,
     paginate,
 )
+from exactdocs_kernel.tags import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
 
 __all__ = [
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
+    "MAX_TAGS",
+    "MAX_TAG_LENGTH",
     "Clock",
     "ConflictError",
     "DomainError",
@@ -35,5 +38,6 @@ __all__ = [
     "ValidationError",
     "decode_cursor",
     "encode_cursor",
+    "normalize_tag",
     "paginate",
 ]

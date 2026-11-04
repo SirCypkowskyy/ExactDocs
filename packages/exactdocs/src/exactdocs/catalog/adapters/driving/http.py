@@ -26,7 +26,7 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ResolveVersion,
 )
-from exactdocs_kernel import DEFAULT_LIMIT
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_TAG_LENGTH, MAX_TAGS
 
 
 def build_router(
@@ -73,14 +73,15 @@ def build_router(
             ),
         ] = "",
         tags: Annotated[
-            list[str],
+            list[Annotated[str, Query(max_length=MAX_TAGS * (MAX_TAG_LENGTH + 1))]] | None,
             Query(
+                max_length=MAX_TAGS,
                 description=(
                     "Only articles with these tags: comma-separated, or repeat the parameter. "
                     "Case does not matter."
-                )
+                ),
             ),
-        ] = [],  # ruff: ignore[mutable-argument-default] - FastAPI copies the default
+        ] = None,
         tags_match: Annotated[
             TagMatch, Query(description="`any` (default): one of the tags; `all`: every tag.")
         ] = TagMatch.ANY,
@@ -92,7 +93,7 @@ def build_router(
             ref=ref,
             path_prefix=path_prefix,
             tag_filter=TagFilter(
-                tags=[t for value in tags for t in value.split(",") if t.strip()],
+                tags=[t for value in tags or [] for t in value.split(",") if t.strip()],
                 match=tags_match,
             ),
             limit=limit,

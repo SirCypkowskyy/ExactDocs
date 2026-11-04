@@ -19,7 +19,7 @@ from exactdocs.catalog.models import (
     TagSelection,
     Version,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_TAG_LENGTH, Page
 
 
 class _Dto(BaseModel):
@@ -416,11 +416,14 @@ class ManifestStates(_Dto):
     states: dict[str, ManifestState]
 
 
+MAX_TAG_RULES = 64
+
+
 class TagRuleIn(_Dto):
     """Articles whose path matches `pattern` get `tag` (already normalized by the importer)."""
 
-    pattern: str = Field(min_length=1)
-    tag: str = Field(min_length=1)
+    pattern: str = Field(min_length=1, max_length=256)
+    tag: str = Field(min_length=1, max_length=MAX_TAG_LENGTH)
 
 
 class CreateLibraryCommand(_Dto):
@@ -433,7 +436,7 @@ class CreateLibraryCommand(_Dto):
     default_branch: str | None = None
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
-    tag_rules: list[TagRuleIn] = Field(default_factory=list)
+    tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
 
 
 class DiscardLibraryCommand(_Dto):

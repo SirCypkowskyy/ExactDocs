@@ -6,6 +6,7 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from exactdocs.ingestion.models import (
+    MAX_TAG_RULES,
     FileProblem,
     Job,
     JobState,
@@ -165,7 +166,7 @@ class AddLibraryCommand(_Dto):
     )
     tag_rules: list[TagRuleIn] = Field(
         default_factory=list,
-        max_length=64,
+        max_length=MAX_TAG_RULES,
         description="Tags for articles by path; they are added to the front-matter tags.",
     )
 

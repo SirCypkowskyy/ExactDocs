@@ -1,39 +1,17 @@
 import pytest
 
+from exactdocs.ingestion import models
 from exactdocs.ingestion.errors import InvalidPathPatternError, InvalidTagError
 from exactdocs.ingestion.models import (
-    MAX_ARTICLE_TAGS,
     MAX_TAG_RULES,
+    MAX_TAGS,
+    PARSER_VERSION,
+    ChunkingConfig,
     TagRule,
     article_tags,
-    normalize_tag,
+    chunking_config_hash,
     parse_article,
 )
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        (" API ", "api"),
-        ("Getting  Started", "getting-started"),
-        ("v1.2+beta", "v1.2+beta"),
-        ("\uff21\uff30\uff29", "api"),  # full-width letters, NFKC
-        ("zażółć", "zażółć"),
-        ("c++", "c++"),
-        ("a" * 40, "a" * 40),
-        ("a" * 41, None),
-        ("", None),
-        ("-lead", None),
-        ("_lead", None),
-        ("a,b", None),
-        ("a/b", None),
-        ("<script>", None),
-        ("emoji\U0001f600", None),
-    ],
-)
-def test_a_tag_has_one_form_or_is_refused(raw: str, expected: str | None) -> None:
-    assert normalize_tag(raw) == expected
-
 
 RULES = TagRule.many([("docs/api/**", "API"), ("docs/adr/", "adr"), ("docs/api/**", "api")])
 
@@ -60,11 +38,11 @@ def test_rules_are_deduplicated_and_normalized() -> None:
 
 
 def test_the_tags_of_an_article_are_capped_rule_tags_first() -> None:
-    declared = tuple(f"t{i}" for i in range(MAX_ARTICLE_TAGS))
+    declared = tuple(f"t{i}" for i in range(MAX_TAGS))
 
     tags = article_tags("docs/api/a.md", declared, RULES)
 
-    assert len(tags) == MAX_ARTICLE_TAGS
+    assert len(tags) == MAX_TAGS
     assert tags[0] == "api"
 
 
@@ -88,10 +66,19 @@ def test_front_matter_tags_that_are_no_tags_are_dropped_with_a_problem() -> None
 
 
 def test_front_matter_tags_are_capped() -> None:
-    names = ", ".join(f"t{i}" for i in range(MAX_ARTICLE_TAGS + 5))
+    names = ", ".join(f"t{i}" for i in range(MAX_TAGS + 5))
 
     article = parse_article("a.md", f"---\ntags: [{names}]\n---\n")
 
-    assert len(article.tags) == MAX_ARTICLE_TAGS
-    assert article.tags[-1] == f"t{MAX_ARTICLE_TAGS - 1}"
+    assert len(article.tags) == MAX_TAGS
+    assert article.tags[-1] == f"t{MAX_TAGS - 1}"
     assert article.problems
+
+
+def test_the_parser_bump_changes_the_chunk_set_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = ChunkingConfig()
+    current = chunking_config_hash(config)
+    monkeypatch.setattr(models, "PARSER_VERSION", 2)
+
+    assert models.PARSER_VERSION != PARSER_VERSION == 3
+    assert chunking_config_hash(config) != current

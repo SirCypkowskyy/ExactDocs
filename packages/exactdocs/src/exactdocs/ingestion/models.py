@@ -10,7 +10,6 @@ import ipaddress
 import json
 import math
 import re
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -36,6 +35,7 @@ from exactdocs.ingestion.errors import (
     UnknownRefError,
     UrlProblem,
 )
+from exactdocs_kernel import MAX_TAGS, normalize_tag
 
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
@@ -129,21 +129,8 @@ def strip_invisible(text: str) -> str:
     return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub(lambda m: m["flag"] or "", text))
 
 
-MAX_TAG_LENGTH = 40
-MAX_ARTICLE_TAGS = 20
 MAX_TAG_RULES = 64
-_TAG = re.compile(r"[^\W_][\w.+-]*")
-
-
-def normalize_tag(raw: str) -> str | None:
-    """Return the tag in its one form, or ``None`` when it cannot be a tag.
-
-    NFKC, lower-case, trimmed, inner whitespace becomes ``-``. A tag starts with a letter or a
-    digit and goes on with letters, digits, ``.``, ``+``, ``-`` and ``_`` (any script); at most
-    ``MAX_TAG_LENGTH`` characters. Commas never survive, so a tag fits a comma-separated filter.
-    """
-    tag = "-".join(unicodedata.normalize("NFKC", raw).lower().split())
-    return tag if len(tag) <= MAX_TAG_LENGTH and _TAG.fullmatch(tag) else None
+_MAX_RAW_TAGS = 100
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -194,12 +181,11 @@ def parse_article(path: str, source: str) -> ParsedArticle:
     if not all(isinstance(tag, str) for tag in tags):
         problems.append("front matter tags must be text; other items were ignored")
     named = [tag for tag in tags if isinstance(tag, str) and tag.strip()]
-    normalized = [normalize_tag(tag) for tag in named]
-    if (invalid := normalized.count(None)) or len(set(normalized)) > MAX_ARTICLE_TAGS:
-        problems.append(
-            f"front matter tags: {invalid} invalid ignored, at most {MAX_ARTICLE_TAGS} kept"
-        )
-    declared_tags = tuple(dict.fromkeys(t for t in normalized if t))[:MAX_ARTICLE_TAGS]
+    skipped = max(0, len(named) - _MAX_RAW_TAGS)  # not even normalized: bounded work
+    normalized = [normalize_tag(tag) for tag in named[:_MAX_RAW_TAGS]]
+    if (invalid := normalized.count(None) + skipped) or len(set(normalized)) > MAX_TAGS:
+        problems.append(f"front matter tags: {invalid} invalid ignored, at most {MAX_TAGS} kept")
+    declared_tags = tuple(dict.fromkeys(t for t in normalized if t))[:MAX_TAGS]
     description = front_matter.get("description")
     return ParsedArticle(
         path=path,
@@ -848,10 +834,10 @@ def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -
     """Combine the tags of the rules matching ``path`` with the front-matter ones.
 
     Rule tags come first (they are the library owner's), then ``declared`` (already normalized by
-    ``parse_article``); duplicates go; at most ``MAX_ARTICLE_TAGS`` are kept.
+    ``parse_article``); duplicates go; at most ``MAX_TAGS`` are kept.
     """
     ruled = (rule.tag for rule in rules if rule.selection.selects(path))
-    return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_ARTICLE_TAGS]
+    return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

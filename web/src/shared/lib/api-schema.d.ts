@@ -166,7 +166,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/v1/search": {
+    readonly "/api/v1/libraries/{owner}/{repo}/search": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -445,6 +445,27 @@ export interface components {
             readonly max_chars: number | null;
         };
         /**
+         * CoverageOut
+         * @description How much of the index the answer stands on.
+         */
+        readonly CoverageOut: {
+            /**
+             * Candidates
+             * @description Lower bound: matching chunks the search looked at, at most `limit` + 1.
+             */
+            readonly candidates: number;
+            /**
+             * Reranked
+             * @description Of those, how many a reranker reordered.
+             */
+            readonly reranked: number;
+            /**
+             * Complete
+             * @description False when more matches exist than `limit` allowed.
+             */
+            readonly complete: boolean;
+        };
+        /**
          * CreateFirstAdminCommand
          * @description The first admin's credentials. The password is a ``SecretStr``: never shown in a repr.
          */
@@ -481,22 +502,6 @@ export interface components {
              * @default []
              */
             readonly fields: readonly components["schemas"]["FieldError"][];
-        };
-        /**
-         * ExcerptOut
-         * @description One verbatim excerpt with its provenance.
-         */
-        readonly ExcerptOut: {
-            /** Text */
-            readonly text: string;
-            /** Source Url */
-            readonly source_url: string;
-            /** Library */
-            readonly library: string;
-            /** Version */
-            readonly version: string;
-            /** Commit Sha */
-            readonly commit_sha: string | null;
         };
         /**
          * FieldError
@@ -703,12 +708,85 @@ export interface components {
             readonly library: string;
         };
         /**
+         * RetrievalMode
+         * @description How a search found its results. One result shape serves every mode.
+         * @enum {string}
+         */
+        readonly RetrievalMode: "bm25";
+        /**
          * SearchDocsResult
-         * @description Excerpts ordered from most to least relevant.
+         * @description Results of one search, best first, with the version and the way they were found.
          */
         readonly SearchDocsResult: {
-            /** Excerpts */
-            readonly excerpts: readonly components["schemas"]["ExcerptOut"][];
+            /** Library */
+            readonly library: string;
+            /** Version */
+            readonly version: string;
+            /** Commit Sha */
+            readonly commit_sha: string;
+            readonly retrieval_mode: components["schemas"]["RetrievalMode"];
+            /** Reranked */
+            readonly reranked: boolean;
+            readonly coverage: components["schemas"]["CoverageOut"];
+            /**
+             * Fallback Reason
+             * @description Why a better mode was not used, when one was asked for.
+             */
+            readonly fallback_reason?: string | null;
+            /** Results */
+            readonly results: readonly components["schemas"]["SearchResultOut"][];
+        };
+        /**
+         * SearchResultOut
+         * @description One verbatim result with where it lives and how to read around it.
+         */
+        readonly SearchResultOut: {
+            /** Chunk Id */
+            readonly chunk_id: string;
+            /** Article Path */
+            readonly article_path: string;
+            /** Heading Path */
+            readonly heading_path: readonly string[];
+            /** Anchor */
+            readonly anchor: string;
+            /**
+             * Position
+             * @description 0-based index of the chunk in its article.
+             */
+            readonly position: number;
+            /**
+             * Total
+             * @description Number of chunks of the article.
+             */
+            readonly total: number;
+            /** Prev Chunk Id */
+            readonly prev_chunk_id: string | null;
+            /** Next Chunk Id */
+            readonly next_chunk_id: string | null;
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /**
+             * Source Url
+             * @description Link to the section at the commit; null when the host is unknown.
+             */
+            readonly source_url: string | null;
+            /** Tags */
+            readonly tags: readonly string[];
+            /**
+             * Score
+             * @description Higher is better; only comparable within one search.
+             */
+            readonly score: number;
+            /**
+             * Snippet
+             * @description Verbatim text of the chunk, possibly cut at either end.
+             */
+            readonly snippet: string;
+            /**
+             * Highlights
+             * @description Offsets into `snippet` of the words that matched.
+             */
+            readonly highlights: readonly components["schemas"]["Span"][];
         };
         /**
          * SessionState
@@ -723,11 +801,15 @@ export interface components {
             readonly account?: components["schemas"]["AccountSummary"] | null;
         };
         /**
-         * TagMatch
-         * @description Whether an article needs any or all of the filter's tags.
-         * @enum {string}
+         * Span
+         * @description A `[start, end)` range of characters.
          */
-        readonly TagMatch: "any" | "all";
+        readonly Span: {
+            /** Start */
+            readonly start: number;
+            /** End */
+            readonly end: number;
+        };
         /**
          * TagRuleIn
          * @description Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`.
@@ -828,11 +910,23 @@ export interface components {
          */
         readonly exactdocs__catalog__models__RefKind: "tag" | "branch" | "commit";
         /**
+         * TagMatch
+         * @description Whether an article needs any or all of the filter's tags.
+         * @enum {string}
+         */
+        readonly exactdocs__catalog__models__TagMatch: "any" | "all";
+        /**
          * RefKind
          * @description What a requested ref turned out to be.
          * @enum {string}
          */
         readonly exactdocs__ingestion__models__RefKind: "tag" | "branch" | "commit";
+        /**
+         * TagMatch
+         * @description How a tag filter combines its tags.
+         * @enum {string}
+         */
+        readonly exactdocs__retrieval__models__TagMatch: "any" | "all";
     };
     responses: never;
     parameters: never;
@@ -1687,9 +1781,9 @@ export interface operations {
                 /** @description Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`. Empty lists everything. */
                 readonly path_prefix?: string;
                 /** @description Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter. */
-                readonly tags?: readonly string[];
+                readonly tags?: readonly string[] | null;
                 /** @description `any` (default): one of the tags; `all`: every tag. */
-                readonly tags_match?: components["schemas"]["TagMatch"];
+                readonly tags_match?: components["schemas"]["exactdocs__catalog__models__TagMatch"];
                 readonly limit?: number;
                 readonly cursor?: string | null;
             };
@@ -1850,13 +1944,19 @@ export interface operations {
     readonly "retrieval-search": {
         readonly parameters: {
             readonly query: {
-                readonly library: string;
-                readonly version: string;
-                readonly query: string;
+                /** @description Identifier, error or question. */
+                readonly q: string;
+                readonly ref?: string | null;
+                /** @description Repeat or comma-separate. */
+                readonly tags?: readonly string[] | null;
+                readonly tags_match?: components["schemas"]["exactdocs__retrieval__models__TagMatch"];
                 readonly limit?: number;
             };
             readonly header?: never;
-            readonly path?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
             readonly cookie?: never;
         };
         readonly requestBody?: never;

@@ -1119,12 +1119,20 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 820
+                  },
+                  "maxItems": 20
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "description": "Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter.",
-              "default": [],
               "title": "Tags"
             },
             "description": "Only articles with these tags: comma-separated, or repeat the parameter. Case does not matter."
@@ -1134,7 +1142,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/TagMatch",
+              "$ref": "#/components/schemas/exactdocs__catalog__models__TagMatch",
               "description": "`any` (default): one of the tags; `all`: every tag.",
               "default": "any"
             },
@@ -1378,7 +1386,7 @@
         }
       }
     },
-    "/api/v1/search": {
+    "/api/v1/libraries/{owner}/{repo}/search": {
       "get": {
         "tags": [
           "retrieval"
@@ -1395,33 +1403,83 @@
         ],
         "parameters": [
           {
-            "name": "library",
-            "in": "query",
+            "name": "owner",
+            "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "title": "Library"
+              "title": "Owner"
             }
           },
           {
-            "name": "version",
-            "in": "query",
+            "name": "repo",
+            "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "title": "Version"
+              "title": "Repo"
             }
           },
           {
-            "name": "query",
+            "name": "q",
             "in": "query",
             "required": true,
             "schema": {
               "type": "string",
               "minLength": 1,
-              "title": "Query"
+              "maxLength": 1000,
+              "description": "Identifier, error or question.",
+              "title": "Q"
+            },
+            "description": "Identifier, error or question."
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ref"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "maxItems": 20
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat or comma-separate.",
+              "title": "Tags"
+            },
+            "description": "Repeat or comma-separate."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/exactdocs__retrieval__models__TagMatch",
+              "default": "any"
             }
           },
           {
@@ -2341,6 +2399,34 @@
         "title": "ChunkingOut",
         "description": "How articles are cut into chunks."
       },
+      "CoverageOut": {
+        "properties": {
+          "candidates": {
+            "type": "integer",
+            "title": "Candidates",
+            "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1."
+          },
+          "reranked": {
+            "type": "integer",
+            "title": "Reranked",
+            "description": "Of those, how many a reranker reordered."
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete",
+            "description": "False when more matches exist than `limit` allowed."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "candidates",
+          "reranked",
+          "complete"
+        ],
+        "title": "CoverageOut",
+        "description": "How much of the index the answer stands on."
+      },
       "CreateFirstAdminCommand": {
         "properties": {
           "username": {
@@ -2420,48 +2506,6 @@
         ],
         "title": "ErrorResponse",
         "description": "The one error shape of the API: a stable machine ``error`` code and a human ``detail``."
-      },
-      "ExcerptOut": {
-        "properties": {
-          "text": {
-            "type": "string",
-            "title": "Text"
-          },
-          "source_url": {
-            "type": "string",
-            "title": "Source Url"
-          },
-          "library": {
-            "type": "string",
-            "title": "Library"
-          },
-          "version": {
-            "type": "string",
-            "title": "Version"
-          },
-          "commit_sha": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commit Sha"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "text",
-          "source_url",
-          "library",
-          "version",
-          "commit_sha"
-        ],
-        "title": "ExcerptOut",
-        "description": "One verbatim excerpt with its provenance."
       },
       "FieldError": {
         "properties": {
@@ -2988,23 +3032,187 @@
         "title": "ResolvedVersion",
         "description": "The version an ID resolved to; always states which one was used."
       },
+      "RetrievalMode": {
+        "type": "string",
+        "enum": [
+          "bm25"
+        ],
+        "title": "RetrievalMode",
+        "description": "How a search found its results. One result shape serves every mode."
+      },
       "SearchDocsResult": {
         "properties": {
-          "excerpts": {
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "retrieval_mode": {
+            "$ref": "#/components/schemas/RetrievalMode"
+          },
+          "reranked": {
+            "type": "boolean",
+            "title": "Reranked"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CoverageOut"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason",
+            "description": "Why a better mode was not used, when one was asked for."
+          },
+          "results": {
             "items": {
-              "$ref": "#/components/schemas/ExcerptOut"
+              "$ref": "#/components/schemas/SearchResultOut"
             },
             "type": "array",
-            "title": "Excerpts"
+            "title": "Results"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "excerpts"
+          "library",
+          "version",
+          "commit_sha",
+          "retrieval_mode",
+          "reranked",
+          "coverage",
+          "results"
         ],
         "title": "SearchDocsResult",
-        "description": "Excerpts ordered from most to least relevant."
+        "description": "Results of one search, best first, with the version and the way they were found."
+      },
+      "SearchResultOut": {
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "title": "Chunk Id"
+          },
+          "article_path": {
+            "type": "string",
+            "title": "Article Path"
+          },
+          "heading_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Heading Path"
+          },
+          "anchor": {
+            "type": "string",
+            "title": "Anchor"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position",
+            "description": "0-based index of the chunk in its article."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Number of chunks of the article."
+          },
+          "prev_chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Chunk Id"
+          },
+          "next_chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Chunk Id"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url",
+            "description": "Link to the section at the commit; null when the host is unknown."
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Higher is better; only comparable within one search."
+          },
+          "snippet": {
+            "type": "string",
+            "title": "Snippet",
+            "description": "Verbatim text of the chunk, possibly cut at either end."
+          },
+          "highlights": {
+            "items": {
+              "$ref": "#/components/schemas/Span"
+            },
+            "type": "array",
+            "title": "Highlights",
+            "description": "Offsets into `snippet` of the words that matched."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "article_path",
+          "heading_path",
+          "anchor",
+          "position",
+          "total",
+          "prev_chunk_id",
+          "next_chunk_id",
+          "commit_sha",
+          "source_url",
+          "tags",
+          "score",
+          "snippet",
+          "highlights"
+        ],
+        "title": "SearchResultOut",
+        "description": "One verbatim result with where it lives and how to read around it."
       },
       "SessionState": {
         "properties": {
@@ -3036,14 +3244,25 @@
         "title": "SessionState",
         "description": "What the UI needs to know first: is setup due, is anyone signed in, and who."
       },
-      "TagMatch": {
-        "type": "string",
-        "enum": [
-          "any",
-          "all"
+      "Span": {
+        "properties": {
+          "start": {
+            "type": "integer",
+            "title": "Start"
+          },
+          "end": {
+            "type": "integer",
+            "title": "End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start",
+          "end"
         ],
-        "title": "TagMatch",
-        "description": "Whether an article needs any or all of the filter's tags."
+        "title": "Span",
+        "description": "A `[start, end)` range of characters."
       },
       "TagRuleIn": {
         "properties": {
@@ -3272,6 +3491,15 @@
         "title": "RefKind",
         "description": "What a version was imported from."
       },
+      "exactdocs__catalog__models__TagMatch": {
+        "type": "string",
+        "enum": [
+          "any",
+          "all"
+        ],
+        "title": "TagMatch",
+        "description": "Whether an article needs any or all of the filter's tags."
+      },
       "exactdocs__ingestion__models__RefKind": {
         "type": "string",
         "enum": [
@@ -3281,6 +3509,15 @@
         ],
         "title": "RefKind",
         "description": "What a requested ref turned out to be."
+      },
+      "exactdocs__retrieval__models__TagMatch": {
+        "type": "string",
+        "enum": [
+          "any",
+          "all"
+        ],
+        "title": "TagMatch",
+        "description": "How a tag filter combines its tags."
       }
     },
     "securitySchemes": {

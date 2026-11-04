@@ -20,6 +20,7 @@ from exactdocs.retrieval.models import (
     TagMatch,
     source_link,
 )
+from exactdocs_kernel import normalize_tag
 
 
 class _Dto(BaseModel):
@@ -66,14 +67,17 @@ class SearchDocsQuery(_Dto):
     @field_validator("tags", mode="before")
     @classmethod
     def _normalize_tags(cls, value: object) -> object:
-        """Split on commas, strip, lowercase (as ingestion stores them), drop blanks and repeats."""
+        """Split on commas and normalize like ingestion stores tags; drop blanks and repeats."""
         if not isinstance(value, list | tuple):
             return value
         if not all(isinstance(v, str) for v in value):
             return value
-        return list(
-            dict.fromkeys(t for v in value for p in v.split(",") if (t := p.strip().lower()))
-        )
+        parts = [p for v in value for p in v.split(",") if p.strip()]
+        tags = [normalize_tag(p) for p in parts]
+        if None in tags:
+            message = "tags must be valid tags"
+            raise ValueError(message)
+        return list(dict.fromkeys(tags))
 
 
 class Span(_Dto):

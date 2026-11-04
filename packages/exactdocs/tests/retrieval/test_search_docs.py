@@ -301,3 +301,14 @@ async def test_a_chunk_that_vanished_is_neither_a_result_nor_a_candidate() -> No
 
     assert [r.article_path for r in result.results] == ["docs/api/client.md"]
     assert result.coverage.candidates == len(result.results)
+
+
+def test_search_tags_are_normalized_like_ingestion_stores_them() -> None:
+    query = SearchDocsQuery(library=LIB, query="x", tags=["Straße, API", "STRASSE"])
+
+    assert query.tags == ["strasse", "api"]
+
+
+def test_a_search_tag_that_cannot_be_a_tag_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        SearchDocsQuery(library=LIB, query="x", tags=["not a tag!"])

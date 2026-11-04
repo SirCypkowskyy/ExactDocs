@@ -234,6 +234,8 @@ def _entry(row: Row) -> ManifestEntry:
     )
 
 
+# ponytail: a correlated json_each per row of the manifest, so a sparse tag on a huge manifest
+# scans it all; upgrade to a catalog_manifest_entry_tags(manifest_id, tag, path) side table.
 _HAS_ANY_TAG = text(
     "EXISTS (SELECT 1 FROM json_each(catalog_manifest_entries.tags)"
     " WHERE value IN (SELECT value FROM json_each(:tags)))"
