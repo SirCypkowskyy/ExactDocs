@@ -61,9 +61,9 @@ function Page() {
   );
 }
 
-function view() {
+function view(start = "/") {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<TestRouter pages={{ "/": Page }} />);
+  return render(<TestRouter pages={{ "/": Page }} start={start} />);
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -103,5 +103,16 @@ describe("ArticleView", () => {
     expect(screen.queryByRole("heading", { name: /Install/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Rendered" }));
     expect(await screen.findByRole("heading", { name: /Install/ })).toBeInTheDocument();
+  });
+
+  it("lands on the heading a search result links to (the bare chunk anchor as the URL hash)", async () => {
+    serve(false);
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+    view("/#install");
+    const heading = await screen.findByRole("heading", { name: /Install/ });
+    expect(heading).toHaveAttribute("id", "doc-install");
+    expect(heading).toHaveClass("doc-target");
+    expect(scroll.mock.contexts).toContain(heading);
+    scroll.mockRestore();
   });
 });
