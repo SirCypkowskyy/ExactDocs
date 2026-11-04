@@ -14,6 +14,7 @@ from exactdocs.ingestion.ports.driven import (
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
+    AddVersion,
     CheckRepository,
     EnqueueJob,
     GetJob,
@@ -26,6 +27,7 @@ from exactdocs.ingestion.ports.driving import (
 
 __all__ = [
     "AddLibrary",
+    "AddVersion",
     "CheckRepository",
     "ChunkIndex",
     "Chunker",

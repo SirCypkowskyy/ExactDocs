@@ -5,13 +5,14 @@ import codecs
 import os
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, InMemoryLibrarySources
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     ImportNotPinnedError,
@@ -20,6 +21,7 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
+    IMPORT_JOB,
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
     ArticleChunk,
@@ -27,6 +29,7 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
+    JobState,
     ParsedArticle,
     PathSelection,
     ProblemCode,
@@ -39,7 +42,14 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import import_job
-from exactdocs.ingestion.use_cases import ImportVersionUseCase, Skip, _decode, _Progress
+from exactdocs.ingestion.use_cases import (
+    ImportVersionUseCase,
+    RunNextJobUseCase,
+    Skip,
+    _decode,
+    _Progress,
+)
+from exactdocs_kernel import SystemClock
 
 SHA = "a" * 40
 URL = RepositoryUrl(
@@ -85,6 +95,10 @@ class Sources:
     async def get(self, library: str) -> ImportSource:
         del library
         return self.source
+
+    async def imported_versions(self, library: str) -> Mapping[str, str]:
+        del library
+        return {}
 
 
 @dataclass(slots=True)
@@ -689,3 +703,21 @@ async def test_a_summary_that_blows_up_does_not_fail_the_import(
 
     assert world.catalog.described == [("/a/b", "v1", None, None)]
     assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+
+
+async def test_a_library_removed_before_the_import_runs_fails_the_job_cleanly(
+    world: World,
+) -> None:
+    jobs = InMemoryJobRepository.of([make_job()])
+    importer = replace(world.run, sources=InMemoryLibrarySources())
+    run_next = RunNextJobUseCase(jobs, SystemClock(), {IMPORT_JOB: importer})
+
+    assert await run_next()
+
+    job = await jobs.get(JobId("j1"))
+    assert job is not None
+    assert job.state is JobState.FAILED
+    assert job.error is not None
+    assert "/a/b" in job.error
+    assert world.log == []  # nothing stored
+    assert world.gateway.fetched == []

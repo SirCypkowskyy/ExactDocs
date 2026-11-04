@@ -242,6 +242,26 @@ class AddedLibrary(_Dto):
         )
 
 
+class AddVersionBody(_Dto):
+    """The request body of adding a version; the library is in the path."""
+
+    ref: str = Field(
+        min_length=1,
+        max_length=255,
+        description="A tag, a branch or a full or short commit SHA.",
+    )
+
+
+class AddVersionCommand(AddVersionBody):
+    """Import another version of an existing library, with the library's own settings."""
+
+    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+
+
+class AddedVersion(AddedLibrary):
+    """Like ``AddedLibrary``, but ``library_id`` is the existing library."""
+
+
 class ListRepositoryRefsQuery(_Dto):
     """Ask a repository for its tags and branches."""
 

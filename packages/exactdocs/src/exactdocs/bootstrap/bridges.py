@@ -177,7 +177,7 @@ class CatalogLibrarySources:
     get_library: GetLibrary
 
     async def get(self, library: str) -> ImportSource:
-        """Read the library's repository and path selection; raises ``NotFoundError`` if unknown."""
+        """Read the library's repository, selection and tag rules; ``NotFoundError`` if unknown."""
         detail = await self.get_library(GetLibraryQuery(id=library))
         settings = detail.settings
         return ImportSource(
@@ -185,6 +185,11 @@ class CatalogLibrarySources:
             selection=PathSelection.of(settings.include_paths, settings.exclude_paths),
             tag_rules=TagRule.many([(r.pattern, r.tag) for r in settings.tag_rules]),
         )
+
+    async def imported_versions(self, library: str) -> Mapping[str, str]:
+        """Return ``{ref: commit SHA}`` of the library's imported versions."""
+        detail = await self.get_library(GetLibraryQuery(id=library))
+        return {v.ref: v.commit_sha for v in detail.versions}
 
 
 @dataclass(frozen=True, slots=True)

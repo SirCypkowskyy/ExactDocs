@@ -6,7 +6,10 @@ from fastapi import APIRouter, Query, Request, Response, status
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
+    AddedVersion,
     AddLibraryCommand,
+    AddVersionBody,
+    AddVersionCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     GetJobQuery,
@@ -19,6 +22,7 @@ from exactdocs.ingestion.dtos import (
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
+    AddVersion,
     CheckRepository,
     GetJob,
     ListLatestJobs,
@@ -36,6 +40,7 @@ def build_router(
     check_repository: CheckRepository,
     list_repository_refs: ListRepositoryRefs,
     add_library: AddLibrary,
+    add_version: AddVersion,
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side."""
     router = APIRouter(tags=["ingestion"])
@@ -60,6 +65,33 @@ def build_router(
         """
         added = await add_library(command)
         response.headers["Location"] = f"{request.url.path.rstrip('/')}{added.library_id}"
+        return added
+
+    @router.post(
+        "/libraries/{owner}/{repo}/versions",
+        status_code=status.HTTP_202_ACCEPTED,
+        responses={
+            status.HTTP_202_ACCEPTED: {
+                "headers": {
+                    "Location": {
+                        "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                        "schema": {"type": "string"},
+                    }
+                }
+            }
+        },
+    )
+    async def add_another_version(
+        owner: str, repo: str, body: AddVersionBody, request: Request, response: Response
+    ) -> AddedVersion:
+        """Import another version of the library with the library's own settings.
+
+        The import is queued: `Location` is its job. A ref the library already has is a 409.
+        """
+        added = await add_version(
+            AddVersionCommand(library=f"/{owner}/{repo}".lower(), ref=body.ref)
+        )
+        response.headers["Location"] = request.url_for("get_job", job_id=added.job_id).path
         return added
 
     @router.get("/jobs/latest", name="list_latest_jobs")

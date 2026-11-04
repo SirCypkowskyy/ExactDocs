@@ -15,7 +15,9 @@ from typing import BinaryIO
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
+    AddedVersion,
     AddLibraryCommand,
+    AddVersionCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     EnqueueJobCommand,
@@ -31,12 +33,15 @@ from exactdocs.ingestion.dtos import (
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
+    CommitImportedError,
     ImportNotPinnedError,
     ImportTooLargeError,
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
     UnknownJobKindError,
+    VersionExistsError,
+    VersionImportingError,
 )
 from exactdocs.ingestion.models import (
     DEFAULT_MAX_ARTICLE_BYTES,
@@ -49,6 +54,7 @@ from exactdocs.ingestion.models import (
     Job,
     JobId,
     JobKind,
+    JobState,
     NewLibrary,
     ParsedArticle,
     PathSelection,
@@ -57,6 +63,7 @@ from exactdocs.ingestion.models import (
     ReadmeSummary,
     RefKind,
     RepositoryUrl,
+    ResolvedRef,
     TagRule,
     article_tags,
     git_blob_sha,
@@ -344,15 +351,7 @@ class AddLibraryUseCase:
             )
         )
         try:
-            job = await self.enqueue_job(
-                EnqueueJobCommand(
-                    kind=IMPORT_JOB,
-                    library=created,
-                    version=resolved.name,
-                    commit_sha=resolved.commit_sha,
-                    ref_kind=resolved.kind,
-                )
-            )
+            job = await _enqueue_import(self.enqueue_job, created, resolved)
         except BaseException:
             try:
                 await self.libraries.discard(created)
@@ -362,6 +361,61 @@ class AddLibraryUseCase:
                 )
             raise
         return AddedLibrary.of(created, resolved, job)
+
+
+async def _enqueue_import(
+    enqueue_job: EnqueueJob, library: str, resolved: ResolvedRef
+) -> JobSummary:
+    """Queue the import of a ref already pinned to its commit."""
+    return await enqueue_job(
+        EnqueueJobCommand(
+            kind=IMPORT_JOB,
+            library=library,
+            version=resolved.name,
+            commit_sha=resolved.commit_sha,
+            ref_kind=resolved.kind,
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AddVersionUseCase:
+    """Implements ``ports.driving.AddVersion``."""
+
+    remote: GitRemote
+    sources: LibrarySources
+    jobs: JobRepository
+    enqueue_job: EnqueueJob
+
+    async def __call__(self, command: AddVersionCommand) -> AddedVersion:
+        """Pin the ref like ``AddLibrary`` does and queue the import with the library's settings.
+
+        The import job reads the library's selection and tag rules when it runs, so the version
+        is built exactly like the ones before it. Refused (nothing queued): a ref the library
+        already has (re-syncing is a different action), a ref whose import is still queued or
+        running, and a commit SHA that is already a version under another ref (a tag and a
+        branch at one commit stay two versions: the branch moves on).
+        ponytail: the in-progress check is not atomic; two simultaneous requests can both pass,
+        and the second import then replaces the first's manifest (harmless: one wasted import).
+        """
+        library = command.library
+        source = await self.sources.get(library)
+        existing = await self.sources.imported_versions(library)
+        resolved = resolve_ref(await self.remote.list_refs(source.url), command.ref)
+        if resolved.name in existing:
+            raise VersionExistsError(library, resolved.name)
+        if resolved.kind is RefKind.COMMIT:
+            for ref, commit_sha in existing.items():
+                if commit_sha == resolved.commit_sha:
+                    raise CommitImportedError(library, commit_sha, ref)
+        unfinished = {JobState.QUEUED, JobState.RUNNING}
+        if any(
+            job.kind == IMPORT_JOB and job.version == resolved.name and job.state in unfinished
+            for job in await self.jobs.list_for_library(library)
+        ):
+            raise VersionImportingError(library, resolved.name)
+        job = await _enqueue_import(self.enqueue_job, library, resolved)
+        return AddedVersion.of(library, resolved, job)
 
 
 @dataclass(frozen=True, slots=True)

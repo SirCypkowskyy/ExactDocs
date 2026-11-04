@@ -1993,6 +1993,134 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/versions": {
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Add Another Version",
+        "description": "Import another version of the library with the library's own settings.\n\nThe import is queued: `Location` is its job. A ref the library already has is a 409.",
+        "operationId": "ingestion-add_another_version",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddVersionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedVersion"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/latest": {
       "get": {
         "tags": [
@@ -2419,6 +2547,24 @@
         "title": "AddLibraryCommand",
         "description": "Create a library from a git repository, with its doc selection, and queue its import."
       },
+      "AddVersionBody": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Ref",
+            "description": "A tag, a branch or a full or short commit SHA."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref"
+        ],
+        "title": "AddVersionBody",
+        "description": "The request body of adding a version; the library is in the path."
+      },
       "AddedLibrary": {
         "properties": {
           "library_id": {
@@ -2453,6 +2599,41 @@
         ],
         "title": "AddedLibrary",
         "description": "The new library, the commit its ref was pinned to, and the queued import."
+      },
+      "AddedVersion": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "ref": {
+            "type": "string",
+            "title": "Ref",
+            "description": "The tag or branch name, or the full SHA of a commit."
+          },
+          "ref_kind": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "ref",
+          "ref_kind",
+          "commit_sha",
+          "job_id"
+        ],
+        "title": "AddedVersion",
+        "description": "Like ``AddedLibrary``, but ``library_id`` is the existing library."
       },
       "Article": {
         "properties": {

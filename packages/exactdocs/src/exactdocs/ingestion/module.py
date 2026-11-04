@@ -13,6 +13,7 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
+    ImportSource,
     JobKind,
 )
 from exactdocs.ingestion.ports.driven import (
@@ -30,6 +31,7 @@ from exactdocs.ingestion.ports.driven import (
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
+    AddVersion,
     CheckRepository,
     EnqueueJob,
     GetJob,
@@ -41,6 +43,7 @@ from exactdocs.ingestion.ports.driving import (
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
+    AddVersionUseCase,
     CheckRepositoryUseCase,
     DiscardInterruptedImportUseCase,
     EnqueueJobUseCase,
@@ -52,7 +55,19 @@ from exactdocs.ingestion.use_cases import (
     RecoverJobsUseCase,
     RunNextJobUseCase,
 )
-from exactdocs_kernel import Clock
+from exactdocs_kernel import Clock, NotFoundError
+
+
+class _NoLibrarySources:
+    """The default ``sources`` of ``build``: no library is known, so no version can be added."""
+
+    async def get(self, library: str) -> ImportSource:
+        message = f"library {library!r} not found"
+        raise NotFoundError(message)
+
+    async def imported_versions(self, library: str) -> Mapping[str, str]:
+        await self.get(library)
+        return {}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -60,6 +75,7 @@ class IngestionModule:
     """The ingestion's driving ports, ready to be exposed by driving adapters."""
 
     add_library: AddLibrary
+    add_version: AddVersion
     check_repository: CheckRepository
     enqueue_job: EnqueueJob
     get_job: GetJob
@@ -78,6 +94,7 @@ class IngestionModule:
         remote: GitRemote,
         library_ids: LibraryIds,
         libraries: NewLibraries,
+        sources: LibrarySources | None = None,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
     ) -> Self:
@@ -89,6 +106,9 @@ class IngestionModule:
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         return cls(
             add_library=AddLibraryUseCase(remote, library_ids, libraries, enqueue_job),
+            add_version=AddVersionUseCase(
+                remote, sources or _NoLibrarySources(), jobs, enqueue_job
+            ),
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),

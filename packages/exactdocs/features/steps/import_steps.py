@@ -63,7 +63,7 @@ def _articles(context: Context, ref: str) -> list[dict]:
             return found
 
 
-def _wait(context: Context, job_id: str) -> dict:
+def wait_for_job(context: Context, job_id: str) -> dict:
     deadline = time.monotonic() + JOB_SECONDS
     while time.monotonic() < deadline:
         job = context.client.get(f"/api/v1/jobs/{job_id}").json()
@@ -75,7 +75,7 @@ def _wait(context: Context, job_id: str) -> dict:
     raise AssertionError(message)
 
 
-def _import(context: Context, ref: str, **settings: object) -> None:
+def import_version(context: Context, ref: str, **settings: object) -> None:
     """Add the library at ``ref`` the first time; later, queue another version of it."""
     commit = _commit(context, ref)
     if context.library_added:
@@ -97,7 +97,7 @@ def _import(context: Context, ref: str, **settings: object) -> None:
         assert response.status_code == HTTPStatus.CREATED, response.text
         job_id = response.json()["job_id"]
         context.library_added = True
-    _wait(context, job_id)
+    wait_for_job(context, job_id)
 
 
 @given("ExactDocs imports the fixture docs repository")
@@ -124,7 +124,7 @@ def step_running(context: Context) -> None:
 @given('"{target}" is imported')
 def step_given_imported(context: Context, target: str) -> None:
     ref = target.removeprefix(LIBRARY + "/")
-    _import(context, ref, include_paths=["docs/"])
+    import_version(context, ref, include_paths=["docs/"])
     assert context.job["state"] == "succeeded", context.job
     context.served = {ref: [a["path"] for a in _articles(context, ref)]}
     context.commits = {ref: _version_commit(context, ref)}
@@ -138,24 +138,26 @@ def _version_commit(context: Context, ref: str) -> str:
 
 @when('"{paths}" of the fixture repository at "{ref}" is imported')
 def step_import(context: Context, paths: str, ref: str) -> None:
-    _import(context, ref, include_paths=[paths])
+    import_version(context, ref, include_paths=[paths])
 
 
 @when('"{paths}" of the fixture repository at "{ref}" is imported excluding "{exclusion}"')
 def step_import_excluding(context: Context, paths: str, ref: str, exclusion: str) -> None:
-    _import(context, ref, include_paths=[paths], exclude_paths=[exclusion])
+    import_version(context, ref, include_paths=[paths], exclude_paths=[exclusion])
 
 
 @when('"{paths}" of the fixture repository at "{ref}" is imported with the tag rule "{rule}"')
 def step_import_tagged(context: Context, paths: str, ref: str, rule: str) -> None:
     pattern, tag = rule.split(" -> ")
-    _import(context, ref, include_paths=[paths], tag_rules=[{"pattern": pattern, "tag": tag}])
+    import_version(
+        context, ref, include_paths=[paths], tag_rules=[{"pattern": pattern, "tag": tag}]
+    )
 
 
 @when('"{ref}" is imported again')
 def step_again(context: Context, ref: str) -> None:
     context.chunks_before = _search_all(context, ref)
-    _import(context, ref)
+    import_version(context, ref)
     assert context.job["state"] == "succeeded", context.job
 
 
@@ -175,7 +177,7 @@ def step_fail(context: Context, ref: str) -> None:
             ref_kind=RefKind.BRANCH,
         ),
     )
-    _wait(context, job.id)
+    wait_for_job(context, job.id)
     assert context.job["state"] == "failed", context.job
     assert "unreachable" in context.job["error"], context.job
 
