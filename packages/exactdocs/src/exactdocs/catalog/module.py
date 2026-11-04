@@ -6,13 +6,30 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.catalog.ports.driven import LibraryRepository
-from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries, ResolveVersion
+from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports.driving import (
+    ActivateManifest,
+    CollectGarbage,
+    DiscardPendingManifests,
+    GetArticle,
+    GetLibrary,
+    ListArticles,
+    ListLibraries,
+    ResolveVersion,
+    StoreManifest,
+)
 from exactdocs.catalog.use_cases import (
+    ActivateManifestUseCase,
+    CollectGarbageUseCase,
+    DiscardPendingManifestsUseCase,
+    GetArticleUseCase,
     GetLibraryUseCase,
+    ListArticlesUseCase,
     ListLibrariesUseCase,
     ResolveVersionUseCase,
+    StoreManifestUseCase,
 )
+from exactdocs_kernel import Clock, SystemClock
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -22,12 +39,31 @@ class CatalogModule:
     list_libraries: ListLibraries
     get_library: GetLibrary
     resolve_version: ResolveVersion
+    store_manifest: StoreManifest
+    activate_manifest: ActivateManifest
+    list_articles: ListArticles
+    get_article: GetArticle
+    discard_pending_manifests: DiscardPendingManifests
+    collect_garbage: CollectGarbage
 
     @classmethod
-    def build(cls, *, repository: LibraryRepository) -> Self:
+    def build(
+        cls,
+        *,
+        repository: LibraryRepository,
+        manifests: ManifestRepository,
+        clock: Clock | None = None,
+    ) -> Self:
         """Assemble the use cases around the given driven adapters."""
+        clock = clock or SystemClock()
         return cls(
             list_libraries=ListLibrariesUseCase(repository),
             get_library=GetLibraryUseCase(repository),
             resolve_version=ResolveVersionUseCase(repository),
+            store_manifest=StoreManifestUseCase(repository, manifests, clock),
+            activate_manifest=ActivateManifestUseCase(repository, manifests, clock),
+            list_articles=ListArticlesUseCase(repository, manifests),
+            get_article=GetArticleUseCase(repository, manifests),
+            discard_pending_manifests=DiscardPendingManifestsUseCase(manifests),
+            collect_garbage=CollectGarbageUseCase(manifests, clock),
         )

@@ -4,11 +4,14 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import Any, NewType, Self
 
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
+    DuplicateArticlePathError,
     DuplicateVersionRefError,
+    InvalidArticlePathError,
+    InvalidBlobShaError,
     InvalidCommitShaError,
     InvalidImportTimeError,
     InvalidLibraryIdError,
@@ -20,7 +23,7 @@ from exactdocs.catalog.errors import (
 _ID_PARTS = 3  # "", owner, repo
 _HEADING_LEVELS = 6
 _SEGMENT = re.compile(r"(?!\.+$)[A-Za-z0-9._-]+")
-_COMMIT_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _SHORT_SHA = re.compile(r"[0-9a-f]{7,64}")
 # Stable semver (https://semver.org) with an optional `v`: a pre-release suffix means not stable.
 _STABLE_SEMVER = re.compile(
@@ -101,7 +104,7 @@ class Version:
     imported_at: datetime
 
     def __post_init__(self) -> None:
-        if not _COMMIT_SHA.fullmatch(self.commit_sha):
+        if not _OBJECT_ID.fullmatch(self.commit_sha):
             raise InvalidCommitShaError(self.commit_sha)
         if self.imported_at.tzinfo is None:
             raise InvalidImportTimeError
@@ -215,3 +218,76 @@ class Library:
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:
     match = _STABLE_SEMVER.fullmatch(tag)
     return (int(match[1]), int(match[2]), int(match[3])) if match else None
+
+
+ManifestId = NewType("ManifestId", str)
+
+
+class ManifestState(StrEnum):
+    """Where a manifest is in its life: stored, serving readers, or replaced by a newer one."""
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestEntry:
+    """One article of a manifest: where it lives, and which shared content it points at."""
+
+    path: str
+    blob_sha: str  # git blob SHA: the key of the (deduplicated) article content
+    title: str
+    tags: tuple[str, ...] = ()
+    front_matter: dict[str, Any] = field(default_factory=dict)
+    size: int = 0  # bytes of the content
+
+    def __post_init__(self) -> None:
+        if not self.path or any(part in {"", ".", ".."} for part in self.path.split("/")):
+            raise InvalidArticlePathError(self.path)
+        if not _OBJECT_ID.fullmatch(self.blob_sha):
+            raise InvalidBlobShaError(self.blob_sha)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Manifest:
+    """The articles of one version at one commit. Readers only ever see the active manifest.
+
+    A manifest is stored `PENDING` (invisible), activated in one step (the previous one becomes
+    `SUPERSEDED`), and collected after a grace period. Other domains hold its ID by value.
+    """
+
+    id: ManifestId
+    library: LibraryId
+    ref: VersionRef
+    kind: RefKind
+    commit_sha: str
+    created_at: datetime
+    entries: tuple[ManifestEntry, ...] = ()
+    state: ManifestState = ManifestState.PENDING
+    superseded_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not _OBJECT_ID.fullmatch(self.commit_sha):
+            raise InvalidCommitShaError(self.commit_sha)
+        paths = [entry.path for entry in self.entries]
+        if len(set(paths)) != len(paths):
+            raise DuplicateArticlePathError(next(p for p in paths if paths.count(p) > 1))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoredArticle:
+    """An article as a reader gets it: its manifest entry and the shared content."""
+
+    manifest_id: ManifestId
+    commit_sha: str
+    entry: ManifestEntry
+    content: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GarbageCollected:
+    """What a collection removed."""
+
+    manifests: int
+    contents: int

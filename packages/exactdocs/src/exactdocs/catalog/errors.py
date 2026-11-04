@@ -1,4 +1,4 @@
-from exactdocs_kernel import NotFoundError, ValidationError
+from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
 
 
 class InvalidLibraryIdError(ValidationError):
@@ -70,5 +70,59 @@ class VersionNotFoundError(NotFoundError):
             super().__init__(f"library {library_id!r} has no imported version")
         else:
             super().__init__(f"library {library_id!r} has no version {ref!r}")
+        self.library_id = library_id
+        self.ref = ref
+
+
+class InvalidBlobShaError(ValidationError):
+    """A blob SHA is not a full lower-case hexadecimal git object ID."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(f"{text!r} is not a full blob SHA (40 or 64 hexadecimal characters)")
+
+
+class InvalidArticlePathError(ValidationError):
+    """An article path is not a relative `/`-separated path inside the repository."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(
+            f"{text!r} is not an article path: expected a relative path without empty, '.' or "
+            "'..' parts"
+        )
+
+
+class DuplicateArticlePathError(ValidationError):
+    """A manifest lists the same article path twice."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(f"article path {path!r} appears more than once")
+
+
+class ManifestNotFoundError(NotFoundError):
+    """No manifest has this ID."""
+
+    def __init__(self, manifest_id: str) -> None:
+        super().__init__(f"manifest {manifest_id!r} does not exist")
+        self.manifest_id = manifest_id
+
+
+class ManifestNotPendingError(ConflictError):
+    """Only a pending manifest can be activated; this one is already active or superseded."""
+
+    def __init__(self, manifest_id: str, state: str) -> None:
+        super().__init__(
+            f"manifest {manifest_id!r} is {state}, only a pending one can be activated"
+        )
+        self.manifest_id = manifest_id
+
+
+class ArticleNotFoundError(NotFoundError):
+    """The version has no active manifest, or its manifest has no such article."""
+
+    def __init__(self, library_id: str, ref: str, path: str | None) -> None:
+        if path is None:
+            super().__init__(f"version {ref!r} of {library_id!r} has no articles")
+        else:
+            super().__init__(f"version {ref!r} of {library_id!r} has no article {path!r}")
         self.library_id = library_id
         self.ref = ref

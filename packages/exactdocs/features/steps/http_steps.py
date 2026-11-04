@@ -89,6 +89,7 @@ def step_running(context: Context) -> None:
     context.add_cleanup(stack.close)  # runs the app's shutdown after the scenario
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     settings = Settings(data_dir=data_dir)
+    context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     context.client = stack.enter_context(
         TestClient(create_app(Container.build(settings)), base_url="http://localhost")
