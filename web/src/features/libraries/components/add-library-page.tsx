@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, ChevronRight } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
@@ -20,12 +20,10 @@ import {
   type RefChoice,
   refToSend,
   type TagRuleDraft,
-  validateLibraryId,
-  validatePatterns,
-  validateRule,
+  validateForm,
   validateUrl,
 } from "../model/add-library";
-import { PathFields, TagRules } from "./file-selection";
+import { AdvancedOptions } from "./file-selection";
 import { ImportProgress } from "./import-progress";
 import { RefPicker } from "./ref-picker";
 
@@ -44,6 +42,56 @@ const FOCUS: Record<AddField, string> = {
   paths: "include",
   tags: "add-rule",
 };
+
+/** Focus goes to the first mistake, in the order the form reads. */
+function RepoFound({ checked }: { checked: Checked | undefined }) {
+  return (
+    <p role="status" className="min-h-5 text-sm text-muted-foreground">
+      {checked && (
+        <span className="fade-in inline-flex items-start gap-1.5">
+          <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+          <span>
+            Found on {HOSTS[checked.host] ?? "a git server"}.{" "}
+            {checked.default_branch
+              ? `Default branch is ${checked.default_branch}.`
+              : "It has no default branch, so choose one below."}
+          </span>
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** `aria-disabled` while busy keeps focus on the button; the submit handler ignores repeats. */
+function SubmitButton({ pending, checked }: { pending: boolean; checked: boolean }) {
+  const label = checked
+    ? pending
+      ? "Adding"
+      : "Add library"
+    : pending
+      ? "Checking"
+      : "Check repository";
+  return (
+    <Button type="submit" aria-disabled={pending} aria-busy={pending}>
+      {pending && (
+        <span
+          aria-hidden="true"
+          className="spin size-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground"
+        />
+      )}
+      {label}
+    </Button>
+  );
+}
+
+function focusFirstMistake(form: { id?: string | undefined; paths?: string | undefined }) {
+  const target =
+    (form.id && "library-id") ||
+    (form.paths && "include") ||
+    document.querySelector<HTMLElement>("[data-rules] [aria-invalid=true]")?.id ||
+    "add-rule";
+  document.getElementById(target)?.focus();
+}
 
 interface Checked extends CheckedRepository {
   url: string;
@@ -85,6 +133,8 @@ export function AddLibraryPage() {
     }
   }
 
+  const clear = (field: AddField) => setErrors((e) => ({ ...e, [field]: undefined }));
+
   function edit(value: string) {
     setUrl(value);
     current.current = value;
@@ -122,25 +172,13 @@ export function AddLibraryPage() {
     if (pending) return;
     if (!checked) return check();
 
-    const idError = validateLibraryId(libraryId);
-    const pathError = validatePatterns(include) ?? validatePatterns(exclude);
-    const ruleErrors = filledRules(rules).some((r) => {
-      const p = validateRule(r);
-      return p.pattern || p.tag;
-    });
-    if (idError || pathError || ruleErrors) {
+    const form = validateForm({ libraryId, include, exclude, rules });
+    if (!form.ok) {
       setProblem(undefined);
       setShowRuleErrors(true);
-      setErrors({ id: idError, paths: pathError });
-      if (pathError || ruleErrors) setAdvanced(true);
-      const first = idError ? "library-id" : pathError ? "include" : undefined;
-      requestAnimationFrame(() => {
-        const target =
-          first ??
-          document.querySelector<HTMLElement>("[data-rules] [aria-invalid=true]")?.id ??
-          "add-rule";
-        document.getElementById(target)?.focus();
-      });
+      setErrors({ id: form.id, paths: form.paths });
+      if (form.paths || form.badRule) setAdvanced(true);
+      requestAnimationFrame(() => focusFirstMistake(form));
       return;
     }
 
@@ -223,19 +261,7 @@ export function AddLibraryPage() {
                 hint={errors.url ? undefined : "A public git repository with Markdown docs."}
                 onChange={(e) => edit(e.target.value)}
               />
-              <p role="status" className="min-h-5 text-sm text-muted-foreground">
-                {checked && (
-                  <span className="fade-in inline-flex items-start gap-1.5">
-                    <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
-                    <span>
-                      Found on {HOSTS[checked.host] ?? "a git server"}.{" "}
-                      {checked.default_branch
-                        ? `Default branch is ${checked.default_branch}.`
-                        : "It has no default branch, so choose one below."}
-                    </span>
-                  </span>
-                )}
-              </p>
+              <RepoFound checked={checked} />
             </div>
 
             {checked && (
@@ -251,7 +277,7 @@ export function AddLibraryPage() {
                   className="font-mono text-[15px]"
                   onChange={(e) => {
                     setLibraryId(e.target.value);
-                    setErrors((x) => ({ ...x, id: undefined }));
+                    clear("id");
                   }}
                 />
                 <RefPicker
@@ -261,51 +287,35 @@ export function AddLibraryPage() {
                   error={errors.ref}
                   onChoice={(c) => {
                     setChoice(c);
-                    setErrors((x) => ({ ...x, ref: undefined }));
+                    clear("ref");
                   }}
                   onTyped={(v) => {
                     setTypedRef(v);
-                    setErrors((x) => ({ ...x, ref: undefined }));
+                    clear("ref");
                   }}
                 />
-                <details
+                <AdvancedOptions
                   open={advanced}
-                  onToggle={(e) => setAdvanced(e.currentTarget.open)}
-                  className="group"
-                >
-                  <summary className="-ml-2 flex min-h-11 w-fit cursor-pointer list-none items-center gap-2 rounded-md px-2 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-                    <ChevronRight
-                      aria-hidden="true"
-                      className="size-4 text-muted-foreground transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none"
-                    />
-                    Choose files and tags
-                    <span className="font-normal text-muted-foreground">(optional)</span>
-                  </summary>
-                  <div className="mt-4 flex flex-col gap-6" data-rules>
-                    <PathFields
-                      include={include}
-                      exclude={exclude}
-                      error={errors.paths}
-                      onInclude={(v) => {
-                        setInclude(v);
-                        setErrors((x) => ({ ...x, paths: undefined }));
-                      }}
-                      onExclude={(v) => {
-                        setExclude(v);
-                        setErrors((x) => ({ ...x, paths: undefined }));
-                      }}
-                    />
-                    <TagRules
-                      rules={rules}
-                      showErrors={showRuleErrors}
-                      error={errors.tags}
-                      onChange={(r) => {
-                        setRules(r);
-                        setErrors((x) => ({ ...x, tags: undefined }));
-                      }}
-                    />
-                  </div>
-                </details>
+                  onOpen={setAdvanced}
+                  include={include}
+                  exclude={exclude}
+                  rules={rules}
+                  pathError={errors.paths}
+                  tagError={errors.tags}
+                  showRuleErrors={showRuleErrors}
+                  onInclude={(v) => {
+                    setInclude(v);
+                    clear("paths");
+                  }}
+                  onExclude={(v) => {
+                    setExclude(v);
+                    clear("paths");
+                  }}
+                  onRules={(r) => {
+                    setRules(r);
+                    clear("tags");
+                  }}
+                />
               </div>
             )}
 
@@ -316,21 +326,7 @@ export function AddLibraryPage() {
               >
                 Cancel
               </Link>
-              <Button type="submit" aria-disabled={pending} aria-busy={pending}>
-                {pending && (
-                  <span
-                    aria-hidden="true"
-                    className="spin size-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground"
-                  />
-                )}
-                {checked
-                  ? pending
-                    ? "Adding"
-                    : "Add library"
-                  : pending
-                    ? "Checking"
-                    : "Check repository"}
-              </Button>
+              <SubmitButton pending={pending} checked={Boolean(checked)} />
             </div>
           </form>
         )}

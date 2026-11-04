@@ -277,3 +277,19 @@ export function summarizeProblems(problems: readonly FileProblem[]): ProblemSumm
     truncated,
   };
 }
+
+/** The checks that need no server: what is wrong with the form as it stands. */
+export function validateForm(form: {
+  libraryId: string;
+  include: string;
+  exclude: string;
+  rules: readonly TagRuleDraft[];
+}) {
+  const id = validateLibraryId(form.libraryId);
+  const paths = validatePatterns(form.include) ?? validatePatterns(form.exclude);
+  const badRule = filledRules(form.rules).some((r) => {
+    const p = validateRule(r);
+    return Boolean(p.pattern || p.tag);
+  });
+  return { id, paths, badRule, ok: !id && !paths && !badRule };
+}

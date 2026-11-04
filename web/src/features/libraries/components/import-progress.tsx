@@ -6,7 +6,7 @@ import { cn } from "@/shared/lib/utils";
 import { buttonVariants } from "@/shared/ui/button";
 import { importJobQueryOptions } from "../api/add-library";
 import { type AddedLibrary, summarizeProblems } from "../model/add-library";
-import { shortSha } from "../model/library";
+import { type Job, shortSha } from "../model/library";
 import { SkippedList } from "./skipped-list";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -32,6 +32,76 @@ interface Props {
   onAddAnother: () => void;
 }
 
+interface MeterProps {
+  id: string;
+  job: Job | undefined;
+  state: string;
+  finished: boolean;
+  lostContact: boolean;
+}
+
+function Status({
+  job,
+  state,
+  known,
+  finished,
+}: {
+  job: Job | undefined;
+  state: string;
+  known: boolean;
+  finished: boolean;
+}) {
+  return (
+    <p className="tabular-nums" aria-hidden={finished}>
+      {state === "queued" && "Waiting for a free worker"}
+      {state === "running" &&
+        (known ? `${job?.done} of ${job?.total} files` : "Reading the repository")}
+      {state === "succeeded" && (
+        <span className="inline-flex items-center gap-1.5">
+          <Check aria-hidden="true" className="size-4 text-mark" />
+          {plural(job?.done ?? 0, "file", "files")} imported
+        </span>
+      )}
+      {state === "failed" && (
+        <span className="inline-flex items-center gap-1.5 font-medium text-destructive">
+          <CircleAlert aria-hidden="true" className="size-4" />
+          Stopped after {job?.done ?? 0} files
+        </span>
+      )}
+    </p>
+  );
+}
+
+function Meter({ id, job, state, finished, lostContact }: MeterProps) {
+  const known = (job?.total ?? 0) > 0;
+  const pct = known && job ? Math.min(1, job.done / job.total) : finished ? 1 : 0;
+  return (
+    <div className="mt-6">
+      <div className="flex items-baseline justify-between gap-4 text-sm">
+        <Status job={job} state={state} known={known} finished={finished} />
+        {lostContact && <p className="text-muted-foreground">Lost contact, retrying…</p>}
+      </div>
+      <div
+        role="progressbar"
+        aria-label={`Import progress for ${id}`}
+        aria-valuemin={0}
+        aria-valuemax={known ? job?.total : undefined}
+        aria-valuenow={known ? job?.done : finished ? 1 : undefined}
+        className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+      >
+        <div
+          className={cn(
+            "h-full origin-left rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none",
+            state === "failed" ? "bg-destructive" : "bg-mark",
+            !known && !finished && "w-1/3 motion-safe:animate-pulse",
+          )}
+          style={known || finished ? { transform: `scaleX(${pct})`, width: "100%" } : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
 /** Watches the import job of a library that was just added, including the files it skipped. */
 export function ImportProgress({ added, onAddAnother }: Props) {
   const { data: job, isError } = useQuery(importJobQueryOptions(added.job_id));
@@ -41,8 +111,6 @@ export function ImportProgress({ added, onAddAnother }: Props) {
   const state = job?.state ?? "queued";
   const finished = state === "succeeded" || state === "failed";
   const summary = summarizeProblems(job?.problems ?? []);
-  const known = (job?.total ?? 0) > 0;
-  const pct = known && job ? Math.min(1, job.done / job.total) : finished ? 1 : 0;
 
   // The announcement changes with the phase only, not with the counter.
   const [announced, setAnnounced] = useState("");
@@ -70,45 +138,13 @@ export function ImportProgress({ added, onAddAnother }: Props) {
         {announced}
       </p>
 
-      <div className="mt-6">
-        <div className="flex items-baseline justify-between gap-4 text-sm">
-          <p className="tabular-nums" aria-hidden={finished}>
-            {state === "queued" && "Waiting for a free worker"}
-            {state === "running" &&
-              (known ? `${job?.done} of ${job?.total} files` : "Reading the repository")}
-            {state === "succeeded" && (
-              <span className="inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-mark" />
-                {plural(job?.done ?? 0, "file", "files")} imported
-              </span>
-            )}
-            {state === "failed" && (
-              <span className="inline-flex items-center gap-1.5 font-medium text-destructive">
-                <CircleAlert aria-hidden="true" className="size-4" />
-                Stopped after {job?.done ?? 0} files
-              </span>
-            )}
-          </p>
-          {isError && !finished && <p className="text-muted-foreground">Lost contact, retrying…</p>}
-        </div>
-        <div
-          role="progressbar"
-          aria-label={`Import progress for ${added.library_id}`}
-          aria-valuemin={0}
-          aria-valuemax={known ? job?.total : undefined}
-          aria-valuenow={known ? job?.done : finished ? 1 : undefined}
-          className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-secondary"
-        >
-          <div
-            className={cn(
-              "h-full origin-left rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none",
-              state === "failed" ? "bg-destructive" : "bg-mark",
-              !known && !finished && "w-1/3 motion-safe:animate-pulse",
-            )}
-            style={known || finished ? { transform: `scaleX(${pct})`, width: "100%" } : undefined}
-          />
-        </div>
-      </div>
+      <Meter
+        id={added.library_id}
+        job={job}
+        state={state}
+        finished={finished}
+        lostContact={isError && !finished}
+      />
 
       {state === "failed" && (
         <pre className="mt-5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-xs [overflow-wrap:anywhere]">

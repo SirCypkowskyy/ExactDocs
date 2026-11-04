@@ -1,5 +1,4 @@
-import { Plus, X } from "lucide-react";
-import { useRef } from "react";
+import { ChevronRight, Plus, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { MAX_TAG_RULES, type TagRuleDraft, validateRule } from "../model/add-library";
@@ -15,7 +14,7 @@ interface PathsProps {
   onExclude: (v: string) => void;
 }
 
-export function PathFields({ include, exclude, error, onInclude, onExclude }: PathsProps) {
+function PathFields({ include, exclude, error, onInclude, onExclude }: PathsProps) {
   const described = ["paths-hint", error && "paths-error"].filter(Boolean).join(" ");
   return (
     <div className="flex flex-col gap-4">
@@ -75,8 +74,7 @@ interface RulesProps {
   onChange: (rules: TagRuleDraft[]) => void;
 }
 
-export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
-  const next = useRef(rules.reduce((n, r) => Math.max(n, r.key + 1), 0));
+function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
   const set = (key: number, patch: Partial<TagRuleDraft>) =>
     onChange(rules.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   return (
@@ -168,7 +166,7 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
           disabled={rules.length >= MAX_TAG_RULES}
           aria-describedby="tags-hint"
           onClick={() => {
-            const key = next.current++;
+            const key = rules.reduce((n, r) => Math.max(n, r.key + 1), 0);
             onChange([...rules, { key, pattern: "", tag: "" }]);
             requestAnimationFrame(() => document.getElementById(`rule-path-${key}`)?.focus());
           }}
@@ -178,5 +176,50 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
         </Button>
       </div>
     </fieldset>
+  );
+}
+
+interface AdvancedProps {
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  include: string;
+  exclude: string;
+  rules: readonly TagRuleDraft[];
+  pathError: string | undefined;
+  tagError: string | undefined;
+  showRuleErrors: boolean;
+  onInclude: (v: string) => void;
+  onExclude: (v: string) => void;
+  onRules: (rules: TagRuleDraft[]) => void;
+}
+
+/** The optional part of the form, closed until asked for or until it holds a mistake. */
+export function AdvancedOptions(p: AdvancedProps) {
+  return (
+    <details open={p.open} onToggle={(e) => p.onOpen(e.currentTarget.open)} className="group">
+      <summary className="-ml-2 flex min-h-11 w-fit cursor-pointer list-none items-center gap-2 rounded-md px-2 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="size-4 text-muted-foreground transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none"
+        />
+        Choose files and tags
+        <span className="font-normal text-muted-foreground">(optional)</span>
+      </summary>
+      <div className="mt-4 flex flex-col gap-6" data-rules>
+        <PathFields
+          include={p.include}
+          exclude={p.exclude}
+          error={p.pathError}
+          onInclude={p.onInclude}
+          onExclude={p.onExclude}
+        />
+        <TagRules
+          rules={p.rules}
+          showErrors={p.showRuleErrors}
+          error={p.tagError}
+          onChange={p.onRules}
+        />
+      </div>
+    </details>
   );
 }
