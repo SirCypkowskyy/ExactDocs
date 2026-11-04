@@ -415,11 +415,10 @@ class PreviewRepositoryUseCase:
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
-        full_ref = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(resolved.kind)
         paths = await self.tree.list_files(
             repository,
             resolved.commit_sha,
-            refs=[] if full_ref is None else [full_ref + resolved.name],
+            refs=_full_refs(resolved.kind, resolved.name),
             credential=credential,
         )
         matching = sorted(path for path in paths if selection.selects(path))

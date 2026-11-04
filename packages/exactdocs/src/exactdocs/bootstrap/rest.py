@@ -18,6 +18,7 @@ from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs_kernel import (
+    BusyError,
     ConflictError,
     DomainError,
     NotFoundError,
@@ -32,6 +33,7 @@ _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     UnauthenticatedError: 401,
     NotFoundError: 404,
     ConflictError: 409,
+    BusyError: 429,
     ValidationError: 422,
 }
 

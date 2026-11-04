@@ -100,7 +100,10 @@ class _NoLibrarySources:
 
 
 class _NoTree:
-    """The default ``tree`` of ``build``: no git to list a commit with."""
+    """The default ``tree`` of ``build``: no git to list a commit with.
+
+    (Not ``MissingGit``: the core does not import adapters.)
+    """
 
     async def list_files(self, repository: object, commit_sha: str, **_: object) -> list[str]:
         del repository, commit_sha

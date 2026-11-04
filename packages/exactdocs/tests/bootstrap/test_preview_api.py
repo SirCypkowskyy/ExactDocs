@@ -7,6 +7,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.errors import PreviewBusyError
 from fixture_repo import DocsRepo
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
@@ -119,3 +120,22 @@ async def test_an_unreachable_server(client: httpx.AsyncClient) -> None:
     response = await preview(client, "http://127.0.0.1:1/acme/gone.git")
 
     assert (response.status_code, response.json()["error"]) == (422, "repository_unreachable")
+
+
+async def test_busy_previews_answer_429(demo_catalog: dict[str, str], docs_repo: DocsRepo) -> None:
+    class Busy:
+        async def list_files(self, *_: object, **__: object) -> list[str]:
+            raise PreviewBusyError
+
+    container = Container.build(Settings(), tree=Busy())
+    async with (
+        container.running(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(container)),
+            base_url="http://localhost",
+            cookies=demo_catalog,
+        ) as busy,
+    ):
+        response = await preview(busy, docs_repo.file_url)
+
+    assert (response.status_code, response.json()["error"]) == (429, "preview_busy")

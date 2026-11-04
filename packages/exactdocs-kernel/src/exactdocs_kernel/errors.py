@@ -29,6 +29,12 @@ class ValidationError(DomainError):
     code = "validation_error"
 
 
+class BusyError(DomainError):
+    """Too many of this kind of request are running: try again shortly."""
+
+    code = "busy"
+
+
 class UnauthenticatedError(DomainError):
     """The caller is not signed in, or the credentials they gave are wrong."""
 

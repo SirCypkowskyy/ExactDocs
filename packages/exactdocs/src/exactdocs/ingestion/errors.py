@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from enum import StrEnum
 
-from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
+from exactdocs_kernel import BusyError, ConflictError, DomainError, NotFoundError, ValidationError
 
 
 class UrlProblem(StrEnum):
@@ -133,6 +133,22 @@ class RepositoryTooLargeError(ValidationError):
 
     def __init__(self, limit: int) -> None:
         super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+
+
+class TreeTooLargeError(RepositoryTooLargeError):
+    """The commit has more files than a preview can list."""
+
+    def __init__(self) -> None:
+        ValidationError.__init__(self, "the repository has too many files to preview")
+
+
+class PreviewBusyError(BusyError):
+    """Every preview slot is taken: the caller may try again in a moment."""
+
+    code = "preview_busy"
+
+    def __init__(self) -> None:
+        super().__init__("too many previews are running; try again in a moment")
 
 
 class LibraryIdTakenError(ConflictError):
