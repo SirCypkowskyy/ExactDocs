@@ -197,7 +197,7 @@ describe("searching a version", () => {
 
   it("keeps the query in the URL after a pause, and clears it with Escape", async () => {
     const { router, searches } = mount("/libraries/acme/payments?version=v1.4.0");
-    const box = await screen.findByRole("searchbox");
+    const box = await screen.findByRole("searchbox", { name: /^Search v/ });
     await userEvent.type(box, "retry");
     expect(searches()).toHaveLength(0);
     await waitFor(() => expect(router.state.location.search).toMatchObject({ q: "retry" }));
@@ -221,7 +221,7 @@ describe("searching a version", () => {
     mount("/libraries/acme/payments?version=v1.4.0&q=retry", {
       hits: { "v1.4.0": [hit(1), hit(2, { anchor: "backoff", heading_path: ["Backoff"] })] },
     });
-    const box = await screen.findByRole("searchbox");
+    const box = await screen.findByRole("searchbox", { name: /^Search v/ });
     await screen.findByRole("link", { name: /Backoff/ });
     await userEvent.keyboard("/");
     expect(box).toHaveFocus();
@@ -292,7 +292,7 @@ describe("searching a version", () => {
     const { router } = mount(
       "/libraries/acme/payments?version=v1.4.0&q=retry&tags=api,guide&match=all",
     );
-    const box = await screen.findByRole("searchbox");
+    const box = await screen.findByRole("searchbox", { name: /^Search v/ });
     await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
     await waitFor(() => expect(router.state.location.search).not.toHaveProperty("q"));
     expect(router.state.location.search).not.toHaveProperty("match");
@@ -308,7 +308,7 @@ describe("searching a version", () => {
 
   it("types a slash into the box instead of stealing it", async () => {
     mount("/libraries/acme/payments?version=v1.4.0");
-    const box = await screen.findByRole("searchbox");
+    const box = await screen.findByRole("searchbox", { name: /^Search v/ });
     await userEvent.click(box);
     await userEvent.keyboard("a/b");
     expect(box).toHaveValue("a/b");

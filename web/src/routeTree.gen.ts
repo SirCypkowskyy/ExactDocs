@@ -14,6 +14,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
+import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
 import { Route as AppLibrariesOwnerRepoSettingsRouteImport } from './routes/_app.libraries.$owner.$repo_.settings'
@@ -42,6 +43,11 @@ const AppAccountRoute = AppAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSearchRoute = AppSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLibrariesNewRoute = AppLibrariesNewRouteImport.update({
   id: '/libraries/new',
   path: '/libraries/new',
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
+  '/search': typeof AppSearchRoute
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
+  '/search': typeof AppSearchRoute
   '/': typeof AppIndexRoute
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
@@ -83,6 +91,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/_app/account': typeof AppAccountRoute
+  '/_app/search': typeof AppSearchRoute
   '/_app/': typeof AppIndexRoute
   '/_app/libraries/new': typeof AppLibrariesNewRoute
   '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in'
     | '/account'
+    | '/search'
     | '/libraries/new'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/settings'
@@ -103,6 +113,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in'
     | '/account'
+    | '/search'
     | '/'
     | '/libraries/new'
     | '/libraries/$owner/$repo'
@@ -113,6 +124,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in'
     | '/_app/account'
+    | '/_app/search'
     | '/_app/'
     | '/_app/libraries/new'
     | '/_app/libraries/$owner/$repo'
@@ -162,6 +174,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/search': {
+      id: '/_app/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof AppSearchRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/libraries/new': {
       id: '/_app/libraries/new'
       path: '/libraries/new'
@@ -188,6 +207,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
+  AppSearchRoute: typeof AppSearchRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
   AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
@@ -196,6 +216,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountRoute: AppAccountRoute,
+  AppSearchRoute: AppSearchRoute,
   AppIndexRoute: AppIndexRoute,
   AppLibrariesNewRoute: AppLibrariesNewRoute,
   AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
