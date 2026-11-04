@@ -18,6 +18,7 @@ packages/
       catalog/                  domain
       identity/                 domain: the admin account (later sessions, API tokens)
       retrieval/                domain
+      ingestion/                domain: jobs and the worker (git access, import use cases to come)
       _web/                     built web UI (gitignored, added by CI / Docker)
     tests/                      pytest: unit, integration, architecture
     features/                   behave: acceptance scenarios (Gherkin)
@@ -143,6 +144,34 @@ the running server) can never create two admins. `bootstrap/rest.py:SetupGuard` 
 `403 setup_required` for everything under `/api/v1` until an account exists (default deny; the
 exemptions are `POST /setup`, `GET /session` and `openapi.json`) and stops asking the database
 once one does.
+
+## Background jobs
+
+Long tasks (imports, syncs, GC) are **jobs** of the `ingestion` domain, never work done inside a
+request. A `Job` has a kind, a library (and optionally a version), a state (`queued`, `running`,
+`succeeded`, `failed`), `done`/`total` files, per-file problems (path, reason), an error and
+timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jobs` read them.
+
+- **Kinds are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
+  maps a kind to the `JobHandler` that runs it and, optionally, a `RecoveryHook`. Handlers report
+  through a `JobProgress` port; every report is stored at once. Raising fails the job: a domain
+  error's message is shown to users, anything else only as `unexpected <ErrorType>` (details go
+  to the log).
+- **The worker is a driving adapter** (`ingestion/adapters/driving/worker.py`): asyncio tasks
+  started in the app lifespan (`Container.running()`) that poll `RunNextJob`. Its use case claims
+  the oldest queued job **whose library has no running job** in one atomic statement, so two jobs
+  for one library never run together while other libraries run alongside.
+- **Restart.** Stopping the app lets idle workers finish and cancels a job still running after
+  a short grace period, so it stays `running` in the database. On the next start `RecoverJobs`
+  runs each one's recovery hook (no-op by default; the import registers the discard of its
+  pending manifest), then re-queues it, and it runs from the beginning. A hook that raises fails
+  its job instead of blocking the start.
+- **One process runs jobs.** Only the HTTP server starts the worker and recovery
+  (`serve --stdio` does not): recovery treats every `running` job as left over from a crash, so a
+  second worker process on the same database would re-queue the first one's live jobs. The
+  claim itself is safe across processes. Several job-running processes need a lease/heartbeat
+  per job first.
+- DBOS replaces the worker behind the same driving ports in MVP-2 (resumable imports).
 
 ## Python conventions
 

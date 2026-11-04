@@ -28,6 +28,19 @@ def test_cursor_is_keyset_so_a_deleted_item_does_not_shift_the_next_page() -> No
     assert page.items == ["c", "d"]
 
 
+def test_descending_pages_walk_a_newest_first_list() -> None:
+    newest_first = list(reversed(KEYS))
+    pages, cursor = [], None
+    while True:
+        page = paginate(newest_first, key=str, limit=2, cursor=cursor, descending=True)
+        pages.append(page.items)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+
+    assert pages == [["e", "d"], ["c", "b"], ["a"]]
+
+
 @pytest.mark.parametrize("cursor", ["!!!", "/w", "not a cursor"])
 def test_foreign_cursor_is_rejected(cursor: str) -> None:
     with pytest.raises(InvalidCursorError):

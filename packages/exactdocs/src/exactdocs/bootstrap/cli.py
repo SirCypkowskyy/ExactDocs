@@ -112,7 +112,7 @@ async def _create_first_admin(settings: Settings, username: str, password: str) 
 
 async def _serve_stdio(settings: Settings) -> None:
     container = _build(settings)
-    async with container.running():
+    async with container.running(jobs=False):  # the HTTP server runs the jobs
         await build_mcp(container).run_stdio_async(show_banner=False)
 
 

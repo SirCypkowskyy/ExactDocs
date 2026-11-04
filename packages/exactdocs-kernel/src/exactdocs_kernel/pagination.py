@@ -29,12 +29,18 @@ class Page[T]:
 
 
 def paginate[T](
-    items: Sequence[T], *, key: Callable[[T], str], limit: int, cursor: str | None
+    items: Sequence[T],
+    *,
+    key: Callable[[T], str],
+    limit: int,
+    cursor: str | None,
+    descending: bool = False,
 ) -> Page[T]:
     """Return the page of ``items`` after ``cursor``.
 
-    ``items`` must already be sorted ascending by the unique ``key``; the cursor encodes the last
-    key served, so inserts and deletes between requests never skip or repeat an item. Apply any
+    ``items`` must already be sorted by the unique ``key``, ascending (or descending with
+    ``descending=True``, for "newest first" lists over time-ordered keys); the cursor encodes the
+    last key served, so inserts and deletes between requests never skip or repeat an item. Apply any
     authorization filter before calling: a cursor only narrows what is passed in.
     """
     # ponytail: in-memory scan; SQL-backed lists push `key > :after LIMIT :n` into the query,
@@ -43,7 +49,11 @@ def paginate[T](
         msg = f"limit must be between 1 and {MAX_LIMIT}, got {limit}"
         raise ValueError(msg)
     after = _decode(cursor) if cursor is not None else None
-    rest = [item for item in items if after is None or key(item) > after]
+    rest = [
+        item
+        for item in items
+        if after is None or (key(item) < after if descending else key(item) > after)
+    ]
     page, more = rest[:limit], len(rest) > limit
     return Page(page, _encode(key(page[-1])) if more else None)
 

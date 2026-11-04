@@ -378,6 +378,207 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Get Job",
+        "operationId": "ingestion-get_job",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/jobs": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "List Library Jobs",
+        "operationId": "ingestion-list_library_jobs",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/search": {
       "get": {
         "tags": [
@@ -681,6 +882,26 @@
         "title": "FieldError",
         "description": "One invalid request field."
       },
+      "FileProblemSummary": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "reason"
+        ],
+        "title": "FileProblemSummary",
+        "description": "A file the job skipped and the reason."
+      },
       "HostKind": {
         "type": "string",
         "enum": [
@@ -692,6 +913,151 @@
         ],
         "title": "HostKind",
         "description": "Where the repository is hosted; `git` is any other HTTPS/SSH git server."
+      },
+      "JobList": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobSummary"
+            },
+            "type": "array",
+            "title": "Jobs"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "jobs",
+          "next_cursor"
+        ],
+        "title": "JobList",
+        "description": "A page of the jobs of one library, newest first."
+      },
+      "JobState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "JobState",
+        "description": "Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."
+      },
+      "JobSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/FileProblemSummary"
+            },
+            "type": "array",
+            "title": "Problems"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "library",
+          "version",
+          "state",
+          "done",
+          "total",
+          "problems",
+          "error",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "JobSummary",
+        "description": "A job and how far it got. ``total`` is 0 until the job knows its size."
       },
       "LibraryDetail": {
         "properties": {
