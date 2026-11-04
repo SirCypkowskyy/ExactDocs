@@ -22,6 +22,7 @@ from exactdocs.catalog.errors import (
     InvalidSimilarityError,
     InvalidTagFilterError,
     InvalidVersionRefError,
+    SelfRenameError,
 )
 from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
 
@@ -324,7 +325,8 @@ class ManifestRename:
     """A file git saw moved: in version ``from_ref``, ``old_path`` became ``new_path`` here.
 
     Belongs to the manifest of the *newer* version (the one ``new_path`` is an article of), so it
-    is replaced, collected and deleted together with it.
+    is replaced, collected and deleted together with it. A tag's renames come from the previous
+    tag; a branch's build up over its syncs, and ``from_ref`` is the branch itself.
     """
 
     from_ref: VersionRef
@@ -340,6 +342,7 @@ class ManifestRename:
 
 
 MAX_SIMILARITY = 100
+MAX_RENAMES = 10_000
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -371,6 +374,8 @@ class Manifest:
         olds = [rename.old_path for rename in self.renames]
         if len(set(olds)) != len(olds):
             raise DuplicateRenameError(next(p for p in olds if olds.count(p) > 1))
+        if self.kind is RefKind.TAG and any(r.from_ref == self.ref for r in self.renames):
+            raise SelfRenameError(str(self.ref))  # a branch's map builds up over its syncs
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

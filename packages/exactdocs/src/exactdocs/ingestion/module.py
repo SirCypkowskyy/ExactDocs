@@ -17,6 +17,7 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     REFRESH_JOB,
     Credential,
+    GitRename,
     ImportedRef,
     ImportSource,
     JobKind,
@@ -85,6 +86,10 @@ class _NoLibrarySources:
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
         await self.get(library)
+        return []
+
+    async def renames_of(self, library: str, ref: str) -> list[GitRename]:
+        del library, ref
         return []
 
 

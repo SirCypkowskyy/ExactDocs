@@ -2,6 +2,7 @@
 
 import unicodedata
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Any, Self
 
 from pydantic import (
@@ -490,12 +491,26 @@ class GetArticleQuery(_Dto):
         return None if isinstance(value, str) and not value.strip() else value
 
 
+class RenameDirection(StrEnum):
+    """Which way a path is followed across the rename map of a version."""
+
+    FORWARD = "forward"
+    """`path` is from the version imported before `ref`; the answer is its path in `ref`."""
+    BACK = "back"
+    """`path` is an article of `ref`; the answer is its path in the version before."""
+
+
 class ResolveRenamedPathQuery(_Dto):
-    """Ask where `old_path` of an earlier version is in `ref` (default version without one)."""
+    """Follow `path` across the renames of `ref` (default version without one) by `direction`.
+
+    One hop: the map covers the previous version only (a branch: its syncs so far). To follow a
+    file across several versions, ask once per version and chain the answers.
+    """
 
     library: str = Field(min_length=1)
     ref: str | None = None
-    old_path: str = Field(min_length=1, max_length=MAX_PATH)
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    direction: RenameDirection = RenameDirection.FORWARD
 
     @field_validator("ref", mode="before")
     @classmethod
@@ -524,6 +539,30 @@ class RenamedPath(_Dto):
             new_path=rename.new_path,
             similarity=rename.similarity,
         )
+
+
+class RenameAnswer(_Dto):
+    """The answer to a rename lookup: `renamed` is `null` when git saw no move of that path."""
+
+    renamed: RenamedPath | None
+
+
+class ListRenamesQuery(_Dto):
+    """List the renames stored with the active manifest of `ref` (default version without one)."""
+
+    library: str = Field(min_length=1)
+    ref: str | None = None
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class RenameList(_Dto):
+    """Every rename of a version, by old path."""
+
+    renames: list[RenamedPath]
 
 
 class ArticleInfo(_Dto):

@@ -124,7 +124,7 @@ class World:
         return ImportVersionUseCase(
             gateway=git_cli,
             chunker=self.chunker,
-            sources=CatalogLibrarySources(c.catalog.get_library),
+            sources=CatalogLibrarySources(c.catalog.get_library, c.catalog.list_renames),
             versions=publisher,
             index=(HangingIndex if hang_after_index else RetrievalChunkIndex)(
                 c.retrieval.index_manifest,

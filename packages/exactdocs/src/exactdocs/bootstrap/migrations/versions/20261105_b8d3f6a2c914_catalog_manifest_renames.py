@@ -33,6 +33,10 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
+    # "Which file did this one come from?" (the reverse lookup); the primary key serves old paths.
+    op.create_index(
+        "ix_catalog_manifest_renames_new", "catalog_manifest_renames", ["manifest_id", "new_path"]
+    )
 
 
 def downgrade() -> None:

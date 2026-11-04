@@ -16,7 +16,8 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListTagsQuery,
-    RenamedPath,
+    RenameAnswer,
+    RenameDirection,
     ResolvedVersion,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
@@ -38,7 +39,7 @@ from exactdocs.catalog.ports.driving import (
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
 
 
-def build_router(  # ruff: ignore[complex-structure]
+def build_router(
     *,
     list_libraries: ListLibraries,
     get_library: GetLibrary,
@@ -142,17 +143,28 @@ def build_router(  # ruff: ignore[complex-structure]
             Query(
                 min_length=1,
                 max_length=MAX_PATH,
-                description="The article's path in the version imported before `ref`.",
+                description=(
+                    "`forward`: the article's path in the version imported before `ref`. "
+                    "`back`: its path in `ref`."
+                ),
             ),
         ],
         ref: str | None = None,
-    ) -> RenamedPath:
-        """Where git saw `path` go when `ref` was imported; 404 when it was not renamed."""
+        direction: Annotated[
+            RenameDirection,
+            Query(description="`forward` (default): old to new path; `back`: new to old."),
+        ] = RenameDirection.FORWARD,
+    ) -> RenameAnswer:
+        """Follow `path` one hop across the renames git saw when `ref` was imported.
+
+        `renamed` is `null` when it was not moved (or no renames are known). An unknown library
+        or version, or a version without an active manifest, is a 404 instead.
+        """
         found = await resolve_renamed_path(
-            ResolveRenamedPathQuery(library=f"/{owner}/{repo}", ref=ref, old_path=path)
+            ResolveRenamedPathQuery(
+                library=f"/{owner}/{repo}", ref=ref, path=path, direction=direction
+            )
         )
-        if found is None:
-            raise HTTPException(status_code=404)
-        return found
+        return RenameAnswer(renamed=found)
 
     return router

@@ -210,7 +210,10 @@ export interface paths {
         };
         /**
          * Get Renamed Path
-         * @description Where git saw `path` go when `ref` was imported; 404 when it was not renamed.
+         * @description Follow `path` one hop across the renames git saw when `ref` was imported.
+         *
+         *     `renamed` is `null` when it was not moved (or no renames are known). An unknown library
+         *     or version, or a version without an active manifest, is a 404 instead.
          */
         readonly get: operations["catalog-get_renamed_path"];
         readonly put?: never;
@@ -1126,6 +1129,19 @@ export interface components {
              */
             readonly collection_job_id: string | null;
         };
+        /**
+         * RenameAnswer
+         * @description The answer to a rename lookup: `renamed` is `null` when git saw no move of that path.
+         */
+        readonly RenameAnswer: {
+            readonly renamed: components["schemas"]["RenamedPath"] | null;
+        };
+        /**
+         * RenameDirection
+         * @description Which way a path is followed across the rename map of a version.
+         * @enum {string}
+         */
+        readonly RenameDirection: "forward" | "back";
         /**
          * RenamedPath
          * @description `old_path` of version `from_ref` is `new_path` in `ref`, as git saw it.
@@ -2830,9 +2846,11 @@ export interface operations {
     readonly "catalog-get_renamed_path": {
         readonly parameters: {
             readonly query: {
-                /** @description The article's path in the version imported before `ref`. */
+                /** @description `forward`: the article's path in the version imported before `ref`. `back`: its path in `ref`. */
                 readonly path: string;
                 readonly ref?: string | null;
+                /** @description `forward` (default): old to new path; `back`: new to old. */
+                readonly direction?: components["schemas"]["RenameDirection"];
             };
             readonly header?: never;
             readonly path: {
@@ -2849,7 +2867,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["RenamedPath"];
+                    readonly "application/json": components["schemas"]["RenameAnswer"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

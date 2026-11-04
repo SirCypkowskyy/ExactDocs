@@ -392,23 +392,38 @@ class SqliteManifestRepository:
 
     async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
         """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
+        return await self._one_rename(manifest_id, manifest_renames.c.old_path == old_path)
+
+    async def find_rename_to(self, manifest_id: ManifestId, new_path: str) -> ManifestRename | None:
+        """Return the rename that made ``new_path`` (the first by old path), or ``None``."""
+        return await self._one_rename(manifest_id, manifest_renames.c.new_path == new_path)
+
+    async def list_renames(
+        self, manifest_id: ManifestId, *, limit: int
+    ) -> Sequence[ManifestRename]:
+        """Return up to ``limit`` renames of the manifest, sorted by old path."""
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(
+                select(manifest_renames)
+                .where(manifest_renames.c.manifest_id == manifest_id)
+                .order_by(manifest_renames.c.old_path)
+                .limit(limit)
+            )
+            return tuple(_rename(row) for row in rows)
+
+    async def _one_rename(
+        self, manifest_id: ManifestId, *where: ColumnElement[bool]
+    ) -> ManifestRename | None:
         async with self.engine.connect() as connection:
             row = (
                 await connection.execute(
-                    select(manifest_renames).where(
-                        manifest_renames.c.manifest_id == manifest_id,
-                        manifest_renames.c.old_path == old_path,
-                    )
+                    select(manifest_renames)
+                    .where(manifest_renames.c.manifest_id == manifest_id, *where)
+                    .order_by(manifest_renames.c.old_path)
+                    .limit(1)
                 )
             ).first()
-        if row is None:
-            return None
-        return ManifestRename(
-            from_ref=VersionRef(row.from_ref),
-            old_path=row.old_path,
-            new_path=row.new_path,
-            similarity=row.similarity,
-        )
+        return None if row is None else _rename(row)
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
         """Return the manifest without its entries, or ``None``."""
@@ -645,6 +660,15 @@ class SqliteManifestRepository:
         if row is None:
             return None
         return _manifest(row)
+
+
+def _rename(row: Row) -> ManifestRename:
+    return ManifestRename(
+        from_ref=VersionRef(row.from_ref),
+        old_path=row.old_path,
+        new_path=row.new_path,
+        similarity=row.similarity,
+    )
 
 
 def _manifest(row: Row) -> Manifest:

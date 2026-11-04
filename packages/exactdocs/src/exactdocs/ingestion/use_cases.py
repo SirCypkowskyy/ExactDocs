@@ -7,7 +7,7 @@ import os
 import stat
 import time
 import uuid
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -90,7 +90,9 @@ from exactdocs.ingestion.models import (
     TagRule,
     article_tags,
     check_credential_fits,
+    compose_renames,
     git_blob_sha,
+    is_unordered,
     parse_article,
     previous_version,
     readme_summary,
@@ -754,35 +756,62 @@ class ImportVersionUseCase:
         refs: Sequence[str],
         articles: Sequence[ImportedArticle],
     ) -> tuple[str | None, tuple[GitRename, ...]]:
-        """Find what was renamed since the previous version; ``(None, ())`` whatever goes wrong."""
+        """Find the renames to store with the version: ``(None, ())`` whatever goes wrong.
+
+        A numeric tag gets what changed since the previous tag. A branch (or commit) builds its
+        map up: the renames its earlier syncs found are chained with this sync's
+        (``compose_renames``). Old paths are filtered by the library's *current* selection,
+        which may differ from the one the previous version was imported with.
+        """
         if self.renames is None or job.version is None or job.commit_sha is None:
             return None, ()
-        try:
-            before = previous_version(
-                job.version, await self.sources.imported_versions(job.library)
-            )
-            if before is None or before.commit_sha == job.commit_sha:
-                return None, ()
-            found = await self.renames.renames(
-                source.url,
-                before.commit_sha,
-                job.commit_sha,
-                refs=[*refs, *_full_refs(before.kind, before.ref)],
-                credential=credential,
-            )
-        except Exception:  # a missing rename map must never fail an import
-            log.exception("no renames known for %s %s", job.library, job.version)
+        imported = await self._quietly(job, self.sources.imported_versions(job.library), [])
+        before = previous_version(job.version, imported)
+        if before is None:
             return None, ()
+        unordered = is_unordered(job.version)
+        earlier = (
+            await self._quietly(job, self.sources.renames_of(job.library, job.version), [])
+            if unordered
+            else []
+        )
+        found = (
+            []
+            if before.commit_sha == job.commit_sha
+            else await self._quietly(
+                job,
+                self.renames.renames(
+                    source.url,
+                    before.commit_sha,
+                    job.commit_sha,
+                    refs=[*refs, *_full_refs(before.kind, before.ref)],
+                    credential=credential,
+                ),
+                [],
+            )
+        )
         paths = {article.path for article in articles}
-        kept = tuple(
+        kept = [
             rename
             for rename in found
             if rename.new_path in paths
             and rename.old_path != rename.new_path
             and rename.old_path.isprintable()  # not a stray byte (a surrogate) or a control
             and source.selection.selects(rename.old_path)
-        )
-        return (before.ref, kept) if kept else (None, ())
+        ]
+        result = compose_renames(earlier, kept, paths) if unordered else tuple(kept)
+        return (before.ref, result) if result else (None, ())
+
+    @staticmethod
+    async def _quietly[T](job: Job, call: Awaitable[T], fallback: T) -> T:
+        """Await ``call``; a failure (never a cancellation) is logged and ``fallback`` returned."""
+        try:
+            return await call
+        except DomainError as error:  # expected: unreachable, auth, too large, ...
+            log.warning("no renames known for %s %s: %s", job.library, job.version, type(error))
+        except Exception:  # a missing rename map must never fail an import
+            log.exception("no renames known for %s %s", job.library, job.version)
+        return fallback
 
     async def _articles(
         self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress

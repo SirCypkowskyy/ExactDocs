@@ -104,7 +104,8 @@ _MAX_STEP_OUTPUT = 1024 * 1024
 _MAX_BRACE_EXPANSIONS = 64
 _PREFIX = "fetch-"
 _ROOT_README = ("/README.md", "/README.mdx")
-_ARTICLE_PATHSPEC = ("*.md", "*.mdx")  # models.ARTICLE_SUFFIXES: never fetch blobs of other files
+# models.ARTICLE_SUFFIXES, whatever the letter case: never fetch the blobs of other files
+_ARTICLE_PATHSPEC = (":(icase)*.md", ":(icase)*.mdx")
 # What servers say when they will not serve a bare SHA (or the ref we named instead).
 _GONE = re.compile(r"not our ref|unadvertised object|couldn't find remote ref|no such remote ref")
 _CONFIG = """\
@@ -383,7 +384,9 @@ class GitCli:
         with edits. Exact renames (same blob) need no blobs at all. Bounds: a fetch slot (shared
         with imports), ``rename_timeout`` for everything, the folder size watchdog, and
         ``rename_limit`` (git skips the similarity search when added x deleted files exceed
-        limit squared; exact renames are still found).
+        limit squared; exact renames are still found). The rename limit bounds CPU, not
+        downloads: a hostile repository with huge added and deleted Markdown files is stopped by
+        the size watchdog and the deadline.
         """
         if (
             repository.url.startswith("-")
@@ -408,6 +411,7 @@ class GitCli:
                     "diff-tree", "-r", "-z", "--name-status", "--diff-filter=R", "-M",
                     f"-l{self.rename_limit}", "--no-ext-diff", old_sha, new_sha,
                     "--", *_ARTICLE_PATHSPEC,
+                    cap=self.max_output,  # MAX_RENAMES long paths; `_parse_renames` truncates
                 )  # fmt: skip
                 if out.code:
                     raise _failure(out.stderr, ssh=ssh)

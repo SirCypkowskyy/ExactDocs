@@ -12,7 +12,13 @@ from exactdocs.ingestion.errors import (
     InvalidRepositoryUrlError,
     RepositoryUnreachableError,
 )
-from exactdocs.ingestion.models import GitRename, ProposedId, RepositoryHost, RepositoryUrl
+from exactdocs.ingestion.models import (
+    MAX_RENAMES,
+    GitRename,
+    ProposedId,
+    RepositoryHost,
+    RepositoryUrl,
+)
 from fixture_repo import DocsRepo, git
 
 SETUP = "docs/guide/setup.md"
@@ -133,6 +139,67 @@ async def test_only_full_lower_case_commit_ids_are_accepted(
 async def test_without_git_it_says_so() -> None:
     with pytest.raises(GitNotInstalledError):
         await MissingGit().renames(repository("https://example.com/a/b"), "a" * 40, "b" * 40)
+
+
+def moved_repo(tmp_path: Path, files: dict[str, str]) -> tuple[str, str, str]:
+    """A repository whose second commit renames every file to ``files[old]``; (url, old, new)."""
+    repo = tmp_path / "moved"
+    repo.mkdir()
+    git("init", "-q", "-b", "main", "--template=", str(repo))
+    git("config", "uploadpack.allowFilter", "true", cwd=repo)
+    git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=repo)
+    for number, old in enumerate(files):
+        (repo / old).parent.mkdir(parents=True, exist_ok=True)
+        (repo / old).write_text(f"# Page {number}\n\nUnique body {number} " * 5, "utf-8")
+    commit = ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m")
+    git("add", "-A", cwd=repo)
+    git(*commit, "one", cwd=repo)
+    old = git("rev-parse", "HEAD", cwd=repo)
+    for source, target in files.items():
+        (repo / target).parent.mkdir(parents=True, exist_ok=True)
+        (repo / source).rename(repo / target)
+    git("add", "-A", cwd=repo)
+    git(*commit, "two", cwd=repo)
+    return f"file://{repo}", old, git("rev-parse", "HEAD", cwd=repo)
+
+
+async def test_article_suffixes_match_whatever_the_letter_case(
+    gateway: GitCli, tmp_path: Path
+) -> None:
+    url, old, new = moved_repo(
+        tmp_path,
+        {"Guide.MD": "docs/Guide.MD", "a.Mdx": "docs/a.Mdx", "image.png": "docs/image.png"},
+    )
+
+    found = await gateway.renames(repository(url), old, new)
+
+    assert sorted((r.old_path, r.new_path) for r in found) == [
+        ("Guide.MD", "docs/Guide.MD"),
+        ("a.Mdx", "docs/a.Mdx"),
+    ]  # as the importer selects them; the png is none of its business
+
+
+async def test_thousands_of_exact_renames_with_long_paths_come_back_whole(
+    gateway: GitCli, tmp_path: Path
+) -> None:
+    deep = "d" * 120
+    files = {
+        f"{deep}/old-{i:05d}-{'x' * 80}.md": f"{deep}/new/{i:05d}-{'y' * 80}.md"
+        for i in range(3000)
+    }
+    url, old, new = moved_repo(tmp_path, files)
+
+    found = await gateway.renames(repository(url), old, new)
+
+    assert len(found) == len(files)  # about 1.5 MB of git output, over the old 1 MiB cap
+    assert {r.old_path: r.new_path for r in found} == files
+    assert {r.similarity for r in found} == {100}
+
+
+def test_more_renames_than_the_cap_are_cut_not_refused() -> None:
+    lines = b"".join(b"R100\0o%d.md\0n%d.md\0" % (i, i) for i in range(MAX_RENAMES + 5))
+
+    assert len(_parse_renames(lines)) == MAX_RENAMES
 
 
 def test_the_name_status_output_is_parsed_whatever_the_file_names_hold() -> None:

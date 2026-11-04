@@ -9,6 +9,7 @@ from exactdocs.ingestion.models import (
     IMPORT_KINDS,
     ArticleChunk,
     Credential,
+    GitRename,
     ImportedRef,
     ImportedVersion,
     ImportSource,
@@ -92,6 +93,11 @@ class InMemoryLibrarySources:
 
     sources: dict[str, ImportSource] = field(default_factory=dict)
     versions: dict[str, list[ImportedRef]] = field(default_factory=dict)
+    renames: dict[tuple[str, str], list[GitRename]] = field(default_factory=dict)
+
+    async def renames_of(self, library: str, ref: str) -> Sequence[GitRename]:
+        """Return the rename map of the version (empty when it has none)."""
+        return self.renames.get((library, ref), [])
 
     async def imported_versions(self, library: str) -> Sequence[ImportedRef]:
         """Return the library's versions; raises ``NotFoundError`` if unknown."""

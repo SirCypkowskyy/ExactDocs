@@ -810,6 +810,13 @@ async def test_renames_are_stored_with_their_manifest_and_found_by_old_path(stor
 
     assert found == rename("guide/setup.md", INSTALL)
     assert await stores.manifests.find_rename(ManifestId("m1"), INSTALL) is None  # not an old path
+    assert await stores.manifests.find_rename_to(ManifestId("m1"), INSTALL) == found
+    assert await stores.manifests.find_rename_to(ManifestId("m1"), "guide/setup.md") is None
+    assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == (
+        rename("guide/setup.md", INSTALL),
+        rename("old.md", "new.md", similarity=100),
+    )
+    assert len(await stores.manifests.list_renames(ManifestId("m1"), limit=1)) == 1
     assert await stores.manifests.find_rename(ManifestId("nope"), "guide/setup.md") is None
     assert await fetch(stores.manifests, "m1") == replace(moved, entries=(), renames=())
 

@@ -11,6 +11,15 @@ Feature: Renames between versions are detected from git
     When the user adds the version "v1.4.0"
     Then the rename map of "v1.4.0" maps "docs/guide/setup.md" to "docs/guide/install.md"
 
+  Scenario: A renamed article can be followed back
+    Given "/fixture/docs-repo/v1.3.0" is imported
+    When the user adds the version "v1.4.0"
+    Then "docs/guide/install.md" of "v1.4.0" came from "docs/guide/setup.md"
+
+  Scenario: An unknown version is not found, unlike a path that was not renamed
+    Given "/fixture/docs-repo/v1.3.0" is imported
+    Then the rename map of "v9.9.9" is not found
+
   Scenario: An article that was not renamed has no rename
     Given "/fixture/docs-repo/v1.3.0" is imported
     When the user adds the version "v1.4.0"

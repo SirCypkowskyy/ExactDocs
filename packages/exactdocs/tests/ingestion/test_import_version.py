@@ -119,9 +119,15 @@ class Sources:
         selection: PathSelection,
         rules: tuple[TagRule, ...] = (),
         imported: Sequence[ImportedRef] = (),
+        earlier: Sequence[GitRename] = (),
     ) -> None:
         self.source = ImportSource(url=URL, selection=selection, tag_rules=rules)
         self.imported = list(imported)
+        self.earlier = list(earlier)
+
+    async def renames_of(self, library: str, ref: str) -> list[GitRename]:
+        del library, ref
+        return self.earlier
 
     async def get(self, library: str) -> ImportSource:
         del library
@@ -265,6 +271,7 @@ def build_world(
     kind: JobKind = IMPORT_JOB,
     renames: RenameSource | None = None,
     imported: Sequence[ImportedRef] = (),
+    earlier: Sequence[GitRename] = (),
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -274,7 +281,7 @@ def build_world(
     handlers, _ = import_job(
         gateway=gateway,
         chunker=chunker,
-        sources=Sources(selection or PathSelection.of(["docs/"]), rules, imported),
+        sources=Sources(selection or PathSelection.of(["docs/"]), rules, imported, earlier),
         versions=catalog,
         index=chunks,
         vault=vault,
@@ -887,21 +894,84 @@ async def test_only_renames_into_imported_articles_from_selected_paths_are_kept(
     assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
 
 
-async def test_a_resync_compares_with_the_commit_the_ref_served_before(tmp_path: Path) -> None:
-    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+async def test_a_resync_of_a_branch_chains_its_earlier_renames_with_the_new_ones(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/b.md", "docs/install.md", 90)])
     before = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD)
     world = build_world(
         tmp_path,
         {"docs/install.md": INSTALL.encode()},
         renames=source,
         imported=[V13, before],
+        earlier=[moved("docs/a.md", "docs/b.md", 70), moved("docs/x.md", "docs/gone.md")],
         kind=REFRESH_JOB,
     )
 
     await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
 
-    assert world.catalog.stored[0].renamed_from == "main"
+    (version,) = world.catalog.stored
+    assert version.renamed_from == "main"
+    assert version.renames == (
+        moved("docs/a.md", "docs/install.md", 70),  # chained, the lower similarity
+        moved("docs/b.md", "docs/install.md", 90),
+    )  # x.md -> gone.md is dropped: its target is not an article any more
     assert source.asked[0][:2] == (OLD, SHA)
+
+
+async def test_a_branch_synced_to_the_same_commit_keeps_its_map(tmp_path: Path) -> None:
+    source = FakeRenames()
+    same = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=SHA)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[same],
+        earlier=[moved("docs/a.md", "docs/install.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+    assert source.asked == []
+
+
+async def test_a_failing_branch_sync_keeps_the_earlier_map(tmp_path: Path) -> None:
+    before = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=RepositoryUnreachableError("it took too long")),
+        imported=[before],
+        earlier=[moved("docs/a.md", "docs/install.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+
+
+async def test_a_resync_of_a_tag_gives_the_same_map_as_its_first_import(tmp_path: Path) -> None:
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    again = ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[V13, again],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert (version.renamed_from, version.renames) == (
+        "v1.3.0",
+        (moved("docs/setup.md", "docs/install.md", 84),),
+    )
+    assert source.asked[0][0] == V13.commit_sha  # never compared with itself
 
 
 @pytest.mark.parametrize(
@@ -911,6 +981,7 @@ async def test_a_resync_compares_with_the_commit_the_ref_served_before(tmp_path:
         ("v1.2.0", [V13], RefKind.TAG),  # only older versions count
         ("main", [V13], RefKind.BRANCH),  # a branch has no place in a version order
         ("v1.4.0", [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=SHA)], RefKind.TAG),
+        ("main", [], RefKind.BRANCH),  # a branch never imported has no earlier commit
     ],
 )
 async def test_without_a_previous_version_git_is_not_asked(

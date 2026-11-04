@@ -174,7 +174,7 @@ class Container:
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=MarkdownChunker(),
-            sources=CatalogLibrarySources(catalog.get_library),
+            sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),
             versions=CatalogVersionPublisher(
                 catalog.store_manifest,
                 catalog.activate_manifest,
@@ -193,7 +193,7 @@ class Container:
             remote=remote,
             library_ids=CatalogLibraryIds(catalog.get_library),
             libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
-            sources=CatalogLibrarySources(catalog.get_library),
+            sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),
             removals=CatalogRemovals(catalog.remove_version, catalog.remove_library),
             index=index,
             vault=vault,

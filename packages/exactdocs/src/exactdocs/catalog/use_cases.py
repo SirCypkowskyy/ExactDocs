@@ -28,12 +28,15 @@ from exactdocs.catalog.dtos import (
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ListRenamesQuery,
     ListTagsQuery,
     ManifestStates,
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RenameDirection,
     RenamedPath,
+    RenameList,
     ResolvedVersion,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
@@ -52,6 +55,7 @@ from exactdocs.catalog.errors import (
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
+    MAX_RENAMES,
     ContentKey,
     HostKind,
     Library,
@@ -341,6 +345,19 @@ class ListArticlesUseCase:
         )
 
 
+async def _renames_manifest(
+    repository: LibraryRepository, manifests: ManifestRepository, library: str, ref: str | None
+) -> tuple[str, str, ManifestId]:
+    """Return ``(library, ref, manifest ID)`` of the version whose renames are asked for."""
+    found, version = await _find_version(
+        repository, LibraryId(library), VersionRef(ref) if ref else None
+    )
+    manifest = await manifests.get_active(found.id, version.ref)
+    if manifest is None:
+        raise ArticleNotFoundError(str(found.id), str(version.ref), None)
+    return str(found.id), str(version.ref), manifest.id
+
+
 @dataclass(frozen=True, slots=True)
 class ResolveRenamedPathUseCase:
     """Implements ``ports.driving.ResolveRenamedPath``."""
@@ -350,15 +367,32 @@ class ResolveRenamedPathUseCase:
 
     async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
         """Look the path up in the renames stored with the version's active manifest."""
-        ref = VersionRef(query.ref) if query.ref else None
-        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
-        manifest = await self.manifests.get_active(library.id, version.ref)
-        if manifest is None:
-            raise ArticleNotFoundError(str(library.id), str(version.ref), None)
-        rename = await self.manifests.find_rename(manifest.id, query.old_path)
-        if rename is None:
-            return None
-        return RenamedPath.from_model(str(library.id), str(version.ref), rename)
+        library, ref, manifest = await _renames_manifest(
+            self.repository, self.manifests, query.library, query.ref
+        )
+        find = (
+            self.manifests.find_rename_to
+            if query.direction is RenameDirection.BACK
+            else self.manifests.find_rename
+        )
+        rename = await find(manifest, query.path)
+        return None if rename is None else RenamedPath.from_model(library, ref, rename)
+
+
+@dataclass(frozen=True, slots=True)
+class ListRenamesUseCase:
+    """Implements ``ports.driving.ListRenames``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: ListRenamesQuery) -> RenameList:
+        """List the renames stored with the version's active manifest."""
+        library, ref, manifest = await _renames_manifest(
+            self.repository, self.manifests, query.library, query.ref
+        )
+        renames = await self.manifests.list_renames(manifest, limit=MAX_RENAMES)
+        return RenameList(renames=[RenamedPath.from_model(library, ref, r) for r in renames])
 
 
 @dataclass(frozen=True, slots=True)

@@ -154,6 +154,19 @@ class InMemoryManifestRepository:
         found = self.manifests.get(manifest_id)
         return next((r for r in found.renames if r.old_path == old_path), None) if found else None
 
+    async def find_rename_to(self, manifest_id: ManifestId, new_path: str) -> ManifestRename | None:
+        """Return the rename that made ``new_path`` (the first by old path), or ``None``."""
+        found = self.manifests.get(manifest_id)
+        renames = sorted(found.renames, key=lambda r: r.old_path) if found else []
+        return next((r for r in renames if r.new_path == new_path), None)
+
+    async def list_renames(
+        self, manifest_id: ManifestId, *, limit: int
+    ) -> Sequence[ManifestRename]:
+        """Return up to ``limit`` renames of the manifest, sorted by old path."""
+        found = self.manifests.get(manifest_id)
+        return tuple(sorted(found.renames, key=lambda r: r.old_path))[:limit] if found else ()
+
     async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
         """Return up to ``limit`` article paths of the manifest, sorted."""
         found = self.manifests.get(manifest_id)

@@ -1863,7 +1863,7 @@
           "catalog"
         ],
         "summary": "Get Renamed Path",
-        "description": "Where git saw `path` go when `ref` was imported; 404 when it was not renamed.",
+        "description": "Follow `path` one hop across the renames git saw when `ref` was imported.\n\n`renamed` is `null` when it was not moved (or no renames are known). An unknown library\nor version, or a version without an active manifest, is a 404 instead.",
         "operationId": "catalog-get_renamed_path",
         "security": [
           {
@@ -1900,10 +1900,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 4096,
-              "description": "The article's path in the version imported before `ref`.",
+              "description": "`forward`: the article's path in the version imported before `ref`. `back`: its path in `ref`.",
               "title": "Path"
             },
-            "description": "The article's path in the version imported before `ref`."
+            "description": "`forward`: the article's path in the version imported before `ref`. `back`: its path in `ref`."
           },
           {
             "name": "ref",
@@ -1920,6 +1920,17 @@
               ],
               "title": "Ref"
             }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RenameDirection",
+              "description": "`forward` (default): old to new path; `back`: new to old.",
+              "default": "forward"
+            },
+            "description": "`forward` (default): old to new path; `back`: new to old."
           }
         ],
         "responses": {
@@ -1928,7 +1939,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RenamedPath"
+                  "$ref": "#/components/schemas/RenameAnswer"
                 }
               }
             }
@@ -4766,6 +4777,36 @@
         ],
         "title": "RemovalResult",
         "description": "A removal is done for readers when this is returned; the disk is freed by a job."
+      },
+      "RenameAnswer": {
+        "properties": {
+          "renamed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RenamedPath"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "renamed"
+        ],
+        "title": "RenameAnswer",
+        "description": "The answer to a rename lookup: `renamed` is `null` when git saw no move of that path."
+      },
+      "RenameDirection": {
+        "type": "string",
+        "enum": [
+          "forward",
+          "back"
+        ],
+        "title": "RenameDirection",
+        "description": "Which way a path is followed across the rename map of a version."
       },
       "RenamedPath": {
         "properties": {

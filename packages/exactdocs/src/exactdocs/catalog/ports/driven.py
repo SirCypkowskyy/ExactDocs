@@ -132,6 +132,16 @@ class ManifestRepository(Protocol):
         """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
         ...
 
+    async def find_rename_to(self, manifest_id: ManifestId, new_path: str) -> ManifestRename | None:
+        """Return the rename that made ``new_path`` (reverse of ``find_rename``), or ``None``."""
+        ...
+
+    async def list_renames(
+        self, manifest_id: ManifestId, *, limit: int
+    ) -> Sequence[ManifestRename]:
+        """Return up to ``limit`` renames of the manifest, sorted by old path."""
+        ...
+
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:
