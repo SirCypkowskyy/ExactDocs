@@ -193,7 +193,7 @@
         "libraries": {
           "items": {
             "additionalProperties": false,
-            "description": "A library and its versions, sorted by ref.",
+            "description": "A library and its version refs, sorted; `refs` carries each version's details.",
             "properties": {
               "default_version": {
                 "anyOf": [
@@ -211,10 +211,20 @@
               "id": {
                 "type": "string"
               },
-              "title": {
-                "type": "string"
+              "last_imported_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "When any version was last imported; null while none is."
               },
-              "versions": {
+              "refs": {
+                "description": "The imported versions, with their commits.",
                 "items": {
                   "additionalProperties": false,
                   "description": "One imported version: the ref, what kind of ref it is, and the commit it stands for.",
@@ -253,6 +263,25 @@
                   "type": "object"
                 },
                 "type": "array"
+              },
+              "source_url": {
+                "type": "string"
+              },
+              "tags": {
+                "description": "The tags the library's tag rules give its articles.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "versions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -260,7 +289,11 @@
               "title",
               "description",
               "versions",
-              "default_version"
+              "default_version",
+              "source_url",
+              "refs",
+              "tags",
+              "last_imported_at"
             ],
             "type": "object"
           },

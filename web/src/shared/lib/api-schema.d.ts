@@ -712,7 +712,7 @@ export interface components {
         };
         /**
          * LibrarySummary
-         * @description A library and its versions, sorted by ref.
+         * @description A library and its version refs, sorted; `refs` carries each version's details.
          */
         readonly LibrarySummary: {
             /** Id */
@@ -722,7 +722,7 @@ export interface components {
             /** Description */
             readonly description: string;
             /** Versions */
-            readonly versions: readonly components["schemas"]["VersionOut"][];
+            readonly versions: readonly string[];
             /** Default Version */
             readonly default_version: string | null;
             /** Source Url */

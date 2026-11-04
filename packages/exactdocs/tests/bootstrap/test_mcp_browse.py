@@ -65,13 +65,15 @@ async def test_list_libraries_has_versions_with_commits_and_the_default(
     data = result.structured_content
     assert data is not None
     payments = next(lib for lib in data["libraries"] if lib["id"] == "/acme/payments")
-    assert {v["ref"]: v["is_default"] for v in payments["versions"]} == {
+    assert payments["source_url"]
+    assert isinstance(payments["tags"], list)
+    assert {v["ref"]: v["is_default"] for v in payments["refs"]} == {
         "main": False,
         "next": False,
         "v1.3.0": False,
         "v1.4.0": True,
     }
-    assert {"kind", "commit_sha"} <= set(payments["versions"][0])
+    assert {"kind", "commit_sha"} <= set(payments["refs"][0])
 
 
 async def test_list_articles_pages_and_names_the_version_used(container: Container) -> None:

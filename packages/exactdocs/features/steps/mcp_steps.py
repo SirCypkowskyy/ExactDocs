@@ -60,14 +60,15 @@ def step_listed(context: Context, library: str) -> None:
     (found,) = [lib for lib in context.mcp_data["libraries"] if lib["id"] == library]
     assert found["title"], found
     assert "description" in found, found
-    assert {v["ref"] for v in found["versions"]} == {"v1.3.0", "v1.4.0"}, found
-    assert all(len(v["commit_sha"]) == SHA_LENGTH for v in found["versions"]), found
+    assert "tags" in found, found
+    assert {v["ref"] for v in found["refs"]} == {"v1.3.0", "v1.4.0"}, found
+    assert all(len(v["commit_sha"]) == SHA_LENGTH for v in found["refs"]), found
     context.listed = found
 
 
 @then('"{ref}" is marked as the default version')
 def step_default(context: Context, ref: str) -> None:
-    defaults = [v["ref"] for v in context.listed["versions"] if v["is_default"]]
+    defaults = [v["ref"] for v in context.listed["refs"] if v["is_default"]]
     assert defaults == [ref], defaults
 
 

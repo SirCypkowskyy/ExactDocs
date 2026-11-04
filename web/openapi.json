@@ -3107,7 +3107,7 @@
           },
           "versions": {
             "items": {
-              "$ref": "#/components/schemas/VersionOut"
+              "type": "string"
             },
             "type": "array",
             "title": "Versions"
@@ -3171,7 +3171,7 @@
           "last_imported_at"
         ],
         "title": "LibrarySummary",
-        "description": "A library and its versions, sorted by ref."
+        "description": "A library and its version refs, sorted; `refs` carries each version's details."
       },
       "RefOut": {
         "properties": {
