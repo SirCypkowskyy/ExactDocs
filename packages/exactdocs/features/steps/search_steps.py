@@ -92,6 +92,7 @@ async def _import(context: Context, refs: list[str]) -> None:
                             content_version=1,
                             title=a.title,
                             tags=_tags(a.path, a.tags),
+                            front_matter=a.front_matter,
                             content=a.body,
                         )
                         for a, (_, text) in zip(parsed, files, strict=True)
