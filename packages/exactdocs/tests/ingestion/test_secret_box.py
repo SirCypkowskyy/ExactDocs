@@ -93,9 +93,14 @@ async def test_the_vault_round_trips_and_forgets(vault: CredentialVault) -> None
     assert await vault.load("/c/d", SCOPE) == DeployKey(private_key=KEY + "\n")
     await vault.save("/a/b", SCOPE, AccessToken(token="other-" + TOKEN))
     assert await vault.load("/a/b", SCOPE) == AccessToken(token="other-" + TOKEN)
+    assert await vault.has("/a/b")
+    assert await vault.has("/c/d")
+    assert not await vault.has("/e/f")
+    assert not await vault.has("/A/B")  # keys are the canonical lower-case IDs
     await vault.delete("/a/b")
     await vault.delete("/a/b")
     assert await vault.load("/a/b", SCOPE) is None
+    assert not await vault.has("/a/b")
 
 
 async def test_the_database_holds_no_plaintext_and_a_new_key_cannot_read_it() -> None:

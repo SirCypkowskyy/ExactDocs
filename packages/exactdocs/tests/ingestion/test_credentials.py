@@ -23,6 +23,7 @@ from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     InvalidCredentialError,
     RepositoryAuthRequiredError,
+    UnknownLibraryError,
 )
 from exactdocs.ingestion.models import (
     AccessToken,
@@ -120,10 +121,10 @@ class FakeRemote:
 class Catalog:
     added: list[NewLibrary] = field(default_factory=list)
     discarded: list[str] = field(default_factory=list)
+    known: set[str] = field(default_factory=set)
 
     async def is_taken(self, library_id: str) -> bool:
-        del library_id
-        return False
+        return library_id in self.known
 
     async def add(self, library: NewLibrary) -> str:
         self.added.append(library)
@@ -328,7 +329,7 @@ async def test_a_library_is_private_exactly_when_it_has_a_stored_credential() ->
         jobs=InMemoryJobRepository(),
         clock=SystemClock(),
         remote=FakeRemote(),
-        library_ids=Catalog(),
+        library_ids=Catalog(known={"/acme/x"}),
         libraries=Catalog(),
         removals=NoRemovals(),
         index=NoIndex(),
@@ -339,5 +340,22 @@ async def test_a_library_is_private_exactly_when_it_has_a_stored_credential() ->
     assert (await module.get_library_access(query)).private is False
     await vault.save("/acme/x", SCOPE, AccessToken(token=TOKEN))
     assert (await module.get_library_access(query)).private is True
+    # IDs are case-insensitive: the vault is keyed by the lower-case one
+    assert (await module.get_library_access(GetLibraryAccessQuery(library="/ACME/X"))).private
     await vault.delete("/acme/x")
     assert (await module.get_library_access(query)).private is False
+
+
+async def test_an_unknown_library_has_no_access_answer() -> None:
+    module = IngestionModule.build(
+        jobs=InMemoryJobRepository(),
+        clock=SystemClock(),
+        remote=FakeRemote(),
+        library_ids=Catalog(),
+        libraries=Catalog(),
+        removals=NoRemovals(),
+        index=NoIndex(),
+    )
+
+    with pytest.raises(UnknownLibraryError):
+        await module.get_library_access(GetLibraryAccessQuery(library="/no/such"))

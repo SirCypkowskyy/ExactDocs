@@ -52,6 +52,7 @@ from exactdocs.ingestion.errors import (
     NoArticlesError,
     SyncFailedError,
     UnknownJobKindError,
+    UnknownLibraryError,
     VersionExistsError,
     VersionImportingError,
 )
@@ -176,10 +177,18 @@ class GetLibraryAccessUseCase:
     """Implements ``ports.driving.GetLibraryAccess``."""
 
     vault: CredentialVault
+    library_ids: LibraryIds
 
     async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
-        """Report a library with a stored credential as private; library IDs are lower-case."""
-        return LibraryAccess(private=await self.vault.has(query.library.lower()))
+        """Report a library with a stored credential as private; ``UnknownLibraryError`` if none.
+
+        Fails closed: a public repository that was given a token anyway counts as private, so its
+        images are never linked to the host. Library IDs are lower-case.
+        """
+        library = query.library.lower()
+        if not await self.library_ids.is_taken(ProposedId(library)):
+            raise UnknownLibraryError(query.library)
+        return LibraryAccess(private=await self.vault.has(library))
 
 
 @dataclass(frozen=True, slots=True)

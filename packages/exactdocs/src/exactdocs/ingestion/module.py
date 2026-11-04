@@ -156,7 +156,7 @@ class IngestionModule:
             check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=enqueue_job,
             get_job=GetJobUseCase(jobs),
-            get_library_access=GetLibraryAccessUseCase(vault or _NoCredentials()),
+            get_library_access=GetLibraryAccessUseCase(vault or _NoCredentials(), library_ids),
             list_latest_jobs=ListLatestJobsUseCase(jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
