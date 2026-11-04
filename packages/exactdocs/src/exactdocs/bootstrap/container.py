@@ -34,6 +34,7 @@ from exactdocs.ingestion.ports.driven import GitRemote
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
+from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class Container:
                 catalog.get_active_manifest, catalog.get_manifest_states
             ),
             chunks=SqliteChunkRepository(engine),
+            search=SqliteSearchIndex(engine),
         )
         # No job kinds yet: the import registers its handler and recovery hook (E3-05a).
         ingestion = IngestionModule.build(

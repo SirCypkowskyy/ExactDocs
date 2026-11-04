@@ -6,6 +6,7 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     ExcerptIndex,
     IndexedVersions,
+    SearchIndex,
 )
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
@@ -42,13 +43,14 @@ class RetrievalModule:
         index: ExcerptIndex,
         manifests: ActiveManifests,
         chunks: ChunkRepository,
+        search: SearchIndex,
         clock: Clock | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters."""
         clock = clock or SystemClock()
         return cls(
             search_docs=SearchDocsUseCase(versions, index),
-            index_manifest=IndexManifestUseCase(chunks, clock),
+            index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk=GetChunkUseCase(versions, manifests, chunks),
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),

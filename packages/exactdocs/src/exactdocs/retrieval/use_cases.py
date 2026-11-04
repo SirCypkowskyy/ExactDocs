@@ -31,6 +31,7 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     ExcerptIndex,
     IndexedVersions,
+    SearchIndex,
 )
 from exactdocs_kernel import Clock
 
@@ -91,10 +92,11 @@ class IndexManifestUseCase:
     """Implements ``ports.driving.IndexManifest``."""
 
     chunks: ChunkRepository
+    search: SearchIndex
     clock: Clock
 
     async def __call__(self, command: IndexManifestCommand) -> IndexedManifestOut:
-        """Compute the chunk IDs and store the rows plus the chunk sets that are new.
+        """Compute the chunk IDs, store the rows plus the new chunk sets, and make them searchable.
 
         Call it between the catalog's store (pending) and its activate, never after.
         """
@@ -130,6 +132,10 @@ class IndexManifestUseCase:
                 manifest.version_id, article.path, chunk_set, tuple(article.tags)
             )
         stored = await self.chunks.add(manifest, chunk_sets, rows)
+        # Also when the manifest was already indexed: a crash between the two calls above and
+        # below leaves sets without index entries, and indexing only fills gaps.
+        for chunk_set in chunk_sets.values():
+            await self.search.index(chunk_set)
         ids: dict[str, list[str]] = {a.path: [] for a in command.articles}
         for row in rows:
             ids[row.article_path].append(row.chunk_id)

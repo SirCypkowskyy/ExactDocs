@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,8 +14,12 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     Removed,
+    SearchHit,
     SearchText,
     StoredChunk,
+    highlights,
+    identifier_tokens,
+    search_terms,
 )
 
 
@@ -97,3 +102,48 @@ class InMemoryChunkRepository:
         for key in unused:
             del self.chunk_sets[key]
         return Removed(manifests=len(gone), chunk_sets=len(unused))
+
+
+@dataclass(slots=True)
+class InMemorySearchIndex:
+    """Reference ``ports.driven.SearchIndex``: a term-count score, not BM25.
+
+    It reads the chunk rows of the repository it is built on, so it forgets a chunk set when the
+    repository does, as the SQLite index does. Headings weigh ten times the body.
+    """
+
+    chunks: InMemoryChunkRepository
+    indexed: set[ChunkSetKey] = field(default_factory=set)
+
+    async def index(self, chunk_set: ChunkSet) -> None:
+        """Remember the set; the text itself is read from the repository."""
+        self.indexed.add(chunk_set.key)
+
+    async def search(
+        self, manifest_id: str, query: str, tag_filter: Collection[str], limit: int
+    ) -> Sequence[SearchHit]:
+        """Return this manifest's best matches, ties broken by chunk ID."""
+        terms = search_terms(query)
+        hits: list[SearchHit] = []
+        for row in self.chunks.rows.get(manifest_id, {}).values():
+            if row.chunk_set not in self.indexed or row.chunk_set not in self.chunks.chunk_sets:
+                continue
+            if tag_filter and not set(tag_filter) & set(row.tags):
+                continue
+            chunk = self.chunks.chunk_sets[row.chunk_set].chunks[row.position]
+            heading = Counter(identifier_tokens(" ".join(chunk.heading_path)).split())
+            body = Counter(identifier_tokens(chunk.content).split())
+            score = sum(10 * heading[t] + body[t] for t in terms)
+            if score:
+                hits.append(_hit(row.chunk_id, float(score), chunk.content, terms))
+        hits.sort(key=lambda h: (-h.score, h.chunk_id))
+        return hits[:limit]
+
+
+def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> SearchHit:
+    marks = highlights(content, terms)
+    start = max(0, marks[0][0] - 40) if marks else 0
+    snippet = content[start : start + 160]
+    return SearchHit(
+        chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
+    )
