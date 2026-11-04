@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
+    ApplyReadmeCommand,
     ArticleIn,
     CreateLibraryCommand,
     DiscardLibraryCommand,
@@ -27,6 +28,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyReadme,
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
@@ -192,6 +194,7 @@ class CatalogVersionPublisher:
     store_manifest: StoreManifest
     activate_manifest: ActivateManifest
     discard_pending_manifests: DiscardPendingManifests
+    apply_readme: ApplyReadme
 
     async def store(self, version: ImportedVersion) -> str:
         """Store the articles as a pending manifest."""
@@ -202,6 +205,14 @@ class CatalogVersionPublisher:
     async def activate(self, manifest_id: str) -> None:
         """Make the manifest what its version serves."""
         await self.activate_manifest(ActivateManifestCommand(manifest_id=manifest_id))
+
+    async def describe(
+        self, *, library: str, ref: str, title: str | None, description: str | None
+    ) -> None:
+        """Offer the README's text to the catalog, which decides whether it applies."""
+        await self.apply_readme(
+            ApplyReadmeCommand(library=library, ref=ref, title=title, description=description)
+        )
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
         """Delete one pending manifest, or the library's pending manifests."""

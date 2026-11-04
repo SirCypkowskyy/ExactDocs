@@ -106,7 +106,10 @@ class Container:
             chunker=MarkdownChunker(),
             sources=CatalogLibrarySources(catalog.get_library),
             versions=CatalogVersionPublisher(
-                catalog.store_manifest, catalog.activate_manifest, catalog.discard_pending_manifests
+                catalog.store_manifest,
+                catalog.activate_manifest,
+                catalog.discard_pending_manifests,
+                catalog.apply_readme,
             ),
             index=RetrievalChunkIndex(
                 retrieval.index_manifest, retrieval.get_chunk_sets, retrieval.discard_pending_chunks

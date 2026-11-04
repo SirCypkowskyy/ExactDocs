@@ -4,7 +4,8 @@ from http import HTTPStatus
 
 from behave import step, then
 from behave.runner import Context
-from steps.mcp_steps import _call
+
+from steps.mcp_steps import call_tool
 
 LIBRARY = "/fixture/docs-repo"
 README_TITLE = "Acme Payments"
@@ -43,6 +44,6 @@ def step_title(context: Context, title: str) -> None:
 
 @then('"list_libraries" shows the title "{title}"')
 def step_listed_title(context: Context, title: str) -> None:
-    _call(context, "list_libraries", {})
+    call_tool(context, "list_libraries", {})
     (found,) = [lib for lib in context.mcp_data["libraries"] if lib["id"] == LIBRARY]
     assert found["title"] == title

@@ -125,6 +125,7 @@ def create_app(container: Container) -> FastAPI:
             resolve_version=container.catalog.resolve_version,
             list_articles=container.catalog.list_articles,
             get_article=container.catalog.get_article,
+            update_library=container.catalog.update_library,
         )
     )
     protected.include_router(

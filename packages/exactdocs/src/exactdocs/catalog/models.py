@@ -214,6 +214,9 @@ class Library:
     default_branch: VersionRef | None = None
     settings: LibrarySettings = field(default_factory=LibrarySettings)
     versions: frozenset[Version] = field(default_factory=frozenset)
+    # Set once a user typed the field: README imports never touch it again.
+    title_edited: bool = False
+    description_edited: bool = False
 
     def __post_init__(self) -> None:
         refs = [v.ref for v in self.versions]

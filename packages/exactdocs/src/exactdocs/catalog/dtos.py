@@ -3,7 +3,14 @@
 from datetime import datetime
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from exactdocs.catalog.models import (
     GarbageCollected,
@@ -530,6 +537,45 @@ class CreateLibraryCommand(_Dto):
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+
+
+MAX_TITLE = 200
+MAX_DESCRIPTION = 1000
+_Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
+_Description = Annotated[str, Field(max_length=MAX_DESCRIPTION)]
+
+
+class LibraryPatch(_Dto):
+    """The fields a user may change; a field that is absent or null stays as it is."""
+
+    title: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TITLE)]
+        | None
+    ) = None
+    description: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_DESCRIPTION)] | None
+    ) = Field(
+        default=None, description="Empty is allowed: it keeps the library without a description."
+    )
+
+
+class UpdateLibraryCommand(LibraryPatch):
+    """Set the title and/or description of a library by hand; they are then kept for good."""
+
+    id: str = Field(min_length=1)
+
+
+class ApplyReadmeCommand(_Dto):
+    """What the root README of an imported version says; used only if it is the default version.
+
+    A missing value (the README has no heading or no paragraph) means: the repository name as
+    title, no description.
+    """
+
+    library: str = Field(min_length=1)
+    ref: str = Field(min_length=1)
+    title: _Title | None = None
+    description: _Description | None = None
 
 
 class DiscardLibraryCommand(_Dto):

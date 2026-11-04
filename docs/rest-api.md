@@ -58,6 +58,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   at most 50 tokens (409 `too_many_tokens`). A password reset revokes all of the account's
   tokens. The three token routes need the **session cookie**, not a token, so a stolen token
   cannot create a successor.
+- **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
+  field is kept across re-imports instead of following the root README (LIB-07).
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`

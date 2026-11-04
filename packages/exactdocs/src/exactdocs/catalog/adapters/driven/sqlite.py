@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from pydantic import TypeAdapter
 from sqlalchemy import (
+    Boolean,
     Column,
     ColumnElement,
     ForeignKey,
@@ -69,6 +70,8 @@ libraries = Table(
     Column("default_branch", Text),
     Column("pinned_version", Text),  # LIB-10 (MVP-2): never written or read yet
     Column("settings", Text, nullable=False),
+    Column("title_edited", Boolean, nullable=False, server_default="0"),
+    Column("description_edited", Boolean, nullable=False, server_default="0"),
 )
 library_versions = Table(
     "catalog_library_versions",
@@ -134,6 +137,8 @@ _LIBRARY_COLUMNS = (
     libraries.c.host,
     libraries.c.default_branch,
     libraries.c.settings,
+    libraries.c.title_edited,
+    libraries.c.description_edited,
 )
 
 
@@ -212,6 +217,8 @@ class SqliteLibraryRepository:
                 default_branch=VersionRef(row.default_branch) if row.default_branch else None,
                 settings=_SETTINGS.validate_json(row.settings),
                 versions=frozenset(versions[row.id]),
+                title_edited=row.title_edited,
+                description_edited=row.description_edited,
             )
             for row in rows
         )
@@ -523,7 +530,7 @@ async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version
     )
 
 
-def _library_values(library: Library) -> dict[str, str | None]:
+def _library_values(library: Library) -> dict[str, str | bool | None]:
     return {
         "title": library.title,
         "description": library.description,
@@ -531,6 +538,8 @@ def _library_values(library: Library) -> dict[str, str | None]:
         "host": library.host.value,
         "default_branch": None if library.default_branch is None else library.default_branch.value,
         "settings": _SETTINGS.dump_json(library.settings).decode(),
+        "title_edited": library.title_edited,
+        "description_edited": library.description_edited,
     }
 
 

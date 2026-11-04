@@ -42,6 +42,7 @@ PAYMENTS = Library(
     source_url="https://github.com/acme/payments",
     host=HostKind.GITHUB,
     default_branch=VersionRef("main"),
+    title_edited=True,
     settings=LibrarySettings(
         include_paths=("docs",),
         exclude_paths=("docs/internal", "**/*.draft.md"),

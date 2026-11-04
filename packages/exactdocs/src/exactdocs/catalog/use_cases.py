@@ -9,6 +9,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyReadmeCommand,
     Article,
     ArticleInfo,
     ArticleList,
@@ -32,6 +33,7 @@ from exactdocs.catalog.dtos import (
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
+    UpdateLibraryCommand,
 )
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
@@ -113,6 +115,56 @@ class CreateLibraryUseCase:
         )
         await self.repository.add(library)
         return LibraryDetail.from_model(library)
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateLibraryUseCase:
+    """Implements ``ports.driving.UpdateLibrary``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: UpdateLibraryCommand) -> LibraryDetail:
+        """Change the given fields and remember that a user chose them."""
+        library = await self.repository.get(LibraryId(command.id))
+        if library is None:
+            raise LibraryNotFoundError(command.id)
+        changes: dict[str, str | bool] = {}
+        if command.title is not None:
+            changes |= {"title": command.title, "title_edited": True}
+        if command.description is not None:
+            changes |= {"description": command.description, "description_edited": True}
+        updated = replace(library, **changes)
+        await self.repository.save(updated)
+        return LibraryDetail.from_model(updated)
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyReadmeUseCase:
+    """Implements ``ports.driving.ApplyReadme``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: ApplyReadmeCommand) -> None:
+        """Follow the default version's README for every field a user has not edited.
+
+        The README of any other version is ignored. No heading means the repository name as
+        title, no paragraph means no description, so a field never keeps text a README dropped.
+        """
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        default = library.default_version()
+        if default is None or default.ref != VersionRef(command.ref):
+            return
+        title = library.title if library.title_edited else command.title
+        description = library.description if library.description_edited else command.description
+        updated = replace(
+            library,
+            title=title or library.id.value.rsplit("/", 1)[-1],
+            description=description or "",
+        )
+        if updated != library:
+            await self.repository.save(updated)
 
 
 @dataclass(frozen=True, slots=True)

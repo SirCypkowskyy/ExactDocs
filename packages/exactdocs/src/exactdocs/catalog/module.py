@@ -9,6 +9,7 @@ from typing import Self
 from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyReadme,
     CollectGarbage,
     CreateLibrary,
     DiscardLibrary,
@@ -21,9 +22,11 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ResolveVersion,
     StoreManifest,
+    UpdateLibrary,
 )
 from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
+    ApplyReadmeUseCase,
     CollectGarbageUseCase,
     CreateLibraryUseCase,
     DiscardLibraryUseCase,
@@ -36,6 +39,7 @@ from exactdocs.catalog.use_cases import (
     ListLibrariesUseCase,
     ResolveVersionUseCase,
     StoreManifestUseCase,
+    UpdateLibraryUseCase,
 )
 from exactdocs_kernel import Clock, SystemClock
 
@@ -57,6 +61,8 @@ class CatalogModule:
     collect_garbage: CollectGarbage
     get_manifest_states: GetManifestStates
     get_active_manifest: GetActiveManifest
+    update_library: UpdateLibrary
+    apply_readme: ApplyReadme
 
     @classmethod
     def build(
@@ -82,4 +88,6 @@ class CatalogModule:
             collect_garbage=CollectGarbageUseCase(manifests, clock),
             get_manifest_states=GetManifestStatesUseCase(manifests),
             get_active_manifest=GetActiveManifestUseCase(repository, manifests),
+            update_library=UpdateLibraryUseCase(repository),
+            apply_readme=ApplyReadmeUseCase(repository),
         )
