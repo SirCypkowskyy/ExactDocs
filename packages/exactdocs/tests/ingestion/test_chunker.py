@@ -1,6 +1,7 @@
 """Guarantees every ``Chunker`` adapter must keep, checked on fixture articles and random ones."""
 
 import itertools
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -273,3 +274,15 @@ def test_config_hash_covers_the_markdown_engine_version(monkeypatch: pytest.Monk
 def test_split_depth_out_of_range_is_a_domain_error() -> None:
     with pytest.raises(InvalidChunkingConfigError):
         ChunkingConfig(split_depth=7)
+
+
+_ANCHOR_VECTORS = json.loads((TESTS / "fixtures" / "heading_anchors.json").read_text("utf-8"))[
+    "cases"
+]
+
+
+@pytest.mark.parametrize("case", _ANCHOR_VECTORS, ids=[c["name"] for c in _ANCHOR_VECTORS])
+def test_anchors_match_the_shared_vectors(case: dict, chunker: Chunker) -> None:
+    """The web renderer (anchors.test.ts) reads the same table: a search link must land on the heading."""
+    chunks = chunker.chunk(parse_article("a.md", case["markdown"]))
+    assert [c.anchor for c in chunks if c.heading_path] == case["anchors"]
