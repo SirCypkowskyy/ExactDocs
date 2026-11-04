@@ -77,24 +77,69 @@ jobs:
       - run: pnpm build
 
   image:
-    name: Docker image (native build + smoke test)
+    name: Docker image (lint, build, scan, smoke test)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: hadolint
+        run: |
+          docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
+            hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e \
+            < deploy/Dockerfile
+      # The runners are persistent VMs, so the daemon's own BuildKit (driver "docker") keeps layers
+      # and cache mounts between jobs: no remote cache to export or restore. (The default
+      # docker-container driver is deleted at the end of every job.) Each VM has its own cache.
       - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - id: created
+        run: |
+          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
           load: true
           tags: exactdocs:ci
-          build-args: VERSION=0.0.0.dev0
-          cache-from: type=gha,scope=exactdocs
-          cache-to: type=gha,scope=exactdocs,mode=max
-      - name: Smoke test
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
+      - name: Trivy scan
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci
+      # Only the runtime-tools stage runs a command for the other architecture (apt, under QEMU);
+      # build just that and prove the tools run there. No Python: it crashes under QEMU.
+      - name: amd64 runtime-tools stage (QEMU) builds and runs git, ssh, tini
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          target: runtime-tools
+          load: true
+          tags: exactdocs:ci-amd64
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      - run: |
+          for tool in "git --version" "ssh -V" "tini --version"; do
+            docker run --rm --platform linux/amd64 --entrypoint ${tool%% *} exactdocs:ci-amd64 ${tool#* }
+          done
+      - name: Build a fixture docs repository
+        run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
+      - name: Smoke test (read-only rootfs, no capabilities)
         run: |
-          docker run -d --rm --name exactdocs-ci -p 127.0.0.1::3000 exactdocs:ci
+          echo "image size: $(docker image inspect exactdocs:ci --format '{{.Size}}') bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+          flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
+          docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 exactdocs:ci
           trap 'docker logs exactdocs-ci; docker stop exactdocs-ci' EXIT
           port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
           for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:${port}/api/health" && break; sleep 1; done
@@ -112,3 +157,12 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp/")" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 400
+          # Hardening as built: unprivileged, tini is PID 1, no pip, no setuid files.
+          test "$(docker exec exactdocs-ci id -u)" = 10001
+          test "$(docker exec exactdocs-ci cat /proc/1/comm)" = tini
+          docker exec exactdocs-ci sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
+          # What the importer needs: ssh, and git reading a repository over file://. The fixture is
+          # owned by the runner user, so git needs safe.directory (the importer issue decides how).
+          docker exec exactdocs-ci ssh -V
+          docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
+            -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'

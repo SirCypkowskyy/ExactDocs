@@ -97,9 +97,9 @@ build version="": web-build
 docker-build version="0.0.0.dev0":
     docker build -f deploy/Dockerfile --build-arg VERSION={{ version }} -t {{ image }} .
 
-# Run the local image on :3000 with a named data volume
+# Run the local image on :3000 with a named data volume, hardened like CI and the Team compose example
 docker-run: docker-build
-    docker run --rm -it -p 3000:3000 -v exactdocs-data:/data {{ image }}
+    docker run --rm -it -p 3000:3000 -v exactdocs-data:/data --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges {{ image }}
 
 # ---------------------------------------------------------------- docs
 

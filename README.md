@@ -171,6 +171,15 @@ services:
   exactdocs:
     image: ghcr.io/sircypkowskyy/exactdocs:latest
     ports: ["3000:3000"]
+    # The image runs as UID 10001 and needs nothing but /data and /tmp to be writable.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g }
+    volumes: ["exactdocs-data:/data"]
     environment:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${DB_PASSWORD}@db:5432/exactdocs
     depends_on: [db]
@@ -182,6 +191,7 @@ services:
       POSTGRES_DB: exactdocs
     volumes: ["pgdata:/var/lib/postgresql/data"]
 volumes:
+  exactdocs-data:
   pgdata:
 ```
 

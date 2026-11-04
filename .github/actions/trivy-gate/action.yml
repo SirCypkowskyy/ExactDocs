@@ -1,0 +1,46 @@
+name: Image vulnerability gate
+description: >
+  Scans a local Docker image with Trivy and fails on a fixable CRITICAL or HIGH vulnerability.
+  Accepted findings are listed in .trivyignore (see docs/releasing.md). Trivy runs from its
+  official container image, pinned by digest, on a `docker save` copy of the image: no third-party
+  action, no Docker socket in the container.
+inputs:
+  image:
+    description: Local image reference to scan
+    required: true
+  retention-days:
+    description: How long the report artifact is kept
+    default: "14"
+runs:
+  using: composite
+  steps:
+    - name: Trivy scan
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        # Trivy v0.70.0
+        TRIVY: ghcr.io/aquasecurity/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
+      run: |
+        set -euo pipefail
+        cache="$HOME/.cache/trivy"; mkdir -p "$cache"
+        docker save "$IMAGE" -o "$RUNNER_TEMP/image.tar"
+        trap 'rm -f "$RUNNER_TEMP/image.tar"' EXIT
+        docker run --rm --user "$(id -u):$(id -g)" \
+          -e TRIVY_CACHE_DIR=/cache -v "$cache:/cache" \
+          -v "$RUNNER_TEMP/image.tar:/image.tar:ro" \
+          -v "$PWD/.trivyignore:/.trivyignore:ro" \
+          -v "$PWD:/out" \
+          "$TRIVY" image --input /image.tar --scanners vuln \
+            --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
+            --ignorefile /.trivyignore --format table --output /out/trivy-report.txt
+    - name: Show the scan report
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: cat trivy-report.txt || true
+    - uses: actions/upload-artifact@v7
+      if: ${{ !cancelled() }}
+      with:
+        name: trivy-report
+        path: trivy-report.txt
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore
