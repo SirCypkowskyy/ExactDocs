@@ -14,12 +14,23 @@ import json
 import sqlalchemy as sa
 from alembic import op
 
-from exactdocs.retrieval.adapters.driven.sqlite_fts import fts_row
+from exactdocs.retrieval.models import identifier_tokens
 
 revision = "3b8f0d6e2a71"
 down_revision = "c4d8e2f6a1b7"
 branch_labels = None
 depends_on = None
+
+
+def _row(rowid: int, heading_path: list[str], content: str) -> dict[str, object]:
+    """The row as this revision shapes it (frozen: later revisions change the live builder)."""
+    heading = " / ".join(heading_path)
+    return {
+        "rowid": rowid,
+        "heading": heading,
+        "text": content,
+        "identifiers": identifier_tokens(f"{heading}\n{content}"),
+    }
 
 
 def upgrade() -> None:
@@ -85,7 +96,7 @@ def upgrade() -> None:
                 "INSERT INTO retrieval_search (rowid, heading, text, identifiers) "
                 "VALUES (:rowid, :heading, :text, :identifiers)"
             ),
-            [fts_row(r.id, json.loads(r.heading_path), r.content) for r in batch],
+            [_row(r.id, json.loads(r.heading_path), r.content) for r in batch],
         )
 
 

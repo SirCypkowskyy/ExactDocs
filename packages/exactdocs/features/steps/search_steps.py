@@ -230,6 +230,12 @@ TABLE = Path(__file__).parents[2] / "tests" / "fixtures" / "docs-repo" / "expect
 
 @when("each query of the expected-queries table is searched in its version")
 def step_search_table(context: Context) -> None:
+    """Search the table over HTTP.
+
+    This scenario mirrors the importer's rules (``SKIPPED_DIRECTORIES``, ``TAG_RULES``) by hand;
+    the pytest suite in ``tests/retrieval/ranking`` is the check on the real importer. Only the
+    imported versions are asked (not ``next``), and entries marked ``xfail`` are skipped.
+    """
     context.ranked = []
     for entry in yaml.safe_load(TABLE.read_text(encoding="utf-8"))["queries"]:
         if "xfail" in entry:  # a known gap, tracked in the ranking suite

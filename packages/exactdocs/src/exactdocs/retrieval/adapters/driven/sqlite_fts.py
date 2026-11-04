@@ -79,14 +79,14 @@ _SEARCHES = {match: text(_SEARCH.format(tags=sql)) for match, sql in _TAG_CONDIT
 
 
 def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, object]:
-    """Return the values of one `retrieval_search` row; the migration backfills with it too."""
-    path = " / ".join(heading_path)
+    """Return the values of one `retrieval_search` row (migrations freeze their own copy)."""
+    full = " / ".join(heading_path)
     return {
         "rowid": rowid,
         "heading": heading_path[-1] if heading_path else "",
         "path": " / ".join(heading_path[:-1]),
         "text": content,
-        "identifiers": identifier_tokens(f"{path}\n{content}"),
+        "identifiers": identifier_tokens(f"{full}\n{content}"),
     }
 
 

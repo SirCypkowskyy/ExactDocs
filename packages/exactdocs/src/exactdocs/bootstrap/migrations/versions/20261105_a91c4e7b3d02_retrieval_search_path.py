@@ -14,7 +14,6 @@ from collections.abc import Callable
 import sqlalchemy as sa
 from alembic import op
 
-from exactdocs.retrieval.adapters.driven.sqlite_fts import fts_row
 from exactdocs.retrieval.models import identifier_tokens
 
 revision = "a91c4e7b3d02"
@@ -49,6 +48,18 @@ def _before(rowid: int, heading_path: list[str], content: str) -> dict[str, obje
     }
 
 
+def _after(rowid: int, heading_path: list[str], content: str) -> dict[str, object]:
+    """The row as this revision shapes it: own heading, ancestors, text, identifiers (frozen)."""
+    full = " / ".join(heading_path)
+    return {
+        "rowid": rowid,
+        "heading": heading_path[-1] if heading_path else "",
+        "path": " / ".join(heading_path[:-1]),
+        "text": content,
+        "identifiers": identifier_tokens(f"{full}\n{content}"),
+    }
+
+
 def upgrade() -> None:
     _rebuild(
         """
@@ -59,7 +70,7 @@ def upgrade() -> None:
         """,
         "INSERT INTO retrieval_search (rowid, heading, path, text, identifiers) "
         "VALUES (:rowid, :heading, :path, :text, :identifiers)",
-        fts_row,
+        _after,
     )
 
 

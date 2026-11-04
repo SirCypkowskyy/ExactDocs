@@ -107,3 +107,61 @@ async def test_search_still_finds_the_right_chunk_after_vacuum(tmp_path: Path) -
 
     assert [h.chunk_id for h in hits] == ["chunk-b2"]
     await engine.dispose()
+
+
+MIDDLE = "3b8f0d6e2a71"
+
+
+async def test_the_path_revision_reindexes_nested_headings_and_round_trips(tmp_path: Path) -> None:
+    engine = await _engine(tmp_path)
+    sections = [
+        (["Guide", "Docker"], "Pull the image, then docker run it."),
+        (["Guide", "Docker", "Troubleshooting"], "If the port is taken, pick another one."),
+        (["Guide", "Other"], "Unrelated words."),
+    ]
+    async with engine.begin() as connection:
+        await connection.run_sync(_alembic, "upgrade", MIDDLE)
+        await connection.execute(
+            text("INSERT INTO retrieval_manifests VALUES ('m1', '/a/b/main', '/a/b', '2026-11-04')")
+        )
+        await connection.execute(text("INSERT INTO retrieval_chunk_sets VALUES ('b', 'c', 'd')"))
+        for position, (heading_path, content) in enumerate(sections):
+            await connection.execute(
+                text(
+                    "INSERT INTO retrieval_chunks (blob_sha, config_hash, position, heading_path,"
+                    " occurrence_index, content, content_hash, anchor, code_languages)"
+                    " VALUES ('b', 'c', :p, :h, 0, :c, 'x', 'a', '[]')"
+                ),
+                {"p": position, "h": json.dumps(heading_path), "c": content},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO retrieval_manifest_chunks VALUES "
+                    "('m1', :id, 'a.md', :p, 3, NULL, NULL, '[]', 'b', 'c')"
+                ),
+                {"id": f"chunk{position}", "p": position},
+            )
+        await connection.run_sync(_alembic, "upgrade", AFTER)
+
+    async def first(query: str) -> str:
+        hits = await SqliteSearchIndex(engine).search("m1", query, TagFilter(), 5)
+        return hits[0].chunk_id
+
+    assert await first("docker") == "chunk0"  # the own heading beats the child under it
+    assert await first("docker troubleshooting") == "chunk1"  # the ancestors still count
+
+    async def entries() -> int:
+        async with engine.connect() as connection:
+            return (
+                await connection.execute(text("SELECT count(*) FROM retrieval_search"))
+            ).scalar_one()
+
+    assert await entries() == 3
+    async with engine.begin() as connection:  # the delete trigger survived the rebuild
+        await connection.execute(text("DELETE FROM retrieval_chunks"))
+    assert await entries() == 0
+
+    async with engine.begin() as connection:  # downgrade and upgrade again
+        await connection.run_sync(_alembic, "downgrade", MIDDLE)
+        await connection.run_sync(_alembic, "upgrade", AFTER)
+    await engine.dispose()
