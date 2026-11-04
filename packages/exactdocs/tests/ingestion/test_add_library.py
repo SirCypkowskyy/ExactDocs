@@ -1,9 +1,8 @@
 from dataclasses import dataclass, field
 
 import pytest
-from doubles import NoIndex, NoRemovals
 
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.dtos import AddLibraryCommand, ListRepositoryRefsQuery, TagRuleIn
 from exactdocs.ingestion.errors import (
     InvalidPathPatternError,

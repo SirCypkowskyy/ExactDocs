@@ -18,7 +18,10 @@ from exactdocs.catalog.dtos import (
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetLibraryQuery,
     ListArticlesQuery,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     ResolveVersionQuery,
     StoreManifestCommand,
 )
@@ -443,3 +446,61 @@ async def test_garbage_is_collected_after_the_grace_period(world: World) -> None
 
     assert (early.manifests, early.contents) == (0, 0)
     assert (late.manifests, late.contents) == (1, 1)
+
+
+async def test_removing_a_version_moves_the_default_and_frees_its_unshared_content(
+    world: World,
+) -> None:
+    await world.active(
+        "v1.3.0", "a1", article("a.md", "shared"), article("old.md", "old"), kind=RefKind.TAG
+    )
+    new = await world.active("v1.4.0", "a2", article("a.md", "shared"), kind=RefKind.TAG)
+    default = await world.catalog.resolve_version(ResolveVersionQuery(id="/acme/payments"))
+    assert default.ref == "v1.4.0"
+
+    removed = await world.catalog.remove_version(
+        RemoveVersionCommand(library="/Acme/Payments", ref="v1.4.0")
+    )
+
+    assert (removed.ref, removed.manifest_ids, removed.default_ref) == ("v1.4.0", [new], "v1.3.0")
+    after = await world.catalog.resolve_version(ResolveVersionQuery(id="/acme/payments"))
+    assert after.ref == "v1.3.0"
+    with pytest.raises(VersionNotFoundError):
+        await world.catalog.resolve_version(ResolveVersionQuery(id="/acme/payments/v1.4.0"))
+    collected = await world.catalog.collect_garbage(CollectGarbageCommand())
+    assert collected.contents == 0  # v1.3.0 still uses both texts
+
+
+async def test_removing_the_last_version_leaves_a_library_without_versions(world: World) -> None:
+    await world.active("v1.0.0", "a1", article("a.md"), kind=RefKind.TAG)
+    await world.catalog.remove_version(RemoveVersionCommand(library="/acme/payments", ref="main"))
+
+    last = await world.catalog.remove_version(
+        RemoveVersionCommand(library="/acme/payments", ref="v1.0.0")
+    )
+
+    assert last.default_ref is None
+    detail = await world.catalog.get_library(GetLibraryQuery(id="/acme/payments"))
+    assert (detail.versions, detail.default_version) == ([], None)
+    assert (await world.catalog.collect_garbage(CollectGarbageCommand())).contents == 1
+
+
+async def test_removing_matches_the_ref_exactly_and_names_what_is_missing(world: World) -> None:
+    with pytest.raises(VersionNotFoundError):
+        await world.catalog.remove_version(
+            RemoveVersionCommand(library="/acme/payments", ref="MAIN")
+        )
+    with pytest.raises(LibraryNotFoundError):
+        await world.catalog.remove_version(RemoveVersionCommand(library="/acme/none", ref="main"))
+    with pytest.raises(LibraryNotFoundError):
+        await world.catalog.remove_library(RemoveLibraryCommand(library="/acme/none"))
+
+
+async def test_removing_a_library_takes_its_versions_and_manifests(world: World) -> None:
+    kept = await world.active("main", "aaa111", article("a.md"))
+
+    removed = await world.catalog.remove_library(RemoveLibraryCommand(library="/Acme/Payments"))
+
+    assert (removed.library, removed.manifest_ids) == ("/acme/payments", [kept])
+    with pytest.raises(LibraryNotFoundError):
+        await world.catalog.get_library(GetLibraryQuery(id="/acme/payments"))

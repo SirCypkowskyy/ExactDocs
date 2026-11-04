@@ -3,11 +3,10 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from doubles import NoIndex, NoRemovals
 
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
-from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
+from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.models import JobKind
 from exactdocs.ingestion.ports import JobHandler, JobRepository, RecoveryHook
 

@@ -3,13 +3,13 @@
 import asyncio
 from collections.abc import Mapping
 
-from doubles import NoIndex, NoRemovals
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
+from exactdocs.ingestion.adapters.driven.memory import NoIndex, NoRemovals
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery

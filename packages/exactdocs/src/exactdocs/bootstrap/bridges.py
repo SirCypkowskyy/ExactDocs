@@ -49,6 +49,7 @@ from exactdocs.catalog.ports.driving import (
 from exactdocs.ingestion.models import (
     PARSER_VERSION,
     ArticleChunk,
+    Collected,
     ImportedVersion,
     ImportSource,
     NewLibrary,
@@ -327,10 +328,10 @@ class CatalogCollector:
 
     collect_garbage: CollectGarbage
 
-    async def collect(self, *, grace_seconds: int) -> int:
+    async def collect(self, *, grace_seconds: int) -> Collected:
         """Delete superseded manifests past the grace period and the texts nothing uses."""
         done = await self.collect_garbage(CollectGarbageCommand(grace_seconds=grace_seconds))
-        return done.manifests + done.contents
+        return Collected(deleted=done.manifests + done.contents)
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,10 +340,10 @@ class RetrievalCollector:
 
     collect_chunks: CollectChunks
 
-    async def collect(self, *, grace_seconds: int) -> int:
+    async def collect(self, *, grace_seconds: int) -> Collected:
         """Delete chunk rows of manifests the catalog collected, and unused chunk sets."""
         done = await self.collect_chunks(CollectChunksCommand(grace_seconds=grace_seconds))
-        return done.manifests + done.chunk_sets
+        return Collected(deleted=done.manifests + done.chunk_sets)
 
 
 def _store_command(version: ImportedVersion) -> StoreManifestCommand:

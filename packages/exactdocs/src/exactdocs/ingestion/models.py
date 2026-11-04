@@ -1050,3 +1050,10 @@ class Removed:
     ref: str | None
     manifest_ids: tuple[str, ...]
     default_ref: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Collected:
+    """What one collector deleted."""
+
+    deleted: int

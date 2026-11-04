@@ -8,6 +8,7 @@ from typing import Protocol
 
 from exactdocs.ingestion.models import (
     ArticleChunk,
+    Collected,
     ImportedVersion,
     ImportSource,
     Job,
@@ -248,6 +249,6 @@ class Removals(Protocol):
 class Collector(Protocol):
     """Frees what one domain no longer needs; the collection job runs them in order."""
 
-    async def collect(self, *, grace_seconds: int) -> int:
-        """Delete what is unused and older than the grace period; return how many things."""
+    async def collect(self, *, grace_seconds: int) -> Collected:
+        """Delete what is unused and older than the grace period; say how many things."""
         ...
