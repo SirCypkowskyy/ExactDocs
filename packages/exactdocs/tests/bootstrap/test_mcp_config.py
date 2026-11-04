@@ -10,6 +10,7 @@ import pytest
 from fastmcp import Client
 
 from exactdocs.bootstrap import cli
+from exactdocs.bootstrap import cli_library as lib
 from exactdocs.bootstrap.client import ClientError, resolve_url
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
@@ -94,10 +95,10 @@ def test_stdio_needs_no_server_and_refuses_show_token(
     monkeypatch.delenv("EXACTDOCS_URL", raising=False)
     run(["config", "--client", "vscode", "--stdio"])
     assert "--stdio" in capsys.readouterr().out
-    with pytest.raises(SystemExit, match="needs no token"):
-        run(
-            ["config", "--client", "vscode", "--stdio", "--show-token"],
-        )
+    for flag in ("--show-token", "--new-token"):
+        with pytest.raises(SystemExit) as exit_info:
+            run(["config", "--client", "vscode", "--stdio", flag])
+        assert exit_info.value.code == lib.EXIT_USAGE
 
 
 def test_http_without_a_server_says_how_to_configure_one(

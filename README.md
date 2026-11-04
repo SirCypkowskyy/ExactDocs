@@ -115,7 +115,8 @@ repository token is `--git-token-file`.
 ```bash
 uvx exactdocs config --client claude            # claude, claude-desktop, cursor, vscode, codex
 uvx exactdocs config --client codex --stdio     # local, read-only, no token
-uvx exactdocs skill > SKILL.md                  # the agent usage skill (also the MCP resource skill://exactdocs/SKILL.md)
+uvx exactdocs skill                             # prints the agent usage skill; redirect it to a SKILL.md
+                                                # (also the MCP resource skill://exactdocs/SKILL.md)
 ```
 
 `config` prints a snippet to paste into the client's config file. It never contains your token:
