@@ -1,0 +1,29 @@
+import { Tabs, Tab } from "@site/components";
+import Banner from "./banner.mdx";
+
+export const meta = { title: "Widgets" };
+
+# Widgets
+
+<Banner kind="info" />
+
+<Tabs groupId="pm">
+<Tab value="pnpm" label="pnpm">
+
+```bash
+pnpm add widgets
+```
+
+</Tab>
+<Tab value="npm" label="npm">
+
+Use `npm install widgets`.
+
+</Tab>
+</Tabs>
+
+Plain **Markdown** still renders, and {1 + 1} is only text.
+
+<script>alert("mdx")</script>
+
+<div onclick="alert(1)">raw html</div>

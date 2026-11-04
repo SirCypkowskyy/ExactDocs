@@ -1,0 +1,252 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixture articles > a rich article, public library 1`] = `
+"<div class="doc"><h3 id="payments-quickstart" class="doc-h doc-h1" hidden="">Payments quickstart<a href="#payments-quickstart" class="doc-anchor" aria-label="Link to Payments quickstart">#</a></h3>
+<p>Accept a first payment in <strong>five minutes</strong>. This page covers the <em>happy path</em>, <s>the old way</s> and where to go next. See the <a href="/libraries/acme/payments?path=docs%2Fguide%2Fauth.md#api-keys">auth guide</a>, the <a href="#overview">overview</a> or the source of the schema. The <a href="https://example.com/docs?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">docs site</a> is the long version, and <a href="https://example.com/bare" target="_blank" rel="noopener noreferrer">https://example.com/bare</a> is an autolink.</p>
+<h4 id="overview" class="doc-h doc-h2">Overview<a href="#overview" class="doc-anchor" aria-label="Link to Overview">#</a></h4>
+<p>Every request is made with <code>curl</code>, <code>fetch()</code> or an SDK. Set <code>ACME_API_KEY</code> first.</p>
+<blockquote><p>Idempotency keys are kept for 24 hours. A retry with the same key returns the original response.</p>
+</blockquote>
+<h5 id="install" class="doc-h doc-h3">Install<a href="#install" class="doc-anchor" aria-label="Link to Install">#</a></h5>
+<figure class="doc-code"><figcaption><span>bash</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>pnpm add @acme/payments
+export ACME_API_KEY=&quot;sk_test_123&quot;   # never commit this</code></pre>
+</figure>
+<h5 id="create-a-payment" class="doc-h doc-h3">Create a payment<a href="#create-a-payment" class="doc-anchor" aria-label="Link to Create a payment">#</a></h5>
+<figure class="doc-code"><figcaption><span>ts</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>import { Acme } from &quot;@acme/payments&quot;;
+
+const acme = new Acme({ apiKey: process.env.ACME_API_KEY });
+
+export async function charge(amount: number): Promise&lt;string&gt; {
+  const payment = await acme.payments.create({ amount, currency: &quot;eur&quot; });
+  return payment.id; // pay_01H…
+}</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>python</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>from acme import Acme
+
+client = Acme(api_key=os.environ[&quot;ACME_API_KEY&quot;])
+payment = client.payments.create(amount=1200, currency=&quot;eur&quot;, metadata={&quot;order&quot;: 42})
+print(f&quot;created {payment.id}&quot;)</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>json</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>{ &quot;id&quot;: &quot;pay_01H8&quot;, &quot;amount&quot;: 1200, &quot;paid&quot;: true, &quot;tags&quot;: [&quot;a&quot;, &quot;b&quot;], &quot;fee&quot;: null }</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>yaml</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>retries:
+  max: 3
+  backoff: exponential # seconds</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>diff</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>- const acme = new Acme(key);
++ const acme = new Acme({ apiKey: key });</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>nolang-here</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>plain text, not highlighted: &lt;b&gt;not bold&lt;/b&gt;</code></pre>
+</figure>
+<h4 id="reference" class="doc-h doc-h2">Reference<a href="#reference" class="doc-anchor" aria-label="Link to Reference">#</a></h4>
+<section class="doc-table" aria-label="Table" tabindex="0"><table><thead><tr><th class="doc-left">Field</th><th class="doc-left">Type</th><th class="doc-right">Required</th><th class="doc-left">Description</th></tr>
+</thead>
+<tbody><tr><td class="doc-left"><code>amount</code></td><td class="doc-left">integer</td><td class="doc-right">yes</td><td class="doc-left">Smallest currency unit. 1200 is 12.00 EUR.</td></tr>
+<tr><td class="doc-left"><code>currency</code></td><td class="doc-left">string</td><td class="doc-right">yes</td><td class="doc-left">Three-letter ISO code, lower case.</td></tr>
+<tr><td class="doc-left"><code>metadata</code></td><td class="doc-left">object</td><td class="doc-right">no</td><td class="doc-left">Up to 20 keys; values are strings of at most 500 characters.</td></tr>
+<tr><td class="doc-left"><code>description</code></td><td class="doc-left">string</td><td class="doc-right">no</td><td class="doc-left">Shown on the receipt and in the dashboard, up to 1,000 characters.</td></tr>
+</tbody>
+</table></section>
+<h5 id="steps" class="doc-h doc-h3">Steps<a href="#steps" class="doc-anchor" aria-label="Link to Steps">#</a></h5>
+<ol><li>Create the payment.</li>
+<li>Confirm it on the client.<ul><li>Cards confirm at once.</li>
+<li>Bank transfers confirm later, by webhook.</li>
+</ul>
+</li>
+<li>Fulfil the order.</li>
+</ol>
+<ul><li class="doc-task"><input type="checkbox" disabled="" aria-label="Done" checked=""/><div>Create a test key</div>
+</li>
+<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Go live</div>
+</li>
+<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Tell the team</div>
+</li>
+</ul>
+<h5 id="pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
+<p><img src="https://raw.githubusercontent.com/acme/payments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/docs/guide/img/dashboard.png" alt="Dashboard overview" loading="lazy" decoding="async" referrerPolicy="no-referrer"/></p>
+<p><span class="doc-noimage"><svg/><span>Logo from elsewhere</span></span></p>
+<p><span class="doc-noimage"><svg/><span>Escapes the repo</span></span></p>
+<hr/><h4 id="usage" class="doc-h doc-h2">Usage<a href="#usage" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
+<p>Duplicate heading, to check the anchors.</p>
+<h4 id="usage-1" class="doc-h doc-h2">Usage<a href="#usage-1" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
+<p>A very long heading follows.</p>
+<h5 id="configuring-the-retry-policy-for-webhook-deliveries-that-fail-repeatedly-across-regions-and-providers" class="doc-h doc-h3">Configuring the retry policy for webhook deliveries that fail repeatedly across regions and providers<a href="#configuring-the-retry-policy-for-webhook-deliveries-that-fail-repeatedly-across-regions-and-providers" class="doc-anchor" aria-label="Link to Configuring the retry policy for webhook deliveries that fail repeatedly across regions and providers">#</a></h5>
+<p>Hard break after this line<br/>and a soft break here.</p>
+<h6 id="level-four" class="doc-h doc-h4">Level four<a href="#level-four" class="doc-anchor" aria-label="Link to Level four">#</a></h6>
+<h6 id="level-five" class="doc-h doc-h5">Level five<a href="#level-five" class="doc-anchor" aria-label="Link to Level five">#</a></h6>
+<h6 id="level-six" class="doc-h doc-h6">Level six<a href="#level-six" class="doc-anchor" aria-label="Link to Level six">#</a></h6>
+</div>
+"
+`;
+
+exports[`fixture articles > an MDX article 1`] = `
+"<div class="doc"><figure class="doc-code"><figcaption><span>jsx</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>import { Tabs, Tab } from &quot;@site/components&quot;;
+import Banner from &quot;./banner.mdx&quot;;</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>jsx</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>export const meta = { title: &quot;Widgets&quot; };</code></pre>
+</figure>
+<h3 id="widgets" class="doc-h doc-h1">Widgets<a href="#widgets" class="doc-anchor" aria-label="Link to Widgets">#</a></h3>
+<figure class="doc-code"><figcaption><span>jsx</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>&lt;Banner kind=&quot;info&quot; /&gt;</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>jsx</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>&lt;Tabs groupId=&quot;pm&quot;&gt;
+&lt;Tab value=&quot;pnpm&quot; label=&quot;pnpm&quot;&gt;</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>bash</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>pnpm add widgets</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>jsx</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>&lt;/Tab&gt;
+&lt;Tab value=&quot;npm&quot; label=&quot;npm&quot;&gt;</code></pre>
+</figure>
+<p>Use <code>npm install widgets</code>.</p>
+<figure class="doc-code"><figcaption><span>jsx</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>&lt;/Tab&gt;
+&lt;/Tabs&gt;</code></pre>
+</figure>
+<p>Plain <strong>Markdown</strong> still renders, and {1 + 1} is only text.</p>
+<figure class="doc-code"><figcaption><span>html</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>&lt;script&gt;alert(&quot;mdx&quot;)&lt;/script&gt;</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>html</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>&lt;div onclick=&quot;alert(1)&quot;&gt;raw html&lt;/div&gt;</code></pre>
+</figure>
+</div>
+"
+`;
+
+exports[`fixture articles > both admonition syntaxes 1`] = `
+"<div class="doc"><h3 id="admonitions" class="doc-h doc-h1">Admonitions<a href="#admonitions" class="doc-anchor" aria-label="Link to Admonitions">#</a></h3>
+<div role="note" class="doc-callout doc-note"><p class="doc-callout-title"><svg/><span>Note</span></p>
+<div class="doc-callout-body"><p>A MkDocs note with <strong>bold</strong> text and <code>code</code>.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-tip"><p class="doc-callout-title"><svg/><span>Use the sandbox</span></p>
+<div class="doc-callout-body"><p>Test keys start with <code>sk_test_</code>.</p>
+<p>A second paragraph, and a list:</p>
+<ul><li>one</li>
+<li>two</li>
+</ul>
+</div>
+</div>
+<div role="note" class="doc-callout doc-warning"><p class="doc-callout-title"><svg/><span>Rate limits</span></p>
+<div class="doc-callout-body"><p>100 requests per second per key.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-danger"><p class="doc-callout-title"><svg/><span>Danger</span></p>
+<div class="doc-callout-body"><p>Deleting a library removes its stored credential.</p>
+</div>
+</div>
+<details class="doc-callout doc-note"><summary><svg/><span>Collapsed by default</span></summary>
+<div class="doc-callout-body"><p>Details that most readers skip.</p>
+</div>
+</details>
+<details class="doc-callout doc-tip" open=""><summary><svg/><span>Open by default</span></summary>
+<div class="doc-callout-body"><figure class="doc-code"><figcaption><span>bash</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>echo &quot;code inside a callout&quot;</code></pre>
+</figure>
+</div>
+</details>
+<div role="note" class="doc-callout doc-note"><p class="doc-callout-title"><svg/><span>Unknown kinds are notes</span></p>
+<div class="doc-callout-body"><p>Body.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-note"><p class="doc-callout-title"><svg/><span>Note</span></p>
+<div class="doc-callout-body"><p>A GitHub note.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-tip"><p class="doc-callout-title"><svg/><span>Tip</span></p>
+<div class="doc-callout-body"><p>A GitHub tip over two lines.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-warning"><p class="doc-callout-title"><svg/><span>Important</span></p>
+<div class="doc-callout-body"><p>Read this first.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-warning"><p class="doc-callout-title"><svg/><span>Warning</span></p>
+<div class="doc-callout-body"><p>Careful.</p>
+</div>
+</div>
+<div role="note" class="doc-callout doc-danger"><p class="doc-callout-title"><svg/><span>Caution</span></p>
+<div class="doc-callout-body"><p>Destructive.</p>
+</div>
+</div>
+<blockquote><p>A plain quote is not an admonition.</p>
+</blockquote>
+<blockquote><p>[!INFO] Not a GitHub kind: stays a quote.</p>
+</blockquote>
+</div>
+"
+`;
+
+exports[`fixture articles > the same article, private library: images are alt text 1`] = `
+"<div class="doc"><h3 id="payments-quickstart" class="doc-h doc-h1" hidden="">Payments quickstart<a href="#payments-quickstart" class="doc-anchor" aria-label="Link to Payments quickstart">#</a></h3>
+<p>Accept a first payment in <strong>five minutes</strong>. This page covers the <em>happy path</em>, <s>the old way</s> and where to go next. See the <a href="/libraries/acme/payments?path=docs%2Fguide%2Fauth.md#api-keys">auth guide</a>, the <a href="#overview">overview</a> or the source of the schema. The <a href="https://example.com/docs?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">docs site</a> is the long version, and <a href="https://example.com/bare" target="_blank" rel="noopener noreferrer">https://example.com/bare</a> is an autolink.</p>
+<h4 id="overview" class="doc-h doc-h2">Overview<a href="#overview" class="doc-anchor" aria-label="Link to Overview">#</a></h4>
+<p>Every request is made with <code>curl</code>, <code>fetch()</code> or an SDK. Set <code>ACME_API_KEY</code> first.</p>
+<blockquote><p>Idempotency keys are kept for 24 hours. A retry with the same key returns the original response.</p>
+</blockquote>
+<h5 id="install" class="doc-h doc-h3">Install<a href="#install" class="doc-anchor" aria-label="Link to Install">#</a></h5>
+<figure class="doc-code"><figcaption><span>bash</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>pnpm add @acme/payments
+export ACME_API_KEY=&quot;sk_test_123&quot;   # never commit this</code></pre>
+</figure>
+<h5 id="create-a-payment" class="doc-h doc-h3">Create a payment<a href="#create-a-payment" class="doc-anchor" aria-label="Link to Create a payment">#</a></h5>
+<figure class="doc-code"><figcaption><span>ts</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>import { Acme } from &quot;@acme/payments&quot;;
+
+const acme = new Acme({ apiKey: process.env.ACME_API_KEY });
+
+export async function charge(amount: number): Promise&lt;string&gt; {
+  const payment = await acme.payments.create({ amount, currency: &quot;eur&quot; });
+  return payment.id; // pay_01H…
+}</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>python</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>from acme import Acme
+
+client = Acme(api_key=os.environ[&quot;ACME_API_KEY&quot;])
+payment = client.payments.create(amount=1200, currency=&quot;eur&quot;, metadata={&quot;order&quot;: 42})
+print(f&quot;created {payment.id}&quot;)</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>json</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>{ &quot;id&quot;: &quot;pay_01H8&quot;, &quot;amount&quot;: 1200, &quot;paid&quot;: true, &quot;tags&quot;: [&quot;a&quot;, &quot;b&quot;], &quot;fee&quot;: null }</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>yaml</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>retries:
+  max: 3
+  backoff: exponential # seconds</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>diff</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>- const acme = new Acme(key);
++ const acme = new Acme({ apiKey: key });</code></pre>
+</figure>
+<figure class="doc-code"><figcaption><span>nolang-here</span><button type="button" class="doc-copy"><svg/><span class="min-w-[3.25rem] text-left">Copy</span><span class="sr-only">code</span></button></figcaption><pre tabindex="0"><code>plain text, not highlighted: &lt;b&gt;not bold&lt;/b&gt;</code></pre>
+</figure>
+<h4 id="reference" class="doc-h doc-h2">Reference<a href="#reference" class="doc-anchor" aria-label="Link to Reference">#</a></h4>
+<section class="doc-table" aria-label="Table" tabindex="0"><table><thead><tr><th class="doc-left">Field</th><th class="doc-left">Type</th><th class="doc-right">Required</th><th class="doc-left">Description</th></tr>
+</thead>
+<tbody><tr><td class="doc-left"><code>amount</code></td><td class="doc-left">integer</td><td class="doc-right">yes</td><td class="doc-left">Smallest currency unit. 1200 is 12.00 EUR.</td></tr>
+<tr><td class="doc-left"><code>currency</code></td><td class="doc-left">string</td><td class="doc-right">yes</td><td class="doc-left">Three-letter ISO code, lower case.</td></tr>
+<tr><td class="doc-left"><code>metadata</code></td><td class="doc-left">object</td><td class="doc-right">no</td><td class="doc-left">Up to 20 keys; values are strings of at most 500 characters.</td></tr>
+<tr><td class="doc-left"><code>description</code></td><td class="doc-left">string</td><td class="doc-right">no</td><td class="doc-left">Shown on the receipt and in the dashboard, up to 1,000 characters.</td></tr>
+</tbody>
+</table></section>
+<h5 id="steps" class="doc-h doc-h3">Steps<a href="#steps" class="doc-anchor" aria-label="Link to Steps">#</a></h5>
+<ol><li>Create the payment.</li>
+<li>Confirm it on the client.<ul><li>Cards confirm at once.</li>
+<li>Bank transfers confirm later, by webhook.</li>
+</ul>
+</li>
+<li>Fulfil the order.</li>
+</ol>
+<ul><li class="doc-task"><input type="checkbox" disabled="" aria-label="Done" checked=""/><div>Create a test key</div>
+</li>
+<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Go live</div>
+</li>
+<li class="doc-task"><input type="checkbox" disabled="" aria-label="Not done"/><div>Tell the team</div>
+</li>
+</ul>
+<h5 id="pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
+<p><span class="doc-noimage"><svg/><span>Dashboard overview</span></span></p>
+<p><span class="doc-noimage"><svg/><span>Logo from elsewhere</span></span></p>
+<p><span class="doc-noimage"><svg/><span>Escapes the repo</span></span></p>
+<hr/><h4 id="usage" class="doc-h doc-h2">Usage<a href="#usage" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
+<p>Duplicate heading, to check the anchors.</p>
+<h4 id="usage-1" class="doc-h doc-h2">Usage<a href="#usage-1" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
+<p>A very long heading follows.</p>
+<h5 id="configuring-the-retry-policy-for-webhook-deliveries-that-fail-repeatedly-across-regions-and-providers" class="doc-h doc-h3">Configuring the retry policy for webhook deliveries that fail repeatedly across regions and providers<a href="#configuring-the-retry-policy-for-webhook-deliveries-that-fail-repeatedly-across-regions-and-providers" class="doc-anchor" aria-label="Link to Configuring the retry policy for webhook deliveries that fail repeatedly across regions and providers">#</a></h5>
+<p>Hard break after this line<br/>and a soft break here.</p>
+<h6 id="level-four" class="doc-h doc-h4">Level four<a href="#level-four" class="doc-anchor" aria-label="Link to Level four">#</a></h6>
+<h6 id="level-five" class="doc-h doc-h5">Level five<a href="#level-five" class="doc-anchor" aria-label="Link to Level five">#</a></h6>
+<h6 id="level-six" class="doc-h doc-h6">Level six<a href="#level-six" class="doc-anchor" aria-label="Link to Level six">#</a></h6>
+</div>
+"
+`;
