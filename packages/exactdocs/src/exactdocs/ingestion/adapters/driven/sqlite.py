@@ -78,8 +78,13 @@ class SqliteJobRepository:
         """Atomically start the oldest queued job whose library has no running job.
 
         One UPDATE ... RETURNING statement, so SQLite's single writer decides the race, also
-        between processes sharing the database.
+        between processes sharing the database. An idle poll only reads: it never takes the
+        write lock that migrations and progress saves wait for.
         """
+        async with self.engine.connect() as connection:
+            waiting = select(jobs.c.id).where(jobs.c.state == JobState.QUEUED).limit(1)
+            if (await connection.execute(waiting)).first() is None:
+                return None
         busy = select(jobs.c.library).where(jobs.c.state == JobState.RUNNING)
         oldest = (
             select(jobs.c.id)

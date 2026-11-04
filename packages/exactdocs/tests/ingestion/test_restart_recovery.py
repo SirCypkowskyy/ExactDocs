@@ -34,6 +34,7 @@ def start_app(
         run_next_job=module.run_next_job,
         concurrency=1,
         poll_interval=0.01,
+        stop_grace=0.05,
     )
     return module, worker, engine
 

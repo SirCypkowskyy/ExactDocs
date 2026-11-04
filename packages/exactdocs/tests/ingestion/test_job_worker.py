@@ -12,6 +12,7 @@ IMPORT = JobKind("import")
 
 def worker_of(module: IngestionModule, concurrency: int = 2) -> JobWorker:
     return JobWorker(
+        stop_grace=0.05,
         recover_jobs=module.recover_jobs,
         run_next_job=module.run_next_job,
         concurrency=concurrency,

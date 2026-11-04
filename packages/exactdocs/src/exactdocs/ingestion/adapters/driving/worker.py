@@ -6,7 +6,7 @@ MVP-2 (E3-11) replaces it with DBOS behind the same driving ports.
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 
 from exactdocs.ingestion.ports.driving import RecoverJobs, RunNextJob
@@ -23,29 +23,36 @@ class JobWorker:
     concurrency: int = 2
     # ponytail: idle workers poll the database; a wake-up event on enqueue if latency matters.
     poll_interval: float = 0.5
+    # How long a stopping worker lets a running job finish before cancelling it.
+    stop_grace: float = 1.0
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
         """Recover interrupted jobs, run the worker for the duration of the block, then stop it.
 
-        Stopping cancels running jobs where they are: they stay ``running`` in the database and
-        are recovered by the next start.
+        Stopping lets idle workers finish their poll, then cancels the jobs still running after
+        ``stop_grace`` seconds. A cancelled job stays ``running`` in the database and is
+        recovered by the next start.
         """
         await self.recover_jobs()
-        tasks = [asyncio.create_task(self._work()) for _ in range(self.concurrency)]
+        stopping = asyncio.Event()
+        tasks = [asyncio.create_task(self._work(stopping)) for _ in range(self.concurrency)]
         try:
             yield
         finally:
-            for task in tasks:
+            stopping.set()
+            _, busy = await asyncio.wait(tasks, timeout=self.stop_grace)
+            for task in busy:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*busy, return_exceptions=True)
 
-    async def _work(self) -> None:
-        while True:
+    async def _work(self, stopping: asyncio.Event) -> None:
+        while not stopping.is_set():
             try:
                 ran = await self.run_next_job()
             except Exception:
                 log.exception("job worker could not run the next job")
                 ran = False
             if not ran:
-                await asyncio.sleep(self.poll_interval)
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stopping.wait(), self.poll_interval)
