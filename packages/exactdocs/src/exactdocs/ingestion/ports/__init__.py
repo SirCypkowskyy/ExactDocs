@@ -1,4 +1,5 @@
 from exactdocs.ingestion.ports.driven import (
+    Chunker,
     GitRemote,
     JobHandler,
     JobProgress,
@@ -17,6 +18,7 @@ from exactdocs.ingestion.ports.driving import (
 
 __all__ = [
     "CheckRepository",
+    "Chunker",
     "EnqueueJob",
     "GetJob",
     "GitRemote",

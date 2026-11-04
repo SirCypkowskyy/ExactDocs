@@ -5,7 +5,9 @@ touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX, ``
 ``export`` lines stay in the body as text and are never executed.
 """
 
+import hashlib
 import ipaddress
+import json
 import math
 import re
 from dataclasses import dataclass, field, replace
@@ -24,6 +26,10 @@ from exactdocs.ingestion.errors import InvalidProgressError, InvalidRepositoryUr
 # Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
 # so a fix here re-chunks stored articles instead of reusing stale chunk sets.
 PARSER_VERSION = 2
+
+# Bump on any change to how a chunker cuts articles. Like PARSER_VERSION it feeds the config hash.
+CHUNKER_VERSION = 1
+MAX_HEADING_LEVEL = 6
 
 # Characters that render as nothing (or as a control) but reach an LLM as text: zero-width
 # space and friends, the byte order mark, bidi controls (Trojan Source), Unicode "tag"
@@ -478,3 +484,40 @@ def branch_name(raw: str) -> str | None:
         and raw.isprintable()
     )
     return raw if ok else None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChunkingConfig:
+    """How articles are cut. ``split_depth`` is the deepest heading level that starts a chunk."""
+
+    split_depth: int = MAX_HEADING_LEVEL
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.split_depth <= MAX_HEADING_LEVEL:
+            msg = "split_depth must be between 1 and 6"
+            raise ValueError(msg)
+
+
+def chunking_config_hash(config: ChunkingConfig) -> str:
+    """Return the hash that keys chunk sets: the effective config plus both version constants.
+
+    A fix to the parser or the chunker changes it, so stored articles are re-chunked instead of
+    reusing a chunk set made by older code.
+    """
+    payload = json.dumps(
+        [PARSER_VERSION, CHUNKER_VERSION, config.split_depth], separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArticleChunk:
+    """One section of an article. The contents of all chunks, joined, are the article body."""
+
+    heading_path: tuple[str, ...]  # empty for the text before the first heading
+    occurrence_index: int  # among chunks with the same heading path: 0, 1, ...
+    position: int  # 0-based index in the article
+    content: str
+    content_hash: str
+    anchor: str  # GitHub-style, unique in the article; empty before the first heading
+    code_languages: tuple[str, ...] = ()
