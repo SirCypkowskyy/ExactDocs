@@ -128,6 +128,7 @@ class Container:
             ),
             chunks=SqliteChunkRepository(engine),
             search=SqliteSearchIndex(engine),
+            query_docs_token_budget=settings.query_docs_token_budget,
         )
         index = RetrievalChunkIndex(
             retrieval.index_manifest,

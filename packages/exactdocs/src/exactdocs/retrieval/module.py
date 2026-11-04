@@ -13,16 +13,19 @@ from exactdocs.retrieval.ports.driving import (
     DiscardPendingChunks,
     GetChunkSets,
     IndexManifest,
+    QueryDocs,
     ReadChunk,
     RemoveChunks,
     ResolveLibraryId,
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
+    DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
     GetChunkSetsUseCase,
     IndexManifestUseCase,
+    QueryDocsUseCase,
     ReadChunkUseCase,
     RemoveChunksUseCase,
     ResolveLibraryIdUseCase,
@@ -40,6 +43,7 @@ class RetrievalModule:
     get_chunk_sets: GetChunkSets
     read_chunk: ReadChunk
     resolve_library_id: ResolveLibraryId
+    query_docs: QueryDocs
     discard_pending_chunks: DiscardPendingChunks
     collect_chunks: CollectChunks
     remove_chunks: RemoveChunks
@@ -54,6 +58,7 @@ class RetrievalModule:
         chunks: ChunkRepository,
         search: SearchIndex,
         clock: Clock | None = None,
+        query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     ) -> Self:
         """Assemble the use cases around the given driven adapters."""
         clock = clock or SystemClock()
@@ -63,6 +68,7 @@ class RetrievalModule:
             get_chunk_sets=GetChunkSetsUseCase(chunks),
             read_chunk=ReadChunkUseCase(searchable, manifests, chunks),
             resolve_library_id=ResolveLibraryIdUseCase(libraries, searchable, search, chunks),
+            query_docs=QueryDocsUseCase(searchable, search, chunks, query_docs_token_budget),
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
             remove_chunks=RemoveChunksUseCase(manifests, chunks),

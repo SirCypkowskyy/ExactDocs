@@ -9,10 +9,13 @@ from exactdocs.retrieval.dtos import (
     CollectChunksCommand,
     CoverageOut,
     DiscardPendingChunksCommand,
+    DocSectionOut,
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     LibraryMatchOut,
+    QueryDocsQuery,
+    QueryDocsResult,
     ReadChunkQuery,
     RemoveChunksCommand,
     RemovedChunks,
@@ -30,6 +33,7 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
+    CHARS_PER_TOKEN,
     Candidate,
     CatalogLibrary,
     Chunk,
@@ -45,7 +49,11 @@ from exactdocs.retrieval.models import (
     SearchText,
     TagFilter,
     TagMatch,
+    FOOTER_CHARS,
+    POINTER_TEXT,
+    SECTION_FRAMING_CHARS,
     article_chunk_rows,
+    language_first,
     name_match,
     rank_matches,
 )
@@ -56,7 +64,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchableVersions,
     SearchIndex,
 )
-from exactdocs_kernel import Clock
+from exactdocs_kernel import NOTICE, Clock
 
 # A manifest the catalog does not know may just not have been stored there yet (the order is
 # Store -> Index -> Activate, but the calls are not one transaction), so it is removed only once
@@ -398,3 +406,84 @@ class ResolveLibraryIdUseCase:
             if len(found) >= MAX_RESOLVED:
                 break
         return found[:MAX_RESOLVED]
+
+
+# Matching chunks looked at per call; the budget decides how many of them are returned.
+QUERY_DOCS_CANDIDATES = 50
+DEFAULT_QUERY_DOCS_TOKEN_BUDGET = 10_000
+
+
+def _cost(section: DocSectionOut) -> int:
+    """Characters a section takes in the payload: its parts plus the fixed framing."""
+    pointer = len(POINTER_TEXT) if section.too_large else 0
+    return (
+        SECTION_FRAMING_CHARS
+        + len(section.title)
+        + len(section.source)
+        + len(section.chunk_id)
+        + len(section.content)
+        + pointer
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class QueryDocsUseCase:
+    """Implements ``ports.driving.QueryDocs``."""
+
+    versions: SearchableVersions
+    search: SearchIndex
+    chunks: ChunkRepository
+    token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET
+
+    async def __call__(self, query: QueryDocsQuery) -> QueryDocsResult:
+        """Answer from exactly one version, with whole chunks that fit the budget, best first.
+
+        The budget covers the whole payload: the notice, the sections and the closing line. A
+        chunk that could never fit is listed as a pointer (no text, ``too_large``) so the agent
+        can fetch it; one that merely found no room left is counted in ``omitted``.
+        """
+        text = SearchText(value=query.query)
+        # `/owner/repo` or `/owner/repo/<ref>`; a ref may itself contain slashes.
+        _, owner, repo, *rest = query.library_id.split("/", 3)
+        ref = rest[0] if rest else None
+        library = f"/{owner}/{repo}"
+        version = await self.versions.find(library, ref)
+        if version is None:
+            raise VersionNotIndexedError(library, ref or "(default version)")
+        found = await self.search.search(
+            version.manifest_id,
+            text.value,
+            TagFilter(tags=(), match=TagMatch.ANY),
+            QUERY_DOCS_CANDIDATES,
+        )
+        stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in found])
+        sections = [
+            DocSectionOut.from_stored(version, stored[hit.chunk_id])
+            for hit in found
+            if hit.chunk_id in stored
+        ]
+        if query.language:
+            sections = language_first(sections, lambda s: s.code_languages, query.language)
+        budget = self.token_budget * CHARS_PER_TOKEN
+        room = budget - len(NOTICE) - FOOTER_CHARS
+        used, kept = 0, []
+        for section in sections:
+            # A chunk that does not fit whole is never cut; a smaller one may still fit.
+            if used + _cost(section) <= room:
+                shown = section
+            elif _cost(section) > room:
+                shown = section.as_pointer()
+            else:
+                continue
+            if used + _cost(shown) <= room:
+                kept.append(shown)
+                used += _cost(shown)
+        return QueryDocsResult(
+            library=version.library,
+            version=version.version,
+            commit_sha=version.commit_sha,
+            retrieval_mode=RetrievalMode.BM25,
+            sections=kept,
+            omitted=len(sections) - len(kept),
+            budget_chars=budget,
+        )
