@@ -241,18 +241,24 @@ jobs:
       - name: uvx exactdocs serve answers /api/health
         run: |
           export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
+          port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
           uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 \
-            exactdocs serve --port 3999 &
-          trap 'kill $!' EXIT
-          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:3999/api/health && break; sleep 1; done
-          curl -fsS http://127.0.0.1:3999/api/health
-          curl -fsS http://127.0.0.1:3999/ | grep -qi '<div id="root"'
+            exactdocs serve --port "$port" &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for _ in $(seq 1 60); do
+            kill -0 "$pid" || { echo "::error::the server exited early"; exit 1; }
+            curl -fsS "http://127.0.0.1:$port/api/health" && break
+            sleep 1
+          done
+          curl -fsS "http://127.0.0.1:$port/api/health"
+          curl -fsS "http://127.0.0.1:$port/" | grep -qi '<div id="root"'
       - name: Without git on PATH, start fails with a clear message
         run: |
           # only what uv and the generated entry point need; git is not linked
           bin="$RUNNER_TEMP/no-git-bin"; mkdir "$bin"
           for tool in uvx sh realpath dirname; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
-          if out=$(PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --prerelease=allow \
+          if out=$(timeout 120 env PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --offline --prerelease=allow \
               --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 exactdocs serve 2>&1); then
             echo "::error::serve started without git"; exit 1
           fi
@@ -273,7 +279,8 @@ jobs:
         working-directory: e2e
         run: |
           pnpm exec playwright install chromium
-          if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium; fi
+          if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium
+          else echo "::warning::no passwordless sudo, system libraries for Chromium not installed"; fi
       - name: Browser end-to-end test (server started with uvx from the wheel)
         run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
       - uses: actions/upload-artifact@v7

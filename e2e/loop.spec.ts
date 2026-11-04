@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const FIXTURE_REPO_URL = process.env.FIXTURE_REPO_URL;
+if (!FIXTURE_REPO_URL) throw new Error("FIXTURE_REPO_URL is not set: run the test through e2e/run.py");
 const PASSWORD = "a long passphrase here";
 
 test("setup, add the fixture repository, browse an article, search a term", async ({ page }) => {
@@ -14,7 +16,7 @@ test("setup, add the fixture repository, browse an article, search a term", asyn
 
   // add the fixture repository over HTTP git
   await page.goto("/libraries/new");
-  await page.getByLabel("Repository address").fill(process.env.FIXTURE_REPO_URL ?? "");
+  await page.getByLabel("Repository address").fill(FIXTURE_REPO_URL);
   await page.getByRole("button", { name: "Check repository" }).click();
   await expect(page.getByText("Found on a git server")).toBeVisible();
   await page.getByLabel("Version to import").selectOption({ label: "v1.4.0" });

@@ -79,7 +79,10 @@ def main() -> int:
             ).returncode
         finally:
             server.terminate()
-            server.wait(timeout=30)
+            try:
+                server.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                server.kill()
 
 
 if __name__ == "__main__":

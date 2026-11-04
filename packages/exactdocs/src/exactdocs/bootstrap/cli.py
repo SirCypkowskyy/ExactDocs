@@ -178,7 +178,10 @@ def _check_startup(settings: Settings) -> None:
     try:
         GitCli.locate()  # imports need git; --stdio only reads, so it skips this check
     except GitNotInstalledError as exc:
-        message = f"exactdocs: {exc}"
+        message = (
+            f"exactdocs: {exc}. Install it (apt install git, brew install git, "
+            "or https://git-scm.com) and run again. For read-only MCP use: exactdocs serve --stdio"
+        )
         raise SystemExit(message) from exc
     _build(settings)  # opens no connection, so there is nothing to release
 
