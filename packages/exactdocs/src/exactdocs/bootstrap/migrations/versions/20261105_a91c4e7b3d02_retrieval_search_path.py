@@ -1,7 +1,7 @@
 """A section's own heading and its ancestors are indexed apart, so a definition beats its children.
 
 Revision ID: a91c4e7b3d02
-Revises: e7a4b1c9d2f6
+Revises: e5b1c7a30f68
 
 Before, one `heading` column held the whole path, so `Docker > Troubleshooting` matched `docker`
 about as well as the `Docker` section itself. FTS5 tables cannot gain a column, so the table is
@@ -17,7 +17,7 @@ from alembic import op
 from exactdocs.retrieval.models import identifier_tokens
 
 revision = "a91c4e7b3d02"
-down_revision = "e7a4b1c9d2f6"
+down_revision = "e5b1c7a30f68"
 branch_labels = None
 depends_on = None
 
