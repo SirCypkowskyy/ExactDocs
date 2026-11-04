@@ -14,7 +14,7 @@ import {
   type Version,
 } from "../model/browse";
 import { CopyButton } from "../render/copy-button";
-import { blobUrl, rawUrl } from "../render/urls";
+import { assetUrl, blobUrl, rawUrl } from "../render/urls";
 
 // The renderer (Markdown parser and all) is its own chunk: the tree and the overview do not wait for it.
 const loadMarkdown = () =>
@@ -121,6 +121,8 @@ function NotInVersion({
   suggestions,
 }: ArticleViewProps & { suggestions: readonly string[] }) {
   const newest = library.default_version;
+  // A link to a file the import left out: the host has it at this commit.
+  const onHost = blobUrl(library.host, library.source_url, version.commit_sha, path);
   const link =
     "flex h-11 items-center justify-between gap-2 rounded-md bg-secondary px-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(hover:hover)]:hover:bg-accent";
   return (
@@ -161,6 +163,15 @@ function NotInVersion({
         </div>
       )}
       <div className="mt-6 flex flex-wrap gap-2">
+        {onHost && (
+          <a href={onHost} target="_blank" rel="noopener noreferrer" className={secondary}>
+            View on {HOST_NAMES[library.host] ?? "the host"}
+            <span className="sr-only">
+              {" "}
+              at commit {shortSha(version.commit_sha)} (opens a new tab)
+            </span>
+          </a>
+        )}
         <Link
           to="/libraries/$owner/$repo"
           params={{ owner, repo }}
@@ -309,10 +320,12 @@ function RenderedText({
             where={{
               path: article.path,
               title: article.title,
-              imageUrl: (p) =>
-                isPublic
+              imageSources: (p) => {
+                const host = isPublic
                   ? rawUrl(library.host, library.source_url, version.commit_sha, p)
-                  : undefined,
+                  : undefined;
+                return [assetUrl(owner, repo, version.ref, p), ...(host ? [host] : [])];
+              },
               fileUrl: (p) => blobUrl(library.host, library.source_url, version.commit_sha, p),
               docLink: (path, to, children) => <Link {...doc(path, to)}>{children}</Link>,
             }}

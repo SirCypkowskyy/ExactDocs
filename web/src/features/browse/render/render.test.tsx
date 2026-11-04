@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import admonitions from "./fixtures/admonitions.md?raw";
@@ -8,13 +8,13 @@ import xss from "./fixtures/xss.md?raw";
 import { grammarOf, highlight } from "./highlight";
 import { Markdown, type Where } from "./markdown";
 import { tokensOf } from "./tokens";
-import { classifyLink, rawUrl, repoPath } from "./urls";
+import { assetUrl, classifyLink, rawUrl, repoPath } from "./urls";
 
 const SHA = "a".repeat(40);
 const where = (over: Partial<Where> = {}): Where => ({
   path: "docs/guide/start.md",
   title: "Payments quickstart",
-  imageUrl: (p) => rawUrl("github", "https://github.com/acme/payments", SHA, p),
+  imageSources: (p) => [rawUrl("github", "https://github.com/acme/payments", SHA, p) ?? ""],
   fileUrl: () => undefined,
   docLink: (p, h, children) => (
     <a href={`/libraries/acme/payments?path=${encodeURIComponent(p)}${h}`}>{children}</a>
@@ -35,7 +35,7 @@ describe("fixture articles", () => {
     expect(html(rich)).toMatchSnapshot();
   });
   it("the same article, private library: images are alt text", () => {
-    expect(html(rich, false, where({ imageUrl: () => undefined }))).toMatchSnapshot();
+    expect(html(rich, false, where({ imageSources: () => [] }))).toMatchSnapshot();
   });
   it("both admonition syntaxes", () => {
     expect(html(admonitions)).toMatchSnapshot();
@@ -207,7 +207,7 @@ describe("links and images", () => {
       <Markdown
         source="![A diagram](./d.png)"
         mdx={false}
-        where={where({ imageUrl: () => undefined })}
+        where={where({ imageSources: () => [] })}
       />,
     );
     expect(container.querySelector("img")).toBeNull();
@@ -240,5 +240,67 @@ describe("highlighting", () => {
   });
   it("leaves an unknown language alone", async () => {
     expect(await highlight("x", "klingon")).toBeUndefined();
+  });
+});
+
+describe("relative links (table)", () => {
+  const cases: [string, string, unknown][] = [
+    ["docs/a/b.md", "../setup.md#docker", { kind: "doc", path: "docs/setup.md", hash: "#docker" }],
+    ["docs/a/b.md", "./c.mdx", { kind: "doc", path: "docs/a/c.mdx", hash: "" }],
+    ["docs/a/b.md", "/README.md#top", { kind: "doc", path: "README.md", hash: "#top" }],
+    ["docs/a/b.md", "c%20d.md", { kind: "doc", path: "docs/a/c d.md", hash: "" }],
+    ["docs/a/b.md", "../x.png", { kind: "file", path: "docs/x.png" }],
+    ["docs/a/b.md", "../../../out.md", { kind: "none" }],
+    ["docs/a/b.md", "mailto:a@b.c", { kind: "external", href: "mailto:a@b.c" }],
+    ["docs/a/b.md", "//evil.test/x.md", { kind: "none" }],
+    ["docs/a/b.md", "javascript:alert(1)", { kind: "none" }],
+  ];
+  it.each(cases)("%s + %s", (from, href, want) => {
+    expect(classifyLink(from, href)).toEqual(want);
+  });
+});
+
+describe("images", () => {
+  const asset = assetUrl("acme", "payments", "v1", "docs/guide/d.png");
+  it("builds the asset URL from owner, repo, ref and path", () => {
+    expect(asset).toBe("/api/v1/libraries/acme/payments/asset?ref=v1&path=docs%2Fguide%2Fd.png");
+  });
+  it("is lazy and async, and loads the imported copy first", () => {
+    const { container } = render(
+      <Markdown
+        source="![D](./d.png)"
+        mdx={false}
+        where={where({ imageSources: () => [asset] })}
+      />,
+    );
+    const img = container.querySelector("img");
+    expect(img).toHaveAttribute("src", asset);
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(img).toHaveAttribute("decoding", "async");
+  });
+  it("falls back to the host, then to the alt text, when a source fails", () => {
+    const host = "https://raw.githubusercontent.com/acme/payments/x/d.png";
+    const { container } = render(
+      <Markdown
+        source="![D](./d.png)"
+        mdx={false}
+        where={where({ imageSources: () => [asset, host] })}
+      />,
+    );
+    fireEvent.error(container.querySelector("img") as Element);
+    expect(container.querySelector("img")).toHaveAttribute("src", host);
+    fireEvent.error(container.querySelector("img") as Element);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toBe("Image not shown: D");
+  });
+  it("never loads an image that is not a repository file", () => {
+    const { container } = render(
+      <Markdown
+        source="![D](https://evil.test/d.png)"
+        mdx={false}
+        where={where({ imageSources: () => ["/x"] })}
+      />,
+    );
+    expect(container.querySelector("img")).toBeNull();
   });
 });

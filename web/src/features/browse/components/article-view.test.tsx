@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
@@ -79,17 +79,30 @@ describe("ArticleView", () => {
     expect(screen.getByRole("note")).toHaveTextContent("Mind the gap.");
     expect(await screen.findByRole("img", { name: "Shot" })).toHaveAttribute(
       "src",
-      `https://raw.githubusercontent.com/acme/payments/${SHA}/docs/shot.png`,
+      "/api/v1/libraries/acme/payments/asset?ref=v1.0.0&path=docs%2Fshot.png",
     );
     expect(document.querySelector("script")).toBeNull();
   });
 
-  it("shows only the alt text of an image in a private library", async () => {
+  it("a private library: the imported copy, and no host fallback once it fails", async () => {
     serve(true);
     view();
     await screen.findByRole("heading", { name: /Install/ });
+    const img = await screen.findByRole("img", { name: "Shot" });
+    expect(img.getAttribute("src")).toContain("/asset?");
+    fireEvent.error(img);
     expect(screen.queryByRole("img", { name: "Shot" })).toBeNull();
     expect(screen.getByText("Image not shown: Shot")).toBeInTheDocument();
+  });
+
+  it("a public library: a missing imported copy falls back to the host's raw file", async () => {
+    serve(false);
+    view();
+    fireEvent.error(await screen.findByRole("img", { name: "Shot" }));
+    expect(screen.getByRole("img", { name: "Shot" })).toHaveAttribute(
+      "src",
+      `https://raw.githubusercontent.com/acme/payments/${SHA}/docs/shot.png`,
+    );
   });
 
   it("keeps the file as stored one click away", async () => {

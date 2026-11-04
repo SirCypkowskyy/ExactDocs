@@ -11,7 +11,7 @@ import { classifyLink, rawUrl } from "./urls";
 const where: Where = {
   path: "docs/a.md",
   title: "A",
-  imageUrl: () => undefined,
+  imageSources: () => [],
   fileUrl: () => undefined,
   docLink: (p, h, children) => <a href={`/x?path=${p}${h}`}>{children}</a>,
 };

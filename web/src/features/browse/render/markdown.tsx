@@ -8,7 +8,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { Token } from "markdown-it";
-import { Fragment, type ReactNode, useEffect, useMemo } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
 import { CodeBlock } from "./code-block";
 import { type Budget, createBudget } from "./limits";
 import { anchorsOf, inertMdx, md, type Variant, variantOf } from "./parse";
@@ -21,8 +21,12 @@ export interface Where {
   path: string;
   /** The article's title: a leading `# Title` that repeats it is not shown twice. */
   title: string;
-  /** The image's bytes at the commit, or undefined: a private library never gets one (alt text only). */
-  imageUrl: (repoPath: string) => string | undefined;
+  /**
+   * Where to load a repository image from, best first: ExactDocs's imported copy, then (public
+   * libraries only) the host's raw file. A source that fails (404 on a version imported without
+   * images) falls through to the next; when none is left the alt text shows.
+   */
+  imageSources: (repoPath: string) => string[];
   /** The page of a file that is not an article, at the commit. */
   fileUrl: (repoPath: string) => string | undefined;
   /** A link to another article of this version: the app's own `Link`, so it navigates without a page load. */
@@ -153,20 +157,39 @@ function link(node: Node, ctx: Ctx) {
   }
 }
 
-function image(token: Token, { where }: Ctx) {
-  const alt = token.content;
-  const target = classifyLink(where.path, attr(token, "src"));
-  // Only the repository's own files are loaded, at the commit; nothing is fetched from elsewhere.
-  const url = target.kind === "file" ? where.imageUrl(target.path) : undefined;
-  if (url) {
-    return <img src={url} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />;
-  }
+function NoImage({ alt }: { alt: string }) {
   return (
     <span className="doc-noimage">
       <ImageOff aria-hidden="true" className="size-4 shrink-0" />
       <span>Image not shown: {alt || "Image"}</span>
     </span>
   );
+}
+
+/** An image that tries each source in turn, then shows its alt text. Size is not known: CSS bounds it. */
+function Img({ sources, alt }: { sources: readonly string[]; alt: string }) {
+  const [failed, setFailed] = useState(0);
+  const src = sources[failed];
+  if (!src) return <NoImage alt={alt} />;
+  return (
+    <img
+      key={src}
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed((n) => n + 1)}
+    />
+  );
+}
+
+function image(token: Token, { where }: Ctx) {
+  const alt = token.content;
+  const target = classifyLink(where.path, attr(token, "src"));
+  // Only the repository's own files are loaded; nothing is fetched from elsewhere.
+  const sources = target.kind === "file" ? where.imageSources(target.path) : [];
+  return <Img sources={sources} alt={alt} />;
 }
 
 function heading(node: Node, ctx: Ctx) {

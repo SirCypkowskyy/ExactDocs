@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "@/shared/config/env";
 import { repoWebUrl } from "../model/browse";
 
 /** Resolve `href` against the article's folder; a repository path, or undefined when it leaves the repository. */
@@ -20,6 +21,12 @@ export function repoPath(articlePath: string, href: string): string | undefined 
     }
   }
   return parts.length ? parts.join("/") : undefined;
+}
+
+/** ExactDocs's own copy of an imported image (private libraries too: same origin, same session). */
+export function assetUrl(owner: string, repo: string, ref: string, path: string): string {
+  const query = new URLSearchParams({ ref, path });
+  return `${API_BASE_URL}/v1/libraries/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/asset?${query}`;
 }
 
 const encode = (path: string) => path.split("/").map(encodeURIComponent).join("/");
