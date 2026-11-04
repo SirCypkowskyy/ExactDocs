@@ -115,13 +115,13 @@ async def test_the_notice_comes_first_in_the_text_every_client_reads(container: 
         ]
 
     for result in results:
-        text = result.content[0].text  # ty: ignore[unresolved-attribute]
-        assert list(json.loads(text))[0] == "notice"
+        text = result.content[0].text
+        assert next(iter(json.loads(text))) == "notice"
         assert json.loads(text)["notice"] == NOTICE
         assert result.structured_content is not None
         assert result.structured_content["notice"] == NOTICE
     # Repository text sits in its own fields, after the notice, never in it.
-    assert INJECTION in results[1].content[0].text  # ty: ignore[unresolved-attribute]
+    assert INJECTION in results[1].content[0].text
     assert INJECTION not in NOTICE
 
 
@@ -215,13 +215,13 @@ def test_fastmcp_never_checks_for_updates() -> None:
     assert os.environ["FASTMCP_CHECK_FOR_UPDATES"] == "off"
 
 
-async def test_the_stdio_banner_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_stdio_banner_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
-    async def fake_run(self: FastMCP, *args: object, **kwargs: Any) -> None:
+    async def fake_run(*_: object, **kwargs: Any) -> None:
         seen.update(kwargs)
 
     monkeypatch.setattr(FastMCP, "run_stdio_async", fake_run)
-    await cli._serve_stdio(Settings())
+    cli.app(["serve", "--stdio"], exit_on_error=False, result_action="return_value")
 
     assert seen == {"show_banner": False}

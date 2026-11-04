@@ -13,6 +13,7 @@ from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs_kernel import NOTICE
 
 LIBRARY = "/fixture/docs-repo"
+SHA_LENGTH = 40
 
 
 def _call(context: Context, tool: str, arguments: dict[str, Any]) -> None:
@@ -57,9 +58,10 @@ def step_next_page(context: Context) -> None:
 )
 def step_listed(context: Context, library: str) -> None:
     (found,) = [lib for lib in context.mcp_data["libraries"] if lib["id"] == library]
-    assert found["title"] and "description" in found, found
+    assert found["title"], found
+    assert "description" in found, found
     assert {v["ref"] for v in found["versions"]} == {"v1.3.0", "v1.4.0"}, found
-    assert all(len(v["commit_sha"]) == 40 for v in found["versions"]), found
+    assert all(len(v["commit_sha"]) == SHA_LENGTH for v in found["versions"]), found
     context.listed = found
 
 
@@ -90,8 +92,9 @@ def step_second_page(context: Context) -> None:
 def step_notice(context: Context) -> None:
     data = context.mcp_data
     assert data["notice"] == NOTICE, data
-    assert (data["library"], data["ref"]) == (LIBRARY, "v1.4.0"), data
-    assert len(data["commit_sha"]) == 40, data
+    assert data["library"] == LIBRARY, data
+    assert data["ref"] == "v1.4.0", data
+    assert len(data["commit_sha"]) == SHA_LENGTH, data
 
 
 @then("the text the agent reads starts with the notice")
