@@ -1,5 +1,6 @@
 """API tokens over HTTP: REST routes, bearer auth, MCP auth, and the list of open routes."""
 
+import itertools
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -262,6 +263,7 @@ async def test_an_mcp_client_with_the_token_lists_the_libraries_until_it_is_revo
         async with mcp_client(app, created["token"]) as mcp:
             result = await mcp.call_tool("list_libraries", {})
             assert result.structured_content is not None
+            assert await mcp.list_resource_templates()  # resources sit behind the same token
 
         assert (await admin.delete(f"/api/v1/tokens/{created['id']}")).status_code == 204
         with pytest.raises(Exception, match="error response"):
@@ -275,14 +277,22 @@ async def test_mcp_refuses_callers_without_a_valid_token_even_with_a_session_coo
     # Sent by hand: the jar would not send a cookie scoped to `/api` to `/mcp` anyway.
     cookie = {"cookie": f"exactdocs_session={admin.cookies['exactdocs_session']}"}
     async with app.router.lifespan_context(app):
-        for extra in ({}, cookie):
+        for extra, (method, params) in itertools.product(
+            ({}, cookie),
+            [
+                ("ping", {}),
+                ("resources/list", {}),
+                ("resources/templates/list", {}),
+                ("resources/read", {"uri": "exactdocs://acme/payments/guide/a.md"}),
+            ],
+        ):
             for auth in ({}, bearer("exd_wrong"), bearer(""), {"authorization": "Basic abc"}):
                 response = await anonymous.post(
                     "/mcp",
-                    json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                    json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
                     headers={"accept": "application/json, text/event-stream", **extra, **auth},
                 )
-                assert response.status_code == 401, (extra.keys(), auth)
+                assert response.status_code == 401, (extra.keys(), method, auth)
 
 
 async def test_logging_in_for_a_token_needs_no_session_and_starts_none(
