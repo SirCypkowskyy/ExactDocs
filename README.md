@@ -194,6 +194,16 @@ external data, never instructions. Planned: hosts that support MCP Apps (Claude,
 render articles and results as UI.
 All tools are read-only, and everything returned is marked as external content.
 
+### MCP resources
+
+Clients that browse resources read articles from the resource template
+`exactdocs://{owner}/{repo}/{path*}{?ref}` (no `ref`: the default version; `ref` is percent-encoded,
+e.g. `?ref=feature%2Fx`). A read returns two items: the untrusted-content notice as `text/plain`,
+then the article as `text/markdown`, byte for byte what `read_article` gives, with its ref, commit
+SHA and source link in `_meta`. `resources/list` shows at most 200 articles (the default version
+of each library, 50 per page), always with an explicit `?ref=`; use `list_articles` to page through
+the rest. Resources sit behind the same bearer token as the tools and are served read-only over stdio.
+
 ### context7 over REST
 
 The same two operations for integrations that do not speak MCP, with context7's parameter
