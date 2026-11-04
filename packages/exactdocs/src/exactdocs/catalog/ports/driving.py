@@ -68,8 +68,10 @@ class StoreManifest(Protocol):
 class ActivateManifest(Protocol):
     """Make a pending manifest what its version serves, all at once.
 
-    Raises ``ManifestNotFoundError``, or ``ManifestNotPendingError`` when it was activated
-    before. If anything fails, the previous manifest stays active.
+    Activating the manifest that is already active succeeds without changes (so a replay after
+    a crash is safe). Raises ``ManifestNotFoundError``; ``ManifestNotPendingError`` when it was
+    superseded; ``ManifestOutdatedError`` when a newer manifest of the version is active. If
+    anything fails, the previous manifest stays active.
     """
 
     async def __call__(self, command: ActivateManifestCommand) -> ActivatedManifest:
@@ -100,7 +102,7 @@ class GetArticle(Protocol):
 
 
 class DiscardPendingManifests(Protocol):
-    """Delete pending manifests: one by ID, or all of them (recovery after a crash)."""
+    """Delete the pending manifests that match the command's filters (never "all")."""
 
     async def __call__(self, command: DiscardPendingManifestsCommand) -> DiscardedManifests:
         """Run the use case."""

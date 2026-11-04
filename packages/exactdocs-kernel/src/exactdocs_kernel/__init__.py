@@ -5,7 +5,15 @@ Keep it small, stable and framework-free. It must never import ``exactdocs``.
 
 from exactdocs_kernel.clock import Clock, SystemClock
 from exactdocs_kernel.errors import ConflictError, DomainError, NotFoundError, ValidationError
-from exactdocs_kernel.pagination import DEFAULT_LIMIT, MAX_LIMIT, InvalidCursorError, Page, paginate
+from exactdocs_kernel.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    InvalidCursorError,
+    Page,
+    decode_cursor,
+    encode_cursor,
+    paginate,
+)
 
 __all__ = [
     "DEFAULT_LIMIT",
@@ -18,5 +26,7 @@ __all__ = [
     "Page",
     "SystemClock",
     "ValidationError",
+    "decode_cursor",
+    "encode_cursor",
     "paginate",
 ]

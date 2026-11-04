@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Self
@@ -7,12 +7,15 @@ from exactdocs.catalog.errors import (
     LibraryNotFoundError,
     ManifestNotFoundError,
     ManifestNotPendingError,
+    ManifestOutdatedError,
 )
 from exactdocs.catalog.models import (
+    ContentKey,
     GarbageCollected,
     Library,
     LibraryId,
     Manifest,
+    ManifestEntry,
     ManifestId,
     ManifestState,
     StoredArticle,
@@ -25,7 +28,7 @@ from exactdocs.catalog.models import (
 class InMemoryLibraryRepository:
     """Implements ``ports.driven.LibraryRepository``. For tests."""
 
-    libraries: dict[LibraryId, Library] = field(default_factory=dict)
+    libraries: MutableMapping[LibraryId, Library] = field(default_factory=dict)
 
     @classmethod
     def of(cls, libraries: Iterable[Library]) -> Self:
@@ -41,8 +44,11 @@ class InMemoryLibraryRepository:
         return self.libraries.get(library_id)
 
     async def save(self, library: Library) -> None:
-        """Store the library, replacing any earlier entry with the same ID."""
-        self.libraries[library.id] = library
+        """Store the library; versions it already has are kept as they are, new ones are added."""
+        stored = self.libraries.get(library.id)
+        known = {v.ref: v for v in stored.versions} if stored else {}
+        merged = known | {v.ref: v for v in library.versions if v.ref not in known}
+        self.libraries[library.id] = replace(library, versions=frozenset(merged.values()))
 
 
 @dataclass(slots=True)
@@ -51,36 +57,43 @@ class InMemoryManifestRepository:
 
     libraries: InMemoryLibraryRepository
     manifests: dict[ManifestId, Manifest] = field(default_factory=dict)
-    contents: dict[str, str] = field(default_factory=dict)
+    contents: dict[ContentKey, str] = field(default_factory=dict)
 
-    async def add(self, manifest: Manifest, contents: Mapping[str, str]) -> None:
-        """Store a pending manifest and the contents it needs; stored contents stay as they are."""
+    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+        """Store a pending manifest and the texts it needs; stored texts stay as they are."""
         if manifest.library not in self.libraries.libraries:
             raise LibraryNotFoundError(str(manifest.library))
-        for blob_sha, text in contents.items():
-            self.contents.setdefault(blob_sha, text)
+        for key, text in contents.items():
+            self.contents.setdefault(key, text)
         self.manifests[manifest.id] = manifest
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
-        """Return the manifest, or ``None``."""
-        return self.manifests.get(manifest_id)
+        """Return the manifest without its entries, or ``None``."""
+        found = self.manifests.get(manifest_id)
+        return replace(found, entries=()) if found else None
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
-        """Return the active manifest of this version, or ``None``."""
-        return next(
-            (
-                m
-                for m in self.manifests.values()
-                if (m.library, m.ref, m.state) == (library_id, ref, ManifestState.ACTIVE)
-            ),
-            None,
+        """Return the version's active manifest without its entries, or ``None``."""
+        found = self._active(library_id, ref)
+        return replace(found, entries=()) if found else None
+
+    async def list_entries(
+        self, manifest_id: ManifestId, *, prefix: str, after: str | None, limit: int
+    ) -> Sequence[ManifestEntry]:
+        """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path."""
+        found = self.manifests.get(manifest_id)
+        entries = found.entries if found else ()
+        inside = (
+            e for e in entries if not prefix or e.path == prefix or e.path.startswith(f"{prefix}/")
         )
+        later = sorted((e for e in inside if after is None or e.path > after), key=lambda e: e.path)
+        return tuple(later[:limit])
 
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:
         """Return one article of the version's active manifest, or ``None``."""
-        manifest = await self.get_active(library_id, ref)
+        manifest = self._active(library_id, ref)
         entry = next((e for e in manifest.entries if e.path == path), None) if manifest else None
         if manifest is None or entry is None:
             return None
@@ -88,7 +101,7 @@ class InMemoryManifestRepository:
             manifest_id=manifest.id,
             commit_sha=manifest.commit_sha,
             entry=entry,
-            content=self.contents[entry.blob_sha],
+            content=self.contents[entry.content_key],
         )
 
     async def activate(self, manifest_id: ManifestId, *, at: datetime) -> Version:
@@ -96,42 +109,58 @@ class InMemoryManifestRepository:
         manifest = self.manifests.get(manifest_id)
         if manifest is None:
             raise ManifestNotFoundError(manifest_id)
-        if manifest.state is not ManifestState.PENDING:
-            raise ManifestNotPendingError(manifest_id, manifest.state)
         library = self.libraries.libraries.get(manifest.library)
         if library is None:
             raise LibraryNotFoundError(str(manifest.library))
+        if manifest.state is ManifestState.ACTIVE:
+            return next(v for v in library.versions if v.ref == manifest.ref)
+        if manifest.state is not ManifestState.PENDING:
+            raise ManifestNotPendingError(manifest_id, manifest.state)
+        current = self._active(manifest.library, manifest.ref)
+        if current is not None and current.created_at > manifest.created_at:
+            raise ManifestOutdatedError(manifest_id)
         version = Version(
             ref=manifest.ref, kind=manifest.kind, commit_sha=manifest.commit_sha, imported_at=at
         )
-        # Everything is computed first; the three assignments below cannot fail.
-        changed = {
-            m.id: replace(m, state=ManifestState.SUPERSEDED, superseded_at=at)
-            for m in self.manifests.values()
-            if (m.library, m.ref, m.state) == (manifest.library, manifest.ref, ManifestState.ACTIVE)
-        }
-        changed[manifest_id] = replace(manifest, state=ManifestState.ACTIVE)
+        changed = {manifest_id: replace(manifest, state=ManifestState.ACTIVE)}
+        if current is not None:
+            changed[current.id] = replace(current, state=ManifestState.SUPERSEDED, superseded_at=at)
         moved = replace(
             library,
             versions=frozenset({v for v in library.versions if v.ref != manifest.ref} | {version}),
         )
-        self.manifests.update(changed)
-        self.libraries.libraries[library.id] = moved
+        before = dict(self.manifests)
+        try:
+            self.manifests.update(changed)
+            self.libraries.libraries[library.id] = moved
+        except BaseException:
+            self.manifests.clear()
+            self.manifests.update(before)
+            raise
         return version
 
-    async def discard_pending(self, manifest_id: ManifestId | None) -> int:
-        """Delete one pending manifest, or every pending one for ``None``."""
+    async def discard_pending(
+        self,
+        *,
+        manifest_id: ManifestId | None,
+        library_id: LibraryId | None,
+        created_before: datetime | None,
+    ) -> int:
+        """Delete the pending manifests that match every given filter."""
         doomed = [
             m.id
             for m in self.manifests.values()
-            if m.state is ManifestState.PENDING and manifest_id in {None, m.id}
+            if m.state is ManifestState.PENDING
+            and manifest_id in {None, m.id}
+            and library_id in {None, m.library}
+            and (created_before is None or m.created_at < created_before)
         ]
         for doomed_id in doomed:
             del self.manifests[doomed_id]
         return len(doomed)
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
-        """Delete manifests superseded before the cutoff, then contents no manifest uses."""
+        """Delete manifests superseded before the cutoff, then texts no manifest uses."""
         old = [
             m.id
             for m in self.manifests.values()
@@ -141,8 +170,18 @@ class InMemoryManifestRepository:
         ]
         for old_id in old:
             del self.manifests[old_id]
-        used = {e.blob_sha for m in self.manifests.values() for e in m.entries}
-        unused = [sha for sha in self.contents if sha not in used]
-        for sha in unused:
-            del self.contents[sha]
+        used = {e.content_key for m in self.manifests.values() for e in m.entries}
+        unused = [key for key in self.contents if key not in used]
+        for key in unused:
+            del self.contents[key]
         return GarbageCollected(manifests=len(old), contents=len(unused))
+
+    def _active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
+        return next(
+            (
+                m
+                for m in self.manifests.values()
+                if (m.library, m.ref, m.state) == (library_id, ref, ManifestState.ACTIVE)
+            ),
+            None,
+        )

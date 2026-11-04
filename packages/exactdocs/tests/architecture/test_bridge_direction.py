@@ -7,6 +7,7 @@ catalog < retrieval < ingestion, which also rules out cycles.
 """
 
 import ast
+from graphlib import TopologicalSorter
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,11 @@ def test_every_bridge_points_from_a_consumer_to_a_provider_that_is_allowed() -> 
 
 
 def test_the_allowed_edges_have_no_cycle() -> None:
-    assert not {(b, a) for a, b in ALLOWED} & ALLOWED
+    graph: dict[str, set[str]] = {}
+    for consumer, provider in ALLOWED:
+        graph.setdefault(consumer, set()).add(provider)
+
+    TopologicalSorter(graph).prepare()  # raises CycleError on any cycle, however long
 
 
 def test_the_catalog_bridge_is_read_as_retrieval_to_catalog() -> None:

@@ -5,10 +5,12 @@ from datetime import datetime
 from typing import Protocol
 
 from exactdocs.catalog.models import (
+    ContentKey,
     GarbageCollected,
     Library,
     LibraryId,
     Manifest,
+    ManifestEntry,
     ManifestId,
     StoredArticle,
     Version,
@@ -33,21 +35,31 @@ class LibraryRepository(Protocol):
 
 
 class ManifestRepository(Protocol):
-    """Persistence for manifests and the article content they share, keyed by blob SHA."""
+    """Persistence for manifests and the article texts they share, keyed by content key."""
 
-    async def add(self, manifest: Manifest, contents: Mapping[str, str]) -> None:
-        """Store a pending manifest and the contents it needs (blob SHA to text).
+    async def add(self, manifest: Manifest, contents: Mapping[ContentKey, str]) -> None:
+        """Store a pending manifest with its entries and the texts it needs.
 
-        One transaction. A content that is already stored is left as it is (idempotent).
+        One transaction. A text whose key is already stored is left as it is (idempotent).
         """
         ...
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
-        """Return the manifest with its entries sorted by path, or ``None``."""
+        """Return the manifest without its entries (see ``list_entries``), or ``None``."""
         ...
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
-        """Return the active manifest of this version, or ``None``."""
+        """Return the version's active manifest without its entries, or ``None``."""
+        ...
+
+    async def list_entries(
+        self, manifest_id: ManifestId, *, prefix: str, after: str | None, limit: int
+    ) -> Sequence[ManifestEntry]:
+        """Return up to ``limit`` entries sorted by path, starting after the path ``after``.
+
+        ``prefix`` is directory-aware: ``guide`` matches ``guide`` and ``guide/...``, not
+        ``guide-old/...``; empty matches everything.
+        """
         ...
 
     async def get_article(
@@ -61,15 +73,23 @@ class ManifestRepository(Protocol):
 
         In one transaction: the previous active manifest becomes superseded, this one active,
         and the version is created or moved to the manifest's commit (``imported_at`` is
-        ``at``). Raises ``ManifestNotFoundError`` / ``ManifestNotPendingError``; on any failure
-        the previous manifest stays active.
+        ``at``). Activating the manifest that is already active changes nothing and returns the
+        version (a replay after a crash succeeds). Raises ``ManifestNotFoundError``,
+        ``ManifestNotPendingError`` (superseded), or ``ManifestOutdatedError`` when the active
+        manifest was created after this one. On any failure the previous manifest stays active.
         """
         ...
 
-    async def discard_pending(self, manifest_id: ManifestId | None) -> int:
-        """Delete one pending manifest, or every pending one for ``None``; return how many."""
+    async def discard_pending(
+        self,
+        *,
+        manifest_id: ManifestId | None,
+        library_id: LibraryId | None,
+        created_before: datetime | None,
+    ) -> int:
+        """Delete the pending manifests that match every given filter; return how many."""
         ...
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
-        """Delete manifests superseded before the cutoff, then contents no manifest uses."""
+        """Delete manifests superseded before the cutoff, then texts no manifest uses."""
         ...

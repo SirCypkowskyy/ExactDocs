@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from exactdocs.catalog.models import (
     GarbageCollected,
@@ -190,7 +190,14 @@ class ArticleIn(_Dto):
     """One article to store: where it lives, its git blob SHA, its metadata and its Markdown."""
 
     path: str = Field(min_length=1, description="Repository-relative, `/`-separated.")
-    blob_sha: str = Field(description="Git blob SHA of the file; articles with it share content.")
+    blob_sha: str = Field(description="Git blob SHA of the file.")
+    content_version: int = Field(
+        ge=0,
+        description=(
+            "Opaque version of the text derived from the blob (the importer's parser version). "
+            "Articles with the same blob SHA and content version share one stored text."
+        ),
+    )
     title: str
     tags: list[str] = []
     front_matter: dict[str, Any] = {}
@@ -244,9 +251,22 @@ class ActivatedManifest(_Dto):
 
 
 class DiscardPendingManifestsCommand(_Dto):
-    """Discard one pending manifest, or all of them when `manifest_id` is omitted."""
+    """Discard the pending manifests that match every filter given; at least one is required.
+
+    Never discard "all": another import may sit between storing and activating its manifest.
+    At startup, before any import runs, `older_than_seconds=0` clears what a crash left behind.
+    """
 
     manifest_id: str | None = None
+    library: str | None = Field(default=None, description="`/owner/repo`, any letter case.")
+    older_than_seconds: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _has_a_filter(self) -> Self:
+        if self.manifest_id is None and self.library is None and self.older_than_seconds is None:
+            message = "give a manifest_id, a library or older_than_seconds"
+            raise ValueError(message)
+        return self
 
 
 class DiscardedManifests(_Dto):
@@ -281,7 +301,13 @@ class ListArticlesQuery(_Dto):
 
     library: str = Field(min_length=1)
     ref: str | None = None
-    path_prefix: str = ""
+    path_prefix: str = Field(
+        default="",
+        description=(
+            "Only paths inside this directory: `guide` matches `guide/install.md`, "
+            "not `guide-old/x.md`. Empty lists everything."
+        ),
+    )
     limit: Limit = DEFAULT_LIMIT
     cursor: str | None = None
 

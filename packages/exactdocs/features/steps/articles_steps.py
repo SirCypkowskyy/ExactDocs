@@ -38,6 +38,7 @@ def _store(context: Context, library: str, ref: str, commit: str) -> str:
         ArticleIn(
             path=row["path"],
             blob_sha=_git_blob_sha(row["content"]),
+            content_version=1,
             title=row["title"],
             content=row["content"],
         )

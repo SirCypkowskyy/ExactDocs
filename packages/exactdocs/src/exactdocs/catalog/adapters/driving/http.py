@@ -61,7 +61,15 @@ def build_router(
         owner: str,
         repo: str,
         ref: str | None = None,
-        path_prefix: str = "",
+        path_prefix: Annotated[
+            str,
+            Query(
+                description=(
+                    "Only paths inside this directory: `guide` matches `guide/install.md`, "
+                    "not `guide-old/x.md`. Empty lists everything."
+                )
+            ),
+        ] = "",
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> ArticleList:

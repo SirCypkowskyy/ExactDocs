@@ -1,5 +1,6 @@
 """Adapter contract: every ``ManifestRepository`` behaves the same, whatever stores the data."""
 
+from collections import UserDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -19,8 +20,13 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteManifestRepository,
     article_contents,
 )
-from exactdocs.catalog.errors import ManifestNotFoundError, ManifestNotPendingError
+from exactdocs.catalog.errors import (
+    ManifestNotFoundError,
+    ManifestNotPendingError,
+    ManifestOutdatedError,
+)
 from exactdocs.catalog.models import (
+    ContentKey,
     HostKind,
     Library,
     LibraryId,
@@ -48,10 +54,13 @@ def sha(name: str) -> str:
     return name.ljust(40, "0")
 
 
-def entry(path: str, blob: str, *, title: str = "T", tags: tuple[str, ...] = ()) -> ManifestEntry:
+def entry(
+    path: str, blob: str, *, title: str = "T", tags: tuple[str, ...] = (), version: int = 1
+) -> ManifestEntry:
     return ManifestEntry(
         path=path,
         blob_sha=sha(blob),
+        content_version=version,
         title=title,
         tags=tags,
         front_matter={"title": title, "nested": {"n": [1, None, "x"]}},
@@ -60,7 +69,12 @@ def entry(path: str, blob: str, *, title: str = "T", tags: tuple[str, ...] = ())
 
 
 def manifest(
-    id_: str, ref: str, commit: str, *entries: ManifestEntry, kind: RefKind = RefKind.BRANCH
+    id_: str,
+    ref: str,
+    commit: str,
+    *entries: ManifestEntry,
+    kind: RefKind = RefKind.BRANCH,
+    created_at: datetime = T0,
 ) -> Manifest:
     return Manifest(
         id=ManifestId(id_),
@@ -68,13 +82,17 @@ def manifest(
         ref=VersionRef(ref),
         kind=kind,
         commit_sha=sha(commit),
-        created_at=T0,
+        created_at=created_at,
         entries=entries,
     )
 
 
-def contents(*entries: ManifestEntry) -> dict[str, str]:
-    return {e.blob_sha: f"content of {e.blob_sha[:6]}" for e in entries}
+def body(e: ManifestEntry) -> str:
+    return f"content of {e.blob_sha[:6]} v{e.content_version}"
+
+
+def contents(*entries: ManifestEntry) -> dict[ContentKey, str]:
+    return {e.content_key: body(e) for e in entries}
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +143,32 @@ async def fetch(manifests: ManifestRepository, id_: str) -> Manifest:
     return found
 
 
+async def paths(
+    manifests: ManifestRepository,
+    id_: str,
+    *,
+    prefix: str = "",
+    after: str | None = None,
+    limit: int = 100,
+) -> list[str]:
+    entries = await manifests.list_entries(ManifestId(id_), prefix=prefix, after=after, limit=limit)
+    return [e.path for e in entries]
+
+
+async def discard(
+    stores: Stores,
+    *,
+    manifest_id: str | None = None,
+    library: LibraryId | None = None,
+    before: datetime | None = None,
+) -> int:
+    return await stores.manifests.discard_pending(
+        manifest_id=None if manifest_id is None else ManifestId(manifest_id),
+        library_id=library,
+        created_before=before,
+    )
+
+
 async def active_commit(stores: Stores, ref: str) -> str | None:
     found = await stores.manifests.get_active(PAYMENTS.id, VersionRef(ref))
     return found.commit_sha if found else None
@@ -141,8 +185,12 @@ async def test_a_stored_manifest_comes_back_pending_with_everything_in_it(stores
 
     await store(stores, stored)
 
-    assert await stores.manifests.get(stored.id) == stored
-    assert (await fetch(stores.manifests, stored.id)).state is ManifestState.PENDING
+    header = await fetch(stores.manifests, stored.id)
+    assert header == replace(stored, entries=())  # reads do not carry the entries
+    assert header.state is ManifestState.PENDING
+    assert await stores.manifests.list_entries(stored.id, prefix="", after=None, limit=9) == (
+        stored.entries
+    )
     assert await stores.manifests.get(ManifestId("nope")) is None
 
 
@@ -155,7 +203,7 @@ async def test_a_pending_manifest_is_invisible_until_it_is_activated(stores: Sto
 
     assert article is not None
     assert (article.commit_sha, article.manifest_id) == (sha("aaa111"), "m1")
-    assert article.content == f"content of {sha('b1')[:6]}"
+    assert article.content == body(entry(INSTALL, "b1"))
     assert await active_commit(stores, "main") == sha("aaa111")
 
 
@@ -204,14 +252,12 @@ async def test_each_version_keeps_its_own_active_manifest(stores: Stores) -> Non
     assert await active_commit(stores, "Main") is None  # refs are case-sensitive
 
 
-async def test_only_a_pending_manifest_can_be_activated(stores: Stores) -> None:
+async def test_a_superseded_or_unknown_manifest_cannot_be_activated(stores: Stores) -> None:
     await store(stores, manifest("m1", "main", "aaa111"))
     await store(stores, manifest("m2", "main", "bbb222"))
     await stores.manifests.activate(ManifestId("m1"), at=T0)
     await stores.manifests.activate(ManifestId("m2"), at=T0)
 
-    with pytest.raises(ManifestNotPendingError):  # active
-        await stores.manifests.activate(ManifestId("m2"), at=T0)
     with pytest.raises(ManifestNotPendingError):  # superseded
         await stores.manifests.activate(ManifestId("m1"), at=T0)
     with pytest.raises(ManifestNotFoundError):
@@ -225,22 +271,41 @@ async def test_the_same_blob_in_two_versions_is_stored_once(stores: Stores) -> N
     await store(stores, manifest("m2", "v1.4.0", "bbb222", install, entry("new.md", "b2")))
 
     assert await stores.count_contents() == 2
-    assert [e.path for e in (await fetch(stores.manifests, "m2")).entries] == [
-        INSTALL,
-        "new.md",
-    ]
+    assert await paths(stores.manifests, "m2") == [INSTALL, "new.md"]
 
 
-async def test_storing_content_again_keeps_what_is_there(stores: Stores) -> None:
+async def test_the_same_content_key_keeps_the_first_text(stores: Stores) -> None:
     stored = manifest("m1", "main", "aaa111", entry(INSTALL, "b1"))
-    await stores.manifests.add(stored, {sha("b1"): "first"})
-    await stores.manifests.add(replace(stored, id=ManifestId("m2")), {sha("b1"): "second"})
+    await stores.manifests.add(stored, {(sha("b1"), 1): "first"})
+    await stores.manifests.add(replace(stored, id=ManifestId("m2")), {(sha("b1"), 1): "second"})
     await stores.manifests.activate(ManifestId("m1"), at=T0)
 
     article = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), INSTALL)
 
     assert article is not None
     assert (article.content, await stores.count_contents()) == ("first", 1)
+
+
+async def test_a_new_content_version_stores_a_fresh_text_next_to_the_old_one(
+    stores: Stores,
+) -> None:
+    # The same blob parsed by a fixed parser: other text, so other content version.
+    await store(stores, manifest("m1", "v1.3.0", "aaa111", entry(INSTALL, "b1", version=1)))
+    await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b1", version=2)))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+
+    old = await stores.manifests.get_article(PAYMENTS.id, VersionRef("v1.3.0"), INSTALL)
+    new = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), INSTALL)
+
+    assert old is not None
+    assert new is not None
+    assert (old.content, new.content) == (
+        body(entry(INSTALL, "b1", version=1)),
+        body(entry(INSTALL, "b1", version=2)),
+    )
+    assert (old.entry.content_version, new.entry.content_version) == (1, 2)
+    assert await stores.count_contents() == 2
 
 
 async def test_an_article_that_is_not_in_the_active_manifest_is_none(stores: Stores) -> None:
@@ -253,21 +318,45 @@ async def test_an_article_that_is_not_in_the_active_manifest_is_none(stores: Sto
     assert await stores.manifests.get_article(PAYMENTS.id, VersionRef("next"), INSTALL) is None
 
 
-async def test_discarding_removes_pending_manifests_and_nothing_else(stores: Stores) -> None:
+async def test_discarding_removes_the_matching_pending_manifests_and_nothing_else(
+    stores: Stores,
+) -> None:
     await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
     await stores.manifests.activate(ManifestId("m1"), at=T0)
     await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b2")))
     await store(stores, manifest("m3", "main", "ccc333"))
     await store(stores, manifest("m4", "next", "ddd444"))
 
-    assert await stores.manifests.discard_pending(ManifestId("m2")) == 1
-    assert await stores.manifests.discard_pending(ManifestId("m1")) == 0  # active: not pending
-    assert await stores.manifests.discard_pending(ManifestId("nope")) == 0
-    assert await stores.manifests.discard_pending(None) == 2
+    assert await discard(stores, manifest_id="m2") == 1
+    assert await discard(stores, manifest_id="m1") == 0  # active: not pending
+    assert await discard(stores, manifest_id="nope") == 0
+    assert await discard(stores, library=PAYMENTS.id) == 2
 
     assert await stores.manifests.get(ManifestId("m1")) is not None
     assert [await stores.manifests.get(ManifestId(i)) for i in ("m2", "m3", "m4")] == [None] * 3
     assert await active_commit(stores, "main") == sha("aaa111")
+
+
+async def test_discarding_by_age_leaves_the_imports_still_in_flight(stores: Stores) -> None:
+    crashed = manifest("m1", "main", "aaa111", created_at=T0)
+    in_flight = manifest("m2", "next", "bbb222", created_at=T0 + timedelta(hours=1))
+    await store(stores, crashed)
+    await store(stores, in_flight)
+
+    assert await discard(stores, before=T0 + timedelta(minutes=30)) == 1
+
+    assert await stores.manifests.get(ManifestId("m1")) is None
+    assert await stores.manifests.get(ManifestId("m2")) is not None
+    await stores.manifests.activate(ManifestId("m2"), at=T0 + timedelta(hours=2))  # still works
+
+
+async def test_discarding_other_libraries_pending_manifests_is_not_possible(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111"))
+
+    assert await discard(stores, library=LibraryId("/acme/ledger")) == 0
+    assert await stores.manifests.get(ManifestId("m1")) is not None
 
 
 async def test_garbage_collection_keeps_recent_superseded_manifests_and_used_contents(
@@ -308,12 +397,157 @@ async def test_garbage_collection_never_touches_active_or_pending_manifests(
 
 async def test_discarded_contents_are_collected_once_nothing_uses_them(stores: Stores) -> None:
     await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
-    await stores.manifests.discard_pending(None)
+    await discard(stores, library=PAYMENTS.id)
 
     collected = await stores.manifests.collect_garbage(superseded_before=T0)
 
     assert (collected.manifests, collected.contents) == (0, 1)
     assert await stores.count_contents() == 0
+
+
+async def test_activating_the_active_manifest_again_succeeds_without_changes(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    first = await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    replay = await stores.manifests.activate(ManifestId("m1"), at=T0 + timedelta(hours=1))
+
+    assert replay == first
+    assert (await fetch(stores.manifests, "m1")).state is ManifestState.ACTIVE
+    assert await active_commit(stores, "main") == sha("aaa111")
+
+
+async def test_an_older_pending_manifest_does_not_replace_a_newer_active_one(
+    stores: Stores,
+) -> None:
+    later = T0 + timedelta(hours=1)
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b2"), created_at=later))
+    await stores.manifests.activate(ManifestId("m2"), at=later)
+
+    with pytest.raises(ManifestOutdatedError):
+        await stores.manifests.activate(ManifestId("m1"), at=later)
+
+    assert await active_commit(stores, "main") == sha("bbb222")
+    assert (await fetch(stores.manifests, "m1")).state is ManifestState.PENDING
+    library = await stores.libraries.get(PAYMENTS.id)
+    assert library is not None
+    assert {v.commit_sha for v in library.versions} == {sha("bbb222")}
+
+
+async def test_entries_are_listed_by_directory_in_path_order_page_by_page(stores: Stores) -> None:
+    names = ["guide-old/x.md", "guide/b.md", "guide/a.md", "guide/sub/c.md", "guide", "api/z.md"]
+    await store(stores, manifest("m1", "main", "aaa111", *(entry(n, "b1") for n in sorted(names))))
+
+    assert await paths(stores.manifests, "m1") == sorted(names)
+    assert await paths(stores.manifests, "m1", prefix="guide") == [
+        "guide",
+        "guide/a.md",
+        "guide/b.md",
+        "guide/sub/c.md",
+    ]
+    assert await paths(stores.manifests, "m1", prefix="guide/sub") == ["guide/sub/c.md"]
+    assert await paths(stores.manifests, "m1", prefix="gui") == []  # not a directory
+    assert await paths(stores.manifests, "m1", prefix="guide", after="guide/a.md", limit=2) == [
+        "guide/b.md",
+        "guide/sub/c.md",
+    ]
+    assert await paths(stores.manifests, "m1", limit=1) == ["api/z.md"]
+    assert await paths(stores.manifests, "nope") == []
+
+
+async def test_a_path_that_exists_only_in_another_version_is_not_found(stores: Stores) -> None:
+    await store(
+        stores,
+        manifest(
+            "m1",
+            "v1.3.0",
+            "aaa111",
+            entry("only-old.md", "b1"),
+            entry(INSTALL, "b2"),
+            kind=RefKind.TAG,
+        ),
+    )
+    await store(
+        stores,
+        manifest(
+            "m2",
+            "v1.4.0",
+            "bbb222",
+            entry("only-new.md", "b3"),
+            entry(INSTALL, "b4"),
+            kind=RefKind.TAG,
+        ),
+    )
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+    get = stores.manifests.get_article
+
+    assert await get(PAYMENTS.id, VersionRef("v1.4.0"), "only-old.md") is None
+    assert await get(PAYMENTS.id, VersionRef("v1.3.0"), "only-new.md") is None
+    old = await get(PAYMENTS.id, VersionRef("v1.3.0"), INSTALL)
+    new = await get(PAYMENTS.id, VersionRef("v1.4.0"), INSTALL)
+    assert old is not None
+    assert new is not None
+    assert (old.commit_sha, new.commit_sha) == (sha("aaa111"), sha("bbb222"))
+    assert (old.content, new.content) == (body(entry(INSTALL, "b2")), body(entry(INSTALL, "b4")))
+    assert await get(PAYMENTS.id, VersionRef("v1.5.0"), INSTALL) is None
+    assert await get(LibraryId("/acme/ledger"), VersionRef("v1.4.0"), INSTALL) is None
+
+
+async def test_saving_a_stale_library_does_not_undo_an_activation(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await store(stores, manifest("m2", "v2.0.0", "bbb222", entry(INSTALL, "b2"), kind=RefKind.TAG))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    stale = await stores.libraries.get(PAYMENTS.id)  # an edit starts here (settings, rename)
+    assert stale is not None
+    await stores.manifests.activate(ManifestId("m2"), at=T0)  # ... an import activates meanwhile
+
+    await stores.libraries.save(replace(stale, title="Renamed"))
+
+    saved = await stores.libraries.get(PAYMENTS.id)
+    assert saved is not None
+    assert saved.title == "Renamed"
+    assert {(v.ref.value, v.commit_sha) for v in saved.versions} == {
+        ("main", sha("aaa111")),
+        ("v2.0.0", sha("bbb222")),
+    }
+    article = await stores.manifests.get_article(PAYMENTS.id, VersionRef("v2.0.0"), INSTALL)
+    assert article is not None
+
+
+async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_active() -> None:
+    libraries = InMemoryLibraryRepository()
+    await libraries.save(PAYMENTS)
+    manifests = InMemoryManifestRepository(libraries)
+    await manifests.add(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {(sha("b1"), 1): "x"}
+    )
+    await manifests.add(
+        manifest("m2", "main", "bbb222", entry(INSTALL, "b2")), {(sha("b2"), 1): "y"}
+    )
+    await manifests.activate(ManifestId("m1"), at=T0)
+
+    class FailingOnWrite(UserDict[LibraryId, Library]):
+        def __setitem__(self, key: LibraryId, item: Library) -> None:
+            message = "injected failure"
+            raise RuntimeError(message)
+
+    failing = FailingOnWrite()
+    failing.data.update(libraries.libraries)
+    libraries.libraries = failing  # the last step of the swap fails
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        await manifests.activate(ManifestId("m2"), at=T0)
+
+    assert [(await fetch(manifests, i)).state for i in ("m1", "m2")] == [
+        ManifestState.ACTIVE,
+        ManifestState.PENDING,
+    ]
+    article = await manifests.get_article(PAYMENTS.id, VersionRef("main"), INSTALL)
+    assert article is not None
+    assert article.commit_sha == sha("aaa111")
 
 
 # ---- SQLite only: what the database itself guarantees
@@ -331,8 +565,12 @@ async def test_sqlite_a_failure_during_activation_leaves_the_previous_manifest_a
     sqlite: Container,
 ) -> None:
     manifests = SqliteManifestRepository(sqlite.engine)
-    await manifests.add(manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {sha("b1"): "old"})
-    await manifests.add(manifest("m2", "main", "bbb222", entry(INSTALL, "b2")), {sha("b2"): "new"})
+    await manifests.add(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {(sha("b1"), 1): "old"}
+    )
+    await manifests.add(
+        manifest("m2", "main", "bbb222", entry(INSTALL, "b2")), {(sha("b2"), 1): "new"}
+    )
     await manifests.activate(ManifestId("m1"), at=T0)
     async with sqlite.engine.begin() as connection:  # the last step of the swap fails
         await connection.execute(
@@ -368,16 +606,3 @@ async def test_sqlite_refuses_a_second_active_manifest_for_one_version(sqlite: C
             await connection.execute(
                 text("UPDATE catalog_manifests SET state = 'active' WHERE id = 'm2'")
             )
-
-
-async def test_sqlite_saving_the_library_again_keeps_its_manifests(sqlite: Container) -> None:
-    libraries = SqliteLibraryRepository(sqlite.engine)
-    manifests = SqliteManifestRepository(sqlite.engine)
-    await manifests.add(manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {sha("b1"): "x"})
-    await manifests.activate(ManifestId("m1"), at=T0)
-    moved = await libraries.get(PAYMENTS.id)
-    assert moved is not None
-
-    await libraries.save(replace(moved, title="Renamed"))
-
-    assert (await manifests.get_active(PAYMENTS.id, VersionRef("main"))) is not None

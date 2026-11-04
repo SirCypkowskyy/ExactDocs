@@ -64,6 +64,6 @@ class CatalogModule:
             activate_manifest=ActivateManifestUseCase(repository, manifests, clock),
             list_articles=ListArticlesUseCase(repository, manifests),
             get_article=GetArticleUseCase(repository, manifests),
-            discard_pending_manifests=DiscardPendingManifestsUseCase(manifests),
+            discard_pending_manifests=DiscardPendingManifestsUseCase(manifests, clock),
             collect_garbage=CollectGarbageUseCase(manifests, clock),
         )

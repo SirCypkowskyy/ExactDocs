@@ -126,3 +126,18 @@ class ArticleNotFoundError(NotFoundError):
             super().__init__(f"version {ref!r} of {library_id!r} has no article {path!r}")
         self.library_id = library_id
         self.ref = ref
+
+
+class ConflictingContentError(ValidationError):
+    """One batch gives different texts for the same blob SHA and content version."""
+
+    def __init__(self, blob_sha: str) -> None:
+        super().__init__(f"articles with blob SHA {blob_sha!r} do not have the same content")
+
+
+class ManifestOutdatedError(ConflictError):
+    """A newer manifest of the version is already active; activating this one would go back."""
+
+    def __init__(self, manifest_id: str) -> None:
+        super().__init__(f"manifest {manifest_id!r} is older than the active manifest")
+        self.manifest_id = manifest_id

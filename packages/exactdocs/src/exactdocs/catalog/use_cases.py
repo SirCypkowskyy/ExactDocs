@@ -1,6 +1,6 @@
 """Catalog use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid4
 
@@ -27,11 +27,13 @@ from exactdocs.catalog.dtos import (
 )
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
+    ConflictingContentError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
+    ContentKey,
     Library,
     LibraryId,
     Manifest,
@@ -42,7 +44,7 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
-from exactdocs_kernel import Clock, paginate
+from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate
 
 
 async def _find_version(
@@ -126,6 +128,7 @@ class StoreManifestUseCase:
                         ManifestEntry(
                             path=a.path,
                             blob_sha=a.blob_sha,
+                            content_version=a.content_version,
                             title=a.title,
                             tags=tuple(a.tags),
                             front_matter=a.front_matter,
@@ -137,7 +140,11 @@ class StoreManifestUseCase:
                 )
             ),
         )
-        await self.manifests.add(manifest, {a.blob_sha: a.content for a in command.articles})
+        contents: dict[ContentKey, str] = {}
+        for a in command.articles:
+            if contents.setdefault((a.blob_sha, a.content_version), a.content) != a.content:
+                raise ConflictingContentError(a.blob_sha)
+        await self.manifests.add(manifest, contents)
         return StoredManifest.from_model(manifest)
 
 
@@ -155,13 +162,17 @@ class ActivateManifestUseCase:
         manifest = await self.manifests.get(manifest_id)
         if manifest is None:
             raise ManifestNotFoundError(command.manifest_id)
-        version = await self.manifests.activate(manifest_id, at=self.clock.now())
         library = await self.repository.get(manifest.library)
-        if library is None:  # a manifest cannot outlive its library
+        if library is None:
             raise LibraryNotFoundError(str(manifest.library))
+        version = await self.manifests.activate(manifest_id, at=self.clock.now())
+        moved = replace(
+            library,
+            versions=frozenset({v for v in library.versions if v.ref != version.ref} | {version}),
+        )
         return ActivatedManifest(
             manifest_id=command.manifest_id,
-            version=ResolvedVersion.from_library(library, version),
+            version=ResolvedVersion.from_library(moved, version),
         )
 
 
@@ -179,17 +190,21 @@ class ListArticlesUseCase:
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
-        # ponytail: pages are cut in memory; push `path > :after LIMIT :n` into SQL if manifests
-        # grow past a few thousand articles.
-        entries = [e for e in manifest.entries if e.path.startswith(query.path_prefix)]
-        page = paginate(entries, key=lambda e: e.path, limit=query.limit, cursor=query.cursor)
+        after = decode_cursor(query.cursor) if query.cursor is not None else None
+        entries = await self.manifests.list_entries(
+            manifest.id,
+            prefix=query.path_prefix.strip("/"),
+            after=after,
+            limit=query.limit + 1,  # one more than asked tells whether another page follows
+        )
+        page = entries[: query.limit]
         return ArticleList(
             library=str(library.id),
             ref=str(version.ref),
             commit_sha=manifest.commit_sha,
             manifest_id=manifest.id,
-            articles=[ArticleSummary.from_model(e) for e in page.items],
-            next_cursor=page.next_cursor,
+            articles=[ArticleSummary.from_model(e) for e in page],
+            next_cursor=encode_cursor(page[-1].path) if len(entries) > query.limit else None,
         )
 
 
@@ -215,11 +230,17 @@ class DiscardPendingManifestsUseCase:
     """Implements ``ports.driving.DiscardPendingManifests``."""
 
     manifests: ManifestRepository
+    clock: Clock
 
     async def __call__(self, command: DiscardPendingManifestsCommand) -> DiscardedManifests:
         """Delete the pending manifest(s); active and superseded ones are never touched."""
-        manifest_id = None if command.manifest_id is None else ManifestId(command.manifest_id)
-        return DiscardedManifests(count=await self.manifests.discard_pending(manifest_id))
+        older = command.older_than_seconds
+        count = await self.manifests.discard_pending(
+            manifest_id=None if command.manifest_id is None else ManifestId(command.manifest_id),
+            library_id=None if command.library is None else LibraryId(command.library),
+            created_before=None if older is None else self.clock.now() - timedelta(seconds=older),
+        )
+        return DiscardedManifests(count=count)
 
 
 @dataclass(frozen=True, slots=True)

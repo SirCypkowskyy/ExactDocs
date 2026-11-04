@@ -231,12 +231,21 @@ class ManifestState(StrEnum):
     SUPERSEDED = "superseded"
 
 
+type ContentKey = tuple[str, int]  # (git blob SHA, content version)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ManifestEntry:
-    """One article of a manifest: where it lives, and which shared content it points at."""
+    """One article of a manifest: where it lives, and which shared content it points at.
+
+    The content is keyed by blob SHA *and* content version: an opaque number the importer
+    raises when it would produce another text from the same blob (a parser fix), so the new
+    text is stored next to the old one instead of being ignored.
+    """
 
     path: str
-    blob_sha: str  # git blob SHA: the key of the (deduplicated) article content
+    blob_sha: str  # git blob SHA
+    content_version: int
     title: str
     tags: tuple[str, ...] = ()
     front_matter: dict[str, Any] = field(default_factory=dict)
@@ -247,6 +256,11 @@ class ManifestEntry:
             raise InvalidArticlePathError(self.path)
         if not _OBJECT_ID.fullmatch(self.blob_sha):
             raise InvalidBlobShaError(self.blob_sha)
+
+    @property
+    def content_key(self) -> ContentKey:
+        """Where the article's text is stored."""
+        return (self.blob_sha, self.content_version)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,14 +1,14 @@
 """A version is a manifest over article content shared by git blob SHA.
 
 Revision ID: 5f87041a0ed2
-Revises: 5d1c7a93b2e4
+Revises: 5f3a9c21d7b4
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "5f87041a0ed2"
-down_revision = "5d1c7a93b2e4"
+down_revision = "5f3a9c21d7b4"
 branch_labels = None
 depends_on = None
 
@@ -16,7 +16,9 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "catalog_article_contents",
-        sa.Column("blob_sha", sa.Text, primary_key=True),  # git blob SHA: stored once
+        sa.Column("blob_sha", sa.Text, primary_key=True),  # git blob SHA
+        # Opaque, raised by the importer when the same blob yields another text (parser fix).
+        sa.Column("content_version", sa.Integer, primary_key=True),
         sa.Column("content", sa.Text, nullable=False),
     )
     op.create_table(
@@ -57,16 +59,23 @@ def upgrade() -> None:
             primary_key=True,
         ),
         sa.Column("path", sa.Text, primary_key=True),
-        sa.Column(
-            "blob_sha", sa.Text, sa.ForeignKey("catalog_article_contents.blob_sha"), nullable=False
-        ),
+        sa.Column("blob_sha", sa.Text, nullable=False),
+        sa.Column("content_version", sa.Integer, nullable=False),
         sa.Column("title", sa.Text, nullable=False),
         sa.Column("tags", sa.Text, nullable=False),  # JSON list
         sa.Column("front_matter", sa.Text, nullable=False),  # JSON object
         sa.Column("size", sa.Integer, nullable=False),
+        sa.ForeignKeyConstraint(
+            ["blob_sha", "content_version"],
+            ["catalog_article_contents.blob_sha", "catalog_article_contents.content_version"],
+        ),
     )
     # Garbage collection asks "is this content still used?" by blob.
-    op.create_index("ix_catalog_manifest_entries_blob", "catalog_manifest_entries", ["blob_sha"])
+    op.create_index(
+        "ix_catalog_manifest_entries_content",
+        "catalog_manifest_entries",
+        ["blob_sha", "content_version"],
+    )
 
 
 def downgrade() -> None:
