@@ -23,6 +23,7 @@ from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
+    SqliteTokenRepository,
 )
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit
@@ -72,6 +73,7 @@ class Container:
         identity = IdentityModule.build(
             repository=SqliteAccountRepository(engine),
             sessions=SqliteSessionRepository(engine),
+            tokens=SqliteTokenRepository(engine),
             hasher=Argon2idPasswordHasher(),
             clock=SystemClock(),
         )

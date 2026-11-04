@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from exactdocs.identity.models import Account, AccountId, Session, Username
+from exactdocs.identity.models import Account, AccountId, ApiToken, Session, Username
 
 
 class AccountRepository(Protocol):
@@ -58,6 +58,30 @@ class SessionRepository(Protocol):
 
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
         """Remove sessions last used before ``idle_before`` or created before ``created_before``."""
+        ...
+
+
+class TokenRepository(Protocol):
+    """Persistence for API tokens, keyed by token hash."""
+
+    async def add(self, token: ApiToken) -> None:
+        """Store a new token."""
+        ...
+
+    async def get(self, token_hash: str) -> ApiToken | None:
+        """Return the token with this hash, or ``None``."""
+        ...
+
+    async def list_for_account(self, account_id: AccountId) -> list[ApiToken]:
+        """Return the account's tokens, newest first."""
+        ...
+
+    async def touch(self, token_hash: str, at: datetime) -> None:
+        """Record that the token was used at ``at``."""
+        ...
+
+    async def delete(self, account_id: AccountId, token_id: str) -> bool:
+        """Remove the account's token with this id; ``False`` when there is none."""
         ...
 
 

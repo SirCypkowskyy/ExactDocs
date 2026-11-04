@@ -154,8 +154,17 @@ jobs:
           curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'
           init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
           mcp=(-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$init")
-          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp/")" = 200
+          # MCP wants an API token; a revoked one is refused again
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 401
+          created=$(curl -fsS -b jar.txt -H 'content-type: application/json' -d '{"name":"ci"}' "http://127.0.0.1:${port}/api/v1/tokens")
+          token=$(echo "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          id=$(echo "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          auth=(-H "authorization: Bearer ${token}")
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "http://127.0.0.1:${port}/api/v1/libraries")" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "${mcp[@]}" "http://127.0.0.1:${port}/mcp/")" = 200
+          curl -fsS -b jar.txt -X DELETE "http://127.0.0.1:${port}/api/v1/tokens/${id}"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 401
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "${mcp[@]}" "http://127.0.0.1:${port}/mcp")" = 400
           # Hardening as built: unprivileged, tini is PID 1, no pip, no setuid files.
           test "$(docker exec exactdocs-ci id -u)" = 10001

@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.identity.models import Account, AccountId, Role, Session, Username
+from exactdocs.identity.models import Account, AccountId, ApiToken, Role, Session, Username
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -42,6 +42,20 @@ sessions = Table(
     ),
     Column("created_at", Text, nullable=False),  # see `_stamp`
     Column("last_used_at", Text, nullable=False),
+)
+api_tokens = Table(
+    "identity_api_tokens",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "account_id", Text, ForeignKey("identity_accounts.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("name", Text, nullable=False),
+    Column("token_hash", Text, nullable=False, unique=True),
+    Column("prefix", Text, nullable=False),
+    Column("created_at", Text, nullable=False),  # see `_stamp`
+    Column("expires_at", Text),
+    Column("last_used_at", Text),
 )
 
 
@@ -176,3 +190,78 @@ class SqliteSessionRepository:
         )
         async with self.engine.begin() as connection:
             await connection.execute(statement)
+
+
+def _moment(value: str | None) -> datetime | None:
+    return None if value is None else datetime.fromisoformat(value)
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteTokenRepository:
+    """Implements ``ports.driven.TokenRepository`` with SQLAlchemy Core on SQLite."""
+
+    engine: AsyncEngine
+
+    async def add(self, token: ApiToken) -> None:
+        """Store a new token."""
+        values = {
+            "id": token.id,
+            "account_id": token.account_id,
+            "name": token.name,
+            "token_hash": token.token_hash,
+            "prefix": token.prefix,
+            "created_at": _stamp(token.created_at),
+            "expires_at": None if token.expires_at is None else _stamp(token.expires_at),
+            "last_used_at": None if token.last_used_at is None else _stamp(token.last_used_at),
+        }
+        async with self.engine.begin() as connection:
+            await connection.execute(insert(api_tokens).values(values))
+
+    async def get(self, token_hash: str) -> ApiToken | None:
+        """Return the token with this hash, or ``None``."""
+        query = select(api_tokens).where(api_tokens.c.token_hash == token_hash)
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(query)).first()
+        return None if row is None else _token(row)
+
+    async def list_for_account(self, account_id: AccountId) -> list[ApiToken]:
+        """Return the account's tokens, newest first."""
+        query = (
+            select(api_tokens)
+            .where(api_tokens.c.account_id == account_id)
+            .order_by(api_tokens.c.created_at.desc(), api_tokens.c.id.desc())
+        )
+        async with self.engine.connect() as connection:
+            return [_token(row) for row in await connection.execute(query)]
+
+    async def touch(self, token_hash: str, at: datetime) -> None:
+        """Record that the token was used at ``at``."""
+        statement = (
+            update(api_tokens)
+            .where(api_tokens.c.token_hash == token_hash)
+            .values(last_used_at=_stamp(at))
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
+    async def delete(self, account_id: AccountId, token_id: str) -> bool:
+        """Remove the account's token with this id; ``False`` when there is none."""
+        statement = delete(api_tokens).where(
+            api_tokens.c.id == token_id, api_tokens.c.account_id == account_id
+        )
+        async with self.engine.begin() as connection:
+            result = await connection.execute(statement)
+        return result.rowcount == 1
+
+
+def _token(row: Row[Any]) -> ApiToken:
+    return ApiToken(
+        id=row.id,
+        account_id=AccountId(row.account_id),
+        name=row.name,
+        token_hash=row.token_hash,
+        prefix=row.prefix,
+        created_at=datetime.fromisoformat(row.created_at),
+        expires_at=_moment(row.expires_at),
+        last_used_at=_moment(row.last_used_at),
+    )

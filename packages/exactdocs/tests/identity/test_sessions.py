@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemorySessionRepository,
+    InMemoryTokenRepository,
 )
 from exactdocs.identity.dtos import (
     AuthenticateQuery,
@@ -62,9 +63,13 @@ class World:
 
 @pytest.fixture
 async def world() -> World:
-    clock, sessions = MovableClock(), InMemorySessionRepository()
+    clock, sessions, tokens = MovableClock(), InMemorySessionRepository(), InMemoryTokenRepository()
     identity = IdentityModule.build(
-        repository=InMemoryAccountRepository(), sessions=sessions, hasher=FakeHasher(), clock=clock
+        repository=InMemoryAccountRepository(),
+        sessions=sessions,
+        tokens=tokens,
+        hasher=FakeHasher(),
+        clock=clock,
     )
     await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
@@ -200,6 +205,7 @@ async def test_session_state_tells_setup_signed_out_and_signed_in(world: World) 
     empty = IdentityModule.build(
         repository=InMemoryAccountRepository(),
         sessions=InMemorySessionRepository(),
+        tokens=InMemoryTokenRepository(),
         hasher=FakeHasher(),
         clock=MovableClock(),
     )

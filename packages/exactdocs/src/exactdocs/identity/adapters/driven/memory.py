@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from exactdocs.identity.models import Account, AccountId, Session, Username
+from exactdocs.identity.models import Account, AccountId, ApiToken, Session, Username
 
 
 @dataclass(slots=True)
@@ -70,3 +70,36 @@ class InMemorySessionRepository:
             for h, s in self.sessions.items()
             if s.last_used_at >= idle_before and s.created_at >= created_before
         }
+
+
+@dataclass(slots=True)
+class InMemoryTokenRepository:
+    """Implements ``ports.driven.TokenRepository``. For tests."""
+
+    tokens: dict[str, ApiToken] = field(default_factory=dict)
+
+    async def add(self, token: ApiToken) -> None:
+        """Store a new token."""
+        self.tokens[token.token_hash] = token
+
+    async def get(self, token_hash: str) -> ApiToken | None:
+        """Return the token with this hash, or ``None``."""
+        return self.tokens.get(token_hash)
+
+    async def list_for_account(self, account_id: AccountId) -> list[ApiToken]:
+        """Return the account's tokens, newest first."""
+        own = [t for t in self.tokens.values() if t.account_id == account_id]
+        return sorted(own, key=lambda t: (t.created_at, t.id), reverse=True)
+
+    async def touch(self, token_hash: str, at: datetime) -> None:
+        """Record that the token was used at ``at``."""
+        if (token := self.tokens.get(token_hash)) is not None:
+            self.tokens[token_hash] = replace(token, last_used_at=at)
+
+    async def delete(self, account_id: AccountId, token_id: str) -> bool:
+        """Remove the account's token with this id; ``False`` when there is none."""
+        for token_hash, token in self.tokens.items():
+            if token.id == token_id and token.account_id == account_id:
+                del self.tokens[token_hash]
+                return True
+        return False

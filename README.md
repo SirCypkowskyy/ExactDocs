@@ -81,7 +81,24 @@ and pre-selection from a repository's `context7.json`. See the [Roadmap](#roadma
 }
 ```
 
-Create tokens in the UI (**Settings → Tokens**) or with `exactdocs token create`;
+MCP over HTTP needs an API token; it acts as the account that created it. Tokens start with
+`exd_`, are shown once when created and stored only as a hash, may expire, and stop working the
+moment they are revoked. Until the UI has a token page, use the REST API with your signed-in
+session (the token routes do not accept a token, so a leaked token cannot mint successors):
+
+```bash
+curl -c jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/session \
+  -d '{"username": "ada", "password": "a long passphrase"}'
+curl -b jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/tokens \
+  -d '{"name": "laptop", "expires_at": "2027-01-01T00:00:00Z"}'    # `expires_at` is optional
+curl -b jar.txt http://localhost:3000/api/v1/tokens                  # list (never the secrets)
+curl -b jar.txt -X DELETE http://localhost:3000/api/v1/tokens/<id>   # revoke
+```
+
+REST clients and scripts send the same token as `Authorization: Bearer exd_...` to any `/api/v1`
+route except the token routes themselves.
+
+Planned: tokens in the UI (**Settings → Tokens**) and `exactdocs token create`;
 `exactdocs config --client claude|cursor|vscode` (planned) will print a ready-to-paste snippet with a new token.
 For a local setup without a network port: `uvx exactdocs serve --stdio` (no token needed).
 

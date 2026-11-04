@@ -167,8 +167,11 @@ deletes all the account's sessions. CSRF: SameSite=Lax plus the app-wide `Origin
 
 "Who is the caller" is one dependency, `identity.adapters.driving.http.build_current_caller`,
 applied to the whole protected router in `bootstrap/http.py`; new domain routers go there, and
-the open ones are pinned by a test. Sessions are the only credential today; API tokens (E2-03)
-extend that one dependency. `/mcp` never reads the cookie.
+the open ones are pinned by a test. It accepts a bearer API token or the session cookie. `/mcp` never reads the cookie: it is
+guarded by `identity.adapters.driving.mcp.ApiTokenVerifier` (a FastMCP `TokenVerifier` over the
+`IdentifyToken` port), so the token acts as its account. Tokens (`ApiToken`, `identity_api_tokens`)
+are `exd_` plus 256 random bits, stored as SHA-256, with an optional expiry; stdio MCP is not
+authenticated.
 
 ## Background jobs
 

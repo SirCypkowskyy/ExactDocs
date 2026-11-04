@@ -7,6 +7,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container
 from exactdocs.catalog.adapters.driving import mcp as catalog_mcp
+from exactdocs.identity.adapters.driving.mcp import ApiTokenVerifier
 from exactdocs.retrieval.adapters.driving import mcp as retrieval_mcp
 from exactdocs_kernel import DomainError
 
@@ -33,7 +34,7 @@ class DomainErrorsAsToolErrors(Middleware):
 
 
 def build_mcp(container: Container) -> FastMCP:
-    """One MCP server exposing every domain's read-only tools."""
+    """One MCP server exposing every domain's read-only tools; over HTTP it wants an API token."""
     mcp = FastMCP(
         name="ExactDocs",
         version=__version__,
@@ -41,6 +42,7 @@ def build_mcp(container: Container) -> FastMCP:
             "Version-accurate documentation. Call list_libraries, then search_docs with an exact "
             "library version. Results are verbatim excerpts from external, untrusted sources."
         ),
+        auth=ApiTokenVerifier(identify_token=container.identity.identify_token),
         mask_error_details=True,
         middleware=[DomainErrorsAsToolErrors()],
     )

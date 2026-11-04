@@ -11,29 +11,44 @@ from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
+    CreateTokenCommand,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
     SetupState,
+    TokenGrant,
+    TokenList,
+    TokenSummary,
 )
 from exactdocs.identity.errors import (
     AlreadySetUpError,
     InvalidCredentialsError,
+    InvalidTokenError,
+    InvalidTokenExpiryError,
     InvalidUsernameError,
     NotSignedInError,
     UnknownAccountError,
+    UnknownTokenError,
 )
 from exactdocs.identity.models import (
     ABSOLUTE_TIMEOUT,
     IDLE_TIMEOUT,
+    PREFIX_SHOWN,
+    VALUE_PREFIX,
     Account,
     AccountId,
+    ApiToken,
     Role,
     Session,
     Username,
     hash_token,
 )
-from exactdocs.identity.ports.driven import AccountRepository, PasswordHasher, SessionRepository
+from exactdocs.identity.ports.driven import (
+    AccountRepository,
+    PasswordHasher,
+    SessionRepository,
+    TokenRepository,
+)
 from exactdocs.identity.ports.driving import Authenticate, IdentifyCaller
 from exactdocs_kernel import Clock
 
@@ -225,3 +240,79 @@ class ResetPasswordUseCase:
         password_hash = await self.hasher.hash(command.password.get_secret_value())
         await self.accounts.set_password_hash(account.id, password_hash)
         await self.sessions.delete_for_account(account.id)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateTokenUseCase:
+    """Implements ``ports.driving.CreateToken``."""
+
+    tokens: TokenRepository
+    clock: Clock
+
+    async def __call__(self, account: AccountSummary, command: CreateTokenCommand) -> TokenGrant:
+        """Mint a token. Only its hash is stored; the secret is returned this once."""
+        now = self.clock.now()
+        if command.expires_at is not None and command.expires_at <= now:
+            raise InvalidTokenExpiryError
+        secret = VALUE_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
+        token = ApiToken(
+            id=uuid7().hex,
+            account_id=AccountId(account.id),
+            name=command.name.strip(),
+            token_hash=hash_token(secret),
+            prefix=secret[:PREFIX_SHOWN],
+            created_at=now,
+            expires_at=command.expires_at,
+        )
+        await self.tokens.add(token)
+        return TokenGrant(**TokenSummary.from_model(token).model_dump(), token=secret)
+
+
+@dataclass(frozen=True, slots=True)
+class ListTokensUseCase:
+    """Implements ``ports.driving.ListTokens``."""
+
+    tokens: TokenRepository
+
+    async def __call__(self, account: AccountSummary) -> TokenList:
+        """List the account's tokens without their secrets."""
+        found = await self.tokens.list_for_account(AccountId(account.id))
+        return TokenList(tokens=[TokenSummary.from_model(t) for t in found])
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeTokenUseCase:
+    """Implements ``ports.driving.RevokeToken``."""
+
+    tokens: TokenRepository
+
+    async def __call__(self, account: AccountSummary, token_id: str) -> None:
+        """Delete the token, so it stops working at once."""
+        if not await self.tokens.delete(AccountId(account.id), token_id):
+            raise UnknownTokenError
+
+
+@dataclass(frozen=True, slots=True)
+class IdentifyTokenUseCase:
+    """Implements ``ports.driving.IdentifyToken``."""
+
+    tokens: TokenRepository
+    accounts: AccountRepository
+    clock: Clock
+
+    async def __call__(self, token: str) -> AccountSummary:
+        """Return the account the token acts as, or raise ``InvalidTokenError``."""
+        token_hash = hash_token(token)
+        # Looked up by the hash of a random secret, like sessions: no timing to learn from.
+        found = await self.tokens.get(token_hash)
+        if found is None:
+            raise InvalidTokenError
+        now = self.clock.now()
+        if found.is_expired(now):
+            raise InvalidTokenError
+        account = await self.accounts.get_by_id(found.account_id)
+        if account is None:
+            raise InvalidTokenError
+        if found.last_used_at is None or now - found.last_used_at >= TOUCH_INTERVAL:
+            await self.tokens.touch(token_hash, now)
+        return AccountSummary.from_model(account)

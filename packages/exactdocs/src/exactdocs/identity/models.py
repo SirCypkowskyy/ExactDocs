@@ -7,11 +7,14 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import NewType
 
-from exactdocs.identity.errors import InvalidUsernameError
+from exactdocs.identity.errors import InvalidTokenNameError, InvalidUsernameError
 
 AccountId = NewType("AccountId", str)
 
 MAX_USERNAME_LENGTH = 64
+MAX_TOKEN_NAME_LENGTH = 64
+VALUE_PREFIX = "exd_"  # recognizable, so secret scanners and humans can spot a leaked token
+PREFIX_SHOWN = len(VALUE_PREFIX) + 4  # the part of a token kept readable, to tell tokens apart
 IDLE_TIMEOUT = timedelta(days=7)  # a session unused for this long ends
 ABSOLUTE_TIMEOUT = timedelta(days=30)  # and none lives longer than this, however busy
 
@@ -81,3 +84,29 @@ class Session:
     def is_expired(self, now: datetime) -> bool:
         """Whether the session is over at ``now``."""
         return now >= self.expires_at()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApiToken:
+    """A revocable credential for agents, the CLI and scripts. It acts as its account.
+
+    Only the hash of the secret is kept; ``prefix`` (the first characters) lets a person tell
+    tokens apart in a list. ``expires_at`` is ``None`` for a token that never expires.
+    """
+
+    id: str
+    account_id: AccountId
+    name: str
+    token_hash: str = field(repr=False)
+    prefix: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.strip() or len(self.name) > MAX_TOKEN_NAME_LENGTH:
+            raise InvalidTokenNameError(MAX_TOKEN_NAME_LENGTH)
+
+    def is_expired(self, now: datetime) -> bool:
+        """Whether the token no longer works at ``now``."""
+        return self.expires_at is not None and now >= self.expires_at
