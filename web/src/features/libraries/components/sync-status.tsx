@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronRight, CircleAlert } from "lucide-react";
 import { useState } from "react";
+import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
 import { jobQueryOptions } from "../api/libraries-query";
 import type { SyncState } from "../hooks/use-libraries";
 import type { LatestJob } from "../model/library";
-import { absoluteTime, absoluteTimeWithZone, relativeTime } from "../model/time";
 
 const SKIPPED_SHOWN = 5;
 

@@ -428,6 +428,41 @@ class ArticleList(_Dto):
     )
 
 
+class ListTagsQuery(_Dto):
+    """The tags of a version's articles; no `ref` means the default version."""
+
+    library: str = Field(min_length=1)
+    ref: str | None = None
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_ref_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class TagCount(_Dto):
+    """A tag and how many articles of the version carry it."""
+
+    tag: str
+    count: int
+
+
+class TagList(_Dto):
+    """The most used tags of one manifest, for a tag filter."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(
+        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
+    )
+
+    library: str
+    ref: str
+    commit_sha: str
+    tags: list[TagCount] = Field(description="Most used first, then by name; at most 100.")
+    truncated: bool = Field(description="True when the version has more tags than are listed.")
+
+
 class GetArticleQuery(_Dto):
     """Read the article at `path` of a version; no `ref` means the default version."""
 

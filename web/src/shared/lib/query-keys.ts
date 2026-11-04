@@ -1,0 +1,6 @@
+/**
+ * The root of every query the browse page makes (libraries, trees, articles). Invalidate it after
+ * an import or a refresh so an open browse page reloads what it shows:
+ * `queryClient.invalidateQueries({ queryKey: BROWSE_KEY })`.
+ */
+export const BROWSE_KEY = ["browse"] as const;

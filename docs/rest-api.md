@@ -13,7 +13,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Operation IDs** are `<tag>-<function name>` (for example `catalog-list_all`), one tag per
   domain. They never change once published, because generated clients are named after them:
   renaming a handler function renames its operation ID, which is a breaking change.
-- **Errors** have one shape for every error under `/api`: `{"error": "<code>", "detail": "<message>", "fields": []}`.
+- **Errors** have one shape for every error under `/api`: `{"error": "<code>", "detail": "<message>", "fields": [], "close_matches": []}`.
   Unknown routes and wrong methods are `not_found` / `method_not_allowed`; an unexpected failure
   is 500 `internal_error` (no internals in `detail`).
   `error` is the stable `DomainError.code` (`not_found` is 404, `conflict` 409, `validation_error`
@@ -43,6 +43,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
+- **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
+  meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
+- **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
+  carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.
 - **Refs containing `/`**: library IDs are `/{owner}/{repo}` in the path. A ref may only be the
   last path segment, declared `{ref:path}`; a route that needs a ref and an article path takes
   `?ref=` and `?path=`, because servers decode `%2F` before routing.

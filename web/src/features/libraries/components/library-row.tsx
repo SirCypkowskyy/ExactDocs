@@ -1,9 +1,10 @@
+import { Link } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { Fragment, useId, useState } from "react";
+import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
 import type { SyncState } from "../hooks/use-libraries";
 import { type Library, orderedVersions, shortSha, sourceLabel } from "../model/library";
-import { absoluteTimeWithZone, relativeTime } from "../model/time";
 import { FailureDetail, SyncStatus } from "./sync-status";
 
 const SHOWN = 5;
@@ -95,6 +96,7 @@ interface LibraryRowProps {
 }
 
 export function LibraryRow({ library, sync, now }: LibraryRowProps) {
+  const [, owner = "", repo = ""] = library.id.split("/");
   const imported = library.last_imported_at;
   const [open, setOpen] = useState(false);
   const panel = useId();
@@ -104,7 +106,13 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
       <div className={cn("flex flex-col gap-y-2.5 md:items-start md:gap-y-0", columns)}>
         <div className="min-w-0">
           <h2 className="font-mono text-[15px] font-medium [overflow-wrap:anywhere]">
-            <Id id={library.id} />
+            <Link
+              to="/libraries/$owner/$repo"
+              params={{ owner, repo }}
+              className="rounded underline decoration-mark/40 underline-offset-4 outline-none hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Id id={library.id} />
+            </Link>
           </h2>
           {library.title && !repeatsId(library.title, library.id) && (
             <p className="truncate text-sm text-muted-foreground" title={library.title}>

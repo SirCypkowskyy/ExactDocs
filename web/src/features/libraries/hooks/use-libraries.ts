@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import {
   latestJobsQueryOptions,
   librariesKeys,
@@ -36,6 +37,8 @@ export function useSyncStates(libraries: readonly Library[]): SyncStates {
     const now = new Set((query.data ?? []).filter(isLive).map((j) => j.library));
     if ([...importing.current].some((id) => !now.has(id))) {
       void queryClient.invalidateQueries({ queryKey: librariesKeys.list() });
+      // A finished import may have changed what an open browse page shows.
+      void queryClient.invalidateQueries({ queryKey: BROWSE_KEY });
     }
     importing.current = now;
   }, [query.data, queryClient]);

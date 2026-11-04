@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -153,6 +154,12 @@ class InMemoryManifestRepository:
         """Return up to ``limit`` article paths of the manifest, sorted."""
         found = self.manifests.get(manifest_id)
         return tuple(sorted(e.path for e in found.entries))[:limit] if found else ()
+
+    async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
+        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        found = self.manifests.get(manifest_id)
+        counts = Counter(tag for e in found.entries for tag in set(e.tags)) if found else Counter()
+        return tuple(sorted(counts.items(), key=lambda item: (-item[1], item[0])))[:limit]
 
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str

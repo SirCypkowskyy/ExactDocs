@@ -23,6 +23,7 @@ from exactdocs.catalog.dtos import (
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ListTagsQuery,
     ManifestStates,
     Removal,
     RemoveLibraryCommand,
@@ -31,6 +32,7 @@ from exactdocs.catalog.dtos import (
     ResolveVersionQuery,
     StoredManifest,
     StoreManifestCommand,
+    TagList,
     UpdateLibraryCommand,
 )
 
@@ -97,6 +99,17 @@ class ListArticles(Protocol):
     """
 
     async def __call__(self, query: ListArticlesQuery) -> ArticleList:
+        """Run the use case."""
+        ...
+
+
+class ListTags(Protocol):
+    """Count the tags of a version's articles (default version without a ref), most used first.
+
+    Raises ``ArticleNotFoundError`` when the version has no active manifest.
+    """
+
+    async def __call__(self, query: ListTagsQuery) -> TagList:
         """Run the use case."""
         ...
 

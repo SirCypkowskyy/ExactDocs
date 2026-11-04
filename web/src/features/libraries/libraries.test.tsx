@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
+import { relativeTime } from "@/shared/lib/time";
 import { LibrariesPage } from "./index";
 import { orderedVersions, syncOf } from "./model/library";
-import { relativeTime } from "./model/time";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const library = (over: Record<string, unknown> = {}) => {
@@ -76,7 +76,13 @@ function renderPage() {
     ...render(
       <QueryClientProvider client={queryClient}>
         <Suspense fallback="loading">
-          <TestRouter pages={{ "/": LibrariesPage, "/libraries/new": () => <p>Add page</p> }} />
+          <TestRouter
+            pages={{
+              "/": LibrariesPage,
+              "/libraries/new": () => <p>Add page</p>,
+              "/libraries/acme/payments": () => <p>Browse page</p>,
+            }}
+          />
         </Suspense>
       </QueryClientProvider>,
     ),
@@ -94,6 +100,10 @@ describe("libraries slice", () => {
 
     const row = (await screen.findByRole("heading", { name: "/acme/payments" })).closest("li");
     if (!row) throw new Error("no row");
+    expect(within(row).getByRole("link", { name: "/acme/payments" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments",
+    );
     const versions = within(within(row).getByRole("list", { name: "Versions" })).getAllByRole(
       "listitem",
     );

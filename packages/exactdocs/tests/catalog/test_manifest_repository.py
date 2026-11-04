@@ -764,3 +764,29 @@ async def test_a_manifest_that_needs_its_version_is_refused_once_the_version_is_
     with pytest.raises(VersionNotFoundError):
         await stores.manifests.add(again, contents(*again.entries), version_must_exist=True)
     await stores.manifests.add(again, contents(*again.entries))  # a first import still may
+
+
+async def test_tags_are_counted_per_manifest_most_used_first_and_capped(stores: Stores) -> None:
+    await store(
+        stores,
+        manifest(
+            "m1",
+            "main",
+            "aaa111",
+            entry("a.md", "b1", tags=("api", "auth")),
+            entry("b.md", "b2", tags=("api",)),
+            entry("c.md", "b3", tags=("zed",)),
+            entry("d.md", "b4"),
+        ),
+    )
+
+    assert list(await stores.manifests.count_tags(ManifestId("m1"), limit=10)) == [
+        ("api", 2),
+        ("auth", 1),
+        ("zed", 1),
+    ]
+    assert list(await stores.manifests.count_tags(ManifestId("m1"), limit=2)) == [
+        ("api", 2),
+        ("auth", 1),
+    ]
+    assert not await stores.manifests.count_tags(ManifestId("none"), limit=10)
