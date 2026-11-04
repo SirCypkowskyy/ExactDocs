@@ -173,9 +173,15 @@ jobs:
             test "$state" = queued -o "$state" = running || break
             sleep 1
           done
-          test "$state" = succeeded
+          if test "$state" != succeeded; then
+            echo "import job ended as '$state':"
+            curl -sS -b jar.txt "http://127.0.0.1:${port}/api/v1/jobs/${job}" \
+              | python3 -c 'import json,sys; j=json.load(sys.stdin); print({k: j.get(k) for k in ("state","error","done","total","problems")})'
+            exit 1
+          fi
           search() { curl -fsS -b jar.txt -G "http://127.0.0.1:${port}/api/v1/libraries/acme/docs/search" --data-urlencode "q=$1" -d "ref=$2"; }
           search token v1.3.0 | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["results"] and {r["commit_sha"] for r in d["results"]} == {d["commit_sha"]}'
+          # retry_policy exists only from v1.4.0 (docs/guide/resilience.md in the fixture), never in v1.3.0
           search retry_policy v1.3.0 | python3 -c 'import json,sys; assert json.load(sys.stdin)["results"] == []'
           curl -fsS "http://127.0.0.1:${port}/" | grep -qi '<div id="root"'
           init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'

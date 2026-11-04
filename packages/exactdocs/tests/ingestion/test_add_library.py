@@ -17,6 +17,7 @@ from exactdocs.ingestion.models import (
     JobId,
     NewLibrary,
     PathSelection,
+    RefKind,
     RemoteRef,
     RemoteRefs,
     RepositoryHost,
@@ -119,11 +120,12 @@ async def test_the_default_branch_is_pinned_and_the_import_is_queued(
     assert library.tag_rules == ()
     job = await jobs.get(JobId(added.job_id))
     assert job is not None
-    assert (job.kind, job.library, job.version, job.commit_sha) == (
+    assert (job.kind, job.library, job.version, job.commit_sha, job.ref_kind) == (
         IMPORT_JOB,
         "/acme/orders",
         "main",
         HEAD,
+        RefKind.BRANCH,
     )
 
 

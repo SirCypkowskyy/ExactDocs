@@ -205,3 +205,23 @@ class NoArticlesError(ValidationError):
 
     def __init__(self) -> None:
         super().__init__("no .md or .mdx file of this commit matches the library's paths")
+
+
+class ImportTooLargeError(ValidationError):
+    """The selected articles add up to more text than one import takes."""
+
+    code = "import_too_large"
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            f"the selected articles are larger than {limit // 2**20} MiB: narrow the paths"
+        )
+
+
+class CheckoutUnreadableError(DomainError):
+    """A folder of the fetched files could not be listed, so the version would be incomplete."""
+
+    code = "checkout_unreadable"
+
+    def __init__(self) -> None:
+        super().__init__("a folder of the fetched files could not be read")

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     database_url: str | None = None
     # Article files above this many bytes are skipped by an import, unread.
     max_article_bytes: int = Field(default=2 * 2**20, ge=1)
+    # An import fails when its selected articles add up to more bytes than this (they are held in
+    # memory, several times over, until stored).
+    max_import_bytes: int = Field(default=256 * 2**20, ge=1)
     telemetry: Literal["off", "otlp"] = "off"
     metrics: bool = False
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,

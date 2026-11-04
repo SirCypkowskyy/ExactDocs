@@ -105,7 +105,6 @@ class Container:
         )
         handlers, recovery_hooks = import_job(
             gateway=gateway,
-            remote=remote,
             chunker=MarkdownChunker(),
             sources=CatalogLibrarySources(catalog.get_library),
             versions=CatalogVersionPublisher(
@@ -115,6 +114,7 @@ class Container:
                 retrieval.index_manifest, retrieval.get_chunk_sets, retrieval.discard_pending_chunks
             ),
             max_article_bytes=settings.max_article_bytes,
+            max_import_bytes=settings.max_import_bytes,
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),

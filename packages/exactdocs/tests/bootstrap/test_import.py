@@ -1,8 +1,10 @@
 """The import over the real catalog, retrieval and SQLite, on the fixture docs repository."""
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import func, select
@@ -31,9 +33,11 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     PARSER_VERSION,
     ArticleChunk,
+    ImportedVersion,
     Job,
     JobId,
     ParsedArticle,
+    RefKind,
 )
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs.retrieval.adapters.driven.sqlite import (
@@ -45,6 +49,7 @@ from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
 
 LIBRARY = "/fixture/docs-repo"
+LIBRARIES = (LIBRARY, "/fixture/other", "/fixture/third")
 UNREADABLE = {"docs/legacy/binary.md", "docs/legacy/latin1.md", "docs/legacy/undecodable.md"}
 
 
@@ -76,13 +81,26 @@ class FailingActivation(CatalogVersionPublisher):
         raise CrashError(manifest_id)
 
 
+class HangingIndex(RetrievalChunkIndex):
+    """The real retrieval, which then never returns: a job cancelled while it indexes."""
+
+    reached: ClassVar[asyncio.Event]
+
+    async def index(self, manifest_id: str, version: ImportedVersion) -> None:
+        await super().index(manifest_id, version)
+        self.reached.set()
+        await asyncio.Event().wait()
+
+
 @dataclass(slots=True)
 class World:
     container: Container
     docs_repo: DocsRepo
     chunker: CountingChunker
 
-    def importer(self, *, activation_fails: bool = False) -> ImportVersionUseCase:
+    def importer(
+        self, *, activation_fails: bool = False, hang_after_index: bool = False
+    ) -> ImportVersionUseCase:
         c = self.container
         git_cli = GitCli.locate()
         publisher = (FailingActivation if activation_fails else CatalogVersionPublisher)(
@@ -92,27 +110,35 @@ class World:
         )
         return ImportVersionUseCase(
             gateway=git_cli,
-            remote=git_cli,
             chunker=self.chunker,
             sources=CatalogLibrarySources(c.catalog.get_library),
             versions=publisher,
-            index=RetrievalChunkIndex(
+            index=(HangingIndex if hang_after_index else RetrievalChunkIndex)(
                 c.retrieval.index_manifest,
                 c.retrieval.get_chunk_sets,
                 c.retrieval.discard_pending_chunks,
             ),
         )
 
-    async def import_ref(self, ref: str, *, activation_fails: bool = False) -> None:
+    async def import_ref(
+        self,
+        ref: str,
+        *,
+        activation_fails: bool = False,
+        hang_after_index: bool = False,
+        library: str = LIBRARY,
+    ) -> None:
         job = Job.queued(
             job_id=JobId("j"),
             kind="import",  # ty: ignore[invalid-argument-type]
-            library=LIBRARY,
+            library=library,
             version=ref,
             commit_sha=git("rev-parse", f"{ref}^{{commit}}", cwd=self.docs_repo.path),
+            ref_kind=RefKind.TAG,
             now=SystemClock().now(),
         )
-        await self.importer(activation_fails=activation_fails)(job, Progress())
+        run = self.importer(activation_fails=activation_fails, hang_after_index=hang_after_index)
+        await run(job, Progress())
 
     async def count(self, table) -> int:
         async with self.container.engine.connect() as connection:
@@ -196,6 +222,61 @@ async def test_a_failure_right_before_activation_leaves_the_previous_version_and
     assert await world.count(indexed_manifests) == indexed  # the new chunk rows are gone
     assert await world.count(chunk_set_rows) == sets  # so are the chunk sets only they used
     assert await world.count(manifest_rows) == 1  # the pending manifest is gone from the catalog
+
+
+async def test_a_cancelled_import_leaves_the_previous_version_and_no_leftovers(
+    world: World,
+) -> None:
+    await world.import_ref("v1.3.0")
+    before = await world.paths("v1.3.0")
+    sets, indexed = await world.count(chunk_set_rows), await world.count(indexed_manifests)
+    HangingIndex.reached = asyncio.Event()
+    task = asyncio.create_task(world.import_ref("v1.4.0", hang_after_index=True))
+    await HangingIndex.reached.wait()  # the new chunks are in
+    assert await world.count(indexed_manifests) == indexed + 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.2)  # the shielded clean-up finishes on its own
+
+    assert await world.paths("v1.3.0") == before
+    assert await world.count(indexed_manifests) == indexed
+    assert await world.count(chunk_set_rows) == sets
+    assert await world.count(manifest_rows) == 1
+
+
+async def test_two_libraries_importing_the_same_blobs_at_once_both_succeed(
+    world: World, docs_repo: DocsRepo
+) -> None:
+    for name in LIBRARIES[1:]:
+        await world.container.catalog.create_library(
+            CreateLibraryCommand(
+                id=name,
+                title=name,
+                source_url=docs_repo.file_url,
+                host=HostKind.GIT,
+                default_branch="main",
+                include_paths=["docs/"],
+            )
+        )
+
+    await asyncio.gather(
+        *(
+            world.import_ref("v1.3.0", library=lib)
+            for lib in (LIBRARY, "/fixture/other", "/fixture/third")
+        )
+    )
+
+    paths = [await _paths(world, lib) for lib in LIBRARIES]
+    assert paths[0] == paths[1] == paths[2] != []
+
+
+async def _paths(world: World, library: str) -> list[str]:
+    listed = await world.container.catalog.list_articles(
+        ListArticlesQuery(library=library, ref="v1.3.0", limit=100)
+    )
+    return [a.path for a in listed.articles]
 
 
 async def test_a_restart_discards_what_an_interrupted_import_left_and_runs_it_again(

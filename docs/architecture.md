@@ -219,9 +219,20 @@ that last step, which is one transaction in the catalog.
   stored chunks are read back through retrieval's `GetChunkSets`; parsing is repeated, because
   the title and tags depend on the path as well as the bytes. Importing a commit again changes
   nothing a reader can see.
+- **Memory.** The selected text is held in memory until stored, and again as chunks, as DTOs in
+  the bridges and as SQL parameters: several times over, and the worker runs two jobs at once.
+  `EXACTDOCS_MAX_IMPORT_BYTES` (256 MiB) bounds the text an import takes; above it the import
+  fails with `import_too_large` instead of the process being killed. The CPU-heavy part of
+  storing and indexing (DTO validation, sorting, chunk-ID hashing) runs in a thread so the event
+  loop keeps serving requests. Progress is stored every 100 files or 250 ms, and at the end.
+- **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
+  bare commit, so the import never asks the remote again; a deleted tag does not break it.
+- **Replays.** A crash right after the activation commits re-queues the job; importing the same
+  commit again activates an equal manifest, so nothing a reader sees changes.
 - **Files.** Only regular files are read (a symlink could point out of the checkout), none over
-  `EXACTDOCS_MAX_ARTICLE_BYTES` (2 MiB), and only valid UTF-8. A skipped file is recorded as a
-  job problem and counted as processed. `done`/`total` count the selected files.
+  `EXACTDOCS_MAX_ARTICLE_BYTES` (2 MiB), and only valid UTF-8. A skipped file (also an
+  unreadable one or one with a file name that is not UTF-8) is recorded as a job problem (the
+  first 1000) and counted as processed. A folder that cannot be listed fails the import. `done`/`total` count the selected files.
 - **Bridges** (`bootstrap/bridges.py`): `CatalogLibrarySources`, `CatalogVersionPublisher`
   (`StoreManifest`, `ActivateManifest`, `DiscardPendingManifests`) and `RetrievalChunkIndex`
   (`IndexManifest`, `GetChunkSets`, `DiscardPendingChunks`).

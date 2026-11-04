@@ -1,9 +1,9 @@
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from exactdocs.retrieval.dtos import (
-    ChunkIn,
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
@@ -17,6 +17,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     SearchDocsResult,
     SearchResultOut,
+    SetChunkOut,
 )
 from exactdocs.retrieval.errors import ChunkNotFoundError, VersionNotIndexedError
 from exactdocs.retrieval.models import (
@@ -55,7 +56,7 @@ async def _confirmed_removals(
     now: datetime,
     pending_too: bool,
 ) -> list[str]:
-    """Pick the manifests safe to remove, asking the catalog twice.
+    """Import asyncioPick the manifests safe to remove, asking the catalog twice.
 
     Removable: pending in the catalog (when ``pending_too``), or unknown to it and older than
     the grace period. Everything else stays, including a status we cannot name. The second
@@ -140,6 +141,27 @@ class IndexManifestUseCase:
             library=library,
             indexed_at=self.clock.now(),
         )
+        chunk_sets, rows = await asyncio.to_thread(self._build, command, manifest)
+        stored = await self.chunks.add(manifest, chunk_sets, rows)
+        # Also when the manifest was already indexed: a crash between the two calls above and
+        # below leaves sets without index entries, and indexing only fills gaps.
+        for chunk_set in chunk_sets.values():
+            await self.search.index(chunk_set)
+        ids: dict[str, list[str]] = {a.path: [] for a in command.articles}
+        for row in rows:
+            ids[row.article_path].append(row.chunk_id)
+        return IndexedManifestOut(
+            manifest_id=command.manifest_id,
+            chunk_ids=ids,
+            chunk_sets_stored=stored or 0,
+            already_indexed=stored is None,
+        )
+
+    @staticmethod
+    def _build(
+        command: IndexManifestCommand, manifest: IndexedManifest
+    ) -> tuple[dict[ChunkSetKey, ChunkSet], list[ManifestChunk]]:
+        """Make the chunk sets and rows: CPU-bound (chunk IDs are hashed), so run in a thread."""
         chunk_sets: dict[ChunkSetKey, ChunkSet] = {}
         rows: list[ManifestChunk] = []
         for article in command.articles:
@@ -164,20 +186,7 @@ class IndexManifestUseCase:
             rows += article_chunk_rows(
                 manifest.version_id, article.path, chunk_set, tuple(article.tags)
             )
-        stored = await self.chunks.add(manifest, chunk_sets, rows)
-        # Also when the manifest was already indexed: a crash between the two calls above and
-        # below leaves sets without index entries, and indexing only fills gaps.
-        for chunk_set in chunk_sets.values():
-            await self.search.index(chunk_set)
-        ids: dict[str, list[str]] = {a.path: [] for a in command.articles}
-        for row in rows:
-            ids[row.article_path].append(row.chunk_id)
-        return IndexedManifestOut(
-            manifest_id=command.manifest_id,
-            chunk_ids=ids,
-            chunk_sets_stored=stored or 0,
-            already_indexed=stored is None,
-        )
+        return chunk_sets, rows
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,7 +224,7 @@ class GetChunkSetsUseCase:
         return ChunkSetsOut(
             chunks={
                 sha: [
-                    ChunkIn(
+                    SetChunkOut(
                         heading_path=list(c.heading_path),
                         occurrence_index=c.occurrence_index,
                         content=c.content,

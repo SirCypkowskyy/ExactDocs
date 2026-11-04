@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.ingestion.models import FileProblem, Job, JobId, JobKind, JobState
+from exactdocs.ingestion.models import FileProblem, Job, JobId, JobKind, JobState, RefKind
 
 # The ingestion's tables, prefixed `ingestion_`. The schema itself is created by an Alembic
 # revision in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -32,6 +32,7 @@ jobs = Table(
     Column("library", Text, nullable=False),
     Column("version", Text),
     Column("commit_sha", Text),
+    Column("ref_kind", Text),
     Column("state", Text, nullable=False),
     Column("done", Integer, nullable=False),
     Column("total", Integer, nullable=False),
@@ -140,6 +141,7 @@ def _values(job: Job) -> Mapping[str, Any]:
         "library": job.library,
         "version": job.version,
         "commit_sha": job.commit_sha,
+        "ref_kind": job.ref_kind,
         "state": job.state,
         "done": job.done,
         "total": job.total,
@@ -162,6 +164,7 @@ def _job(row: Row) -> Job:
         library=row.library,
         version=row.version,
         commit_sha=row.commit_sha,
+        ref_kind=None if row.ref_kind is None else RefKind(row.ref_kind),
         state=JobState(row.state),
         done=row.done,
         total=row.total,

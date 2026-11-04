@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -12,12 +12,14 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.errors import (
+    CheckoutUnreadableError,
     ImportNotPinnedError,
+    ImportTooLargeError,
     NoArticlesError,
     RepositoryUnreachableError,
-    UnknownRefError,
 )
 from exactdocs.ingestion.models import (
+    MAX_JOB_PROBLEMS,
     ArticleChunk,
     ImportedVersion,
     ImportSource,
@@ -27,8 +29,6 @@ from exactdocs.ingestion.models import (
     PathSelection,
     ProposedId,
     RefKind,
-    RemoteRef,
-    RemoteRefs,
     RepositoryHost,
     RepositoryUrl,
     TagRule,
@@ -36,7 +36,7 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import import_job
-from exactdocs.ingestion.use_cases import ImportVersionUseCase
+from exactdocs.ingestion.use_cases import ImportVersionUseCase, _Progress
 
 SHA = "a" * 40
 URL = RepositoryUrl(
@@ -55,6 +55,7 @@ class Checkout:
     error: Exception | None = None
     fetched: list[tuple[str, str, list[str]]] = field(default_factory=list)
     tmp: Path | None = None
+    after_write: Callable[[Path], None] = lambda _: None
 
     @asynccontextmanager
     async def fetch(
@@ -70,16 +71,8 @@ class Checkout:
             (self.tmp / name).write_bytes(data)
         for name, target in self.links.items():
             (self.tmp / name).symlink_to(target)
+        self.after_write(self.tmp)
         yield self.tmp
-
-
-class Remote:
-    def __init__(self, *refs: RemoteRef) -> None:
-        self.refs = refs
-
-    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
-        del repository, patterns
-        return RemoteRefs(default_branch="main", refs=self.refs)
 
 
 class Sources:
@@ -92,23 +85,24 @@ class Sources:
 
 
 @dataclass(slots=True)
-class Catalog:
-    """Plays both the catalog and retrieval and records every call, in order."""
+class Side:
+    """Plays the catalog (``VersionPublisher``) or retrieval (``ChunkIndex``), sharing one log."""
 
-    calls: list[str] = field(default_factory=list)
+    name: str
+    log: list[str]
     stored: list[ImportedVersion] = field(default_factory=list)
     known_sets: dict[str, tuple[ArticleChunk, ...]] = field(default_factory=dict)
+    known_calls: list[int] = field(default_factory=list)
     fail_at: str | None = None
     hang_at: str | None = None
     broken_discard: bool = False
     reached: asyncio.Event = field(default_factory=asyncio.Event)
-    discards: list[tuple[str | None, str]] = field(default_factory=list)
 
-    async def _step(self, name: str) -> None:
-        self.calls.append(name)
-        if self.fail_at == name:
-            raise RuntimeError(name)
-        if self.hang_at == name:
+    async def _step(self, step: str) -> None:
+        self.log.append(f"{self.name} {step}")
+        if self.fail_at == step:
+            raise RuntimeError(step)
+        if self.hang_at == step:
             self.reached.set()
             await asyncio.Event().wait()
 
@@ -124,6 +118,7 @@ class Catalog:
         self, config_hash: str, blob_shas: Sequence[str]
     ) -> Mapping[str, tuple[ArticleChunk, ...]]:
         del config_hash
+        self.known_calls.append(len(blob_shas))
         return {sha: self.known_sets[sha] for sha in blob_shas if sha in self.known_sets}
 
     async def index(self, manifest_id: str, version: ImportedVersion) -> None:
@@ -131,10 +126,9 @@ class Catalog:
         await self._step(f"index {manifest_id}")
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
-        self.calls.append("discard")
+        self.log.append(f"{self.name} discard {manifest_id} {library}")
         if self.broken_discard:
             raise OSError(manifest_id, library)
-        self.discards.append((manifest_id, library))
 
 
 class CountingChunker:
@@ -160,13 +154,16 @@ class Progress:
         self.problems.append((path, reason))
 
 
-def make_job(version: str | None = "v1", commit: str | None = SHA) -> Job:
+def make_job(
+    version: str | None = "v1", commit: str | None = SHA, kind: RefKind | None = RefKind.TAG
+) -> Job:
     return Job.queued(
         job_id=JobId("j1"),
         kind="import",  # ty: ignore[invalid-argument-type]
         library="/a/b",
         version=version,
         commit_sha=commit,
+        ref_kind=kind,
         now=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
@@ -175,9 +172,14 @@ def make_job(version: str | None = "v1", commit: str | None = SHA) -> Job:
 class World:
     run: ImportVersionUseCase
     gateway: Checkout
-    catalog: Catalog
+    catalog: Side
+    chunks: Side
     chunker: CountingChunker
     progress: Progress
+
+    @property
+    def log(self) -> list[str]:
+        return self.catalog.log
 
 
 @pytest.fixture
@@ -194,24 +196,26 @@ def build_world(
     selection: PathSelection | None = None,
     rules: tuple[TagRule, ...] = (),
     max_bytes: int = 2**20,
+    max_import_bytes: int = 2**30,
     links: Mapping[str, str] | None = None,
+    after_write: Callable[[Path], None] = lambda _: None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    gateway = Checkout(files, links or {}, tmp=checkout)
-    catalog, chunker = Catalog(), CountingChunker()
-    remote = Remote(RemoteRef(name="refs/tags/v1", sha=SHA))
+    gateway = Checkout(files, links or {}, tmp=checkout, after_write=after_write)
+    log: list[str] = []
+    catalog, chunks, chunker = Side("catalog", log), Side("chunks", log), CountingChunker()
     handlers, _ = import_job(
         gateway=gateway,
-        remote=remote,
         chunker=chunker,
         sources=Sources(selection or PathSelection.of(["docs/"]), rules),
         versions=catalog,
-        index=catalog,
+        index=chunks,
         max_article_bytes=max_bytes,
+        max_import_bytes=max_import_bytes,
     )
     (run,) = handlers.values()
-    return World(run, gateway, catalog, chunker, Progress())  # ty: ignore[invalid-argument-type]
+    return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
 
 
 async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_files(
@@ -219,7 +223,7 @@ async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_fi
 ) -> None:
     await world.run(make_job(), world.progress)
 
-    assert world.catalog.calls == ["store", "index m1", "activate m1"]
+    assert world.log == ["catalog store", "chunks index m1", "catalog activate m1"]
     (version,) = world.catalog.stored
     assert (version.library, version.ref, version.kind, version.commit_sha) == (
         "/a/b",
@@ -252,12 +256,21 @@ async def test_rule_tags_come_before_front_matter_tags(tmp_path: Path) -> None:
 async def test_a_blob_that_was_chunked_before_is_not_chunked_again(tmp_path: Path) -> None:
     world = build_world(tmp_path, {"docs/a.md": AUTH.encode(), "docs/b.md": INSTALL.encode()})
     known = tuple(MarkdownChunker().chunk(_parsed(AUTH)))
-    world.catalog.known_sets[git_blob_sha(AUTH.encode())] = known
+    world.chunks.known_sets[git_blob_sha(AUTH.encode())] = known
 
     await world.run(make_job(), world.progress)
 
     assert world.chunker.chunked == ["docs/b.md"]  # only the blob nobody chunked
     assert world.catalog.stored[0].articles[0].chunks == known
+
+
+async def test_known_chunk_sets_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
+    files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.chunks.known_calls == [500, 500, 100]
 
 
 async def test_two_files_with_the_same_bytes_are_chunked_once(tmp_path: Path) -> None:
@@ -279,43 +292,50 @@ async def test_a_fetch_that_fails_stores_nothing(world: World) -> None:
     with pytest.raises(RepositoryUnreachableError):
         await world.run(make_job(), world.progress)
 
-    assert world.catalog.calls == []
+    assert world.log == []
 
 
 @pytest.mark.parametrize("failing", ["store", "index m1", "activate m1"])
-async def test_a_failure_before_activation_discards_the_pending_data(
+async def test_a_failure_before_activation_discards_chunks_then_manifest(
     world: World, failing: str
 ) -> None:
-    world.catalog.fail_at = failing
+    (world.chunks if failing.startswith("index") else world.catalog).fail_at = failing
 
     with pytest.raises(RuntimeError):
         await world.run(make_job(), world.progress)
 
-    stored = failing != "store"
-    assert world.catalog.discards == [("m1" if stored else None, "/a/b")] * 2
-    assert ("activate m1" in world.catalog.calls) == (failing == "activate m1")
+    pending = "None" if failing == "store" else "m1"
+    discards = [e for e in world.log if " discard " in e]
+    assert discards == [f"chunks discard {pending} /a/b", f"catalog discard {pending} /a/b"]
+    assert ("catalog activate m1" in world.log) == (failing == "activate m1")
 
 
 @pytest.mark.parametrize("hanging", ["store", "index m1", "activate m1"])
-async def test_a_cancelled_import_discards_the_pending_data(world: World, hanging: str) -> None:
-    world.catalog.hang_at = hanging
+async def test_a_cancelled_import_discards_chunks_then_manifest(world: World, hanging: str) -> None:
+    side = world.chunks if hanging.startswith("index") else world.catalog
+    side.hang_at = hanging
     task = asyncio.create_task(world.run(make_job(), world.progress))
-    await world.catalog.reached.wait()
+    await side.reached.wait()
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    for _ in range(5):  # the clean-up outlives the cancelled task
+        await asyncio.sleep(0)
 
-    # once for the chunks and once for the manifest (the fake plays both)
-    assert world.catalog.discards == [("m1" if hanging != "store" else None, "/a/b")] * 2
+    pending = "None" if hanging == "store" else "m1"
+    discards = [e for e in world.log if " discard " in e]
+    assert discards == [f"chunks discard {pending} /a/b", f"catalog discard {pending} /a/b"]
 
 
-async def test_a_failing_discard_does_not_hide_the_failure(world: World) -> None:
-    world.catalog.fail_at = "index m1"
+async def test_a_failing_chunk_discard_still_discards_the_manifest(world: World) -> None:
+    world.catalog.fail_at = "activate m1"
+    world.chunks.broken_discard = True
 
-    world.catalog.broken_discard = True
-    with pytest.raises(RuntimeError, match="index m1"):
+    with pytest.raises(RuntimeError, match="activate m1"):  # the cause, not the clean-up error
         await world.run(make_job(), world.progress)
+
+    assert "catalog discard m1 /a/b" in world.log
 
 
 async def test_a_selection_without_articles_publishes_nothing(tmp_path: Path) -> None:
@@ -324,7 +344,7 @@ async def test_a_selection_without_articles_publishes_nothing(tmp_path: Path) ->
     with pytest.raises(NoArticlesError):
         await world.run(make_job(), world.progress)
 
-    assert world.catalog.calls == []
+    assert world.log == []
 
 
 async def test_files_that_cannot_be_read_are_skipped_with_a_reason(tmp_path: Path) -> None:
@@ -352,26 +372,91 @@ async def test_files_that_cannot_be_read_are_skipped_with_a_reason(tmp_path: Pat
     assert world.progress.reports[-1] == (4, 4)  # skipped files count as processed
 
 
-async def test_a_file_over_the_cap_is_not_opened(tmp_path: Path, monkeypatch) -> None:
-    world = build_world(tmp_path, {"docs/ok.md": INSTALL.encode(), "docs/big.md": b"x" * 100})
-    world.run = ImportVersionUseCase(  # same ports, small cap
-        world.run.gateway,
-        world.run.remote,
-        world.run.chunker,
-        world.run.sources,
-        world.run.versions,
-        world.run.index,
-        50,
-    )
-    opened: list[str] = []
-    real_open = os.open
-    monkeypatch.setattr(
-        os, "open", lambda path, *a, **k: (opened.append(str(path)), real_open(path, *a, **k))[1]
+async def test_a_file_name_that_is_not_utf8_is_skipped_with_a_printable_path(
+    tmp_path: Path,
+) -> None:
+    odd = os.fsdecode(b"docs/caf\xe9.md")
+    world = build_world(tmp_path, {odd: INSTALL.encode(), "docs/ok.md": INSTALL.encode()})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/ok.md"]
+    ((path, reason),) = world.progress.problems
+    assert reason == "file name is not valid UTF-8"
+    assert path.isprintable()
+    path.encode()  # would raise on a lone surrogate
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+async def test_a_file_that_cannot_be_opened_is_skipped_not_fatal(tmp_path: Path) -> None:
+    def lock(folder: Path) -> None:
+        (folder / "docs/locked.md").chmod(0)
+
+    world = build_world(
+        tmp_path,
+        {"docs/ok.md": INSTALL.encode(), "docs/locked.md": INSTALL.encode()},
+        after_write=lock,
     )
 
     await world.run(make_job(), world.progress)
 
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/ok.md"]
+    assert world.progress.problems == [("docs/locked.md", "unreadable")]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+async def test_a_folder_that_cannot_be_listed_fails_the_import_before_anything_is_stored(
+    tmp_path: Path,
+) -> None:
+    def lock(folder: Path) -> None:
+        (folder / "docs/secret").chmod(0)
+
+    world = build_world(
+        tmp_path,
+        {"docs/ok.md": INSTALL.encode(), "docs/secret/a.md": INSTALL.encode()},
+        after_write=lock,
+    )
+
+    try:
+        with pytest.raises(CheckoutUnreadableError):
+            await world.run(make_job(), world.progress)
+    finally:
+        (tmp_path / "checkout/docs/secret").chmod(0o700)
+
+    assert world.log == []
+
+
+async def test_a_file_over_the_cap_is_not_opened(tmp_path: Path, monkeypatch) -> None:
+    world = build_world(
+        tmp_path, {"docs/ok.md": INSTALL.encode(), "docs/big.md": b"x" * 100}, max_bytes=50
+    )
+    opened: list[str] = []
+    real_open = os.open
+
+    def recording_open(path, *args, **kwargs):
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", recording_open)
+
+    await world.run(make_job(), world.progress)
+
     assert [Path(p).name for p in opened] == ["ok.md"]
+
+
+async def test_an_import_over_the_byte_budget_fails_before_anything_is_stored(
+    tmp_path: Path,
+) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": b"a" * 60, "docs/b.md": b"b" * 60},
+        max_import_bytes=100,
+    )
+
+    with pytest.raises(ImportTooLargeError):
+        await world.run(make_job(), world.progress)
+
+    assert world.log == []
 
 
 async def test_a_job_without_a_pinned_commit_is_refused(world: World) -> None:
@@ -381,15 +466,49 @@ async def test_a_job_without_a_pinned_commit_is_refused(world: World) -> None:
         await world.run(make_job(version=None), world.progress)
 
 
-async def test_a_ref_the_remote_no_longer_has_is_refused(world: World) -> None:
-    with pytest.raises(UnknownRefError):
-        await world.run(make_job(version="v9"), world.progress)
+async def test_the_kind_comes_from_the_job_and_a_branch_is_fetched_by_its_ref(
+    world: World,
+) -> None:
+    await world.run(make_job(version="main", kind=RefKind.BRANCH), world.progress)
 
-    assert world.gateway.fetched == []
+    assert world.catalog.stored[0].kind is RefKind.BRANCH
+    assert world.gateway.fetched == [(SHA, "", ["refs/heads/main"])]
 
 
-async def test_a_pinned_commit_is_fetched_without_asking_the_remote(world: World) -> None:
-    await world.run(make_job(version=SHA), world.progress)
+async def test_a_pinned_commit_is_fetched_by_sha_alone(world: World) -> None:
+    await world.run(make_job(version=SHA, kind=RefKind.COMMIT), world.progress)
 
     assert world.catalog.stored[0].kind is RefKind.COMMIT
     assert world.gateway.fetched == [(SHA, "", [])]
+
+
+class CountingJobs:
+    def __init__(self) -> None:
+        self.saves = 0
+
+    async def save(self, job: Job) -> None:
+        del job
+        self.saves += 1
+
+
+async def test_progress_is_stored_now_and_then_not_for_every_file() -> None:
+    jobs = CountingJobs()
+    progress = _Progress(jobs, make_job())  # ty: ignore[invalid-argument-type]
+
+    await progress.report(done=0, total=1000)
+    for done in range(1, 1001):
+        await progress.report(done=done, total=1000)
+        await progress.problem(f"docs/{done}.md", "skipped")
+
+    assert jobs.saves < 30
+    assert (progress.job.done, progress.job.total) == (1000, 1000)
+    assert len(progress.job.problems) == MAX_JOB_PROBLEMS  # the cap holds for exactly 1000
+
+
+def test_a_job_lists_a_bounded_number_of_skipped_files() -> None:
+    job = make_job()
+    for i in range(MAX_JOB_PROBLEMS + 50):
+        job = job.with_problem(f"docs/{i}.md", "skipped")
+
+    assert len(job.problems) == MAX_JOB_PROBLEMS + 1
+    assert not job.problems[-1].path

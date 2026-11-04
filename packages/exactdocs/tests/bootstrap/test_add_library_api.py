@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -13,18 +14,11 @@ from fixture_repo import DocsRepo, git
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
 
-@pytest.fixture(params=[False], ids=["no jobs"])
-async def client(
-    demo_catalog: dict[str, str], request: pytest.FixtureRequest
-) -> AsyncIterator[httpx.AsyncClient]:
-    """The app on the real system git; its worker runs only when a test asks (``jobs``).
-
-    Yields:
-        A client signed in as the admin.
-    """
-    container = Container.build(Settings())
+@asynccontextmanager
+async def _client(demo_catalog: dict[str, str], *, jobs: bool) -> AsyncGenerator[httpx.AsyncClient]:
+    container = Container.build(Settings())  # the real system git
     async with (
-        container.running(jobs=request.param),
+        container.running(jobs=jobs),
         httpx.AsyncClient(
             transport=httpx.ASGITransport(app=create_app(container)),
             base_url="http://localhost",
@@ -32,6 +26,28 @@ async def client(
         ) as client,
     ):
         yield client
+
+
+@pytest.fixture
+async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClient]:
+    """The app without its job worker: queued imports stay queued.
+
+    Yields:
+        A client signed in as the admin.
+    """
+    async with _client(demo_catalog, jobs=False) as found:
+        yield found
+
+
+@pytest.fixture
+async def client_with_jobs(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClient]:
+    """The app with its job worker, so queued imports run.
+
+    Yields:
+        A client signed in as the admin.
+    """
+    async with _client(demo_catalog, jobs=True) as found:
+        yield found
 
 
 async def test_an_anonymous_caller_is_refused(client: httpx.AsyncClient) -> None:
@@ -179,26 +195,25 @@ async def test_refs_of_an_unreachable_server(client: httpx.AsyncClient) -> None:
     assert (response.status_code, response.json()["error"]) == (422, "repository_unreachable")
 
 
-@pytest.mark.parametrize("client", [True], indirect=True, ids=["jobs"])
 async def test_the_queued_import_publishes_the_version(
-    client: httpx.AsyncClient, docs_repo: DocsRepo
+    client_with_jobs: httpx.AsyncClient, docs_repo: DocsRepo
 ) -> None:
     added = (
-        await client.post(
+        await client_with_jobs.post(
             "/api/v1/libraries",
             json={"url": docs_repo.file_url, "ref": "v1.3.0", "include_paths": ["docs/guide/"]},
         )
     ).json()
 
     for _ in range(1000):
-        job = (await client.get(f"/api/v1/jobs/{added['job_id']}")).json()
+        job = (await client_with_jobs.get(f"/api/v1/jobs/{added['job_id']}")).json()
         if job["state"] in {"failed", "succeeded"}:
             break
         await asyncio.sleep(0.01)
 
     assert job["state"] == "succeeded", job
     assert (job["done"], job["total"]) == (4, 4)
-    library = (await client.get("/api/v1/libraries/fixture/docs-repo")).json()
+    library = (await client_with_jobs.get("/api/v1/libraries/fixture/docs-repo")).json()
     assert [(v["ref"], v["commit_sha"]) for v in library["versions"]] == [
         ("v1.3.0", added["commit_sha"])
     ]

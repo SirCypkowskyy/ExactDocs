@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.ingestion.models import DEFAULT_MAX_ARTICLE_BYTES, IMPORT_JOB, JobKind
+from exactdocs.ingestion.models import (
+    DEFAULT_MAX_ARTICLE_BYTES,
+    DEFAULT_MAX_IMPORT_BYTES,
+    IMPORT_JOB,
+    JobKind,
+)
 from exactdocs.ingestion.ports.driven import (
     Chunker,
     ChunkIndex,
@@ -98,15 +103,15 @@ class IngestionModule:
 def import_job(
     *,
     gateway: GitGateway,
-    remote: GitRemote,
     chunker: Chunker,
     sources: LibrarySources,
     versions: VersionPublisher,
     index: ChunkIndex,
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES,
+    max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions."""
     importer = ImportVersionUseCase(
-        gateway, remote, chunker, sources, versions, index, max_article_bytes
+        gateway, chunker, sources, versions, index, max_article_bytes, max_import_bytes
     )
     return {IMPORT_JOB: importer}, {IMPORT_JOB: DiscardInterruptedImportUseCase(versions, index)}

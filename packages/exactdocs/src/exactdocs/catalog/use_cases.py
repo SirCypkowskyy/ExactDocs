@@ -1,5 +1,6 @@
 """Catalog use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
+import asyncio
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid4
@@ -165,6 +166,14 @@ class StoreManifestUseCase:
         library_id = LibraryId(command.library)
         if await self.repository.get(library_id) is None:
             raise LibraryNotFoundError(command.library)
+        manifest, contents = await asyncio.to_thread(self._build, command, library_id)
+        await self.manifests.add(manifest, contents)
+        return StoredManifest.from_model(manifest)
+
+    def _build(
+        self, command: StoreManifestCommand, library_id: LibraryId
+    ) -> tuple[Manifest, dict[ContentKey, str]]:
+        """Build the manifest and its texts: CPU-bound for a big version, so run in a thread."""
         manifest = Manifest(
             id=ManifestId(uuid4().hex),
             library=library_id,
@@ -194,8 +203,7 @@ class StoreManifestUseCase:
         for a in command.articles:
             if contents.setdefault((a.blob_sha, a.content_version), a.content) != a.content:
                 raise ConflictingContentError(a.blob_sha)
-        await self.manifests.add(manifest, contents)
-        return StoredManifest.from_model(manifest)
+        return manifest, contents
 
 
 @dataclass(frozen=True, slots=True)

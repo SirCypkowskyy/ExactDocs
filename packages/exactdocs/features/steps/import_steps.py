@@ -18,6 +18,7 @@ from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.dtos import EnqueueJobCommand
 from exactdocs.ingestion.errors import RepositoryUnreachableError
+from exactdocs.ingestion.models import RefKind
 from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 
 LIBRARY = "/fixture/docs-repo"
@@ -82,7 +83,13 @@ def _import(context: Context, ref: str, **settings: object) -> None:
         added = context.container.ingestion.enqueue_job
         job = context.client.portal.call(
             added,
-            EnqueueJobCommand(kind="import", library=LIBRARY, version=ref, commit_sha=commit),
+            EnqueueJobCommand(
+                kind="import",
+                library=LIBRARY,
+                version=ref,
+                commit_sha=commit,
+                ref_kind=RefKind.TAG,
+            ),
         )
         job_id = job.id
     else:
@@ -160,7 +167,13 @@ def step_fail(context: Context, ref: str) -> None:
     commit = context.moved_to
     job = context.client.portal.call(
         context.container.ingestion.enqueue_job,
-        EnqueueJobCommand(kind="import", library=LIBRARY, version=ref, commit_sha=commit),
+        EnqueueJobCommand(
+            kind="import",
+            library=LIBRARY,
+            version=ref,
+            commit_sha=commit,
+            ref_kind=RefKind.BRANCH,
+        ),
     )
     _wait(context, job.id)
     assert context.job["state"] == "failed", context.job

@@ -4,6 +4,7 @@ This is how domains talk to each other without importing each other: the consume
 port in its own language, and a bridge here translates to the provider's public use case.
 """
 
+import asyncio
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -215,26 +216,8 @@ class CatalogVersionPublisher:
 
     async def store(self, version: ImportedVersion) -> str:
         """Store the articles as a pending manifest."""
-        stored = await self.store_manifest(
-            StoreManifestCommand(
-                library=version.library,
-                ref=version.ref,
-                kind=CatalogRefKind(version.kind.value),
-                commit_sha=version.commit_sha,
-                articles=[
-                    ArticleIn(
-                        path=a.path,
-                        blob_sha=a.blob_sha,
-                        content_version=PARSER_VERSION,
-                        title=a.title,
-                        tags=list(a.tags),
-                        front_matter=a.front_matter,
-                        content=a.content,
-                    )
-                    for a in version.articles
-                ],
-            )
-        )
+        command = await asyncio.to_thread(_store_command, version)
+        stored = await self.store_manifest(command)
         return stored.manifest_id
 
     async def activate(self, manifest_id: str) -> None:
@@ -283,33 +266,8 @@ class RetrievalChunkIndex:
 
     async def index(self, manifest_id: str, version: ImportedVersion) -> None:
         """Store and index the chunks of the pending manifest."""
-        await self.index_manifest(
-            IndexManifestCommand(
-                manifest_id=manifest_id,
-                library=version.library,
-                ref=version.ref,
-                config_hash=version.config_hash,
-                articles=[
-                    ArticleChunksIn(
-                        path=a.path,
-                        blob_sha=a.blob_sha,
-                        tags=list(a.tags),
-                        chunks=[
-                            ChunkIn(
-                                heading_path=list(c.heading_path),
-                                occurrence_index=c.occurrence_index,
-                                content=c.content,
-                                content_hash=c.content_hash,
-                                anchor=c.anchor,
-                                code_languages=list(c.code_languages),
-                            )
-                            for c in a.chunks
-                        ],
-                    )
-                    for a in version.articles
-                ],
-            )
-        )
+        command = await asyncio.to_thread(_index_command, manifest_id, version)
+        await self.index_manifest(command)
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
         """Delete one pending manifest's chunks, or the library's pending chunks."""
@@ -318,3 +276,54 @@ class RetrievalChunkIndex:
                 manifest_id=manifest_id, library=None if manifest_id else library
             )
         )
+
+
+def _store_command(version: ImportedVersion) -> StoreManifestCommand:
+    """Build the catalog's command (validates every article: off the event loop)."""
+    return StoreManifestCommand(
+        library=version.library,
+        ref=version.ref,
+        kind=CatalogRefKind(version.kind.value),
+        commit_sha=version.commit_sha,
+        articles=[
+            ArticleIn(
+                path=a.path,
+                blob_sha=a.blob_sha,
+                content_version=PARSER_VERSION,
+                title=a.title,
+                tags=list(a.tags),
+                front_matter=a.front_matter,
+                content=a.content,
+            )
+            for a in version.articles
+        ],
+    )
+
+
+def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestCommand:
+    """Build retrieval's command (validates every chunk: off the event loop)."""
+    return IndexManifestCommand(
+        manifest_id=manifest_id,
+        library=version.library,
+        ref=version.ref,
+        config_hash=version.config_hash,
+        articles=[
+            ArticleChunksIn(
+                path=a.path,
+                blob_sha=a.blob_sha,
+                tags=list(a.tags),
+                chunks=[
+                    ChunkIn(
+                        heading_path=list(c.heading_path),
+                        occurrence_index=c.occurrence_index,
+                        content=c.content,
+                        content_hash=c.content_hash,
+                        anchor=c.anchor,
+                        code_languages=list(c.code_languages),
+                    )
+                    for c in a.chunks
+                ],
+            )
+            for a in version.articles
+        ],
+    )

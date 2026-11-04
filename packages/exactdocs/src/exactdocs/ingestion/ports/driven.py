@@ -58,7 +58,7 @@ class JobRepository(Protocol):
 
 
 class JobProgress(Protocol):
-    """What a running job reports to; every call is stored at once."""
+    """What a running job reports to; stored soon (not at every call), and at the job's end."""
 
     async def report(self, *, done: int, total: int) -> None:
         """``done`` of ``total`` files processed."""
@@ -115,6 +115,8 @@ class GitGateway(Protocol):
         history: nothing older than the commit is fetched. ``refs`` (full names such as
         ``refs/tags/v1``) are tried only when the server refuses a request for a bare SHA.
 
+        The files must be checked out verbatim (no eol, filter or encoding conversion): the import
+        derives each file's git blob SHA from the bytes it reads.
         Never prompts, runs hooks or follows submodules. Raises ``RepositoryUnreachableError``
         (including a timeout), ``RepositoryAuthRequiredError``, ``NotAGitRepositoryError``,
         ``CommitUnavailableError`` or ``RepositoryTooLargeError``.
