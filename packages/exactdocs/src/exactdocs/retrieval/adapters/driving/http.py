@@ -22,6 +22,8 @@ from exactdocs.retrieval.dtos import (
     QueryDocsResult,
     ReadChunkQuery,
     ResolveLibraryIdQuery,
+    SearchAllQuery,
+    SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
 )
@@ -30,6 +32,7 @@ from exactdocs.retrieval.ports.driving import (
     QueryDocs,
     ReadChunk,
     ResolveLibraryId,
+    SearchAllLibraries,
     SearchDocs,
 )
 from exactdocs_kernel import NOTICE
@@ -141,6 +144,7 @@ class C7ContextResponse(_Camel):
 def build_router(
     *,
     search_docs: SearchDocs,
+    search_all_libraries: SearchAllLibraries,
     read_chunk: ReadChunk,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
@@ -177,6 +181,32 @@ def build_router(
         except ValidationError as error:  # what the Query() bounds above cannot see
             raise RequestValidationError(error.errors()) from error
         return await search_docs(query)
+
+    @router.get("/search")
+    async def search_all(
+        q: Annotated[
+            str,
+            Query(min_length=1, max_length=MAX_QUERY, description="Identifier, error or question."),
+        ],
+        library: Annotated[
+            str | None,
+            Query(max_length=MAX_NAME, description="`/owner/repo`: narrow the results to it."),
+        ] = None,
+        tags: Annotated[
+            list[Annotated[str, Query(max_length=MAX_TAG)]] | None,
+            Query(max_length=MAX_TAGS, description="Repeat or comma-separate."),
+        ] = None,
+        tags_match: TagMatch = TagMatch.ANY,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ) -> SearchAllResult:
+        """Search the default version of every library; `libraries` counts matches per library."""
+        try:
+            query = SearchAllQuery(
+                query=q, library=library, tags=tags or [], tags_match=tags_match, limit=limit
+            )
+        except ValidationError as error:
+            raise RequestValidationError(error.errors()) from error
+        return await search_all_libraries(query)
 
     @router.get("/chunks/{chunk_id}")
     async def get_chunk(chunk_id: Annotated[str, Path(max_length=MAX_NAME)]) -> ChunkOut:

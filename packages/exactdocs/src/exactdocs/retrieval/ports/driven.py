@@ -12,6 +12,7 @@ from exactdocs.retrieval.models import (
     DocTarget,
     IndexedManifest,
     ManifestChunk,
+    ManifestHit,
     ManifestStatus,
     Removed,
     SearchableVersion,
@@ -98,6 +99,15 @@ class ChunkRepository(Protocol):
         """Return the chunks of the manifest that exist, by ID, in one query."""
         ...
 
+    async def get_across(
+        self, wanted: Mapping[str, Collection[ChunkId]]
+    ) -> Mapping[tuple[str, ChunkId], StoredChunk]:
+        """Return the chunks that exist, by (manifest ID, chunk ID), for several manifests at once.
+
+        One query, whatever the number of manifests; missing pairs are left out.
+        """
+        ...
+
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks; zeros for an unknown manifest."""
         ...
@@ -142,4 +152,21 @@ class SearchIndex(Protocol):
         before ranking: the best ``limit`` of the chunks that pass, not the passing part of the
         best ``limit``. An unknown manifest or a query without words gives no hits.
         """
+        ...
+
+    async def search_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
+    ) -> Sequence[ManifestHit]:
+        """Return at most ``limit`` chunks of any of these manifests, best first, in one search.
+
+        Same rules as ``search``. Scores are comparable across manifests: the statistics are
+        global over the stored chunks, never per manifest. A chunk set shared by two manifests
+        is a hit for each (they are different library versions), with the same score.
+        """
+        ...
+
+    async def count_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
+    ) -> Mapping[str, int]:
+        """Return how many chunks of each manifest match, uncapped; zero counts are left out."""
         ...

@@ -14,6 +14,7 @@ from exactdocs.retrieval.ports.driving import (
     ReadChunk,
     RemoveChunks,
     ResolveLibraryId,
+    SearchAllLibraries,
     SearchDocs,
 )
 
@@ -29,6 +30,7 @@ __all__ = [
     "ReadChunk",
     "RemoveChunks",
     "ResolveLibraryId",
+    "SearchAllLibraries",
     "SearchDocs",
     "SearchIndex",
     "SearchableVersions",

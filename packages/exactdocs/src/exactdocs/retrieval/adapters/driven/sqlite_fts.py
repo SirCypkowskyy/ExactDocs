@@ -1,13 +1,15 @@
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
+    ManifestHit,
     SearchHit,
     TagFilter,
     TagMatch,
@@ -45,7 +47,7 @@ _INSERT = text(
 # Rank first and cut to LIMIT, then build snippets for the survivors only.
 _SEARCH = """
     WITH ranked AS (
-        SELECT c.id AS id, mc.chunk_id AS chunk_id,
+        SELECT c.id AS id, mc.manifest_id AS manifest_id, mc.chunk_id AS chunk_id,
                -bm25(retrieval_search, :heading_weight, :path_weight, :text_weight,
                      :identifiers_weight) AS score
         FROM retrieval_search
@@ -53,11 +55,12 @@ _SEARCH = """
         JOIN retrieval_manifest_chunks mc
           ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
          AND mc.position = c.position
-        WHERE retrieval_search MATCH :match AND mc.manifest_id = :manifest {tags}
+        WHERE retrieval_search MATCH :match AND mc.manifest_id IN :manifests {tags}
         ORDER BY score DESC, mc.chunk_id
         LIMIT :limit
     )
-    SELECT r.chunk_id, r.score, snippet(retrieval_search, 2, '', '', '', 24) AS snippet
+    SELECT r.manifest_id, r.chunk_id, r.score,
+           snippet(retrieval_search, 2, '', '', '', 24) AS snippet
     FROM ranked r
     JOIN retrieval_search ON retrieval_search.rowid = r.id
     WHERE retrieval_search MATCH :match
@@ -75,7 +78,26 @@ _TAG_CONDITIONS = {
         " WHERE wanted.value NOT IN (SELECT value FROM json_each(mc.tags)))"
     ),
 }
-_SEARCHES = {match: text(_SEARCH.format(tags=sql)) for match, sql in _TAG_CONDITIONS.items()}
+_COUNT = """
+    SELECT mc.manifest_id AS manifest_id, count(*) AS matches
+    FROM retrieval_search
+    JOIN retrieval_chunks c ON c.id = retrieval_search.rowid
+    JOIN retrieval_manifest_chunks mc
+      ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
+     AND mc.position = c.position
+    WHERE retrieval_search MATCH :match AND mc.manifest_id IN :manifests {tags}
+    GROUP BY mc.manifest_id
+"""
+
+
+def _statements(template: str) -> dict[object, Any]:
+    return {
+        match: text(template.format(tags=sql)).bindparams(bindparam("manifests", expanding=True))
+        for match, sql in _TAG_CONDITIONS.items()
+    }
+
+
+_SEARCHES, _COUNTS = _statements(_SEARCH), _statements(_COUNT)
 
 
 def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, object]:
@@ -134,30 +156,59 @@ class SqliteSearchIndex:
         self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[SearchHit]:
         """Return the manifest's best matches; the manifest's rows decide what is visible."""
+        found = await self.search_many([manifest_id], query, tag_filter, limit)
+        return [f.hit for f in found]
+
+    async def search_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
+    ) -> Sequence[ManifestHit]:
+        """Return the best matches of any of the manifests: one query, one global BM25 scale."""
         match = _match(query)
-        if match is None:
+        if match is None or not manifest_ids:
             return []
-        params: dict[str, object] = {
+        params = self._params(match, manifest_ids, tag_filter) | {
             "heading_weight": HEADING_WEIGHT,
             "path_weight": PATH_WEIGHT,
             "text_weight": TEXT_WEIGHT,
             "identifiers_weight": IDENTIFIERS_WEIGHT,
-            "match": match,
-            "manifest": manifest_id,
             "limit": limit,
         }
-        if tag_filter.tags:
-            params["tags"] = json.dumps(list(tag_filter.tags))
         statement = _SEARCHES[tag_filter.match if tag_filter.tags else None]
         async with self.engine.connect() as connection:
             found = (await connection.execute(statement, params)).all()
         terms = search_terms(query)
         return [
-            SearchHit(
-                chunk_id=ChunkId(row.chunk_id),
-                score=row.score,
-                snippet=row.snippet,
-                highlights=highlights(row.snippet, terms),
+            ManifestHit(
+                manifest_id=row.manifest_id,
+                hit=SearchHit(
+                    chunk_id=ChunkId(row.chunk_id),
+                    score=row.score,
+                    snippet=row.snippet,
+                    highlights=highlights(row.snippet, terms),
+                ),
             )
             for row in found
         ]
+
+    async def count_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
+    ) -> Mapping[str, int]:
+        """Return the number of matching chunks per manifest, in one query."""
+        match = _match(query)
+        if match is None or not manifest_ids:
+            return {}
+        statement = _COUNTS[tag_filter.match if tag_filter.tags else None]
+        async with self.engine.connect() as connection:
+            found = await connection.execute(
+                statement, self._params(match, manifest_ids, tag_filter)
+            )
+            return {row.manifest_id: row.matches for row in found}
+
+    @staticmethod
+    def _params(
+        match: str, manifest_ids: Sequence[str], tag_filter: TagFilter
+    ) -> dict[str, object]:
+        params: dict[str, object] = {"match": match, "manifests": list(manifest_ids)}
+        if tag_filter.tags:
+            params["tags"] = json.dumps(list(tag_filter.tags))
+        return params

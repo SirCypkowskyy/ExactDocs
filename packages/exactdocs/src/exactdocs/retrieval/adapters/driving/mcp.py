@@ -18,12 +18,20 @@ from exactdocs.retrieval.dtos import (
     QueryDocsResult,
     ReadChunkQuery,
     ResolveLibraryIdQuery,
+    SearchAllQuery,
+    SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
     Tag,
 )
 from exactdocs.retrieval.models import POINTER_TEXT, TagMatch
-from exactdocs.retrieval.ports.driving import QueryDocs, ReadChunk, ResolveLibraryId, SearchDocs
+from exactdocs.retrieval.ports.driving import (
+    QueryDocs,
+    ReadChunk,
+    ResolveLibraryId,
+    SearchAllLibraries,
+    SearchDocs,
+)
 from exactdocs_kernel import LIBRARY_ID_PATTERN, NOTICE, TOOL_HINTS
 
 
@@ -93,6 +101,7 @@ def register_tools(
     mcp: FastMCP,
     *,
     search_docs: SearchDocs,
+    search_all_libraries: SearchAllLibraries,
     read_chunk: ReadChunk,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
@@ -158,6 +167,50 @@ def register_tools(
                 tags_match=tags_match,
                 limit=limit,
                 mode=mode,
+            )
+        )
+
+    @mcp.tool(
+        name="search_all_docs",
+        annotations=ToolAnnotations(title="Search all libraries", **TOOL_HINTS),
+    )
+    async def search_all_docs_tool(
+        query: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=MAX_QUERY,
+                description="Identifier, error message or question",
+            ),
+        ],
+        library: Annotated[
+            str | None,
+            Field(
+                pattern=LIBRARY_ID_PATTERN,
+                max_length=MAX_NAME,
+                description="Library ID, e.g. '/facebook/react': only its results; else all",
+            ),
+        ] = None,
+        tags: Annotated[
+            list[Tag] | None,
+            Field(max_length=MAX_TAGS, description="Only articles with these tags"),
+        ] = None,
+        tags_match: Annotated[TagMatch, Field(description="'any' or 'all' of tags")] = TagMatch.ANY,
+        limit: Annotated[int, Field(ge=1, le=50)] = 10,
+    ) -> SearchAllResult:
+        """Search every library at once when you do not know which one documents something.
+
+        Only each library's default version is searched; each result names its library and
+        version, and `libraries` counts the matches per library. Narrow with `library`, or use
+        `search_docs` with a `ref` for another version. Chunk IDs work with `read_chunk`.
+        """
+        return await search_all_libraries(
+            SearchAllQuery(
+                query=query,
+                library=library,
+                tags=tags or [],
+                tags_match=tags_match,
+                limit=limit,
             )
         )
 

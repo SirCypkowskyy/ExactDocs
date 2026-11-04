@@ -13,7 +13,9 @@ from exactdocs.retrieval.dtos import (
     GetChunkSetsQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    LibraryFacetOut,
     LibraryMatchOut,
+    LibrarySearchResultOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -21,6 +23,8 @@ from exactdocs.retrieval.dtos import (
     RemovedChunks,
     ResolveLibraryIdQuery,
     ResolveLibraryIdResult,
+    SearchAllQuery,
+    SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
     SearchResultOut,
@@ -146,6 +150,94 @@ class SearchDocsUseCase:
             ),
             results=results,
         )
+
+
+# Libraries searched at once: bounds the catalog lookups and the size of the one FTS query.
+MAX_SEARCHED_LIBRARIES = 500
+# Catalog lookups in flight at a time while the default versions are resolved.
+LOOKUP_BATCH = 20
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAllLibrariesUseCase:
+    """Implements ``ports.driving.SearchAllLibraries``."""
+
+    libraries: Libraries
+    versions: SearchableVersions
+    search: SearchIndex
+    chunks: ChunkRepository
+
+    async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
+        """Rank the chunks of all default versions together; count the matches per library."""
+        text = SearchText(value=query.query)
+        tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
+        searched, omitted = await self._default_versions()
+        scope = searched
+        if query.library is not None:
+            only = await self.versions.find(query.library, None)
+            if only is None:
+                raise VersionNotIndexedError(query.library, "(default version)")
+            searched[only.manifest_id] = only
+            scope = {only.manifest_id: only}
+        # One more than asked for tells whether the answer was cut short.
+        found_hits, counts = await asyncio.gather(
+            self.search.search_many(list(scope), text.value, tag_filter, query.limit + 1),
+            self.search.count_many(list(searched), text.value, tag_filter),
+        )
+        shown = found_hits[: query.limit]
+        wanted: dict[str, list[ChunkId]] = {}
+        for found_hit in shown:
+            wanted.setdefault(found_hit.manifest_id, []).append(found_hit.hit.chunk_id)
+        stored = await self.chunks.get_across(wanted)
+        # A chunk gone since the search (the manifest was collected) leaves no result.
+        results = [
+            LibrarySearchResultOut.of(
+                searched[found_hit.manifest_id],
+                stored[found_hit.manifest_id, found_hit.hit.chunk_id],
+                found_hit.hit,
+            )
+            for found_hit in shown
+            if (found_hit.manifest_id, found_hit.hit.chunk_id) in stored
+        ]
+        vanished = len(shown) - len(results)
+        facets = sorted(
+            (
+                LibraryFacetOut(
+                    library=searched[m].library,
+                    version=searched[m].version,
+                    commit_sha=searched[m].commit_sha,
+                    matches=n,
+                )
+                for m, n in counts.items()
+                if m in searched and n > 0
+            ),
+            key=lambda f: (-f.matches, f.library),
+        )
+        return SearchAllResult(
+            retrieval_mode=RetrievalMode.BM25,
+            reranked=False,
+            coverage=CoverageOut(
+                candidates=len(found_hits) - vanished,
+                reranked=0,
+                complete=len(found_hits) <= query.limit,
+            ),
+            libraries_searched=len(searched),
+            libraries_omitted=omitted,
+            libraries=facets,
+            results=results,
+        )
+
+    async def _default_versions(self) -> tuple[dict[str, SearchableVersion], int]:
+        """Return the readable default versions by manifest ID, and how many libraries were cut."""
+        named = sorted(lib.id for lib in await self.libraries.all())
+        kept = named[:MAX_SEARCHED_LIBRARIES]
+        searched: dict[str, SearchableVersion] = {}
+        # ponytail: two catalog calls per library; a bulk "default manifests" query if this shows.
+        for start in range(0, len(kept), LOOKUP_BATCH):
+            batch = kept[start : start + LOOKUP_BATCH]
+            found = await asyncio.gather(*(self.versions.find(lib, None) for lib in batch))
+            searched |= {v.manifest_id: v for v in found if v is not None}
+        return searched, len(named) - len(kept)
 
 
 @dataclass(frozen=True, slots=True)

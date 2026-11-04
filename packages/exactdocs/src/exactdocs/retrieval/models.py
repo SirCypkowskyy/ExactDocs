@@ -210,6 +210,14 @@ class SearchHit:
     highlights: tuple[tuple[int, int], ...]  # [start, end) offsets into ``snippet``, in order
 
 
+@dataclass(frozen=True, slots=True)
+class ManifestHit:
+    """A hit of a search over several manifests: which manifest (so which library) it came from."""
+
+    manifest_id: str
+    hit: SearchHit
+
+
 def search_terms(query: str) -> list[str]:
     """Return the distinct alternatives a query is matched by: each word whole and by its parts."""
     return list(dict.fromkeys(identifier_tokens(query).split()))

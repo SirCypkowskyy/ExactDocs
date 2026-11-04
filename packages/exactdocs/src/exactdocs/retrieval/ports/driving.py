@@ -17,6 +17,8 @@ from exactdocs.retrieval.dtos import (
     RemovedChunks,
     ResolveLibraryIdQuery,
     ResolveLibraryIdResult,
+    SearchAllQuery,
+    SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
 )
@@ -30,6 +32,20 @@ class SearchDocs(Protocol):
     """
 
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
+        """Run the use case."""
+        ...
+
+
+class SearchAllLibraries(Protocol):
+    """Search the default version of every library at once (or of one, with ``library``).
+
+    Each result names its library and version; ``libraries`` counts the matches per library
+    over all of them, also when ``library`` narrows the results. A version other than a
+    library's default never answers. Raises ``VersionNotIndexedError`` for a ``library`` that
+    has no readable default version.
+    """
+
+    async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
         """Run the use case."""
         ...
 
