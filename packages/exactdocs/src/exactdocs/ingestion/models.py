@@ -320,6 +320,10 @@ JobId = NewType("JobId", str)
 JobKind = NewType("JobKind", str)
 IMPORT_JOB = JobKind("import")
 """The kind of job that imports one version of a library."""
+COLLECT_JOB = JobKind("collect")
+"""The kind of job that frees what removed or replaced versions left on disk."""
+DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
+"""How long a replaced manifest is kept so that its chunk IDs can still be recognized as stale."""
 
 
 class JobState(StrEnum):
@@ -1036,3 +1040,13 @@ class ImportedVersion:
 def git_blob_sha(data: bytes) -> str:
     """Return the SHA-1 git gives a file with exactly these bytes."""
     return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Removed:
+    """What the catalog took out: the manifests other domains must forget, the new default."""
+
+    library: str
+    ref: str | None
+    manifest_ids: tuple[str, ...]
+    default_ref: str | None

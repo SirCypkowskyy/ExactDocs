@@ -9,6 +9,8 @@ from exactdocs.catalog.ports.driving import (
     GetManifestStates,
     ListArticles,
     ListLibraries,
+    RemoveLibrary,
+    RemoveVersion,
     ResolveVersion,
     StoreManifest,
 )
@@ -25,6 +27,8 @@ __all__ = [
     "ListArticles",
     "ListLibraries",
     "ManifestRepository",
+    "RemoveLibrary",
+    "RemoveVersion",
     "ResolveVersion",
     "StoreManifest",
 ]

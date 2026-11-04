@@ -11,6 +11,7 @@ from exactdocs.retrieval.dtos import (
     IndexedManifestOut,
     IndexManifestCommand,
     ReadChunkQuery,
+    RemoveChunksCommand,
     RemovedChunks,
     SearchDocsQuery,
     SearchDocsResult,
@@ -77,5 +78,17 @@ class CollectChunks(Protocol):
     """Delete chunk rows of manifests the catalog collected, then unused chunk sets."""
 
     async def __call__(self, command: CollectChunksCommand) -> RemovedChunks:
+        """Run the use case."""
+        ...
+
+
+class RemoveChunks(Protocol):
+    """Delete the chunk rows and unused chunk sets of manifests the catalog no longer knows.
+
+    A manifest the catalog still knows (in any state) is kept, whatever the caller says. Unlike
+    ``CollectChunks`` it needs no grace period: the caller names IDs the catalog just deleted.
+    """
+
+    async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
         """Run the use case."""
         ...

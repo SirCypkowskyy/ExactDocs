@@ -119,6 +119,7 @@ class World:
                 c.retrieval.index_manifest,
                 c.retrieval.get_chunk_sets,
                 c.retrieval.discard_pending_chunks,
+                c.retrieval.remove_chunks,
             ),
         )
 

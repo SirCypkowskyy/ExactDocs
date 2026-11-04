@@ -282,3 +282,29 @@ class RepositoryRefs(_Dto):
     branches: list[RefOut]
     tags: list[RefOut]
     truncated: bool = Field(description="True when branches or tags were cut at 1000 each.")
+
+
+class RemoveVersionCommand(_Dto):
+    """Remove one version of a library everywhere and free its content."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    ref: str = Field(min_length=1)
+
+
+class RemoveLibraryCommand(_Dto):
+    """Remove a library, with all its versions, everywhere and free its content."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+
+
+class RemovalResult(_Dto):
+    """A removal is done for readers when this is returned; the disk is freed by a job."""
+
+    library: str
+    ref: str | None = Field(description="The removed version; null when a library was removed.")
+    default_version: str | None = Field(
+        description="What `/owner/repo` means now; null when no version is left."
+    )
+    collection_job_id: str | None = Field(
+        description="The job that frees the content (`/jobs/{id}`); null if it was not queued."
+    )

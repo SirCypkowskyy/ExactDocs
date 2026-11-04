@@ -16,6 +16,9 @@ from exactdocs.ingestion.dtos import (
     LatestJobs,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    RemovalResult,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     RepositoryRefs,
 )
 
@@ -109,5 +112,31 @@ class ListRepositoryRefs(Protocol):
     """List a repository's branches and tags; raises what ``CheckRepository`` raises."""
 
     async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
+        """Run the use case."""
+        ...
+
+
+class RemoveVersion(Protocol):
+    """Remove a version from every surface and queue the job that frees its content.
+
+    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` (catalog) and
+    ``ImportInProgressError`` when an import of that version is queued or running: removal
+    refuses, it never cancels a job. Removing the last version leaves the library without
+    versions; removing the default version moves the default to the next best one.
+    """
+
+    async def __call__(self, command: RemoveVersionCommand) -> RemovalResult:
+        """Run the use case."""
+        ...
+
+
+class RemoveLibrary(Protocol):
+    """Remove a library and all its versions, and queue the job that frees their content.
+
+    Raises ``LibraryNotFoundError`` and ``ImportInProgressError`` when any import of the library
+    is queued or running.
+    """
+
+    async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Run the use case."""
         ...

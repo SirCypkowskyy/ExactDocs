@@ -46,7 +46,7 @@ LOCATION_FIELDS = [
 ]
 
 
-def _git_blob_sha(content: str) -> str:
+def git_blob_sha(content: str) -> str:
     data = content.encode()
     return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
@@ -93,7 +93,7 @@ async def _import(context: Context, refs: list[str]) -> None:
                     articles=[
                         ArticleIn(
                             path=a.path,
-                            blob_sha=_git_blob_sha(text),
+                            blob_sha=git_blob_sha(text),
                             content_version=1,
                             title=a.title,
                             tags=_tags(a.path, a.tags),
@@ -113,7 +113,7 @@ async def _import(context: Context, refs: list[str]) -> None:
                     articles=[
                         ArticleChunksIn(
                             path=a.path,
-                            blob_sha=_git_blob_sha(text),
+                            blob_sha=git_blob_sha(text),
                             tags=_tags(a.path, a.tags),
                             chunks=[
                                 ChunkIn(

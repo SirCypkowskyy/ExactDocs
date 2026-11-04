@@ -149,6 +149,9 @@ class Side:
         del version
         await self._step(f"index {manifest_id}")
 
+    async def remove(self, manifest_ids: Sequence[str]) -> None:
+        raise NotImplementedError
+
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
         self.log.append(f"{self.name} discard {manifest_id} {library}")
         if self.broken_discard:

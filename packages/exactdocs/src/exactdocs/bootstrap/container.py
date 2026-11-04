@@ -9,12 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogCollector,
     CatalogLibraryIds,
     CatalogLibrarySources,
     CatalogNewLibraries,
+    CatalogRemovals,
     CatalogSearchableVersions,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
+    RetrievalCollector,
 )
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
@@ -30,7 +33,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteSessionRepository,
     SqliteTokenRepository,
 )
-from exactdocs.ingestion import IngestionModule, import_job
+from exactdocs.ingestion import IngestionModule, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
@@ -101,6 +104,12 @@ class Container:
             chunks=SqliteChunkRepository(engine),
             search=SqliteSearchIndex(engine),
         )
+        index = RetrievalChunkIndex(
+            retrieval.index_manifest,
+            retrieval.get_chunk_sets,
+            retrieval.discard_pending_chunks,
+            retrieval.remove_chunks,
+        )
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=MarkdownChunker(),
@@ -111,9 +120,7 @@ class Container:
                 catalog.discard_pending_manifests,
                 catalog.apply_readme,
             ),
-            index=RetrievalChunkIndex(
-                retrieval.index_manifest, retrieval.get_chunk_sets, retrieval.discard_pending_chunks
-            ),
+            index=index,
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
         )
@@ -124,7 +131,19 @@ class Container:
             library_ids=CatalogLibraryIds(catalog.get_library),
             libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
             sources=CatalogLibrarySources(catalog.get_library),
-            handlers=handlers,
+            removals=CatalogRemovals(catalog.remove_version, catalog.remove_library),
+            index=index,
+            # The catalog first: retrieval keeps every manifest the catalog still knows.
+            # #35: a credentials collector goes here once library credentials exist.
+            handlers={
+                **handlers,
+                **collect_job(
+                    collectors=[
+                        CatalogCollector(catalog.collect_garbage),
+                        RetrievalCollector(retrieval.collect_chunks),
+                    ]
+                ),
+            },
             recovery_hooks=recovery_hooks,
         )
         job_worker = JobWorker(

@@ -13,6 +13,7 @@ from exactdocs.retrieval.dtos import (
     IndexedManifestOut,
     IndexManifestCommand,
     ReadChunkQuery,
+    RemoveChunksCommand,
     RemovedChunks,
     SearchDocsQuery,
     SearchDocsResult,
@@ -298,3 +299,19 @@ class CollectChunksUseCase:
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=False)
         return RemovedChunks.from_model(await self.chunks.remove(doomed))
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveChunksUseCase:
+    """Implements ``ports.driving.RemoveChunks``."""
+
+    manifests: ActiveManifests
+    chunks: ChunkRepository
+
+    async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
+        """Remove what the catalog has forgotten; keep every manifest it still knows."""
+        asked = list(dict.fromkeys(command.manifest_ids))
+        known = await self.manifests.statuses(asked)
+        return RemovedChunks.from_model(
+            await self.chunks.remove([i for i in asked if i not in known])
+        )

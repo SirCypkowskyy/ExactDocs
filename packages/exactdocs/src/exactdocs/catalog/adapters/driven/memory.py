@@ -9,6 +9,7 @@ from exactdocs.catalog.errors import (
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
@@ -230,6 +231,30 @@ class InMemoryManifestRepository:
         for key in unused:
             del self.contents[key]
         return GarbageCollected(manifests=len(old), contents=len(unused))
+
+    async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
+        """Delete the version row and every manifest of the ref."""
+        library = self.libraries.libraries.get(library_id)
+        if library is None:
+            raise LibraryNotFoundError(str(library_id))
+        if all(v.ref != ref for v in library.versions):
+            raise VersionNotFoundError(str(library_id), str(ref))
+        doomed = [m.id for m in self.manifests.values() if (m.library, m.ref) == (library_id, ref)]
+        for doomed_id in doomed:
+            del self.manifests[doomed_id]
+        kept = frozenset(v for v in library.versions if v.ref != ref)
+        self.libraries.libraries[library_id] = replace(library, versions=kept)
+        return doomed
+
+    async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
+        """Delete the library and all its manifests."""
+        if library_id not in self.libraries.libraries:
+            raise LibraryNotFoundError(str(library_id))
+        doomed = [m.id for m in self.manifests.values() if m.library == library_id]
+        for doomed_id in doomed:
+            del self.manifests[doomed_id]
+        del self.libraries.libraries[library_id]
+        return doomed
 
     def _active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
         return next(

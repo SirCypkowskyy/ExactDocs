@@ -20,6 +20,8 @@ from exactdocs.catalog.ports.driving import (
     GetManifestStates,
     ListArticles,
     ListLibraries,
+    RemoveLibrary,
+    RemoveVersion,
     ResolveVersion,
     StoreManifest,
     UpdateLibrary,
@@ -37,6 +39,8 @@ from exactdocs.catalog.use_cases import (
     GetManifestStatesUseCase,
     ListArticlesUseCase,
     ListLibrariesUseCase,
+    RemoveLibraryUseCase,
+    RemoveVersionUseCase,
     ResolveVersionUseCase,
     StoreManifestUseCase,
     UpdateLibraryUseCase,
@@ -63,6 +67,8 @@ class CatalogModule:
     get_active_manifest: GetActiveManifest
     update_library: UpdateLibrary
     apply_readme: ApplyReadme
+    remove_version: RemoveVersion
+    remove_library: RemoveLibrary
 
     @classmethod
     def build(
@@ -90,4 +96,6 @@ class CatalogModule:
             get_active_manifest=GetActiveManifestUseCase(repository, manifests),
             update_library=UpdateLibraryUseCase(repository),
             apply_readme=ApplyReadmeUseCase(repository),
+            remove_version=RemoveVersionUseCase(repository, manifests),
+            remove_library=RemoveLibraryUseCase(repository, manifests),
         )

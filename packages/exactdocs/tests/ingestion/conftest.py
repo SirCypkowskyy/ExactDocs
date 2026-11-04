@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from doubles import NoIndex, NoRemovals
 
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
@@ -62,6 +63,8 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
             remote=MissingGit(),
             library_ids=_NoLibraryIds(),
             libraries=_NoLibraries(),
+            removals=NoRemovals(),
+            index=NoIndex(),
             handlers=handlers or {},
             recovery_hooks=recovery_hooks or {},
         )

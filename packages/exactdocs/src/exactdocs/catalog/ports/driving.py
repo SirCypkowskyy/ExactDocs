@@ -24,6 +24,9 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ManifestStates,
+    Removal,
+    RemoveLibraryCommand,
+    RemoveVersionCommand,
     ResolvedVersion,
     ResolveVersionQuery,
     StoredManifest,
@@ -174,6 +177,17 @@ class UpdateLibrary(Protocol):
         ...
 
 
+class RemoveVersion(Protocol):
+    """Remove a version: it and its manifests are gone at once, in one transaction.
+
+    Texts that no manifest uses any more are freed by ``CollectGarbage``. The default version is
+    computed from the versions that remain, so it follows. Raises ``LibraryNotFoundError`` /
+    ``VersionNotFoundError``; the ref must match exactly (a short SHA does not).
+    """
+
+    async def __call__(self, command: RemoveVersionCommand) -> Removal:
+
+
 class ApplyReadme(Protocol):
     """Take title and description from the README of a just-imported version.
 
@@ -184,3 +198,13 @@ class ApplyReadme(Protocol):
     async def __call__(self, command: ApplyReadmeCommand) -> None:
         """Run the use case."""
         ...
+
+
+class RemoveLibrary(Protocol):
+    """Remove a library with all its versions and manifests, in one transaction.
+
+    Raises ``LibraryNotFoundError``. Unlike ``DiscardLibrary`` it takes libraries that have
+    versions.
+    """
+
+    async def __call__(self, command: RemoveLibraryCommand) -> Removal:

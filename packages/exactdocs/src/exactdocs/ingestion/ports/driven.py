@@ -18,6 +18,7 @@ from exactdocs.ingestion.models import (
     ProblemCode,
     ProposedId,
     RemoteRefs,
+    Removed,
     RepositoryUrl,
 )
 
@@ -225,4 +226,28 @@ class ChunkIndex(Protocol):
 
         Call it before the catalog's discard: it needs the catalog to still say "pending".
         """
+        ...
+
+    async def remove(self, manifest_ids: Sequence[str]) -> None:
+        """Delete the chunks of manifests the catalog has just deleted (and unused chunk sets)."""
+        ...
+
+
+class Removals(Protocol):
+    """Removes versions and libraries from the catalog (in ingestion's words)."""
+
+    async def remove_version(self, library: str, ref: str) -> Removed:
+        """Delete the version and its manifests at once; raises ``NotFoundError`` if unknown."""
+        ...
+
+    async def remove_library(self, library: str) -> Removed:
+        """Delete the library, its versions and manifests; raises ``NotFoundError`` if unknown."""
+        ...
+
+
+class Collector(Protocol):
+    """Frees what one domain no longer needs; the collection job runs them in order."""
+
+    async def collect(self, *, grace_seconds: int) -> int:
+        """Delete what is unused and older than the grace period; return how many things."""
         ...

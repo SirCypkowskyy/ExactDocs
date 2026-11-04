@@ -144,3 +144,18 @@ class ManifestRepository(Protocol):
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
         """Delete manifests superseded before the cutoff, then texts no manifest uses."""
         ...
+
+    async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
+        """Delete the version row and every manifest of the ref (any state), in one transaction.
+
+        Returns the deleted manifest IDs. Raises ``VersionNotFoundError`` when the library has no
+        such version; the manifests and the version go together, never one without the other.
+        """
+        ...
+
+    async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
+        """Delete the library, its versions and all its manifests, in one transaction.
+
+        Returns the deleted manifest IDs. Raises ``LibraryNotFoundError``.
+        """
+        ...

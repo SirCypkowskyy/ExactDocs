@@ -34,9 +34,11 @@ from sqlalchemy.sql.elements import TextClause
 
 from exactdocs.catalog.errors import (
     LibraryAlreadyExistsError,
+    LibraryNotFoundError,
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
@@ -523,6 +525,39 @@ class SqliteManifestRepository:
                 )
             )
         return GarbageCollected(manifests=old.rowcount, contents=unused.rowcount)
+
+    async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
+        """Delete the version row and the manifests of the ref (their entries cascade)."""
+        async with self._write() as connection:
+            version = (
+                library_versions.c.library_id == library_id.value,
+                library_versions.c.ref == ref.value,
+            )
+            gone = await connection.execute(delete(library_versions).where(*version))
+            if gone.rowcount == 0:
+                raise VersionNotFoundError(str(library_id), str(ref))
+            ids = await connection.execute(
+                delete(manifests)
+                .where(manifests.c.library_id == library_id.value, manifests.c.ref == ref.value)
+                .returning(manifests.c.id)
+            )
+            return [ManifestId(row.id) for row in ids]
+
+    async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
+        """Delete the library; its versions, manifests and entries cascade."""
+        async with self._write() as connection:
+            ids = [
+                ManifestId(row.id)
+                for row in await connection.execute(
+                    select(manifests.c.id).where(manifests.c.library_id == library_id.value)
+                )
+            ]
+            gone = await connection.execute(
+                delete(libraries).where(libraries.c.id == library_id.value)
+            )
+            if gone.rowcount == 0:
+                raise LibraryNotFoundError(str(library_id))
+            return ids
 
     async def _load(self, *where: ColumnElement[bool]) -> Manifest | None:
         async with self.engine.connect() as connection:

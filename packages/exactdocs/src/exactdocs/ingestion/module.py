@@ -4,12 +4,14 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 together with the job kinds it supports. ``import_job`` builds the import's handler and hook.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
 from exactdocs.ingestion.models import (
+    COLLECT_JOB,
+    DEFAULT_GRACE_SECONDS,
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
@@ -19,6 +21,7 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.ports.driven import (
     Chunker,
     ChunkIndex,
+    Collector,
     GitGateway,
     GitRemote,
     JobHandler,
@@ -27,6 +30,7 @@ from exactdocs.ingestion.ports.driven import (
     LibrarySources,
     NewLibraries,
     RecoveryHook,
+    Removals,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -39,12 +43,15 @@ from exactdocs.ingestion.ports.driving import (
     ListLibraryJobs,
     ListRepositoryRefs,
     RecoverJobs,
+    RemoveLibrary,
+    RemoveVersion,
     RunNextJob,
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
     AddVersionUseCase,
     CheckRepositoryUseCase,
+    CollectGarbageUseCase,
     DiscardInterruptedImportUseCase,
     EnqueueJobUseCase,
     GetJobUseCase,
@@ -53,6 +60,8 @@ from exactdocs.ingestion.use_cases import (
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     RecoverJobsUseCase,
+    RemoveLibraryUseCase,
+    RemoveVersionUseCase,
     RunNextJobUseCase,
 )
 from exactdocs_kernel import Clock, NotFoundError
@@ -83,6 +92,8 @@ class IngestionModule:
     list_library_jobs: ListLibraryJobs
     list_repository_refs: ListRepositoryRefs
     recover_jobs: RecoverJobs
+    remove_library: RemoveLibrary
+    remove_version: RemoveVersion
     run_next_job: RunNextJob
 
     @classmethod
@@ -95,6 +106,8 @@ class IngestionModule:
         library_ids: LibraryIds,
         libraries: NewLibraries,
         sources: LibrarySources | None = None,
+        removals: Removals,
+        index: ChunkIndex,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
     ) -> Self:
@@ -116,6 +129,8 @@ class IngestionModule:
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),
+            remove_library=RemoveLibraryUseCase(jobs, removals, index, enqueue_job),
+            remove_version=RemoveVersionUseCase(jobs, removals, index, enqueue_job),
             run_next_job=RunNextJobUseCase(jobs, clock, handlers),
         )
 
@@ -135,3 +150,10 @@ def import_job(
         gateway, chunker, sources, versions, index, max_article_bytes, max_import_bytes
     )
     return {IMPORT_JOB: importer}, {IMPORT_JOB: DiscardInterruptedImportUseCase(versions, index)}
+
+
+def collect_job(
+    *, collectors: Sequence[Collector], grace_seconds: int = DEFAULT_GRACE_SECONDS
+) -> Mapping[JobKind, JobHandler]:
+    """Return the ``handlers`` entry that makes the module free unused content, in this order."""
+    return {COLLECT_JOB: CollectGarbageUseCase(collectors, grace_seconds)}

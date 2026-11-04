@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 import pytest
+from doubles import NoIndex, NoRemovals
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.dtos import CheckRepositoryCommand
@@ -50,6 +51,8 @@ def build(remote: GitRemote, taken: frozenset[str] = frozenset()) -> IngestionMo
         remote=remote,
         library_ids=FakeLibraryIds(taken),
         libraries=_NoLibraries(),
+        removals=NoRemovals(),
+        index=NoIndex(),
     )
 
 

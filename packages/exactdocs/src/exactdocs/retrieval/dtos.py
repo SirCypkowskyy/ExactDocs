@@ -268,6 +268,12 @@ class CollectChunksCommand(_Dto):
     grace_seconds: int = Field(default=DEFAULT_GRACE_SECONDS, ge=0)
 
 
+class RemoveChunksCommand(_Dto):
+    """Delete the chunk rows of these manifests, which the catalog has just deleted."""
+
+    manifest_ids: list[str] = Field(max_length=100_000)
+
+
 class RemovedChunks(_Dto):
     """What a discard or collection deleted."""
 

@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Mapping
 
+from doubles import NoIndex, NoRemovals
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.database import migrate, open_database
@@ -44,6 +45,8 @@ def start_app(
         remote=MissingGit(),
         library_ids=_NoLibraryIds(),
         libraries=_NoLibraries(),
+        removals=NoRemovals(),
+        index=NoIndex(),
         handlers=handlers,
         recovery_hooks=hooks or {},
     )
