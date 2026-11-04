@@ -122,6 +122,8 @@ export function TypedConfirm({
     >
       <ConfirmContent
         ref={content}
+        // Anchored near the top: an error arriving below must not re-centre (move) the panel.
+        className="sm:top-[22vh] sm:translate-y-0"
         onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
           // The field is the next thing to do; Cancel stays one Shift+Tab away.
