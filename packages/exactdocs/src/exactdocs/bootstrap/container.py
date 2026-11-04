@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -5,7 +6,7 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.bootstrap.bridges import CatalogIndexedVersions
+from exactdocs.bootstrap.bridges import CatalogIndexedVersions, CatalogLibraryIds
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog import CatalogModule
@@ -20,11 +21,16 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteSessionRepository,
 )
 from exactdocs.ingestion import IngestionModule
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
+from exactdocs.ingestion.errors import GitNotInstalledError
+from exactdocs.ingestion.ports.driven import GitRemote
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
 from exactdocs_kernel import SystemClock
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -35,17 +41,25 @@ class Container:
     engine: AsyncEngine
     catalog: CatalogModule
     identity: IdentityModule
-    retrieval: RetrievalModule
     ingestion: IngestionModule
+    retrieval: RetrievalModule
     job_worker: JobWorker
 
     @classmethod
-    def build(cls, settings: Settings) -> Self:
+    def build(cls, settings: Settings, *, remote: GitRemote | None = None) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
         Creates the data directory (``StartupError`` when it is unusable) but opens no
         connection; ``running()`` migrates the schema and releases the engine afterwards.
+        ``remote`` replaces the system ``git`` (tests). A missing ``git`` is logged here and
+        reported as ``git_not_installed`` by everything that needs it, so the rest still runs.
         """
+        if remote is None:
+            try:
+                remote = GitCli.locate()
+            except GitNotInstalledError as exc:
+                logger.warning("%s", exc)
+                remote = MissingGit()
         engine = open_database(settings)
         catalog = CatalogModule.build(
             repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
@@ -61,7 +75,12 @@ class Container:
             index=InMemoryExcerptIndex(),
         )
         # No job kinds yet: the import registers its handler and recovery hook (E3-05a).
-        ingestion = IngestionModule.build(jobs=SqliteJobRepository(engine), clock=SystemClock())
+        ingestion = IngestionModule.build(
+            jobs=SqliteJobRepository(engine),
+            clock=SystemClock(),
+            remote=remote,
+            library_ids=CatalogLibraryIds(catalog.get_library),
+        )
         job_worker = JobWorker(
             recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job
         )
@@ -70,8 +89,8 @@ class Container:
             engine=engine,
             catalog=catalog,
             identity=identity,
-            retrieval=retrieval,
             ingestion=ingestion,
+            retrieval=retrieval,
             job_worker=job_worker,
         )
 

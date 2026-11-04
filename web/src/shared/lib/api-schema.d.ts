@@ -142,6 +142,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/repositories/check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Check
+         * @description Check a git URL (nothing is saved); the URL is never echoed back.
+         */
+        readonly post: operations["ingestion-check"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/jobs/{job_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -267,6 +287,35 @@ export interface components {
              * Format: password
              */
             readonly password: string;
+        };
+        /**
+         * CheckRepositoryCommand
+         * @description Ask whether a git URL works, before anything is saved.
+         */
+        readonly CheckRepositoryCommand: {
+            /**
+             * Url
+             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             */
+            readonly url: string;
+        };
+        /**
+         * CheckedRepository
+         * @description A reachable git repository and what a new library from it would look like.
+         */
+        readonly CheckedRepository: {
+            /** @description The hosting service, for source links. */
+            readonly host: components["schemas"]["RepositoryHost"];
+            /**
+             * Library Id
+             * @description The proposed `/owner/repo` library ID.
+             */
+            readonly library_id: string;
+            /**
+             * Default Branch
+             * @description The branch `HEAD` points at; null for an empty repository.
+             */
+            readonly default_branch: string | null;
         };
         /**
          * ChunkingOut
@@ -473,6 +522,12 @@ export interface components {
          * @enum {string}
          */
         readonly RefKind: "tag" | "branch" | "commit";
+        /**
+         * RepositoryHost
+         * @description Where a repository is hosted, by exact host name; ``git`` is any other server.
+         * @enum {string}
+         */
+        readonly RepositoryHost: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
         /**
          * ResolvedVersion
          * @description The version an ID resolved to; always states which one was used.
@@ -1274,6 +1329,84 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SearchDocsResult"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CheckRepositoryCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckedRepository"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

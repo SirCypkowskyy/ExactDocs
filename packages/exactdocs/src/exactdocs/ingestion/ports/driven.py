@@ -1,10 +1,10 @@
-"""Driven (secondary) ports of ingestion: what it needs from storage and from the job kinds."""
+"""Driven (secondary) ports of ingestion: what it needs from git, storage and other domains."""
 
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
-from exactdocs.ingestion.models import Job, JobId
+from exactdocs.ingestion.models import Job, JobId, ProposedId, RemoteRefs, RepositoryUrl
 
 
 class JobRepository(Protocol):
@@ -64,4 +64,24 @@ class RecoveryHook(Protocol):
 
     async def __call__(self, job: Job, /) -> None:
         """Undo what the interrupted run left half done."""
+        ...
+
+
+class GitRemote(Protocol):
+    """Talk to a remote git repository (the system ``git``; no hosting APIs)."""
+
+    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+        """List the remote's refs (``git ls-remote``), narrowed by ref patterns such as ``HEAD``.
+
+        Never prompts for credentials. Raises ``NotAGitRepositoryError``,
+        ``RepositoryUnreachableError`` (including a timeout) or ``RepositoryAuthRequiredError``.
+        """
+        ...
+
+
+class LibraryIds(Protocol):
+    """What ingestion needs to know about the catalog, in its own words."""
+
+    async def is_taken(self, library_id: ProposedId) -> bool:
+        """Tell whether a library with this ``/owner/repo`` ID already exists."""
         ...

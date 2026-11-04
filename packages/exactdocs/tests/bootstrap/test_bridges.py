@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from exactdocs.bootstrap.bridges import CatalogIndexedVersions
+from exactdocs.bootstrap.bridges import CatalogIndexedVersions, CatalogLibraryIds
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
@@ -16,6 +16,7 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
+from exactdocs.ingestion.models import ProposedId
 from exactdocs.retrieval.models import DocTarget
 
 PAYMENTS = Library(
@@ -67,3 +68,17 @@ async def test_an_indexed_version_comes_back_with_the_stored_library_id(library:
 )
 async def test_anything_but_an_exact_indexed_ref_is_not_indexed(library: str, version: str) -> None:
     assert await BRIDGE.find_indexed(DocTarget(library=library, version=version)) is None
+
+
+_TAKEN = InMemoryLibraryRepository.of([PAYMENTS])
+LIBRARY_IDS = CatalogLibraryIds(
+    CatalogModule.build(repository=_TAKEN, manifests=InMemoryManifestRepository(_TAKEN)).get_library
+)
+
+
+@pytest.mark.parametrize(
+    ("library", "taken"),
+    [("/acme/payments", True), ("/Acme/Payments", True), ("/acme/ledger", False)],
+)
+async def test_a_library_id_is_taken_when_the_catalog_has_it(library: str, taken: bool) -> None:
+    assert await LIBRARY_IDS.is_taken(ProposedId(library)) is taken

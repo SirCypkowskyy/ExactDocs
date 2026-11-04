@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion import IngestionModule
+from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery
@@ -18,6 +19,12 @@ from exactdocs_kernel import SystemClock
 IMPORT = JobKind("import")
 
 
+class _NoLibraryIds:
+    async def is_taken(self, library_id: str) -> bool:
+        del library_id
+        return False
+
+
 def start_app(
     handlers: Mapping[JobKind, JobHandler], hooks: Mapping[JobKind, RecoveryHook] | None = None
 ) -> tuple[IngestionModule, JobWorker, AsyncEngine]:
@@ -26,6 +33,8 @@ def start_app(
     module = IngestionModule.build(
         jobs=SqliteJobRepository(engine),
         clock=SystemClock(),
+        remote=MissingGit(),
+        library_ids=_NoLibraryIds(),
         handlers=handlers,
         recovery_hooks=hooks or {},
     )

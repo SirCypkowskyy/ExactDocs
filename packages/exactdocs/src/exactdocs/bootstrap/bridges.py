@@ -6,8 +6,9 @@ port in its own language, and a bridge here translates to the provider's public 
 
 from dataclasses import dataclass
 
-from exactdocs.catalog.dtos import ResolveVersionQuery
-from exactdocs.catalog.ports.driving import ResolveVersion
+from exactdocs.catalog.dtos import GetLibraryQuery, ResolveVersionQuery
+from exactdocs.catalog.ports.driving import GetLibrary, ResolveVersion
+from exactdocs.ingestion.models import ProposedId
 from exactdocs.retrieval.models import DocTarget
 from exactdocs_kernel import NotFoundError
 
@@ -29,3 +30,18 @@ class CatalogIndexedVersions:
         if resolved.ref != target.version:
             return None
         return DocTarget(library=resolved.library, version=resolved.ref)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogLibraryIds:
+    """Implements ``ingestion.ports.driven.LibraryIds`` using the catalog."""
+
+    get_library: GetLibrary
+
+    async def is_taken(self, library_id: ProposedId) -> bool:
+        """Tell whether a library with this ID is in the catalog."""
+        try:
+            await self.get_library(GetLibraryQuery(id=library_id))
+        except NotFoundError:
+            return False
+        return True

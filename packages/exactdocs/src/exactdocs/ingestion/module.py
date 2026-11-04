@@ -10,8 +10,15 @@ from types import MappingProxyType
 from typing import Self
 
 from exactdocs.ingestion.models import JobKind
-from exactdocs.ingestion.ports.driven import JobHandler, JobRepository, RecoveryHook
+from exactdocs.ingestion.ports.driven import (
+    GitRemote,
+    JobHandler,
+    JobRepository,
+    LibraryIds,
+    RecoveryHook,
+)
 from exactdocs.ingestion.ports.driving import (
+    CheckRepository,
     EnqueueJob,
     GetJob,
     ListLibraryJobs,
@@ -19,6 +26,7 @@ from exactdocs.ingestion.ports.driving import (
     RunNextJob,
 )
 from exactdocs.ingestion.use_cases import (
+    CheckRepositoryUseCase,
     EnqueueJobUseCase,
     GetJobUseCase,
     ListLibraryJobsUseCase,
@@ -32,6 +40,7 @@ from exactdocs_kernel import Clock
 class IngestionModule:
     """The ingestion's driving ports, ready to be exposed by driving adapters."""
 
+    check_repository: CheckRepository
     enqueue_job: EnqueueJob
     get_job: GetJob
     list_library_jobs: ListLibraryJobs
@@ -44,6 +53,8 @@ class IngestionModule:
         *,
         jobs: JobRepository,
         clock: Clock,
+        remote: GitRemote,
+        library_ids: LibraryIds,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
     ) -> Self:
@@ -53,6 +64,7 @@ class IngestionModule:
         clean-up after an interrupted run (a kind without one needs none).
         """
         return cls(
+            check_repository=CheckRepositoryUseCase(remote, library_ids),
             enqueue_job=EnqueueJobUseCase(jobs, clock, handlers),
             get_job=GetJobUseCase(jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs),

@@ -5,9 +5,16 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from exactdocs.ingestion import IngestionModule
+from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.models import JobKind
 from exactdocs.ingestion.ports import JobHandler, JobRepository, RecoveryHook
+
+
+class _NoLibraryIds:
+    async def is_taken(self, library_id: str) -> bool:
+        del library_id
+        return False
 
 
 class FakeClock:
@@ -44,6 +51,8 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
         return IngestionModule.build(
             jobs=repository or jobs,
             clock=clock,
+            remote=MissingGit(),
+            library_ids=_NoLibraryIds(),
             handlers=handlers or {},
             recovery_hooks=recovery_hooks or {},
         )

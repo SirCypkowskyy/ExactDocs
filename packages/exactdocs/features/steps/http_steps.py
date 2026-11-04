@@ -28,6 +28,9 @@ from exactdocs.identity.adapters.driven.sqlite import (
 )
 from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.models import RemoteRefs, RepositoryUrl
+from exactdocs.ingestion.ports import GitRemote
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -98,6 +101,18 @@ async def store_demo_catalog(settings: Settings) -> None:
             await repository.save(library)
 
 
+class OfflineGit:
+    """Real git for the local fixture servers; a reachable `main` for hosts no test may dial."""
+
+    def __init__(self, local: GitRemote) -> None:
+        self.local = local
+
+    async def list_refs(self, repository: RepositoryUrl, *patterns: str) -> RemoteRefs:
+        if repository.url.startswith(("file:", "http://127.0.0.1")):
+            return await self.local.list_refs(repository, *patterns)
+        return RemoteRefs(default_branch="main")
+
+
 @given("ExactDocs is running with the demo catalog")
 def step_running(context: Context) -> None:
     stack = ExitStack()
@@ -108,7 +123,7 @@ def step_running(context: Context) -> None:
     asyncio.run(store_demo_catalog(settings))
     context.client = stack.enter_context(
         TestClient(
-            create_app(Container.build(settings)),
+            create_app(Container.build(settings, remote=OfflineGit(GitCli.locate()))),
             base_url="http://localhost",
             cookies={SESSION_COOKIE: DEMO_COOKIE},
         )
