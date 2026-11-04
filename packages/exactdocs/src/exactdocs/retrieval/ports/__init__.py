@@ -8,8 +8,8 @@ from exactdocs.retrieval.ports.driven import (
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
-    GetChunk,
     GetChunkSets,
+    ReadChunk,
     IndexManifest,
     SearchDocs,
 )
@@ -19,8 +19,8 @@ __all__ = [
     "ChunkRepository",
     "CollectChunks",
     "DiscardPendingChunks",
-    "GetChunk",
     "GetChunkSets",
+    "ReadChunk",
     "IndexManifest",
     "IndexedVersions",
     "SearchDocs",

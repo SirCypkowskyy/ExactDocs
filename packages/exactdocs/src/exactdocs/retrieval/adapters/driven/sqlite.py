@@ -3,6 +3,7 @@ from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     Column,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Row,
     MetaData,
     Table,
     Text,
@@ -99,6 +101,7 @@ manifest_chunks = Table(
         ["retrieval_chunk_sets.blob_sha", "retrieval_chunk_sets.config_hash"],
     ),
     Index("ix_retrieval_manifest_chunks_article", "manifest_id", "article_path", "position"),
+    Index("ix_retrieval_manifest_chunks_chunk_id", "chunk_id"),
 )
 
 
@@ -285,6 +288,17 @@ class SqliteChunkRepository:
             for row in rows
         }
 
+    async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
+        """Return every indexed manifest that has a row for this chunk ID (any status)."""
+        query = (
+            select(indexed_manifests)
+            .join(manifest_chunks, manifest_chunks.c.manifest_id == indexed_manifests.c.manifest_id)
+            .where(manifest_chunks.c.chunk_id == chunk_id)
+        )
+        async with self.engine.connect() as connection:
+            found = (await connection.execute(query)).all()
+        return tuple(_manifest(r) for r in found)
+
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
@@ -298,15 +312,7 @@ class SqliteChunkRepository:
             query = query.where(indexed_manifests.c.indexed_at < _iso(indexed_before))
         async with self.engine.connect() as connection:
             found = (await connection.execute(query)).all()
-        return tuple(
-            IndexedManifest(
-                manifest_id=r.manifest_id,
-                version_id=r.version_id,
-                library=r.library,
-                indexed_at=datetime.fromisoformat(r.indexed_at),
-            )
-            for r in found
-        )
+        return tuple(_manifest(r) for r in found)
 
     async def remove(self, manifest_ids: Collection[str]) -> Removed:
         """Delete these manifests' rows, then every chunk set no row points at."""
@@ -329,6 +335,15 @@ class SqliteChunkRepository:
                 )
             )
         return Removed(manifests=gone, chunk_sets=unused.rowcount)
+
+
+def _manifest(row: Row[Any]) -> IndexedManifest:
+    return IndexedManifest(
+        manifest_id=row.manifest_id,
+        version_id=row.version_id,
+        library=row.library,
+        indexed_at=datetime.fromisoformat(row.indexed_at),
+    )
 
 
 def _batches(items: list[str], size: int = 500) -> list[list[str]]:

@@ -66,6 +66,10 @@ class InMemoryChunkRepository:
         found = {i: await self.get(manifest_id, i) for i in chunk_ids}
         return {i: c for i, c in found.items() if c is not None}
 
+    async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
+        """Return every indexed manifest that has a row for this chunk ID (any status)."""
+        return [self.manifests[i] for i, rows in self.rows.items() if chunk_id in rows]
+
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
