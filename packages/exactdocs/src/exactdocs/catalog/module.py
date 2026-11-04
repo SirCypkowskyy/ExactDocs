@@ -7,8 +7,12 @@ from dataclasses import dataclass
 from typing import Self
 
 from exactdocs.catalog.ports.driven import LibraryRepository
-from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries
-from exactdocs.catalog.use_cases import GetLibraryUseCase, ListLibrariesUseCase
+from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries, ResolveVersion
+from exactdocs.catalog.use_cases import (
+    GetLibraryUseCase,
+    ListLibrariesUseCase,
+    ResolveVersionUseCase,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -17,6 +21,7 @@ class CatalogModule:
 
     list_libraries: ListLibraries
     get_library: GetLibrary
+    resolve_version: ResolveVersion
 
     @classmethod
     def build(cls, *, repository: LibraryRepository) -> Self:
@@ -24,4 +29,5 @@ class CatalogModule:
         return cls(
             list_libraries=ListLibrariesUseCase(repository),
             get_library=GetLibraryUseCase(repository),
+            resolve_version=ResolveVersionUseCase(repository),
         )

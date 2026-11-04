@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -6,12 +7,51 @@ import pytest
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
-from exactdocs.catalog.models import Library, LibraryName, Version
+from exactdocs.catalog.models import (
+    HostKind,
+    Library,
+    LibraryId,
+    RefKind,
+    Version,
+    VersionRef,
+)
 from fixture_repo import DocsRepo, served
 
+IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+
+
+def _version(ref: str, kind: RefKind, sha: str) -> Version:
+    return Version(
+        ref=VersionRef(ref), kind=kind, commit_sha=sha.ljust(40, "0"), imported_at=IMPORTED
+    )
+
+
+# Shaped like the fixture docs repository (two tags and a branch); ExactDocs itself starts empty.
 DEMO_LIBRARIES = [
-    Library(name=LibraryName("/fastapi/fastapi"), versions=frozenset({Version("0.115")})),
-    Library(name=LibraryName("/reactjs/react.dev"), versions=frozenset({Version("19.1")})),
+    Library(
+        id=LibraryId("/acme/payments"),
+        title="Payments",
+        description="Payment processing SDK",
+        source_url="https://github.com/acme/payments",
+        host=HostKind.GITHUB,
+        default_branch=VersionRef("main"),
+        versions=frozenset(
+            {
+                _version("v1.3.0", RefKind.TAG, "1a"),
+                _version("v1.4.0", RefKind.TAG, "1b"),
+                _version("main", RefKind.BRANCH, "1c"),
+                _version("next", RefKind.BRANCH, "1d"),
+            }
+        ),
+    ),
+    Library(
+        id=LibraryId("/acme/ledger"),
+        title="Ledger",
+        source_url="https://git.example.com/acme/ledger.git",
+        host=HostKind.GIT,
+        default_branch=VersionRef("main"),
+        versions=frozenset({_version("main", RefKind.BRANCH, "2a")}),
+    ),
 ]
 
 

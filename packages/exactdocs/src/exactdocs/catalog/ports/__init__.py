@@ -1,4 +1,4 @@
 from exactdocs.catalog.ports.driven import LibraryRepository
-from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries
+from exactdocs.catalog.ports.driving import GetLibrary, ListLibraries, ResolveVersion
 
-__all__ = ["GetLibrary", "LibraryRepository", "ListLibraries"]
+__all__ = ["GetLibrary", "LibraryRepository", "ListLibraries", "ResolveVersion"]

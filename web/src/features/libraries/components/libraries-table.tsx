@@ -20,11 +20,14 @@ export function LibrariesTable({ libraries }: LibrariesTableProps) {
       </TableHeader>
       <TableBody>
         {libraries.map((library) => (
-          <TableRow key={library.name}>
-            <TableCell className="font-medium">{library.name}</TableCell>
+          <TableRow key={library.id}>
+            <TableCell className="font-medium">{library.id}</TableCell>
             <TableCell className="flex flex-wrap gap-1">
               {library.versions.map((version) => (
-                <Badge key={version} variant="secondary">
+                <Badge
+                  key={version}
+                  variant={version === library.default_version ? "default" : "secondary"}
+                >
                   {version}
                 </Badge>
               ))}

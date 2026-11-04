@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Protocol
 
-from exactdocs.catalog.models import Library, LibraryName
+from exactdocs.catalog.models import Library, LibraryId
 
 
 class LibraryRepository(Protocol):
@@ -13,10 +13,10 @@ class LibraryRepository(Protocol):
         """Return every library."""
         ...
 
-    async def get(self, name: LibraryName) -> Library | None:
-        """Return the library with this exact name, or ``None``."""
+    async def get(self, library_id: LibraryId) -> Library | None:
+        """Return the library with this ID, or ``None``."""
         ...
 
     async def save(self, library: Library) -> None:
-        """Store the library, replacing any earlier entry with the same name."""
+        """Store the library, replacing any earlier entry with the same ID."""
         ...

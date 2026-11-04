@@ -28,7 +28,20 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery
 from exactdocs.catalog.errors import LibraryNotFoundError
-from exactdocs.catalog.models import Library, LibraryName, Version
+from exactdocs.catalog.models import HostKind, Library, LibraryId
+
+ORPHAN_VERSION = (
+    "INSERT INTO catalog_library_versions VALUES ('/no/such', 'v1', 'tag', 'abc', '2026-11-04')"
+)
+
+
+def library(library_id: str) -> Library:
+    return Library(
+        id=LibraryId(library_id),
+        title="Payments",
+        source_url="https://github.com/acme/payments",
+        host=HostKind.GITHUB,
+    )
 
 
 def head() -> str | None:
@@ -47,29 +60,28 @@ async def test_empty_data_dir_gets_a_database_at_the_alembic_head(
 
 
 async def test_a_stored_library_is_listed_after_a_restart() -> None:
-    library = Library(name=LibraryName("/acme/payments"), versions=frozenset({Version("1.4")}))
     first = Container.build(Settings())
     async with first.running():
-        await SqliteLibraryRepository(first.engine).save(library)
+        await SqliteLibraryRepository(first.engine).save(library("/acme/payments"))
 
     second = Container.build(Settings())
     async with second.running():
         listed = await second.catalog.list_libraries(ListLibrariesQuery())
-        found = await second.catalog.get_library(GetLibraryQuery(name="/acme/payments"))
+        found = await second.catalog.get_library(GetLibraryQuery(id="/acme/payments"))
 
-    assert [lib.name for lib in listed.libraries] == ["/acme/payments"]
-    assert found.versions == ["1.4"]
+    assert [lib.id for lib in listed.libraries] == ["/acme/payments"]
+    assert found.title == "Payments"
 
 
 async def test_nothing_survives_in_another_data_dir(tmp_path: Path) -> None:
     first = Container.build(Settings())
     async with first.running():
-        await SqliteLibraryRepository(first.engine).save(Library(name=LibraryName("/a/b")))
+        await SqliteLibraryRepository(first.engine).save(library("/a/b"))
 
     other = Container.build(Settings(data_dir=tmp_path / "other"))
     async with other.running():
         with pytest.raises(LibraryNotFoundError):
-            await other.catalog.get_library(GetLibraryQuery(name="/a/b"))
+            await other.catalog.get_library(GetLibraryQuery(id="/a/b"))
 
 
 def test_data_dir_that_cannot_be_created_fails_naming_the_path(tmp_path: Path) -> None:
@@ -141,9 +153,7 @@ async def test_foreign_keys_are_enforced_within_a_domain() -> None:
     async with container.running():
         with pytest.raises(IntegrityError):
             async with container.engine.begin() as connection:
-                await connection.execute(
-                    text("INSERT INTO catalog_library_versions VALUES ('/no/such', '1')")
-                )
+                await connection.execute(text(ORPHAN_VERSION))
 
 
 def test_migration_history_is_linear() -> None:
@@ -199,13 +209,13 @@ async def test_a_batch_alteration_keeps_the_rows_that_reference_the_table(tmp_pa
     )
     async with container.running():
         repository = SqliteLibraryRepository(container.engine)
-        library = Library(name=LibraryName("/acme/payments"), versions=frozenset({Version("1.4")}))
-        await repository.save(library)
+        stored = library("/acme/payments")
+        await repository.save(stored)
 
         await migrate(container.engine, location=location)
 
         assert await current_revision(container.engine) == "extra"
-        assert await repository.get(library.name) == library
+        assert await repository.get(stored.id) == stored
         # foreign keys are back on for ordinary connections
         async with container.engine.connect() as connection:
             assert (await connection.execute(text("PRAGMA foreign_keys"))).scalar_one() == 1
@@ -213,12 +223,7 @@ async def test_a_batch_alteration_keeps_the_rows_that_reference_the_table(tmp_pa
 
 async def test_a_migration_that_breaks_a_foreign_key_is_rolled_back(tmp_path: Path) -> None:
     container = Container.build(Settings())
-    location = add_revision(
-        tmp_path,
-        """
-        op.execute("INSERT INTO catalog_library_versions VALUES ('/no/such', '1')")
-        """,
-    )
+    location = add_revision(tmp_path, f"op.execute({ORPHAN_VERSION!r})")
     async with container.running():
         with pytest.raises(StartupError, match="foreign key"):
             await migrate(container.engine, location=location)

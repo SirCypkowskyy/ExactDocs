@@ -13,8 +13,12 @@ class IndexedVersions(Protocol):
     and the composition root plugs in an adapter, so neither domain imports the other.
     """
 
-    async def is_indexed(self, target: DocTarget) -> bool:
-        """Return ``True`` only for an exact library and version match."""
+    async def find_indexed(self, target: DocTarget) -> DocTarget | None:
+        """Return ``target`` in its canonical spelling, or ``None`` unless that version exists.
+
+        Canonical means the library ID as stored (`/Acme/Payments` is `/acme/payments`); the
+        version is never altered or approximated.
+        """
         ...
 
 

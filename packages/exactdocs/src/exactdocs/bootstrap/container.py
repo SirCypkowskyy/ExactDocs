@@ -33,7 +33,7 @@ class Container:
         engine = open_database(settings)
         catalog = CatalogModule.build(repository=SqliteLibraryRepository(engine))
         retrieval = RetrievalModule.build(
-            versions=CatalogIndexedVersions(catalog.get_library),
+            versions=CatalogIndexedVersions(catalog.resolve_version),
             index=InMemoryExcerptIndex(),
         )
         return cls(settings=settings, engine=engine, catalog=catalog, retrieval=retrieval)
