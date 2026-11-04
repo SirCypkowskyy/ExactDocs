@@ -47,6 +47,29 @@ curl -X POST http://localhost:3000/api/v1/setup -H 'content-type: application/js
   -d '{"username": "ada", "password": "a long passphrase"}'
 ```
 
+### From `docker run` to a searchable library
+
+The same steps CI runs on every change ([`deploy/smoke.sh`](deploy/smoke.sh), `sh` and `curl`
+only; with the fixture repository mounted at `/fixture/docs-repo` instead of a URL), in well under
+five minutes, with no model and no API key:
+
+```bash
+docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data ghcr.io/sircypkowskyy/exactdocs:latest
+H='content-type: application/json'; U=http://localhost:3000
+curl -X POST $U/api/v1/setup -H "$H" -d '{"username":"ada","password":"a long passphrase"}'    # 1. admin
+curl -c jar.txt $U/api/v1/session -H "$H" -d '{"username":"ada","password":"a long passphrase"}' # 2. sign in
+curl -b jar.txt $U/api/v1/tokens -H "$H" -d '{"name":"laptop"}'                                  # 3. token (shown once)
+curl -b jar.txt $U/api/v1/libraries -H "$H" \
+  -d '{"url":"https://github.com/acme/payments","ref":"v1.4.0","include_paths":["docs/"]}'       # 4. add; returns job_id
+curl -b jar.txt $U/api/v1/jobs/<job_id>                                                          # 5. until "succeeded"
+curl -b jar.txt "$U/api/v1/libraries/acme/payments/articles?ref=v1.4.0"                          # 6. list ...
+curl -b jar.txt -G "$U/api/v1/libraries/acme/payments/article" -d ref=v1.4.0 -d path=docs/index.md  # ... and read
+curl -b jar.txt -G "$U/api/v1/libraries/acme/payments/search" -d ref=v1.4.0 -d q=token           # 7. search
+```
+
+8. Point your agent at `http://localhost:3000/mcp` with the token ([Connect your agent](#connect-your-agent))
+   and call `query-docs` with `libraryId` `/acme/payments/v1.4.0`.
+
 `admin create` opens the database directly (so it works before the server is up, and against the
 same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
 Passwords are stored as argon2id hashes.
