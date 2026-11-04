@@ -22,6 +22,36 @@ interface FilesAsideProps {
   match?: "all" | undefined;
 }
 
+function FilesToggle({
+  open,
+  label,
+  onToggle,
+}: {
+  open: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls="file-tree"
+      onClick={onToggle}
+      className="flex h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium outline-none ring-1 ring-inset ring-border transition-transform duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] lg:hidden"
+    >
+      <FolderTree aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      <span className="truncate">{label}</span>
+      <ChevronRight
+        aria-hidden="true"
+        className={cn(
+          "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+          open && "rotate-90",
+        )}
+      />
+    </button>
+  );
+}
+
 /**
  * The version picker, the tag filter and the file tree. On a phone the picker and a "Files"
  * button share a row, and the filter and tree fold behind that button.
@@ -57,6 +87,7 @@ export function FilesAside({
   const treeTags = q ? undefined : tagsParam;
   const closeFiles = useCallback(() => setChosen(false), []);
   const name = path?.split("/").pop();
+  const label = filesOpen || !name ? (path || q ? "Files" : "Browse files") : name;
 
   return (
     <aside aria-label="Files" className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-4">
@@ -68,25 +99,7 @@ export function FilesAside({
           current={version}
           keep={{ path, tags: tagsParam, q, match }}
         />
-        <button
-          type="button"
-          aria-expanded={filesOpen}
-          aria-controls="file-tree"
-          onClick={() => setChosen(!filesOpen)}
-          className="flex h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium outline-none ring-1 ring-inset ring-border transition-transform duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] lg:hidden"
-        >
-          <FolderTree aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          <span className="truncate">
-            {filesOpen || !name ? (path || q ? "Files" : "Browse files") : name}
-          </span>
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-              filesOpen && "rotate-90",
-            )}
-          />
-        </button>
+        <FilesToggle open={filesOpen} label={label} onToggle={() => setChosen(!filesOpen)} />
       </div>
       {/* On a phone the box leads while searching: it is the one control the reader is using. */}
       {searchBox && <div className={cn(q && "max-lg:order-first")}>{searchBox}</div>}

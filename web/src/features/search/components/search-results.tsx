@@ -71,7 +71,7 @@ function Crumbs({ hit }: { hit: SearchHit }) {
 function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
   return (
     // The whole row is the target (the title link stretches over it), so the hover tint covers the tags too.
-    <li className="relative rounded-md px-2 py-3 transition-colors duration-150 [@media(hover:hover)]:hover:bg-accent/70">
+    <li className="relative px-2 py-3 transition-colors duration-150 [@media(hover:hover)]:hover:bg-accent/70">
       <Link
         data-result=""
         to="/libraries/$owner/$repo"
