@@ -6,11 +6,15 @@ interface FieldProps extends Omit<React.ComponentProps<"input">, "id"> {
   label: string;
   hint?: string | undefined;
   error?: string | undefined;
+  /** Id of a form-level alert that explains this field too (a wrong password). */
+  alertId?: string | undefined;
 }
 
-/** A labelled input whose hint and error are announced with it. */
-export function Field({ id, label, hint, error, ...props }: FieldProps) {
-  const describedBy = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(" ");
+/** A labelled input whose rule, error and form-level alert are all announced with it. */
+export function Field({ id, label, hint, error, alertId, ...props }: FieldProps) {
+  const describedBy = [hint && `${id}-hint`, error && `${id}-error`, alertId]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={id} className="text-sm font-medium">
@@ -23,7 +27,7 @@ export function Field({ id, label, hint, error, ...props }: FieldProps) {
         aria-describedby={describedBy || undefined}
         {...props}
       />
-      {hint && !error && (
+      {hint && (
         <p id={`${id}-hint`} className="text-sm text-muted-foreground">
           {hint}
         </p>

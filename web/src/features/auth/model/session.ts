@@ -3,7 +3,9 @@ import type { components } from "@/shared/lib/api-schema";
 export type SessionState = components["schemas"]["SessionState"];
 export type Account = components["schemas"]["AccountSummary"];
 
+// Mirrors the backend's rules (identity/dtos.py, identity/model); the server stays the authority.
 export const MIN_PASSWORD_LENGTH = 12;
+const MAX_PASSWORD_LENGTH = 1024;
 const MAX_USERNAME_LENGTH = 64;
 
 /** Where a visitor may be: behind the session (`app`), or on one of the two public pages. */
@@ -46,10 +48,8 @@ export function safeNext(raw: unknown): string | undefined {
   return raw;
 }
 
-export interface Credentials {
-  username: string;
-  password: string;
-}
+/** The body of both `POST /v1/setup` and `POST /v1/session`. */
+export type Credentials = components["schemas"]["CreateFirstAdminCommand"];
 
 export type FieldErrors = Partial<Record<"username" | "password" | "confirm", string>>;
 
@@ -69,6 +69,8 @@ export function validateSetup(values: Credentials & { confirm: string }): FieldE
   else if (/\s/.test(username)) errors.username = "No spaces, please.";
   if (values.password.length < MIN_PASSWORD_LENGTH)
     errors.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+  else if (values.password.length > MAX_PASSWORD_LENGTH)
+    errors.password = `Use at most ${MAX_PASSWORD_LENGTH} characters.`;
   if (values.confirm !== values.password) errors.confirm = "The passwords don't match.";
   return errors;
 }

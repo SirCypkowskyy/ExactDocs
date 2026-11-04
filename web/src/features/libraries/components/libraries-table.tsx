@@ -8,7 +8,14 @@ interface LibrariesTableProps {
 
 export function LibrariesTable({ libraries }: LibrariesTableProps) {
   if (libraries.length === 0) {
-    return <p className="text-muted-foreground text-sm">No libraries indexed yet.</p>;
+    return (
+      <div>
+        <p>No libraries yet. Index one from a git repository:</p>
+        <pre className="mt-3 overflow-x-auto rounded-md bg-secondary px-4 py-3 text-sm">
+          <code>exactdocs add https://github.com/acme/payments --path docs/</code>
+        </pre>
+      </div>
+    );
   }
   return (
     <Table>

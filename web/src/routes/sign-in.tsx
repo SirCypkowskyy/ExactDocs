@@ -11,6 +11,6 @@ export const Route = createFileRoute("/sign-in")({
   component: function SignIn() {
     const router = useRouter();
     const { next } = Route.useSearch();
-    return <SignInPage next={next} onSignedIn={(to) => router.history.push(to)} />;
+    return <SignInPage next={next} onSignedIn={(to) => router.navigate({ to, replace: true })} />;
   },
 });

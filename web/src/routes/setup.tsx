@@ -8,6 +8,6 @@ export const Route = createFileRoute("/setup")({
   },
   component: function Setup() {
     const router = useRouter();
-    return <SetupPage onDone={() => router.history.push("/")} />;
+    return <SetupPage onDone={() => router.navigate({ to: "/", replace: true })} />;
   },
 });

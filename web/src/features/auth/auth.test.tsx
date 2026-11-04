@@ -2,7 +2,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SetupPage, SignInPage, safeNext } from "./index";
+import { HttpError } from "@/shared/lib/http";
+import { setUp, signIn } from "./api/session-query";
+import { SetupPage, SignInPage, SignOutButton, safeNext } from "./index";
+import { AdminCreated, explainError } from "./model/errors";
 import { resolveGuard, validateSetup } from "./model/session";
 
 describe("safeNext", () => {
@@ -166,5 +169,105 @@ describe("setup form", () => {
       "href",
       "/sign-in",
     );
+  });
+});
+
+describe("form alert", () => {
+  it("keeps an empty alert region and no visible message on first render", () => {
+    renderWithClient(<SetupPage onDone={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/^$/);
+  });
+});
+
+describe("explainError", () => {
+  const http = (status: number, error: string, fields: unknown[] = []) =>
+    new HttpError(status, "/v1/x", { error, detail: "d", fields: fields as never });
+
+  it("maps 422 field problems onto the fields", () => {
+    const problem = explainError(
+      http(422, "validation_error", [
+        { loc: ["body", "password"], msg: "too short", type: "string_too_short" },
+        { loc: ["body", "username"], msg: "bad name", type: "x" },
+      ]),
+    );
+    expect(problem.fields).toEqual({ password: "too short", username: "bad name" });
+  });
+
+  it("maps setup_required to a link to setup", () => {
+    expect(explainError(http(403, "setup_required")).link?.href).toBe("/setup");
+  });
+
+  it("falls back to a server message for other statuses", () => {
+    expect(explainError(http(500, "boom")).message).toMatch(/500/);
+  });
+});
+
+describe("session calls", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("clears the previous account's data when someone signs in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ state: "signed_in", account }, 201)),
+    );
+    const client = new QueryClient();
+    client.setQueryData(["libraries", "list"], ["private"]);
+    await signIn(client, { username: "ada", password: "x" });
+    expect(client.getQueryData(["libraries", "list"])).toBeUndefined();
+    expect(client.getQueryData(["session"])).toMatchObject({ state: "signed_in" });
+  });
+
+  it("tells the visitor the admin exists when only the sign-in after setup fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/setup") ? json(account, 201) : json({ error: "x", detail: "x" }, 500),
+      ),
+    );
+    await expect(
+      setUp(new QueryClient(), { username: "ada", password: "x" }),
+    ).rejects.toBeInstanceOf(AdminCreated);
+    expect(explainError(new AdminCreated())).toMatchObject({
+      message: expect.stringContaining("created"),
+      link: { href: "/sign-in" },
+    });
+  });
+
+  it("signs out: sends DELETE, drops cached data, marks the session signed out", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient();
+    client.setQueryData(["libraries", "list"], ["private"]);
+    client.setQueryData(["session"], { state: "signed_in", account });
+    const onSignedOut = vi.fn();
+    render(
+      <QueryClientProvider client={client}>
+        <SignOutButton onSignedOut={onSignedOut} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(onSignedOut).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/session",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(client.getQueryData(["libraries", "list"])).toBeUndefined();
+    expect(client.getQueryData(["session"])).toEqual({ state: "signed_out" });
+  });
+
+  it("keeps the visitor signed in and says so when sign-out fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account });
+    const onSignedOut = vi.fn();
+    render(
+      <QueryClientProvider client={client}>
+        <SignOutButton onSignedOut={onSignedOut} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't sign out");
+    expect(onSignedOut).not.toHaveBeenCalled();
+    expect(client.getQueryData(["session"])).toMatchObject({ state: "signed_in" });
   });
 });

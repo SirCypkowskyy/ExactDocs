@@ -1,11 +1,12 @@
 import { API_BASE_URL } from "@/shared/config/env";
+import type { components, paths } from "./api-schema";
 
-/** The API's error envelope (`ErrorResponse`): a stable code, a sentence, and per-field problems. */
-export interface ErrorBody {
-  error: string;
-  detail: string;
-  fields: { loc: (string | number)[]; msg: string; type: string }[];
-}
+/** The API's error envelope: a stable code, a sentence, and per-field problems. */
+export type ErrorBody = components["schemas"]["ErrorResponse"];
+
+type StripBase<P> = P extends `${typeof API_BASE_URL}${infer Rest}` ? Rest : never;
+/** A route that exists in the generated schema, relative to the API base (`/v1/session`). */
+export type ApiPath = StripBase<keyof paths>;
 
 export class HttpError extends Error {
   readonly status: number;
@@ -24,7 +25,7 @@ export class HttpError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<T> {
+async function request<T>(path: ApiPath, init: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: { Accept: "application/json", ...init.headers },
@@ -36,14 +37,14 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
 }
 
 /** Typed JSON GET against the ExactDocs API. Validating the payload is the calling slice's job. */
-export function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+export function getJson<T>(path: ApiPath, init?: RequestInit): Promise<T> {
   return request<T>(path, { ...init, credentials: "same-origin" });
 }
 
 /** JSON POST/DELETE against the ExactDocs API (the session cookie rides along, same-origin). */
 export function sendJson<T>(
   method: "POST" | "PUT" | "DELETE",
-  path: string,
+  path: ApiPath,
   body?: unknown,
 ): Promise<T> {
   return request<T>(path, {

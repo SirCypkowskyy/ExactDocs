@@ -15,6 +15,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const form = new FormData(event.currentTarget);
     const values = {
       username: String(form.get("username") ?? "").trim(),
@@ -43,45 +44,40 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
   return (
     <AuthLayout
       title="Create the admin account"
-      intro="This instance is new, so you set it up. The account you create here is the admin."
+      intro="First run. This account becomes the admin of this server."
     >
-      <form onSubmit={submit} noValidate className="flex flex-col gap-5">
-        <FormAlert>
-          {problem.message}
-          {problem.alreadySetUp && (
-            <>
-              {" "}
-              <a href="/sign-in" className="underline underline-offset-2">
-                Sign in instead
-              </a>
-              .
-            </>
-          )}
-        </FormAlert>
-        <Field
-          id="username"
-          label="Username"
-          autoComplete="username"
-          autoCapitalize="none"
-          spellCheck={false}
-          error={problem.fields?.username}
-        />
-        <Field
-          id="password"
-          label="Password"
-          type="password"
-          autoComplete="new-password"
-          hint={`At least ${MIN_PASSWORD_LENGTH} characters. A few words in a row works well.`}
-          error={problem.fields?.password}
-        />
-        <Field
-          id="confirm"
-          label="Repeat the password"
-          type="password"
-          autoComplete="new-password"
-          error={problem.fields?.confirm}
-        />
-        <SubmitButton pending={pending} idle="Create account and sign in" busy="Creating account" />
+      <form onSubmit={submit} noValidate>
+        <FormAlert problem={problem} />
+        <div className="flex flex-col gap-5">
+          <Field
+            id="username"
+            label="Username"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            error={problem.fields?.username}
+          />
+          <Field
+            id="password"
+            label="Password"
+            type="password"
+            autoComplete="new-password"
+            hint={`At least ${MIN_PASSWORD_LENGTH} characters. A short phrase of unrelated words works well.`}
+            error={problem.fields?.password}
+          />
+          <Field
+            id="confirm"
+            label="Repeat the password"
+            type="password"
+            autoComplete="new-password"
+            error={problem.fields?.confirm}
+          />
+          <SubmitButton
+            pending={pending}
+            idle="Create account and sign in"
+            busy="Creating account"
+          />
+        </div>
       </form>
     </AuthLayout>
   );

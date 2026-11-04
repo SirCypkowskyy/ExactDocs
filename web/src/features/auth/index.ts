@@ -9,4 +9,4 @@ export { SignInPage } from "./components/sign-in-page";
 export { SignOutButton } from "./components/sign-out-button";
 export { guard } from "./guard";
 export { useSession } from "./hooks/use-session";
-export { safeNext } from "./model/session";
+export { resolveGuard, safeNext } from "./model/session";

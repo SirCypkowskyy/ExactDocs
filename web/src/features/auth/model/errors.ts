@@ -5,20 +5,43 @@ export interface FormProblem {
   /** Shown in the alert above the form. */
   message?: string;
   fields?: FieldErrors;
-  /** The instance got its admin while this page was open. */
-  alreadySetUp?: boolean;
+  /** A way out of the problem: a plain link after the message. */
+  link?: { href: "/sign-in" | "/setup"; label: string };
+}
+
+/** Setup succeeded but the sign-in that follows it did not: the admin exists, a retry would 409. */
+export class AdminCreated extends Error {
+  constructor() {
+    super("admin created, sign-in failed");
+    this.name = "AdminCreated";
+  }
 }
 
 /** Turn a failed request into words a person can act on. */
 export function explainError(error: unknown): FormProblem {
+  if (error instanceof AdminCreated) {
+    return {
+      message: "The admin account was created, but signing in failed.",
+      link: { href: "/sign-in", label: "Sign in" },
+    };
+  }
   if (!(error instanceof HttpError)) {
     return { message: "Can't reach the server. Check your connection and try again." };
   }
   if (error.code === "invalid_credentials") {
-    return { message: "That username and password don't match. Check them and try again." };
+    return { message: "That username and password don't match." };
   }
   if (error.code === "already_set_up") {
-    return { message: "This instance already has an admin.", alreadySetUp: true };
+    return {
+      message: "This server already has an admin.",
+      link: { href: "/sign-in", label: "Sign in instead" },
+    };
+  }
+  if (error.code === "setup_required") {
+    return {
+      message: "This server has no admin yet.",
+      link: { href: "/setup", label: "Set it up" },
+    };
   }
   if (error.code === "invalid_username") return { fields: { username: error.message } };
   if (error.status === 422 && error.fields.length > 0) {

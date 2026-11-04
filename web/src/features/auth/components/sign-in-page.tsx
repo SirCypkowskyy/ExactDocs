@@ -6,7 +6,7 @@ import { safeNext, validateSignIn } from "../model/session";
 import { AuthLayout } from "./auth-layout";
 import { Field } from "./field";
 import { focusField } from "./focus-field";
-import { FormAlert, SubmitButton } from "./form-parts";
+import { FORM_ALERT_ID, FormAlert, SubmitButton } from "./form-parts";
 
 export function SignInPage({
   next,
@@ -21,6 +21,7 @@ export function SignInPage({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const form = new FormData(event.currentTarget);
     const credentials = {
       username: String(form.get("username") ?? "").trim(),
@@ -39,35 +40,35 @@ export function SignInPage({
       const found = explainError(error);
       setProblem(found);
       // The password is the likelier typo, and it is selected so retyping replaces it.
-      if (found.message) {
-        (document.getElementById("password") as HTMLInputElement | null)?.select();
-        focusField("password");
-      }
+      if (found.message) focusField("password", { select: true });
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <AuthLayout title="Sign in" intro="Welcome back. Your documentation is where you left it.">
-      <form onSubmit={submit} noValidate className="flex flex-col gap-5">
-        <FormAlert>{problem.message}</FormAlert>
-        <Field
-          id="username"
-          label="Username"
-          autoComplete="username"
-          autoCapitalize="none"
-          spellCheck={false}
-          error={problem.fields?.username}
-        />
-        <Field
-          id="password"
-          label="Password"
-          type="password"
-          autoComplete="current-password"
-          error={problem.fields?.password}
-        />
-        <SubmitButton pending={pending} idle="Sign in" busy="Signing in" />
+    <AuthLayout title="Sign in" intro="Sign in to this ExactDocs server.">
+      <form onSubmit={submit} noValidate>
+        <FormAlert problem={problem} />
+        <div className="flex flex-col gap-5">
+          <Field
+            id="username"
+            label="Username"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            error={problem.fields?.username}
+          />
+          <Field
+            id="password"
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            error={problem.fields?.password}
+            alertId={problem.message ? FORM_ALERT_ID : undefined}
+          />
+          <SubmitButton pending={pending} idle="Sign in" busy="Signing in" />
+        </div>
       </form>
     </AuthLayout>
   );
