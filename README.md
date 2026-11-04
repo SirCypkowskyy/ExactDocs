@@ -197,12 +197,24 @@ All tools are read-only, and everything returned is marked as external content.
 ### MCP resources
 
 Clients that browse resources read articles from the resource template
-`exactdocs://{owner}/{repo}/{path*}{?ref}` (no `ref`: the default version; `ref` is percent-encoded,
-e.g. `?ref=feature%2Fx`). A read returns two items: the untrusted-content notice as `text/plain`,
-then the article as `text/markdown`, byte for byte what `read_article` gives, with its ref, commit
-SHA and source link in `_meta`. `resources/list` shows at most 200 articles (the default version
-of each library, 50 per page), always with an explicit `?ref=`; use `list_articles` to page through
-the rest. Resources sit behind the same bearer token as the tools and are served read-only over stdio.
+`exactdocs://{owner}/{repo}/{path*}{?ref}` (no `ref`: the default version). Percent-encode `ref`:
+`/` is `%2F` and `+` is `%2B` (a bare `+` means a space and is refused, e.g. `?ref=v1.0.0%2Bbuild`).
+`{path*}` is FastMCP's multi-segment match, not RFC 6570; `guide/a.md` and `guide%2Fa.md` read the
+same article. Other aliases of one article: a mixed-case owner or repo (lowercased like library IDs),
+percent-encoded letters and `./` segments; `../` never leaves the version's article tree. A repeated
+`ref` is refused, and a missing library, version or article is JSON-RPC error `-32002`.
+
+A read returns two items: the untrusted-content notice as `text/plain`, then the article as
+`text/markdown`, byte for byte what `read_article` gives, with its ref, commit SHA and source link
+in `_meta`. MCP does not say how clients present several items, so the leading notice is best
+effort; the template description and the server instructions carry the notice too.
+
+`resources/list` is a **truncated sample**: at most 200 articles of the libraries' default
+versions, shared fairly across libraries, always with an explicit `?ref=`, sorted by URI and
+paged (currently 50 per page; clients must not assume a page size) with a stable cursor. Every
+page's `_meta` has `truncated` and `max_resources`. The list is rebuilt at most every 30 seconds.
+Use the template or `list_articles` for the rest. Resources sit behind the same bearer token as
+the tools and are served read-only over stdio.
 
 ### context7 over REST
 

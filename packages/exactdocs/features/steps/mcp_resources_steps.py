@@ -11,10 +11,10 @@ from mcp.types import ListResourcesResult
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
-from exactdocs.catalog.adapters.driving.mcp import ARTICLE_TEMPLATE, RESOURCE_PAGE_SIZE, article_uri
+from exactdocs.catalog.adapters.driving.mcp import ARTICLE_TEMPLATE, RESOURCE_PAGE_SIZE
 from exactdocs_kernel import NOTICE
 from steps.mcp_stdio_steps import FRAMES, rpc, start
-from steps.mcp_steps import LIBRARY, call_tool
+from steps.mcp_steps import call_tool
 
 DEFAULT_REF = "v1.4.0"
 
@@ -94,9 +94,7 @@ def step_listed_read(context: Context) -> None:
 
 @when('a client reads a resource whose path climbs out with ".."')
 def step_traversal(context: Context) -> None:
-    uri = article_uri(LIBRARY, DEFAULT_REF, "guide/..%2f..%2f..%2fREADME.md").replace(
-        "%252f", "%2f"
-    )
+    uri = f"exactdocs://fixture/docs-repo/guide/..%2f..%2f..%2fREADME.md?ref={DEFAULT_REF}"
     context.resource_error = None
 
     async def action(mcp: Client) -> Any:
