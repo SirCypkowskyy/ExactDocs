@@ -6,7 +6,11 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.bootstrap.bridges import CatalogIndexedVersions, CatalogLibraryIds
+from exactdocs.bootstrap.bridges import (
+    CatalogActiveManifests,
+    CatalogIndexedVersions,
+    CatalogLibraryIds,
+)
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog import CatalogModule
@@ -28,6 +32,7 @@ from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import GitRemote
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
@@ -73,6 +78,10 @@ class Container:
         retrieval = RetrievalModule.build(
             versions=CatalogIndexedVersions(catalog.resolve_version),
             index=InMemoryExcerptIndex(),
+            manifests=CatalogActiveManifests(
+                catalog.get_active_manifest, catalog.get_manifest_states
+            ),
+            chunks=SqliteChunkRepository(engine),
         )
         # No job kinds yet: the import registers its handler and recovery hook (E3-05a).
         ingestion = IngestionModule.build(

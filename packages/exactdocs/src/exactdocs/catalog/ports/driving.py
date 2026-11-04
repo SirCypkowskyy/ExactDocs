@@ -5,18 +5,22 @@ from typing import Protocol
 from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
+    ActiveManifest,
     Article,
     ArticleList,
     CollectGarbageCommand,
     CollectionResult,
     DiscardedManifests,
     DiscardPendingManifestsCommand,
+    GetActiveManifestQuery,
     GetArticleQuery,
     GetLibraryQuery,
+    GetManifestStatesQuery,
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
     ListLibrariesQuery,
+    ManifestStates,
     ResolvedVersion,
     ResolveVersionQuery,
     StoredManifest,
@@ -113,5 +117,21 @@ class CollectGarbage(Protocol):
     """Delete manifests superseded longer ago than the grace period, and unused contents."""
 
     async def __call__(self, command: CollectGarbageCommand) -> CollectionResult:
+        """Run the use case."""
+        ...
+
+
+class GetManifestStates(Protocol):
+    """Tell whether manifests are pending, active or superseded, for domains that hold their IDs."""
+
+    async def __call__(self, query: GetManifestStatesQuery) -> ManifestStates:
+        """Run the use case."""
+        ...
+
+
+class GetActiveManifest(Protocol):
+    """Name the manifest that serves a version, for domains that hold manifest IDs."""
+
+    async def __call__(self, query: GetActiveManifestQuery) -> ActiveManifest:
         """Run the use case."""
         ...

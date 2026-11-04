@@ -11,8 +11,10 @@ from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     CollectGarbage,
     DiscardPendingManifests,
+    GetActiveManifest,
     GetArticle,
     GetLibrary,
+    GetManifestStates,
     ListArticles,
     ListLibraries,
     ResolveVersion,
@@ -22,8 +24,10 @@ from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
     CollectGarbageUseCase,
     DiscardPendingManifestsUseCase,
+    GetActiveManifestUseCase,
     GetArticleUseCase,
     GetLibraryUseCase,
+    GetManifestStatesUseCase,
     ListArticlesUseCase,
     ListLibrariesUseCase,
     ResolveVersionUseCase,
@@ -45,6 +49,8 @@ class CatalogModule:
     get_article: GetArticle
     discard_pending_manifests: DiscardPendingManifests
     collect_garbage: CollectGarbage
+    get_manifest_states: GetManifestStates
+    get_active_manifest: GetActiveManifest
 
     @classmethod
     def build(
@@ -66,4 +72,6 @@ class CatalogModule:
             get_article=GetArticleUseCase(repository, manifests),
             discard_pending_manifests=DiscardPendingManifestsUseCase(manifests, clock),
             collect_garbage=CollectGarbageUseCase(manifests, clock),
+            get_manifest_states=GetManifestStatesUseCase(manifests),
+            get_active_manifest=GetActiveManifestUseCase(repository, manifests),
         )

@@ -1,11 +1,12 @@
+from collections.abc import Collection
 from dataclasses import dataclass
 
 import pytest
 
-from exactdocs.retrieval.adapters.driven.memory import InMemoryExcerptIndex
+from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemoryExcerptIndex
 from exactdocs.retrieval.dtos import SearchDocsQuery
 from exactdocs.retrieval.errors import VersionNotIndexedError
-from exactdocs.retrieval.models import DocTarget, Excerpt
+from exactdocs.retrieval.models import DocTarget, Excerpt, ManifestStatus
 from exactdocs.retrieval.module import RetrievalModule
 
 REACT_19 = DocTarget(library="react", version="19.1")
@@ -23,6 +24,18 @@ class FakeIndexedVersions:
         return canonical if canonical in self.indexed else None
 
 
+class NoManifests:
+    """Search does not look at manifests."""
+
+    async def active_id(self, target: DocTarget) -> str | None:
+        del target
+        return None
+
+    async def statuses(self, manifest_ids: Collection[str]) -> dict[str, ManifestStatus]:
+        del manifest_ids
+        return {}
+
+
 @pytest.fixture
 def retrieval() -> RetrievalModule:
     index = InMemoryExcerptIndex.of(
@@ -35,7 +48,12 @@ def retrieval() -> RetrievalModule:
             ),
         ]
     )
-    return RetrievalModule.build(versions=FakeIndexedVersions(frozenset({REACT_19})), index=index)
+    return RetrievalModule.build(
+        versions=FakeIndexedVersions(frozenset({REACT_19})),
+        index=index,
+        manifests=NoManifests(),
+        chunks=InMemoryChunkRepository(),
+    )
 
 
 async def test_returns_verbatim_excerpts_only_from_the_requested_version(
