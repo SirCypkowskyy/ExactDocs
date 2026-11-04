@@ -1,7 +1,12 @@
 import { ChevronRight, Plus, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
-import { MAX_TAG_RULES, type TagRuleDraft, validateRule } from "../model/add-library";
+import {
+  MAX_TAG_RULES,
+  type TagRuleDraft,
+  validatePatterns,
+  validateRule,
+} from "../model/add-library";
 
 const textarea =
   "min-h-24 w-full rounded-md border border-input bg-secondary px-3 py-2.5 font-mono text-[15px] leading-6 outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 aria-invalid:border-destructive";
@@ -15,6 +20,10 @@ interface PathsProps {
 }
 
 function PathFields({ include, exclude, error, onInclude, onExclude }: PathsProps) {
+  // A local mistake marks the box it is in; a server refusal cannot say which, so marks both.
+  const local = validatePatterns(include) ?? validatePatterns(exclude);
+  const bad = (text: string) =>
+    Boolean(error) && (local ? validatePatterns(text) !== undefined : true);
   const described = ["paths-hint", error && "paths-error"].filter(Boolean).join(" ");
   return (
     <div className="flex flex-col gap-4">
@@ -29,7 +38,7 @@ function PathFields({ include, exclude, error, onInclude, onExclude }: PathsProp
           spellCheck={false}
           autoComplete="off"
           placeholder={"docs/\nREADME.md"}
-          aria-invalid={error ? true : undefined}
+          aria-invalid={bad(include) ? true : undefined}
           aria-describedby={described}
           onChange={(e) => onInclude(e.target.value)}
           className={textarea}
@@ -46,7 +55,7 @@ function PathFields({ include, exclude, error, onInclude, onExclude }: PathsProp
           spellCheck={false}
           autoComplete="off"
           placeholder="docs/internal/**"
-          aria-invalid={error ? true : undefined}
+          aria-invalid={bad(exclude) ? true : undefined}
           aria-describedby={described}
           onChange={(e) => onExclude(e.target.value)}
           className={textarea}
