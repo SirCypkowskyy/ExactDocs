@@ -274,14 +274,22 @@ endpoints and, if enabled, your OpenTelemetry collector. No analytics, no update
 Telemetry and the Prometheus endpoint are **off by default**; query text is never exported
 unless you opt in.
 
-This is tested, not just promised:
-[`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py) runs an import
-over git/HTTP, REST search and both MCP search tools under a socket guard that refuses anything
-but loopback, and asserts that FastMCP's update check is off and no telemetry is configured.
-The web UI bundles its fonts and loads nothing from another origin
-([`no-external-assets.test.ts`](web/src/app/no-external-assets.test.ts)). The guard sees Python
-sockets only; for the `git` child process the test pins the URLs and protocols it was given (see
-the test's docstring).
+This is tested, not just promised, in
+[`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py): an import over
+git/HTTP, REST search and both MCP search tools run with FastMCP's update check forced off and
+no telemetry configured. What that proves, exactly:
+
+- **Observed:** every Python socket and name lookup goes through a guard that refuses anything
+  but loopback. Where unprivileged user namespaces exist (`unshare -rn`), the same loop and a
+  redirect to another host also run in a network namespace with only loopback, so the kernel
+  itself blocks anything else, git included. Elsewhere that check is skipped.
+- **Only pinned:** where it is skipped, git (a child process) is checked by what it was *told*:
+  the only URL is the fixture server, the protocols are restricted, no ssh is started.
+- git follows an HTTP redirect from your git host, and honours `HTTP(S)_PROXY`/`ALL_PROXY`
+  when set (traffic then goes to that proxy). The test runs without proxy variables.
+
+The web UI bundles its fonts; `pnpm build` fails if the built HTML, CSS or any JS chunk names
+another host ([`web/scripts/check-dist.mjs`](web/scripts/check-dist.mjs)).
 
 ## Development
 
