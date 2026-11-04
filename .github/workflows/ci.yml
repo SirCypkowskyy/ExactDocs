@@ -108,22 +108,22 @@ jobs:
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
-      - name: Trivy scan
-        uses: ./.github/actions/trivy-gate
-        with:
-          image: exactdocs:ci
       # RUN-02: size budgets and no model weights (budgets and reasoning: docs/releasing.md).
       - name: Image size budget and no model files
         run: python3 deploy/check_artifacts.py image exactdocs:ci
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
       - name: Wheel size budget, no model files, no ML dependencies
         run: |
-          docker create --name exactdocs-wheel exactdocs:ci >/dev/null
-          docker cp exactdocs-wheel:/app/.venv/lib/python3.14/site-packages/exactdocs/_web packages/exactdocs/src/exactdocs/_web
-          docker rm exactdocs-wheel >/dev/null
+          cid=$(docker create exactdocs:ci)
+          docker cp "$cid:/app/.venv/lib/python3.14/site-packages/exactdocs/_web" packages/exactdocs/src/exactdocs/_web
+          docker rm "$cid" >/dev/null
           UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
           python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
+      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
+      - name: Trivy scan
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci
       # Only the runtime-tools stage runs a command for the other architecture (apt, under QEMU);
       # build just that and prove the tools run there. No Python: it crashes under QEMU.
       - name: amd64 runtime-tools stage (QEMU) builds and runs git, ssh, tini

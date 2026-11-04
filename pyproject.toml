@@ -97,7 +97,7 @@ ignore = [
 # The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
-"deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "D", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
+"deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
 

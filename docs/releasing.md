@@ -70,10 +70,17 @@ enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land 
 | wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
 | image (uncompressed) | 375 MB | 354 MB | no such model file anywhere in the filesystem |
 
-The unit tests add that `uv.lock` holds no torch, transformers, sentence-transformers,
-huggingface-hub, onnx, pydantic-ai or chonkie, and that a started app imports none of them
-(`packages/exactdocs/tests/bootstrap/test_model_free.py`). Optional AI extras must stay out of the
-default dependencies; add them as extras and extend those lists.
+The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
+extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
+onnxruntime, model2vec, tensorflow or pydantic-ai, and that a started app imports none of them
+(`packages/exactdocs/tests/bootstrap/test_model_free.py`). The list is `ML_PACKAGES` in
+`deploy/check_artifacts.py`, shared by the script and the test. Optional AI extras (`[ai]`) are
+allowed to carry them: both checks skip `extra ==` requirements.
+
+**Chonkie is not banned** (the chunker is markdown-it-py, issue #27; Chonkie's Markdown recipe needs the
+HF Hub and network, which breaks RUN-02). If it is ever added, these extras must stay off: anything
+pulling torch, transformers, sentence-transformers, onnx/onnxruntime, huggingface-hub or model2vec
+(for Chonkie: the `semantic`, `neural`, `embeddings`, `code` and `all` extras).
 
 **Why 375 MB and not the 300 MB first planned.** The floor is the `python:3.14-slim` base (~120 MB),
 git and ssh (~25 MB git-core plus libraries; Perl is already purged) and the virtualenv (167 MB). 57 MB
