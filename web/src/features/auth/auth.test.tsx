@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { setUp, signIn } from "./api/session-query";
-import { SetupPage, SignInPage, SignOutButton, safeNext } from "./index";
+import { AccountPanel, SetupPage, SignInPage, SignOutButton, safeNext } from "./index";
 import { AdminCreated, explainError } from "./model/errors";
 import { resolveGuard, validateSetup } from "./model/session";
 
@@ -294,5 +294,26 @@ describe("session calls", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't sign out");
     expect(onSignedOut).not.toHaveBeenCalled();
     expect(client.getQueryData(["session"])).toMatchObject({ state: "signed_in" });
+  });
+});
+
+describe("account panel", () => {
+  it("offers sign-out only on phones, above the page's sections", () => {
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account });
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}}>
+          <section aria-label="Tokens" />
+        </AccountPanel>
+      </QueryClientProvider>,
+    );
+    // jsdom ignores CSS: assert the breakpoint class the header's `hidden sm:flex` mirrors
+    const [button, ...others] = screen.getAllByRole("button", { name: "Sign out" });
+    expect(others).toHaveLength(0);
+    expect(button?.closest(".sm\\:hidden")).not.toBeNull();
+    const tokens = screen.getByRole("region", { name: "Tokens" });
+    const position = button?.compareDocumentPosition(tokens) ?? 0;
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

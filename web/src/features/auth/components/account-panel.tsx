@@ -28,10 +28,12 @@ export function AccountPanel({
         <dt className="text-muted-foreground">Role</dt>
         <dd className="font-medium">{account?.role}</dd>
       </dl>
-      {children}
-      <div className="mt-10">
+      {/* The header carries sign-out from sm up; a phone's header hides it, so it sits here,
+          above the sections, where a long token list can't push it off the screen. */}
+      <div className="mt-6 sm:hidden">
         <SignOutButton onSignedOut={onSignedOut} />
       </div>
+      {children}
     </main>
   );
 }
