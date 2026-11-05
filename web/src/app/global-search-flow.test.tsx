@@ -308,9 +308,7 @@ describe("searching all libraries", () => {
 
   it("keeps Try again for server errors", async () => {
     mount("/search?q=token", { status: 500 });
-    expect(
-      await screen.findByRole("button", { name: "Try again" }, { timeout: 4000 }),
-    ).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeVisible();
   });
 
   it("ArrowDown in the header box moves into the global results", async () => {
