@@ -91,13 +91,15 @@ async def build(
     versions = FakeVersions(
         {"v1": version("v1", "m1", rules), "v2": version("v2", "m2", rules)}, default="v2"
     )
+    index = InMemorySearchIndex(chunks)
     module = RetrievalModule.build(
         defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=versions,
         chunks=chunks,
-        search=InMemorySearchIndex(chunks),
+        search=index,
+        maintenance=index,
         query_docs_token_budget=budget,
     )
     for manifest, ref, items in [("m1", "v1", old), ("m2", "v2", new)]:

@@ -178,13 +178,21 @@ jobs:
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
-  # them the way uvx does, then drives the whole loop in Chromium (e2e/, one test).
+  # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
+  # drives the whole loop in Chromium (e2e/, one test).
+  #
+  # The self-hosted runner keeps uv's cache between runs, and uv reuses a cached wheel of the same
+  # file name: with one version for every build, uvx served an older build. So the wheels get a
+  # version unique to the commit, and every step that runs them uses a cache that starts empty in
+  # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
   uvx:
-    name: uvx smoke + browser end-to-end (built wheel)
+    name: uvx smoke, upgrade + browser end-to-end (built wheel)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-tags: true # only for a manual run on a tagged checkout: CI has no tag builds, and a PR's HEAD is the merge commit
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
         with:
           enable-cache: true
@@ -202,15 +210,24 @@ jobs:
         run: |
           (cd web && pnpm install --frozen-lockfile && pnpm build)
           cp -r web/dist packages/exactdocs/src/exactdocs/_web
-          export UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0
+          version="0.0.0.dev0+g${GITHUB_SHA::7}"
+          echo "WHEEL_VERSION=$version" >> "$GITHUB_ENV"
+          export UV_DYNAMIC_VERSIONING_BYPASS="$version"
           uv build --wheel --package exactdocs-kernel --out-dir "$RUNNER_TEMP/dist"
           uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
           python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-0*.whl
+      # What the build under test must report, taken from the checkout (not from that build).
+      - name: Alembic head of this checkout
+        run: |
+          head=$(python3 deploy/upgrade_check.py --print-head)
+          echo "ALEMBIC_HEAD=$head" | tee -a "$GITHUB_ENV"
       - name: uvx exactdocs serve answers /api/health
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: |
           export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
           port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 \
+          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
             exactdocs serve --port "$port" &
           pid=$!
           trap 'kill $pid' EXIT
@@ -219,19 +236,31 @@ jobs:
             curl -fsS "http://127.0.0.1:$port/api/health" && break
             sleep 1
           done
-          curl -fsS "http://127.0.0.1:$port/api/health"
+          health=$(curl -fsS "http://127.0.0.1:$port/api/health")
+          echo "$health"
+          # the build under test, not a cached one: it migrated to this checkout's head
+          grep -q "\"schema_revision\":\"$ALEMBIC_HEAD\"" <<<"$health" \
+            || { echo "::error::schema_revision is not $ALEMBIC_HEAD: a stale wheel ran"; exit 1; }
           curl -fsS "http://127.0.0.1:$port/" | grep -qi '<div id="root"'
       - name: Without git on PATH, start fails with a clear message
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: |
           # only what uv and the generated entry point need; git is not linked
           bin="$RUNNER_TEMP/no-git-bin"; mkdir "$bin"
           for tool in uvx sh realpath dirname; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
           if out=$(timeout 120 env PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --offline --prerelease=allow \
-              --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 exactdocs serve 2>&1); then
+              --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" exactdocs serve 2>&1); then
             echo "::error::serve started without git"; exit 1
           fi
           echo "$out"
           grep -q "git is not installed" <<<"$out"
+      # RUN-04: a data directory written by the newest stable release (from PyPI) is migrated and
+      # served unchanged by these wheels, and `exactdocs reindex` runs while it serves.
+      - name: Upgrade from the previous release, then reindex while serving
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
+        run: python3 deploy/upgrade_check.py --wheels "$RUNNER_TEMP/dist" --head "$ALEMBIC_HEAD"
       # The runners may have no browser: cache Playwright's (keyed by its version) and install the
       # missing part only. System libraries need root; installed when sudo is passwordless.
       - name: Playwright
@@ -250,6 +279,8 @@ jobs:
           if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium
           else echo "::warning::no passwordless sudo, system libraries for Chromium not installed"; fi
       - name: Browser end-to-end test (server started with uvx from the wheel)
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}

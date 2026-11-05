@@ -1,12 +1,11 @@
 """The admin's browser session over HTTP: cookie attributes, expiry on the server, CSRF, MCP."""
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from http.cookies import SimpleCookie
 from typing import Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
 
@@ -256,20 +255,25 @@ INITIALIZE = {
 }
 
 
-@pytest.fixture
-def browser(container: Container) -> Iterator[TestClient]:
-    # TestClient runs the app (and the MCP session manager's lifespan) in one event loop.
-    with TestClient(create_app(container), base_url="http://localhost") as client:
-        yield client
+async def test_mcp_ignores_the_session_cookie() -> None:
+    # The app's lifespan runs the container and the MCP session manager: the `container` fixture
+    # would be a second run of it (#203).
+    container = Container.build(Settings())
+    app = create_app(container)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        await create_admin(container)
+        token = await sign_in(client)
 
-
-async def test_mcp_ignores_the_session_cookie(
-    client: httpx.AsyncClient, browser: TestClient
-) -> None:
-    token = await sign_in(client)
-
-    with_cookie = browser.post("/mcp", json=INITIALIZE, headers={**MCP_HEADERS, **cookie_of(token)})
-    without = browser.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
+        # The jar keeps the cookie to `/api`: sent by hand, so only the header differs.
+        with_cookie = await client.post(
+            "/mcp", json=INITIALIZE, headers={**MCP_HEADERS, **cookie_of(token)}
+        )
+        without = await client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
 
     # MCP wants an API token: the cookie is not a credential there, so it changes nothing.
     assert with_cookie.status_code == without.status_code == 401

@@ -1,0 +1,11 @@
+# Groups the generated notes of a GitHub Release (docs/releasing.md, "Release notes template").
+changelog:
+  categories:
+    - title: Requires reindex
+      labels: ["requires reindex"]
+    - title: Features
+      labels: ["type: feature"]
+    - title: Fixes
+      labels: ["type: bug"]
+    - title: Other changes
+      labels: ["*"]

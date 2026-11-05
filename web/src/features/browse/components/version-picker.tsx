@@ -1,8 +1,10 @@
-import { Link } from "@tanstack/react-router";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
+import { Check, ChevronsUpDown, LoaderCircle } from "lucide-react";
 import { Popover } from "radix-ui";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
+import { pathInVersionQueryOptions } from "../api/browse-queries";
 import { type BrowseSearch, orderVersions, shortSha, type Version } from "../model/browse";
 import { DefaultPin } from "./default-pin";
 
@@ -19,7 +21,19 @@ interface VersionPickerProps {
 
 const FILTER_FROM = 8;
 
-/** Switches the version and keeps the article path, so the same page can be compared across versions. */
+/** A click the browser should handle itself: new tab, new window, or (Alt) download. */
+const handledByBrowser = (event: MouseEvent) =>
+  event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+
+/**
+ * Switches the version and keeps the article, so the same page can be compared across versions.
+ * An article renamed between the two versions is followed through the rename map; one that is
+ * not there either way keeps its path (the article pane then offers the version's root).
+ *
+ * The renames are looked up when the list opens, and each link carries the path it resolved to,
+ * so a new tab or a copied link lands on the renamed article too. Only a click on a version whose
+ * answer is still on its way waits for it, and a later click or navigation cancels that wait.
+ */
 export function VersionPicker({
   owner,
   repo,
@@ -31,9 +45,28 @@ export function VersionPicker({
   const defaultLabel = pinned ? "pinned default" : "default";
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  /** The version a click waits to switch to, and the page it was clicked on. */
+  const [switching, setSwitching] = useState<{ to: Version; from: string } | null>(null);
+  const href = useRouterState({ select: (s) => s.location.href });
+  // Once the user is on another page, the wait is over for them, whatever the lookup still does.
+  const waitingFor = switching?.from === href ? switching.to : null;
+  /** What the trigger shows: the version being switched to while a click waits. */
+  const shownVersion = waitingFor ?? current;
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const router = useRouter();
   const list = useRef<HTMLUListElement>(null);
+  /** The latest click: an older switch that resolves late must not navigate. */
+  const latest = useRef(0);
   const ordered = orderVersions(versions);
   const shown = ordered.filter((v) => v.ref.toLowerCase().includes(filter.trim().toLowerCase()));
+  const path = keep.path;
+  const resolved = useQueries({
+    queries: shown.map((v) => ({
+      ...pathInVersionQueryOptions(owner, repo, current, v, path ?? ""),
+      enabled: open && path !== undefined && v.ref !== current.ref,
+    })),
+  });
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -46,6 +79,27 @@ export function VersionPicker({
     event.preventDefault();
   }
 
+  /** Waits for the rename answer of `target`, then switches, unless the user went elsewhere. */
+  async function switchTo(target: Version, at: string) {
+    const mine = ++latest.current;
+    const from = router.state.location.href;
+    setSwitching({ to: target, from });
+    try {
+      const moved = await client
+        .fetchQuery(pathInVersionQueryOptions(owner, repo, current, target, at))
+        .then((answer) => answer.path)
+        .catch(() => at);
+      if (mine !== latest.current || router.state.location.href !== from) return;
+      await navigate({
+        to: "/libraries/$owner/$repo",
+        params: { owner, repo },
+        search: { version: target.ref, ...keep, path: moved },
+      });
+    } finally {
+      if (mine === latest.current) setSwitching(null);
+    }
+  }
+
   return (
     <Popover.Root
       open={open}
@@ -55,20 +109,39 @@ export function VersionPicker({
       }}
     >
       <Popover.Trigger
-        aria-label={`Version: ${current.ref}. Change version`}
+        aria-label={
+          waitingFor === null
+            ? `Version: ${current.ref}. Change version`
+            : `Version: ${current.ref}, switching to ${waitingFor.ref}. Change version`
+        }
+        aria-busy={waitingFor !== null || undefined}
         className="flex h-11 w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md bg-secondary px-3 text-sm outline-none ring-1 ring-inset ring-border transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[state=open]:ring-ring [@media(hover:hover)]:hover:bg-accent"
       >
         <span className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate font-mono font-semibold">{current.ref}</span>
-          {current.is_default && (
+          <span
+            className={cn(
+              "truncate font-mono font-semibold",
+              waitingFor !== null && "text-muted-foreground",
+            )}
+          >
+            {shownVersion.ref}
+          </span>
+          {shownVersion.is_default && (
             <span className="text-xs text-mark max-sm:hidden">{defaultLabel}</span>
           )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span className="font-mono text-xs text-muted-foreground max-lg:hidden">
-            {shortSha(current.commit_sha)}
+            {shortSha(shownVersion.commit_sha)}
           </span>
-          <ChevronsUpDown aria-hidden="true" className="size-4 text-muted-foreground" />
+          {waitingFor === null ? (
+            <ChevronsUpDown aria-hidden="true" className="size-4 text-muted-foreground" />
+          ) : (
+            <LoaderCircle
+              aria-hidden="true"
+              className="size-4 text-muted-foreground motion-safe:animate-spin"
+            />
+          )}
         </span>
       </Popover.Trigger>
       <Popover.Portal>
@@ -98,16 +171,28 @@ export function VersionPicker({
             aria-label="Versions"
             className="max-h-[min(22rem,60dvh)] overflow-y-auto p-1"
           >
-            {shown.map((v) => {
+            {shown.map((v, i) => {
               const isCurrent = v.ref === current.ref;
+              const moved = resolved[i]?.data?.path;
+              const waits = path !== undefined && !isCurrent && moved === undefined;
               return (
                 <li key={v.ref}>
                   <Link
                     to="/libraries/$owner/$repo"
                     params={{ owner, repo }}
-                    search={{ version: v.ref, ...keep }}
+                    search={{ version: v.ref, ...keep, path: moved ?? path }}
                     aria-current={isCurrent ? "true" : undefined}
-                    onClick={() => setOpen(false)}
+                    onClick={(event) => {
+                      setOpen(false);
+                      if (handledByBrowser(event)) return;
+                      if (!waits) {
+                        latest.current++;
+                        setSwitching(null);
+                        return;
+                      }
+                      event.preventDefault();
+                      void switchTo(v, path);
+                    }}
                     className={cn(
                       "flex min-h-11 items-center gap-2 rounded-md px-2.5 py-1 text-sm lg:min-h-9 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       isCurrent ? "bg-mark/[0.16]" : "[@media(hover:hover)]:hover:bg-accent",

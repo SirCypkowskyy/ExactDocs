@@ -186,8 +186,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
   and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.
-- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version` and the database's
-  `schema_revision`.
+- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version`, the database's
+  `schema_revision`, the `search_index_format` the search index was built in (`null` if none is
+  recorded), and `reindex_required`: `true` when that format is older than this version's or not
+  recorded, until `exactdocs reindex` has run (search keeps answering meanwhile).
 
 ## Job problems
 

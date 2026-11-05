@@ -14,9 +14,11 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     ManifestStatus,
+    RebuiltIndex,
     Removed,
     SearchableVersion,
     SearchHit,
+    SearchIndexState,
     SectionRef,
     StoredChunk,
     TagFilter,
@@ -196,4 +198,21 @@ class SearchIndex(Protocol):
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
     ) -> Mapping[str, int]:
         """Return how many chunks of each manifest match, uncapped; zero counts are left out."""
+        ...
+
+
+class SearchIndexMaintenance(Protocol):
+    """Rebuilds the search index from the stored chunks, without stopping search.
+
+    The new index is built beside the one that answers and replaces it in one step, so a search
+    sees either the old index or the new one, never a half-built one. Chunks indexed or removed
+    while it builds are in the new one too.
+    """
+
+    async def state(self) -> SearchIndexState:
+        """Return the stored index's format and the one this build writes."""
+        ...
+
+    async def rebuild(self) -> RebuiltIndex:
+        """Build a new index of every stored chunk in the current format, then swap it in."""
         ...
