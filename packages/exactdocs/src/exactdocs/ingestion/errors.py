@@ -185,6 +185,19 @@ class VersionImportingError(ConflictError):
         self.library, self.ref = library, ref
 
 
+class TagNotMovedError(ConflictError):
+    """A re-import was asked for a tag that still names the commit its version serves."""
+
+    code = "tag_not_moved"
+
+    def __init__(self, library: str, ref: str, commit_sha: str) -> None:
+        super().__init__(
+            f"the tag {ref!r} of library {library!r} still points at commit {commit_sha}, "
+            "which the version serves: there is nothing to re-import"
+        )
+        self.library, self.ref, self.commit_sha = library, ref, commit_sha
+
+
 class CommitImportedError(ConflictError):
     """The commit a SHA names is already a version of the library, under another ref."""
 
@@ -232,6 +245,14 @@ class UnknownLibraryError(NotFoundError):
     def __init__(self, library: str) -> None:
         super().__init__(f"library {library!r} not found")
         self.library = library
+
+
+class UnknownVersionError(NotFoundError):
+    """The library has no version with this ref."""
+
+    def __init__(self, library: str, ref: str) -> None:
+        super().__init__(f"library {library!r} has no version {ref!r}")
+        self.library, self.ref = library, ref
 
 
 class UnknownJobKindError(ValidationError):
@@ -314,6 +335,29 @@ class AmbiguousRefError(ValidationError):
 
     def __init__(self, prefix: str) -> None:
         super().__init__(f"commit {prefix!r} is ambiguous: use more characters of the SHA")
+
+
+class NotATagError(ValidationError):
+    """Only a tag version is re-imported on request: a branch follows its tip with a sync."""
+
+    code = "not_a_tag"
+
+    def __init__(self, ref: str, kind: str) -> None:
+        follow = (
+            "a branch follows its tip with a sync" if kind == "branch" else "a commit never changes"
+        )
+        super().__init__(f"{ref!r} is a {kind}, not a tag: {follow}")
+        self.ref = ref
+
+
+class RefDeletedError(ValidationError):
+    """The tag a re-import was asked for is gone from the repository."""
+
+    code = "ref_deleted"
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(f"the tag {ref!r} no longer exists in the repository")
+        self.ref = ref
 
 
 class ImportNotPinnedError(ValidationError):

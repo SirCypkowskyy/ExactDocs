@@ -4077,13 +4077,141 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/versions/reimport": {
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Reimport",
+        "description": "Re-import a tag version that moved upstream, at the commit the tag names now.\n\nThis is the confirmation a sync's `tag_moved` asks for: the tag is checked again and its\nimport queued (`Location` is the job); the version keeps serving the old commit until the\nimport has finished, and its error clears with it. 404 for an unknown library or version,\n422 `not_a_tag` for a branch (a sync follows it) or a commit, 409 `tag_not_moved` when the\ntag still names the commit the version serves, 422 `ref_deleted` when the tag is gone\nupstream, 409 `version_importing` when an import of it is queued or running, and the 422\ncodes of reading a repository (`repository_unreachable`, `credentials_required`, ...).",
+        "operationId": "ingestion-reimport",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReimportVersionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReimportedVersion"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/sync": {
       "post": {
         "tags": [
           "ingestion"
         ],
         "summary": "Sync",
-        "description": "Re-sync the library's branch versions: import the ones whose tip moved.\n\nOnly changed articles are re-chunked. Commits are never checked and tags never moved:\na tag that still names its commit is `pinned`. Read each version's `status`, not the HTTP\nstatus, for what happened to it: `up_to_date`, `queued`, `importing` (an import of it is\nalready queued or running), `failed` with an `error_code`: `ref_deleted` (the branch or\ntag is gone upstream), `tag_moved` (the tag names another commit now; it is reported,\nnever re-imported) or `unexpected` (its import could not be queued). Every version keeps\nwhat it served. Queued imports answer 202, anything else 200. 409 `version_importing`\nwhen a running import left nothing queued. 422 when the remote cannot be read, mostly\n`repo_unreachable` (deleted, private, moved or down; also a login prompt for a library\nwithout a credential) or `auth_failed` (the credential was refused or cannot be read).\nOther codes are possible: `host_key_changed` (the SSH host key changed, possibly a man\nin the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed\njobs recorded for it are named in the message.",
+        "description": "Re-sync the library's branch versions: import the ones whose tip moved.\n\nOnly changed articles are re-chunked. Commits are never checked and tags never moved:\na tag that still names its commit is `pinned`. Read each version's `status`, not the HTTP\nstatus, for what happened to it: `up_to_date`, `queued`, `importing` (an import of it is\nalready queued or running), `failed` with an `error_code`: `ref_deleted` (the branch or\ntag is gone upstream), `tag_moved` (the tag names another commit now; it is reported,\nand re-imported only when confirmed with `versions/reimport`) or `unexpected` (its\nimport could not be queued). Every version keeps what it served. Queued imports answer\n202, anything else 200. 409 `version_importing` when a running import left nothing\nqueued. 422 when the remote cannot be read, mostly `repo_unreachable` (deleted, private,\nmoved or down; also a login prompt for a library without a credential) or `auth_failed`\n(the credential was refused or cannot be read).\nOther codes are possible: `host_key_changed` (the SSH host key changed, possibly a man\nin the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed\njobs recorded for it are named in the message.",
         "operationId": "ingestion-sync",
         "security": [
           {
@@ -6960,6 +7088,65 @@
         "title": "RefOut",
         "description": "A tag or branch and the commit it points at."
       },
+      "ReimportVersionBody": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Ref",
+            "description": "The tag version to re-import, e.g. `v1.4.0`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref"
+        ],
+        "title": "ReimportVersionBody",
+        "description": "The request body of re-importing a version; the library is in the path."
+      },
+      "ReimportedVersion": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "ref_kind": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+          },
+          "previous_commit_sha": {
+            "type": "string",
+            "title": "Previous Commit Sha",
+            "description": "The commit the version served until now."
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha",
+            "description": "The commit the tag names now, which the import takes."
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "ref",
+          "ref_kind",
+          "previous_commit_sha",
+          "commit_sha",
+          "job_id"
+        ],
+        "title": "ReimportedVersion",
+        "description": "The tag version whose re-import is queued, and the commits it moves between."
+      },
       "RemovalResult": {
         "properties": {
           "library": {
@@ -7653,7 +7840,7 @@
               }
             ],
             "title": "Error Code",
-            "description": "Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone upstream), `tag_moved` (the tag names another commit now; it is not re-imported) or `unexpected` (its import could not be queued); null otherwise."
+            "description": "Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone upstream), `tag_moved` (the tag names another commit now; it is re-imported only when confirmed, with `versions/reimport`) or `unexpected` (its import could not be queued); null otherwise."
           },
           "error": {
             "anyOf": [

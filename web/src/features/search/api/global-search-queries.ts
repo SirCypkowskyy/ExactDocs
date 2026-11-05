@@ -1,6 +1,6 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { getJson, type QueryOf } from "@/shared/lib/http";
-import { BROWSE_KEY } from "@/shared/lib/query-keys";
+import { SEARCH_ALL_KEY } from "@/shared/lib/query-keys";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import type { GlobalResults } from "../model/global";
 
@@ -17,8 +17,8 @@ export const globalSearchQueryOptions = ({ q, library }: GlobalArgs) => {
   const text = normalizeQuery(q) ?? "";
   return queryOptions({
     // Under BROWSE_KEY, so every import, refresh and delete that invalidates it drops these hits too
-    // (that invalidation is the freshness contract). "*search-all*" cannot be a GitHub owner.
-    queryKey: [...BROWSE_KEY, "*search-all*", text, library ?? ""] as const,
+    // (that invalidation is the freshness contract).
+    queryKey: [...SEARCH_ALL_KEY, text, library ?? ""] as const,
     queryFn: ({ signal }) => {
       const query: QueryOf<"/api/v1/search"> = {
         q: text,

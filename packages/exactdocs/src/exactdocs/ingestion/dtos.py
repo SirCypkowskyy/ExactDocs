@@ -420,6 +420,31 @@ class AddedVersion(_PinnedImport):
     """The existing library, the commit the new version's ref was pinned to, and its import."""
 
 
+class ReimportVersionBody(_Dto):
+    """The request body of re-importing a version; the library is in the path."""
+
+    ref: str = Field(
+        min_length=1, max_length=255, description="The tag version to re-import, e.g. `v1.4.0`."
+    )
+
+
+class ReimportVersionCommand(ReimportVersionBody):
+    """Re-import a tag version that moved upstream, at the commit the tag names now."""
+
+    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+
+
+class ReimportedVersion(_Dto):
+    """The tag version whose re-import is queued, and the commits it moves between."""
+
+    library_id: str
+    ref: str
+    ref_kind: RefKind
+    previous_commit_sha: str = Field(description="The commit the version served until now.")
+    commit_sha: str = Field(description="The commit the tag names now, which the import takes.")
+    job_id: str
+
+
 class ListRepositoryRefsQuery(_Dto):
     """Ask a repository for its tags and branches."""
 
@@ -570,8 +595,9 @@ class SyncedVersion(_Dto):
         default=None,
         description=(
             "Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is "
-            "gone upstream), `tag_moved` (the tag names another commit now; it is not "
-            "re-imported) or `unexpected` (its import could not be queued); null otherwise."
+            "gone upstream), `tag_moved` (the tag names another commit now; it is "
+            "re-imported only when confirmed, with `versions/reimport`) or `unexpected` (its "
+            "import could not be queued); null otherwise."
         ),
     )
     error: str | None = Field(

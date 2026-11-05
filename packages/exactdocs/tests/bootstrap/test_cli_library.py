@@ -158,6 +158,136 @@ async def test_a_sync_names_each_version_that_failed_and_why(
     assert "tag_moved" not in capsys.readouterr().out  # the table, then the reason on stderr
 
 
+def _moved_tag_sync(
+    reimport: httpx2.Response, moved: tuple[str, ...] = ("v1",)
+) -> tuple[httpx2.MockTransport, list[str]]:
+    """A sync that reports the ``moved`` tags as moved, and ``reimport`` as the answer to each."""
+    asked: list[str] = []
+    sha = "a" * 40
+    body = {
+        "library_id": "/acme/docs",
+        "versions": [
+            {"ref": "main", "ref_kind": "branch", "status": "up_to_date", "commit_sha": sha},
+            *(
+                {
+                    "ref": ref,
+                    "ref_kind": "tag",
+                    "status": "failed",
+                    "previous_commit_sha": sha,
+                    "commit_sha": sha,
+                    "error_code": "tag_moved",
+                    "error": f"the tag {ref!r} now points at commit b",
+                }
+                for ref in moved
+            ),
+        ],
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        asked.append(f"{request.method} {request.url.path} {request.content.decode()}".strip())
+        if request.url.path.endswith("/sync"):
+            return httpx2.Response(200, json=body)
+        return reimport
+
+    return httpx2.MockTransport(handler), asked
+
+
+async def test_confirm_re_imports_each_moved_tag_and_succeeds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    reimported = {
+        "ref": "v1",
+        "previous_commit_sha": "a" * 40,
+        "commit_sha": "b" * 40,
+        "job_id": "j9",
+    }
+    transport, asked = _moved_tag_sync(httpx2.Response(202, json=reimported))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        await sync_library(api, "/acme/docs", confirm=True, as_json=True)
+
+    assert asked == [
+        "POST /api/v1/libraries/acme/docs/sync",
+        'POST /api/v1/libraries/acme/docs/versions/reimport {"ref":"v1"}',
+    ]
+    by_ref = {v["ref"]: v for v in json.loads(capsys.readouterr().out)["versions"]}
+    assert (by_ref["v1"]["status"], by_ref["v1"]["commit_sha"], by_ref["v1"]["job_id"]) == (
+        "queued",
+        "b" * 40,
+        "j9",
+    )
+
+
+REIMPORTED = {"ref": "v1", "previous_commit_sha": "a" * 40, "commit_sha": "b" * 40, "job_id": "j9"}
+
+
+async def test_a_confirmed_re_import_says_which_commit_the_tag_moved_from_and_to(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    transport, _ = _moved_tag_sync(httpx2.Response(202, json=REIMPORTED))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        await sync_library(api, "/acme/docs", confirm=True)
+
+    assert f"v1: re-import queued, {'a' * 9} -> {'b' * 9}" in capsys.readouterr().out
+
+
+async def test_confirming_named_tags_re_imports_only_those() -> None:
+    transport, asked = _moved_tag_sync(httpx2.Response(202, json=REIMPORTED), ("v1", "v2"))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs", confirm=["v1"])
+
+    assert [a for a in asked if "reimport" in a] == [
+        'POST /api/v1/libraries/acme/docs/versions/reimport {"ref":"v1"}'
+    ]
+    assert "sync of v2 failed [tag_moved]" in str(raised.value)  # left as reported
+    assert "sync of v1" not in str(raised.value)
+
+
+async def test_a_named_tag_that_did_not_move_is_said_not_re_imported() -> None:
+    transport, asked = _moved_tag_sync(httpx2.Response(202, json=REIMPORTED), ())
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs", confirm=["v9"])
+
+    assert "v9 was not re-imported: the sync did not report it as a moved tag" in str(raised.value)
+    assert exit_code(raised.value) == EXIT_IMPORT
+    assert not [a for a in asked if "reimport" in a]
+
+
+@pytest.mark.parametrize(("confirm", "flag"), [(True, "--confirm"), (["v1"], "--confirm-tag")])
+async def test_a_busy_library_tells_a_confirming_sync_to_come_back(
+    confirm: bool | list[str], flag: str
+) -> None:
+    body = {"error": "version_importing", "detail": "an import of 'main' is already in progress"}
+    async with ApiClient("http://localhost", "t", transport=_sync_answer(409, body)) as api:
+        with pytest.raises(ApiError) as raised:
+            await sync_library(api, "/acme/docs", confirm=confirm)
+
+    assert exit_code(raised.value) == EXIT_CONFLICT
+    assert f"with {flag} again once that import finished" in str(raised.value)
+
+
+async def test_a_refused_confirmation_leaves_the_tag_failed_with_the_refusal() -> None:
+    refused = {"error": "tag_not_moved", "detail": "the tag 'v1' still points at commit a"}
+    transport, _ = _moved_tag_sync(httpx2.Response(409, json=refused))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs", confirm=True)
+
+    assert "sync of v1 failed [tag_not_moved]: the tag 'v1' still points" in str(raised.value)
+    assert exit_code(raised.value) == EXIT_IMPORT
+
+
+async def test_without_confirm_a_moved_tag_is_not_re_imported_and_the_way_is_named() -> None:
+    transport, asked = _moved_tag_sync(httpx2.Response(500))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs")
+
+    assert asked == ["POST /api/v1/libraries/acme/docs/sync"]
+    assert "exactdocs sync /acme/docs --confirm" in str(raised.value)
+
+
 async def test_progress_is_reported_once_per_change() -> None:
     states = iter(
         [
@@ -473,7 +603,14 @@ def test_remove_asks_on_stderr_and_a_bad_target_is_refused_first(
     assert _exit(["remove", "justone", "--yes"]) == EXIT_USAGE
 
 
-@pytest.mark.parametrize("args", [["sync", "/a/b/v1"], ["version", "add", "/a/b/v1", "v2"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["sync", "/a/b/v1"],
+        ["version", "add", "/a/b/v1", "v2"],
+        ["sync", "/a/b", "--confirm", "--confirm-tag", "v1"],  # every moved tag, or these?
+    ],
+)
 def test_a_ref_where_a_library_is_expected_is_a_usage_error(
     server: Recorder, args: list[str]
 ) -> None:

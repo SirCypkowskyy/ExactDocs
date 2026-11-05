@@ -51,6 +51,19 @@ Feature: Libraries and tokens from the command line
     When the user runs the command "exactdocs sync /fixture/docs-repo"
     Then the command exits with code 6
     And the error output says "sync of v1.4.0 failed [tag_moved]"
+    And the error output says "--confirm"
+
+  Scenario: A moved tag is re-imported from the CLI after confirmation
+    Given the fixture repository is a private copy
+    And the user ran the command "exactdocs add <fixture-url> --ref v1.4.0 --path docs/ --wait"
+    And tag "v1.4.0" now points elsewhere
+    When the user runs the command "exactdocs sync /fixture/docs-repo --confirm-tag v1.4.0 --wait"
+    Then the command succeeds
+    And the output says "v1.4.0: re-import queued"
+    And the output says "v1.4.0: imported"
+    When the user runs the command "exactdocs sync /fixture/docs-repo"
+    Then the command succeeds
+    And the output says "pinned"
 
   Scenario: A sync of a repository that is gone exits non-zero with the reason
     Given the fixture repository is a private copy

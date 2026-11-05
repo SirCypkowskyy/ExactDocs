@@ -54,13 +54,26 @@ const gone = { error: "not_found", detail: "no article", fields: [], close_match
 /** An in-memory API: v1.3.0 lacks webhooks.md; v1.4.0 has everything. */
 function serve(options: Options = {}) {
   const calls: URL[] = [];
+  // Manual tags by path: they hold for every version, as the API keeps them.
+  const manual = new Map<string, string[]>();
+  const tagsOf = (a: { path: string; tags: string[] }) => [
+    ...new Set([...a.tags, ...(manual.get(a.path) ?? [])]),
+  ];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string) => {
+    vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input, "http://x");
       calls.push(url);
       const p = url.pathname;
       const ref = url.searchParams.get("ref");
+      if (p.endsWith("/tags") && (init?.method === "PUT" || init?.method === "DELETE")) {
+        const path = url.searchParams.get("path") ?? "";
+        const body = init.method === "PUT" ? JSON.parse(String(init.body)) : { tags: [] };
+        const tags = (body.tags as string[]).map((t) => t.toLowerCase());
+        manual.set(path, tags);
+        if (init.method === "DELETE") return new Response(null, { status: 204 });
+        return Response.json({ library: "/acme/payments", path, tags });
+      }
       const inVersion = (a: { path: string }) =>
         ref === "v1.4.0" || !a.path.endsWith("webhooks.md");
       if (p.endsWith("/session")) {
@@ -79,8 +92,10 @@ function serve(options: Options = {}) {
           (a) =>
             inVersion(a) &&
             (prefix === "" || a.path.startsWith(`${prefix}/`)) &&
-            (tags.length === 0 || a.tags.some((t) => tags.includes(t))),
-        ).sort((x, y) => (x.path < y.path ? -1 : 1));
+            (tags.length === 0 || tagsOf(a).some((t) => tags.includes(t))),
+        )
+          .map((a) => ({ ...a, tags: tagsOf(a) }))
+          .sort((x, y) => (x.path < y.path ? -1 : 1));
         const size = options.pageSize ?? 1000;
         const from = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
         const page = articles.slice(from, from + size);
@@ -90,7 +105,7 @@ function serve(options: Options = {}) {
       if (p.endsWith("/tags")) {
         const counts = new Map<string, number>();
         for (const a of ALL.filter(inVersion))
-          for (const t of a.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+          for (const t of tagsOf(a)) counts.set(t, (counts.get(t) ?? 0) + 1);
         const tags =
           options.tags ??
           [...counts]
@@ -118,6 +133,8 @@ function serve(options: Options = {}) {
         if (!found) return Response.json(gone, { status: 404 });
         return Response.json({
           ...found,
+          tags: tagsOf(found),
+          manual_tags: (manual.get(path) ?? []).map((tag) => ({ tag, path })),
           library: "/acme/payments",
           ref,
           commit_sha: SHA,
@@ -207,6 +224,47 @@ describe("browsing a library version", () => {
     expect(screen.getByRole("button", { name: "api" })).toHaveAttribute("aria-pressed", "true");
     // The other tags stay on offer while one is selected.
     expect(screen.getByRole("button", { name: "guide" })).toBeVisible();
+  });
+
+  it("adds a manual tag: it shows on the article and in the tree's filter of every version", async () => {
+    const { router } = mount("/libraries/acme/payments?version=v1.4.0&path=docs/guide/install.md");
+    expect(await screen.findByRole("heading", { name: "Installing", level: 2 })).toBeVisible();
+    const tags = screen.getByRole("region", { name: "Tags" });
+    expect(within(tags).getByRole("list", { name: "Tags from path rules" })).toHaveTextContent(
+      "guide",
+    );
+    await userEvent.click(within(tags).getByRole("button", { name: "Add tag" }));
+    await userEvent.type(
+      within(tags).getByRole("textbox", { name: "New tag" }),
+      "Onboarding{Enter}",
+    );
+    const byHand = within(tags).getByRole("list", { name: "Tags added by hand" });
+    expect(await within(byHand).findByText("onboarding")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "onboarding" })).toBeVisible();
+
+    await router.navigate({
+      to: "/libraries/$owner/$repo",
+      params: { owner: "acme", repo: "payments" },
+      search: { version: "v1.3.0", path: "docs/guide/install.md" },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tree", { name: "Files of v1.3.0" })).toBeVisible(),
+    );
+    const older = await screen.findByRole("list", { name: "Tags added by hand" });
+    expect(await within(older).findByText("onboarding")).toBeVisible();
+    await userEvent.click(await screen.findByRole("button", { name: "onboarding" }));
+    const tree = screen.getByRole("tree", { name: "Files of v1.3.0" });
+    expect(await within(tree).findByRole("treeitem", { name: /Installing/ })).toBeVisible();
+    await waitFor(() =>
+      expect(within(tree).queryByRole("treeitem", { name: /Authentication/ })).toBeNull(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove tag onboarding" }));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Tags added by hand" })).queryByText("onboarding"),
+      ).toBeNull(),
+    );
   });
 
   it("moves with the arrow keys and opens a folder with ArrowRight", async () => {

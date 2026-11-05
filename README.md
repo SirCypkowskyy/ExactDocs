@@ -87,6 +87,8 @@ uvx exactdocs add https://github.com/acme/docs --ref v1.4.0 --path 'docs/**' --d
 uvx exactdocs libraries --json
 uvx exactdocs version add /acme/docs v1.5.0 --wait
 uvx exactdocs sync /acme/docs --wait             # re-syncs the branch versions, checks the tags
+uvx exactdocs sync /acme/docs --confirm --wait   # also re-imports every tag that moved upstream
+uvx exactdocs sync /acme/docs --confirm-tag v1.4.0  # ... or only the moved tags named
 uvx exactdocs remove /acme/docs/v1.4.0           # asks first; --yes skips the question
 uvx exactdocs remove /acme/docs --yes
 uvx exactdocs add git@github.com:acme/private.git --ssh-key ./deploy_key
@@ -115,8 +117,10 @@ and without `--yes`), 3 not found, 4 conflict (an import is running, the ID is t
 in or refused, 6 an import or a sync failed (or `--wait` lost track of it), 130 interrupted.
 A sync that fails says why with a stable code, and every version keeps serving what it had:
 `repo_unreachable` (deleted, private or down), `auth_failed` (the token or key was refused),
-`ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now; it is never
-re-imported: remove the version and add it again). The same codes are on the jobs (`error_code`).
+`ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now; a sync
+never re-imports it: `--confirm` (every moved tag) or `--confirm-tag REF` does, at the new commit,
+and prints each tag's old and new commit). The same codes are on the jobs
+(`error_code`).
 
 `--wait` only watches: it follows an import for `--wait-timeout` seconds (default 600) and retries
 a poll that hiccups. When it times out, loses track or you press Ctrl-C (exit 130), it says so and
@@ -361,8 +365,10 @@ the mode is chosen.
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
 never splitting code blocks or tables (Chonkie was dropped: its Markdown recipe needs the Hugging
 Face Hub and the network, which a model-free, offline-capable image cannot have). Articles are
-tagged from front matter and path rules, and listings and search filter by tag.
-Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
+tagged from front matter and path rules, and by hand: the article page of the web UI shows each
+tag under where it comes from and adds or removes manual tags, which hold for every version
+(`PUT`/`DELETE /api/v1/libraries/{owner}/{repo}/tags?path=`). Listings and search filter by tag.
+Per-library split level and chunk sizes are planned (MVP-2).
 
 ## Configuration
 

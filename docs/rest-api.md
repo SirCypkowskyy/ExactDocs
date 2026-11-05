@@ -197,8 +197,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   queued or running: it is left alone and the others still sync), `pinned` (commits, and tags
   that still name the commit they were imported at) or `failed` with an `error_code` and an
   `error`: `ref_deleted` (the branch or tag no longer exists upstream), `tag_moved` (the tag
-  names another commit now; it is reported, **never re-imported**: remove the version and add
-  it again to take the new commit) or `unexpected` (its import could not be queued). A failed
+  names another commit now; it is reported, **never re-imported by a sync**: confirm it with
+  `versions/reimport`, below) or `unexpected` (its import could not be queued). A failed
   version keeps serving what it had. **202 Accepted** with `Location` (the import job, or the
   library's jobs when several were queued) when anything was queued, else **200**. At most one
   import per library and ref is unfinished at any time (a unique index), so concurrent syncs
@@ -212,6 +212,21 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   versions keep what they served, and a failed job with that code is recorded per branch and tag
   (once per distinct reason) and named in the message. A later sync that finds the version fine
   again records a succeeded no-op job, so the error no longer shows.
+- **Re-importing a moved tag**: `POST /libraries/{owner}/{repo}/versions/reimport` (`{"ref"}`;
+  the ref is in the body because a ref may hold slashes, so nothing could follow it in the path)
+  is the confirmation a `tag_moved` asks for. The tag is checked against the remote again and a
+  `refresh` import of the commit it names now is queued: **202 Accepted** with `library_id`,
+  `ref`, `ref_kind` (`tag`), `previous_commit_sha`, `commit_sha` (the new one), `job_id` and
+  `Location: /api/v1/jobs/{job_id}`. Like a re-synced branch, the version keeps its ID and serves
+  the old commit until the import has finished, unchanged files reuse their chunks, and chunk IDs
+  of changed sections then answer `409 stale_chunk`. The import is the version's newest job, so
+  its `tag_moved` error no longer shows. Errors: 404 `not_found` (unknown library or version),
+  422 `not_a_tag` (a branch, which a sync follows, or a commit, which never changes), 409
+  `tag_not_moved` (the tag still names the commit the version serves), 422 `ref_deleted` (the tag
+  is gone upstream), 409 `version_importing` (an import of it is queued or running), and the
+  422 codes of reading a repository (`repository_unreachable`, `credentials_required`, ...).
+  These are the codes adding a version answers, not the sync's own `repo_unreachable` /
+  `auth_failed`: a script that branches on codes handles both sets.
 
 ## Jobs, access and health
 
