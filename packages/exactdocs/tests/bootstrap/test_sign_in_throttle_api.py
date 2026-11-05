@@ -110,4 +110,9 @@ async def test_429_is_part_of_the_typed_error_shape(container: Container) -> Non
         for method, operation in operations.items()
         if "429" in operation.get("responses", {})
     }
-    assert throttled == {(SESSION, "post"), (TOKEN_LOGIN, "post")}
+    # Besides the credential routes, only the import preview (busy slots, #62) answers 429.
+    assert throttled == {
+        (SESSION, "post"),
+        (TOKEN_LOGIN, "post"),
+        ("/api/v1/repositories/preview", "post"),
+    }

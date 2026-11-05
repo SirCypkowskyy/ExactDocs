@@ -18,6 +18,7 @@ from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs_kernel import (
+    BusyError,
     ConflictError,
     DomainError,
     NotFoundError,
@@ -33,6 +34,7 @@ _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     UnauthenticatedError: 401,
     NotFoundError: 404,
     ConflictError: 409,
+    BusyError: 429,
     ValidationError: 422,
     RateLimitedError: 429,
 }
@@ -122,7 +124,8 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
     close = [str(path) for path in getattr(exc, "close_matches", ())]
     body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
-    headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, RateLimitedError) else None
+    retry = isinstance(exc, (BusyError, RateLimitedError))
+    headers = {"Retry-After": str(exc.retry_after)} if retry else None
     return JSONResponse(body.model_dump(), status_code=status, headers=headers)
 
 

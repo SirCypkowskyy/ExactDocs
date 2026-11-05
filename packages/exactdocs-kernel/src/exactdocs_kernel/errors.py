@@ -29,6 +29,19 @@ class ValidationError(DomainError):
     code = "validation_error"
 
 
+class BusyError(DomainError):
+    """Too many of this kind of request are running: try again shortly.
+
+    ``retry_after`` is a hint in whole seconds (an HTTP adapter sends it as ``Retry-After``).
+    """
+
+    code = "busy"
+
+    def __init__(self, detail: str, *, retry_after: int = 1) -> None:
+        super().__init__(detail)
+        self.retry_after = max(1, retry_after)
+
+
 class UnauthenticatedError(DomainError):
     """The caller is not signed in, or the credentials they gave are wrong."""
 

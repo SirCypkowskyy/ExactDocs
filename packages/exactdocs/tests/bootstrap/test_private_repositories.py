@@ -301,3 +301,32 @@ async def test_syncing_and_refreshing_a_private_library_use_its_stored_token(
         )
     )
     assert (await _job(client, job.id))["state"] == "succeeded"
+
+
+async def test_previewing_a_private_repository_needs_a_session_and_the_token(
+    client: httpx.AsyncClient, docs_repo: DocsRepo
+) -> None:
+    created = await client.post("/api/v1/tokens", json={"name": "mcp client"})
+    bearer = {"Authorization": f"Bearer {created.json()['token']}"}
+    credential = {"kind": "token", "token": docs_repo.token}
+    body = {"url": docs_repo.private_url, "ref": "v1.4.0", "include_paths": ["docs/"]}
+
+    anonymous = await client.post("/api/v1/repositories/preview", json=body)
+    allowed = await client.post(
+        "/api/v1/repositories/preview", json={**body, "credential": credential}
+    )
+    async with httpx.AsyncClient(
+        transport=client._transport,  # ruff: ignore[private-member-access]
+        base_url="http://localhost",
+        headers=bearer,
+    ) as api:
+        by_token = await api.post(
+            "/api/v1/repositories/preview", json={**body, "credential": credential}
+        )
+
+    assert anonymous.status_code == 422
+    assert anonymous.json()["error"] == "repository_auth_required"
+    assert allowed.status_code == 200
+    assert "docs/guide/install.md" in allowed.json()["files"]
+    assert by_token.status_code == 401
+    assert docs_repo.token not in anonymous.text + allowed.text + by_token.text

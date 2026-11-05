@@ -7,14 +7,14 @@ import { accessQueryOptions, articleQueryOptions } from "../api/browse-queries";
 import {
   type Article,
   commitUrl,
-  HOST_NAMES,
+  hostName,
   type LibraryDetail,
   safeHref,
   shortSha,
   type Version,
 } from "../model/browse";
 import { CopyButton } from "../render/copy-button";
-import { blobUrl, rawUrl } from "../render/urls";
+import { assetUrl, blobUrl, rawUrl } from "../render/urls";
 
 // The renderer (Markdown parser and all) is its own chunk: the tree and the overview do not wait for it.
 const loadMarkdown = () =>
@@ -66,14 +66,14 @@ export function CommitLinks({
   version: Version;
   fileUrl?: string | null | undefined;
 }) {
-  const host = HOST_NAMES[library.host];
+  const host = hostName(library.host);
   const file = safeHref(fileUrl);
   const commit = commitUrl(library.host, library.source_url, version.commit_sha);
   return (
     <div className="-ml-1 flex flex-wrap items-center gap-x-4 gap-y-0">
       {file && (
         <a href={file} target="_blank" rel="noopener noreferrer" className={external}>
-          <span className={underline}>View file on {host ?? "the host"}</span>
+          <span className={underline}>View file on {host}</span>
           <ArrowUpRight aria-hidden="true" className="size-3.5" />
           <span className="sr-only">
             at commit {shortSha(version.commit_sha)} (opens a new tab)
@@ -121,6 +121,8 @@ function NotInVersion({
   suggestions,
 }: ArticleViewProps & { suggestions: readonly string[] }) {
   const newest = library.default_version;
+  // A link to a file the import left out: the host has it at this commit.
+  const onHost = blobUrl(library.host, library.source_url, version.commit_sha, path);
   const link =
     "flex h-11 items-center justify-between gap-2 rounded-md bg-secondary px-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(hover:hover)]:hover:bg-accent";
   return (
@@ -178,6 +180,16 @@ function NotInVersion({
           >
             Open this path in {newest}
           </Link>
+        )}
+        {onHost && (
+          <a href={onHost} target="_blank" rel="noopener noreferrer" className={secondary}>
+            View on {hostName(library.host)}
+            <ArrowUpRight aria-hidden="true" className="ml-1 size-4" />
+            <span className="sr-only">
+              {" "}
+              at commit {shortSha(version.commit_sha)} (opens a new tab)
+            </span>
+          </a>
         )}
       </div>
     </div>
@@ -309,10 +321,12 @@ function RenderedText({
             where={{
               path: article.path,
               title: article.title,
-              imageUrl: (p) =>
-                isPublic
+              imageSources: (p) => {
+                const host = isPublic
                   ? rawUrl(library.host, library.source_url, version.commit_sha, p)
-                  : undefined,
+                  : undefined;
+                return [assetUrl(owner, repo, version.ref, p), ...(host ? [host] : [])];
+              },
               fileUrl: (p) => blobUrl(library.host, library.source_url, version.commit_sha, p),
               docLink: (path, to, children) => <Link {...doc(path, to)}>{children}</Link>,
             }}

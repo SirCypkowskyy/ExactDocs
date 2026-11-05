@@ -95,7 +95,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   exclusion always wins. The library has no versions until its import has run; the job records the
   pinned ref and commit. `GET /repositories/refs?url=` lists `default_branch`, `branches` and `tags`
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
-  Like `/repositories/check`, both accept `file://`, localhost and private addresses (see
+  `POST /repositories/preview` (`url`, optional `ref`, `include_paths`, `exclude_paths`, `credential`)
+  is a dry run: it fetches the commit and its trees only (`--filter=blob:none`, depth 1, no
+  checkout; git's process limits, and the fetch deadline and size watchdog, apply) and answers
+  `ref`, `ref_kind`, `commit_sha`, `files` (sorted, 1000 at most), `total` and `truncated`. The
+  same selection rules as the import decide, so nothing is stored. Sizes are not included: they
+  would need the blobs. Paths are untrusted text; render them as text. Errors are those of
+  adding a library, plus 422 `commit_unavailable`, and 422 `repository_too_large` when the
+  fetch or the tree listing is too large. A `credential` needs a signed-in session, as for
+  `/repositories/check`. It does a real fetch of the commit's trees, so it is slower than
+  `/repositories/check`; at most two run at once, and a third waits a few seconds, then gets 429
+  `preview_busy` with a `Retry-After` header (seconds).
+  Like `/repositories/check`, all of them accept `file://`, localhost and private addresses (see
   SECURITY.md).
 - **Re-syncing**: `POST /libraries/{owner}/{repo}/sync` (no body) asks the remote where each
   *branch* version of the library is now and queues an import pinned to the new commit for each
@@ -127,7 +138,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
   library's jobs, newest first.
 - **Private repositories**: a `credential` (`{"kind": "token", ...}` or `{"kind": "ssh_key", ...}`)
-  is accepted by `POST /repositories/check`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
+  is accepted by `POST /repositories/check`, `POST /repositories/preview`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
   and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.

@@ -18,8 +18,10 @@ from exactdocs.ingestion.errors import (
     GitNotInstalledError,
     InvalidRepositoryUrlError,
     NotAGitRepositoryError,
+    PreviewBusyError,
     RepositoryTooLargeError,
     RepositoryUnreachableError,
+    TreeTooLargeError,
 )
 from exactdocs.ingestion.models import PathSelection, ProposedId, RepositoryHost, RepositoryUrl
 from fixture_repo import DocsRepo, git
@@ -542,3 +544,76 @@ async def test_fetch_files_is_bounded_by_its_own_byte_limit(
         ):
             pass
     assert leftovers(work) == []
+
+
+async def test_lists_the_tree_without_a_checkout_or_blobs(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path
+) -> None:
+    pinned = sha(docs_repo, "v1.4.0")
+
+    listed = await gateway.list_files(repository(docs_repo.file_url), pinned)
+
+    assert "docs/guide/install.md" in listed
+    assert "docs/assets/logo.png" in listed  # everything in the tree; the use case filters
+    assert set(listed) == set(
+        git("ls-tree", "-r", "--name-only", pinned, cwd=docs_repo.path).split("\n")
+    )
+    assert leftovers(work) == []
+
+
+async def test_a_listing_of_a_missing_commit_is_reported(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    with pytest.raises(CommitUnavailableError):
+        await gateway.list_files(repository(docs_repo.file_url), "0" * 40)
+
+
+async def test_a_listing_shares_the_process_deadline(gateway: GitCli, docs_repo: DocsRepo) -> None:
+    slow = GitCli(git=gateway.git, work_root=gateway.work_root, fetch_timeout=0.0)
+
+    with pytest.raises(RepositoryUnreachableError):
+        await slow.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+
+
+async def test_a_tree_over_the_output_cap_is_too_large_to_preview(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    small = GitCli(git=GitCli.locate().git, work_root=work, max_output=64)
+
+    with pytest.raises(TreeTooLargeError) as raised:
+        await small.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+
+    assert raised.value.code == "repository_too_large"
+    assert "refs" not in str(raised.value)
+    assert not isinstance(raised.value, RepositoryTooLargeError)  # no MiB limit to report
+    assert leftovers(work) == []
+
+
+async def test_a_preview_waits_a_bounded_time_for_a_slot(docs_repo: DocsRepo, work: Path) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(2):
+        await busy.preview_slots.acquire()
+
+    with pytest.raises(PreviewBusyError) as raised:
+        await busy.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+    assert raised.value.retry_after == 1  # whole seconds, at least one
+
+    busy.preview_slots.release()  # a slot is free again: the preview runs
+    assert await busy.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+    assert leftovers(work) == []
+
+
+async def test_a_listing_leaves_symlinks_out(tmp_path: Path, gateway: GitCli) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "a.md").write_text("a")
+    (source / "link.md").symlink_to("a.md")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+
+    listed = await gateway.list_files(
+        repository(source.as_uri()), git("rev-parse", "HEAD", cwd=source)
+    )
+
+    assert listed == ["a.md"]
