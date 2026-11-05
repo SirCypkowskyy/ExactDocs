@@ -4577,11 +4577,11 @@
           },
           "manual_tags": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ManualTagInfo"
             },
             "type": "array",
             "title": "Manual Tags",
-            "description": "The tags among `tags` set by hand: for this path or one it was renamed from."
+            "description": "The tags among `tags` set by hand, each with the path it was set on: this one or one it was renamed from. A tag set on both is listed for each."
           },
           "size": {
             "type": "integer",
@@ -6168,6 +6168,27 @@
         ],
         "title": "LoginForTokenCommand",
         "description": "Credentials exchanged for an API token (the CLI's login); ``name`` labels the token."
+      },
+      "ManualTagInfo": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Where the tag was set: this article's path, or an older one it was renamed from. Change or remove the tag on this path."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "path"
+        ],
+        "title": "ManualTagInfo",
+        "description": "A tag set by hand, and the article path it was set on."
       },
       "ManualTagsIn": {
         "properties": {

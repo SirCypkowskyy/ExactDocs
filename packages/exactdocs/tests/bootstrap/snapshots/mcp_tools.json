@@ -441,9 +441,27 @@
           "type": "string"
         },
         "manual_tags": {
-          "description": "The tags among `tags` set by hand: for this path or one it was renamed from.",
+          "description": "The tags among `tags` set by hand, each with the path it was set on: this one or one it was renamed from. A tag set on both is listed for each.",
           "items": {
-            "type": "string"
+            "additionalProperties": false,
+            "description": "A tag set by hand, and the article path it was set on.",
+            "properties": {
+              "path": {
+                "description": "Where the tag was set: this article's path, or an older one it was renamed from. Change or remove the tag on this path.",
+                "title": "Path",
+                "type": "string"
+              },
+              "tag": {
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "path"
+            ],
+            "title": "ManualTagInfo",
+            "type": "object"
           },
           "title": "Manual Tags",
           "type": "array"

@@ -736,9 +736,9 @@ export interface components {
             readonly tags: readonly string[];
             /**
              * Manual Tags
-             * @description The tags among `tags` set by hand: for this path or one it was renamed from.
+             * @description The tags among `tags` set by hand, each with the path it was set on: this one or one it was renamed from. A tag set on both is listed for each.
              */
-            readonly manual_tags: readonly string[];
+            readonly manual_tags: readonly components["schemas"]["ManualTagInfo"][];
             /** Size */
             readonly size: number;
             /** Front Matter */
@@ -1443,6 +1443,19 @@ export interface components {
             readonly name: string;
             /** Expires At */
             readonly expires_at?: string | null;
+        };
+        /**
+         * ManualTagInfo
+         * @description A tag set by hand, and the article path it was set on.
+         */
+        readonly ManualTagInfo: {
+            /** Tag */
+            readonly tag: string;
+            /**
+             * Path
+             * @description Where the tag was set: this article's path, or an older one it was renamed from. Change or remove the tag on this path.
+             */
+            readonly path: string;
         };
         /**
          * ManualTagsIn
