@@ -22,6 +22,8 @@ export interface Problem {
   /** The way out is another part of this page (a refused version is a branch to re-sync). */
   jump?: { href: `#${string}`; label: string };
   link?: { href: "/sign-in" | "/setup"; label: string };
+  /** Asking again would get the same answer (a moved tag moved back): offer no retry. */
+  final?: boolean;
 }
 
 export interface DetailsDraft {
@@ -183,11 +185,13 @@ export function explainReimport(error: unknown): Problem {
   switch (error.code) {
     case "not_found":
       return {
+        final: true,
         message: "This version no longer exists. It may have been removed in another window.",
       };
     case "tag_not_moved":
       return {
         tone: "info",
+        final: true,
         message:
           "The tag points at the commit this version serves again, so there is nothing to re-import.",
       };
@@ -195,10 +199,20 @@ export function explainReimport(error: unknown): Problem {
       return { tone: "info", message: "This version is being imported right now." };
     case "ref_deleted":
       return {
+        final: true,
         message: "The tag is gone from the repository now. The version keeps serving what it had.",
       };
+    case "not_a_tag":
+      return {
+        final: true,
+        message: "Only a tag is re-imported this way: a branch is updated with Re-sync.",
+      };
+    case "host_key_changed":
+      return {
+        message:
+          "The SSH host key of the repository's server has changed since it was first seen, so nothing was fetched. Check with whoever runs that server before trusting the new key. The version keeps serving what it had.",
+      };
     case "credentials_required":
-    case "auth_failed":
     case "repository_auth_required":
       return {
         message:

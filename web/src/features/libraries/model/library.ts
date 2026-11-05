@@ -1,4 +1,5 @@
 import type { components } from "@/shared/lib/api-schema";
+import { HttpError } from "@/shared/lib/http";
 
 export type Library = components["schemas"]["LibrarySummary"];
 export type LibrariesResponse = components["schemas"]["LibraryList"];
@@ -6,6 +7,48 @@ export type Job = components["schemas"]["JobSummary"];
 /** The newest job of one version, without its skipped files (see `/jobs/{id}`). */
 export type LatestJob = components["schemas"]["LatestJob"];
 export type LatestJobs = components["schemas"]["LatestJobs"];
+export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
+
+/** Why confirming a moved tag queued nothing; `final` refusals will not change on a retry. */
+export function explainReimport(error: unknown): {
+  message: string;
+  tone?: "info";
+  final?: boolean;
+} {
+  const kept = "The version keeps serving what it had.";
+  if (!(error instanceof HttpError)) {
+    return { message: "Can't reach the server. Check your connection and try again." };
+  }
+  if (error.status === 401) return { message: "Your session ended. Sign in and try again." };
+  if (error.status === 403) return { message: "Your account isn't allowed to change libraries." };
+  switch (error.code) {
+    case "not_found":
+      return { message: "This version no longer exists.", final: true };
+    case "tag_not_moved":
+      return {
+        tone: "info",
+        final: true,
+        message: "The tag points at the commit this version serves again: nothing to re-import.",
+      };
+    case "ref_deleted":
+      return { final: true, message: `The tag is gone from the repository now. ${kept}` };
+    case "version_importing":
+      return { tone: "info", message: "This version is being imported right now." };
+    case "host_key_changed":
+      return {
+        message: `The SSH host key of the repository's server has changed, so nothing was fetched. ${kept}`,
+      };
+    case "credentials_required":
+    case "repository_auth_required":
+      return { message: `The stored credentials were refused or can't be read. ${kept}` };
+    default:
+      return error.status === 422
+        ? { message: `The repository couldn't be read, so nothing changed. ${kept}` }
+        : {
+            message: `Something went wrong on the server (${error.status}). Try again in a moment.`,
+          };
+  }
+}
 
 /** What the newest job of every version of a library says about its sync. */
 export type Sync =

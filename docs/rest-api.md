@@ -175,6 +175,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `tag_not_moved` (the tag still names the commit the version serves), 422 `ref_deleted` (the tag
   is gone upstream), 409 `version_importing` (an import of it is queued or running), and the
   422 codes of reading a repository (`repository_unreachable`, `credentials_required`, ...).
+  These are the codes adding a version answers, not the sync's own `repo_unreachable` /
+  `auth_failed`: a script that branches on codes handles both sets.
 
 ## Jobs, access and health
 

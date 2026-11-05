@@ -56,18 +56,21 @@ function Reimport({
   });
   return (
     <div className="mt-2">
-      <Button
-        type="button"
-        aria-disabled={reimport.isPending}
-        aria-busy={reimport.isPending}
-        onClick={() => {
-          if (!reimport.isPending) reimport.mutate();
-        }}
-        className={`${secondary} min-w-32`}
-      >
-        {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
-        <span className="sr-only">of {v.ref}</span>
-      </Button>
+      {/* After a refusal that a retry cannot change, there is nothing left to press. */}
+      {!problem?.final && (
+        <Button
+          type="button"
+          aria-disabled={reimport.isPending}
+          aria-busy={reimport.isPending}
+          onClick={() => {
+            if (!reimport.isPending) reimport.mutate();
+          }}
+          className={`${secondary} min-w-32`}
+        >
+          {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
+          <span className="sr-only">of {v.ref}</span>
+        </Button>
+      )}
       <div className={problem ? "mt-3" : undefined}>
         <FormAlert
           id={`reimport-alert-${v.ref}`}

@@ -54,7 +54,7 @@ job problems with a code, and the version is published without them.
 A branch that moved gets a `refresh` job, which is the same pipeline pinned to the new commit;
 unchanged files reuse their stored chunks, and the new manifest replaces the old one in place.
 A tag that moved is reported (`tag_moved`), never re-imported by a sync: the user confirms its
-re-import (`POST .../versions/reimport`, the button on the error, `exactdocs sync --confirm`),
+re-import (`POST .../versions/reimport`, the button on the error in the library list and in Re-sync, `exactdocs sync --confirm`),
 which queues a `refresh` job of the tag pinned to its new commit. Every upstream problem leaves the
 last good version served and is recorded on a failed job with a stable `error_code`.
 

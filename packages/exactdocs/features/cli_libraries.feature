@@ -57,8 +57,9 @@ Feature: Libraries and tokens from the command line
     Given the fixture repository is a private copy
     And the user ran the command "exactdocs add <fixture-url> --ref v1.4.0 --path docs/ --wait"
     And tag "v1.4.0" now points elsewhere
-    When the user runs the command "exactdocs sync /fixture/docs-repo --confirm --wait"
+    When the user runs the command "exactdocs sync /fixture/docs-repo --confirm-tag v1.4.0 --wait"
     Then the command succeeds
+    And the output says "v1.4.0: re-import queued"
     And the output says "v1.4.0: imported"
     When the user runs the command "exactdocs sync /fixture/docs-repo"
     Then the command succeeds

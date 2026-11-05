@@ -17,7 +17,7 @@ import re
 import stat
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -33,6 +33,7 @@ from exactdocs.bootstrap.client import (
 EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT = 1, 2, 3, 4, 5, 6
 POLL_SECONDS = 1.0
 SYNC_FAILED_STATUS = 422  # the remote could not be read: repo_unreachable, auth_failed, ...
+CONFLICT_STATUS = 409  # e.g. an import is running and the sync could queue nothing
 TAG_MOVED = "tag_moved"  # a sync's code for a tag that names another commit now
 PAGE = 200  # the largest page the API serves
 MAX_REFS_SHOWN = 5
@@ -421,15 +422,21 @@ async def _follow(
     return jobs, failure
 
 
-async def _reimport_moved_tags(api: ApiClient, library: str, synced: dict[str, Any]) -> None:
-    """Re-import, in place in ``synced``, each tag the sync reported as ``tag_moved``.
+async def _reimport_moved_tags(
+    api: ApiClient, library: str, synced: dict[str, Any], wanted: Collection[str] | None
+) -> list[dict[str, Any]]:
+    """Re-import, in place in ``synced``, the tags the sync reported as ``tag_moved``.
 
-    A tag whose re-import is refused (it moved back, an import of it started meanwhile...)
-    stays ``failed``, with the refusal as its code and reason.
+    ``wanted`` names the tags to confirm (``None``: every moved tag). Returns the rows whose
+    re-import was queued. A tag whose re-import is refused (it moved back, an import of it started
+    meanwhile...) stays ``failed``, with the refusal as its code and reason.
     """
     path = f"{_library_path(library)}/versions/reimport"
+    queued = []
     for version in synced["versions"]:
         if version["status"] != "failed" or version.get("error_code") != TAG_MOVED:
+            continue
+        if wanted is not None and version["ref"] not in wanted:
             continue
         try:
             reimported = await api.request("POST", path, json={"ref": version["ref"]})
@@ -438,18 +445,36 @@ async def _reimport_moved_tags(api: ApiClient, library: str, synced: dict[str, A
             continue
         version.update(
             status="queued",
+            previous_commit_sha=reimported["previous_commit_sha"],
             commit_sha=reimported["commit_sha"],
             job_id=reimported["job_id"],
             error_code=None,
             error=None,
         )
+        queued.append(version)
+    return queued
+
+
+async def _sync(api: ApiClient, library: str, *, confirming: bool) -> dict[str, Any]:
+    """``POST .../sync``: a 422 (the remote could not be read) is a failed sync, exit 6."""
+    try:
+        return await api.request("POST", f"{_library_path(library)}/sync")
+    except ApiError as exc:
+        if exc.status == CONFLICT_STATUS and confirming:
+            # Nothing was checked, so no moved tag was seen either: say when to confirm.
+            detail = f"{exc.detail}; run the sync with --confirm again once that import finished"
+            raise ApiError(exc.status, exc.code, detail) from None
+        if exc.status != SYNC_FAILED_STATUS:
+            raise
+        message = f"sync of {printable(library)} failed [{printable(exc.code)}]: {exc.detail}"
+        raise ImportFailedError(message) from None
 
 
 async def sync_library(
     api: ApiClient,
     library: str,
     *,
-    confirm: bool = False,
+    confirm: bool | Collection[str] = False,
     wait: bool = False,
     as_json: bool = False,
     interval: float = POLL_SECONDS,
@@ -457,20 +482,16 @@ async def sync_library(
 ) -> None:
     """``POST /libraries/{owner}/{repo}/sync``; ``--wait`` follows every queued import.
 
-    With ``confirm``, each tag the sync reports as moved is re-imported at its new commit
-    (``POST .../versions/reimport``) and followed like a queued branch. Any version that could not
-    be synced (the remote could not be read, a branch or tag is gone, a tag moved and was not
-    confirmed, a queued import failed) raises ``ImportFailedError`` naming each reason and code.
+    ``confirm`` re-imports tags the sync reports as moved at their new commit
+    (``POST .../versions/reimport``): ``True`` every one of them, a collection of refs only those.
+    They are followed like a queued branch, and each one's old and new commit is printed. Any
+    version that could not be synced (the remote could not be read, a branch or tag is gone, a tag
+    moved and was not confirmed, a named tag did not move, a queued import failed) raises
+    ``ImportFailedError`` naming each reason and code.
     """
-    try:
-        synced = await api.request("POST", f"{_library_path(library)}/sync")
-    except ApiError as exc:
-        if exc.status != SYNC_FAILED_STATUS:
-            raise
-        message = f"sync of {printable(library)} failed [{printable(exc.code)}]: {exc.detail}"
-        raise ImportFailedError(message) from None
-    if confirm:
-        await _reimport_moved_tags(api, library, synced)
+    wanted = None if confirm is True else set(confirm or ())
+    synced = await _sync(api, library, confirming=bool(confirm))
+    reimported = await _reimport_moved_tags(api, library, synced, wanted) if confirm else []
     versions = synced["versions"]
     jobs: dict[str, Any] = {}
     failure = None
@@ -481,15 +502,28 @@ async def sync_library(
     else:
         rows = [[v["ref"], v["ref_kind"], v["status"], v["commit_sha"][:9]] for v in versions]
         say(table(["REF", "KIND", "STATUS", "COMMIT"], rows))
+        for v in reimported:  # a tag that moved is news even when confirmed: say from where
+            say(
+                f"{v['ref']}: re-import queued, "
+                f"{v['previous_commit_sha'][:9]} -> {v['commit_sha'][:9]}"
+            )
         queued = sum(v["status"] == "queued" for v in versions)
         if queued and not wait:
             say(f"{queued} import(s) queued; follow them with --wait or in the web UI.")
         for ref, job in jobs.items():
             say(f"{ref}: {_finished(job)}.")
     failed = [v for v in versions if v["status"] == "failed"]
-    if failure or failed:
+    moved = {v["ref"] for v in reimported} | {
+        v["ref"] for v in failed if v.get("error_code") == TAG_MOVED
+    }
+    unmoved = sorted((wanted or set()) - moved - {v["ref"] for v in failed})
+    if failure or failed or unmoved:
         parts = [str(failure)] if failure else []
         parts += [_sync_failure(v) for v in failed]
+        parts += [
+            f"{printable(ref)} was not re-imported: the sync did not report it as a moved tag"
+            for ref in unmoved
+        ]
         if any(v.get("error_code") == TAG_MOVED for v in failed):
             parts.append(
                 f"re-import moved tags at their new commit with "

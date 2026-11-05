@@ -1018,7 +1018,7 @@ class ImportVersionUseCase:
             return None, ()
         imported = await self._quietly(job, self.sources.imported_versions(job.library), [])
         before = previous_version(job.version, imported)
-        if before is None or (before.ref == job.version and job.ref_kind is RefKind.TAG):
+        if before is None or (before.ref == job.version and before.kind is RefKind.TAG):
             # A tag has no map of its own past: a re-imported (moved) tag without a numeric
             # order has nothing to be compared with, as when it was first imported.
             return None, ()

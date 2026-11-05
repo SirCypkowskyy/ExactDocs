@@ -1,12 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Check, ChevronRight, CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
-import { jobQueryOptions } from "../api/libraries-query";
+import { jobQueryOptions, librariesKeys } from "../api/libraries-query";
+import { reimportVersion } from "../api/reimport";
 import type { SyncState } from "../hooks/use-libraries";
-import type { LatestJob } from "../model/library";
+import { explainReimport, type LatestJob } from "../model/library";
 
 const SKIPPED_SHOWN = 5;
 
@@ -40,9 +41,46 @@ function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
   );
 }
 
+/** The confirmation a moved tag waits for, right on its error: re-import the new commit. */
+function ReimportMovedTag({ library, version }: { library: string; version: string }) {
+  const queryClient = useQueryClient();
+  const reimport = useMutation({
+    mutationFn: () => reimportVersion(library, version),
+    // The queued import is the version's newest job now: the list shows it instead of the error.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: librariesKeys.all }),
+  });
+  const problem = reimport.isError ? explainReimport(reimport.error) : undefined;
+  return (
+    <div className="mt-3">
+      {!problem?.final && (
+        <button
+          type="button"
+          aria-disabled={reimport.isPending}
+          aria-busy={reimport.isPending}
+          onClick={() => {
+            if (!reimport.isPending) reimport.mutate();
+          }}
+          className="inline-flex min-h-11 items-center rounded-md bg-foreground px-3 font-medium text-background outline-none transition-colors duration-150 hover:bg-foreground/90 focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        >
+          {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
+          <span className="sr-only">of {version}</span>
+        </button>
+      )}
+      <p role="alert" className={problem ? "mt-2" : undefined}>
+        {problem && (
+          <span className={problem.tone === "info" ? "text-foreground" : "text-destructive"}>
+            {problem.message}
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
 export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) {
   const finished = job.finished_at ?? job.created_at;
   const [, owner = "", repo = ""] = job.library.split("/");
+  const moved = job.error_code === "tag_moved";
   return (
     <div className="mt-3 rounded-md bg-secondary px-3 py-3 text-sm">
       <p className="text-muted-foreground">
@@ -55,13 +93,14 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
         {job.error ?? "No reason was recorded."}
       </pre>
       <SkippedFiles job={job} open={open} />
+      {moved && job.version && <ReimportMovedTag library={job.library} version={job.version} />}
       <Link
         to="/libraries/$owner/$repo/settings"
         params={{ owner, repo }}
         hash="sync-heading"
         className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium outline-none ring-1 ring-inset ring-border transition-colors duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
       >
-        Open settings to sync again
+        {moved ? "Review the moved tag in settings" : "Open settings to sync again"}
       </Link>
     </div>
   );

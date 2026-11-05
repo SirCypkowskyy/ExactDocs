@@ -9,6 +9,7 @@ import { LibrarySettingsPage } from "./index";
 import {
   changedFields,
   explainAddVersion,
+  explainReimport,
   explainRemove,
   explainSync,
   failureWords,
@@ -236,6 +237,10 @@ describe("settings model", () => {
     expect(explainSync(e(422, "auth_failed")).message).toMatch(/send the token or key again/);
     expect(explainSync(e(422, "host_key_changed")).message).toMatch(/SSH host key .* changed/);
     expect(explainSync(e(422, "host_key_changed")).message).not.toMatch(/deleted/);
+    expect(explainReimport(e(422, "not_a_tag")).message).toMatch(/branch is updated with Re-sync/);
+    expect(explainReimport(e(422, "host_key_changed")).message).toMatch(/SSH host key/);
+    expect(explainReimport(e(422, "repository_unreachable")).message).toMatch(/couldn't be read/);
+    expect(explainReimport(e(409, "version_importing")).final).toBeFalsy();
     expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
       /never cancels/,
     );
@@ -560,6 +565,8 @@ describe("re-sync", () => {
     const said = await screen.findByText(/nothing to re-import/);
     expect(said.closest("p")).toHaveClass("bg-accent"); // not a mistake: neutral
     expect(screen.getByText(/tag now points at another commit/)).toBeInTheDocument();
+    // Asking again would get the same answer.
+    expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
   });
 
   it("explains 409 and 422", async () => {

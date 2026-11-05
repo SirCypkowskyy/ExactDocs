@@ -494,8 +494,15 @@ def sync(
     *,
     confirm: Annotated[
         bool,
-        Parameter(help="Re-import each tag that moved upstream at the commit it names now."),
+        Parameter(
+            help="Confirm every tag of the library that moved upstream: re-import each at the "
+            "commit it names now (old and new commit are printed)."
+        ),
     ] = False,
+    confirm_tag: Annotated[
+        list[str] | None,
+        Parameter(help="Confirm only this moved tag; repeatable. Other moved tags stay reported."),
+    ] = None,
     wait: WaitOption = False,
     wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
@@ -509,7 +516,7 @@ def sync(
             await lib.sync_library(
                 api,
                 library,
-                confirm=confirm,
+                confirm=confirm or confirm_tag or False,
                 wait=wait,
                 as_json=json_output,
                 give_up_after=wait_timeout,
