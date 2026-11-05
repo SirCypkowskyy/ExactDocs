@@ -144,22 +144,34 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (the version before), so an ID that is several re-syncs old may get no location.
   The body lists every version with a `status`; read it rather than the HTTP status:
   `queued` (with the `job_id`), `up_to_date`, `importing` (an import of that branch is already
-  queued or running: it is left alone and the others still sync), `pinned` (tags and commits never
-  move) or `failed` (the branch no longer exists upstream, or its import could not be queued; the
-  version keeps serving). **202 Accepted** with `Location` (the import job, or the library's jobs
-  when several were queued) when anything was queued, else **200**. At most one import per
-  library and ref is unfinished at any time (a unique index), so concurrent syncs cannot queue it
-  twice. Errors: 404 `not_found`; 409 `version_importing` when an import is running and nothing
-  could be queued; and, when the remote cannot be read, the repository error of
-  `/repositories/check` (422 `repository_unreachable`, ...). The 422 is deliberate (distinct
-  codes are E9-02): the versions keep what they served, and a failed job is recorded per branch
-  (once per distinct reason) and named in the message. A later sync that finds the branch up to
-  date after a failure records a succeeded no-op job, so the error no longer shows.
+  queued or running: it is left alone and the others still sync), `pinned` (commits, and tags
+  that still name the commit they were imported at) or `failed` with an `error_code` and an
+  `error`: `ref_deleted` (the branch or tag no longer exists upstream), `tag_moved` (the tag
+  names another commit now; it is reported, **never re-imported**: remove the version and add
+  it again to take the new commit) or `unexpected` (its import could not be queued). A failed
+  version keeps serving what it had. **202 Accepted** with `Location` (the import job, or the
+  library's jobs when several were queued) when anything was queued, else **200**. At most one
+  import per library and ref is unfinished at any time (a unique index), so concurrent syncs
+  cannot queue it twice. Errors: 404 `not_found`; 409 `version_importing` when an import is
+  running and nothing could be queued; and, when the remote cannot be read, 422
+  `repo_unreachable` (the repository was deleted, made private, moved, or the server cannot be
+  reached; a login prompt for a library stored without a credential counts too, because GitHub
+  answers a missing repository that way) or `auth_failed` (the stored token or key was refused,
+  e.g. expired or revoked, or cannot be read with the current secret key); an SSH host key that
+  changed stays `host_key_changed`, and a server without git answers `git_not_installed`. The
+  versions keep what they served, and a failed job with that code is recorded per branch and tag
+  (once per distinct reason) and named in the message. A later sync that finds the version fine
+  again records a succeeded no-op job, so the error no longer shows.
 
 ## Jobs, access and health
 
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh` or `collect`; state `queued`,
   `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; problems).
+  A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its
+  `finished_at`. The code of an upstream problem is one of `repo_unreachable`, `auth_failed`,
+  `ref_deleted` and `tag_moved`, the same for a sync and for an import that meets it; any other
+  failure keeps the error's own code (`no_articles`, `commit_unavailable`, ...) or is
+  `unexpected`. Jobs that failed before codes were recorded have `error_code: null`.
   `GET /jobs/latest` is the newest job of every library version in one call (`{"jobs": [...]}`,
   with `skipped` instead of the problem list), which the library list uses to show freshness and
   sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
@@ -169,8 +181,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
   and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.
-- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version` and the database's
-  `schema_revision`.
+- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version`, the database's
+  `schema_revision`, the `search_index_format` the search index was built in (`null` if none is
+  recorded), and `reindex_required`: `true` when that format is older than this version's or not
+  recorded, until `exactdocs reindex` has run (search keeps answering meanwhile).
 
 ## Job problems
 

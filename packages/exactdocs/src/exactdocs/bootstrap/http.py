@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -41,6 +41,13 @@ class Health(BaseModel):
     status: str
     version: str
     schema_revision: str | None
+    search_index_format: int | None = Field(
+        description="Format the stored search index was built in; null when none is recorded."
+    )
+    reindex_required: bool = Field(
+        description="The index is in an older or unrecorded format: run `exactdocs reindex` "
+        "(it keeps serving)."
+    )
 
 
 def create_app(container: Container) -> FastAPI:
@@ -89,7 +96,14 @@ def create_app(container: Container) -> FastAPI:
     @api.get("/health", tags=["system"])
     async def health() -> Health:
         revision = await current_revision(container.engine)
-        return Health(status="ok", version=__version__, schema_revision=revision)
+        index = await container.retrieval.get_search_index_state()
+        return Health(
+            status="ok",
+            version=__version__,
+            schema_revision=revision,
+            search_index_format=index.stored_format,
+            reindex_required=index.needs_rebuild,
+        )
 
     v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
     # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.

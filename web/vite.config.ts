@@ -30,5 +30,9 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     css: false,
+    // The busiest tests (user-event flows of a whole form) take ~1.5-2 s of CPU on an idle machine
+    // and passed 5 s when the CPU was shared (the suite run beside CPU burners); the ~2.5 s polling
+    // tests are mostly a deliberate 1.8 s wait. A ceiling, so passing tests are no slower.
+    testTimeout: 15_000,
   },
 });

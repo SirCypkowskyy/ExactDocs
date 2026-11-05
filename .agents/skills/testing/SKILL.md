@@ -32,6 +32,10 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   the same cases as the in-memory one.
 - **New domain**: the architecture tests discover it automatically; make sure they pass and that
   `test_domain_has_the_standard_module_set` is green.
+- **One run per container.** `Container.running()` refuses a second concurrent run, and the app's
+  lifespan is such a run. A test that needs the MCP session manager runs the container through the
+  app only: `app.router.lifespan_context(app)` in the test body, or `serving(app)` from
+  `tests/fixtures/app_lifespan.py` in an async fixture. Don't also wrap it in `container.running()`.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 
 ## MCP tool snapshot

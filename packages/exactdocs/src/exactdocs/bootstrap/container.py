@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -74,13 +75,15 @@ def _build_read_side(
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
     )
+    search = SqliteSearchIndex(engine)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
         libraries=CatalogLibraries(catalog.list_libraries),
         defaults=CatalogDefaultVersions(catalog.list_default_manifests),
         manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
         chunks=SqliteChunkRepository(engine),
-        search=SqliteSearchIndex(engine),
+        search=search,
+        maintenance=search,
         renames=CatalogRenamedPaths(catalog.resolve_renamed_path),
         query_docs_token_budget=settings.query_docs_token_budget,
     )
@@ -97,6 +100,7 @@ class ReadOnlyContainer:
     engine: AsyncEngine
     catalog: CatalogModule
     retrieval: RetrievalModule
+    _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
     def build(cls, settings: Settings) -> Self:
@@ -107,12 +111,21 @@ class ReadOnlyContainer:
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
-        """Check the schema is current (no migration), serve, then release the connections."""
+        """Check the schema is current (no migration), serve, then release the connections.
+
+        Runs once at a time, like ``Container.running()``: ``RuntimeError`` otherwise.
+        """
+        if not self._run.acquire(blocking=False):
+            message = "this container is already running; run it once"
+            raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
             yield
         finally:
-            await self.engine.dispose()
+            try:
+                await self.engine.dispose()
+            finally:
+                self._run.release()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -126,6 +139,9 @@ class Container:
     ingestion: IngestionModule
     retrieval: RetrievalModule
     job_worker: JobWorker
+    # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
+    # event loop) is refused as well.
+    _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
     def build(
@@ -256,9 +272,30 @@ class Container:
 
         ``jobs`` also runs the job worker (and the recovery before it). Only the HTTP server
         does: one process runs jobs.
+
+        A container runs once at a time: a second run would share the engine, and whichever
+        stopped first would dispose it under the other, stranding the connections the other had
+        checked out (a job worker's poll). ``RuntimeError`` refuses it; the app's lifespan is
+        such a run, so a container whose app is served is not run on its own as well.
         """
+        if not self._run.acquire(blocking=False):
+            message = "this container is already running; run it once (or through its app)"
+            raise RuntimeError(message)
         try:
             await migrate(self.engine)
+            index = await self.retrieval.get_search_index_state()
+            if index.needs_rebuild:
+                stored = (
+                    "has no recorded format"
+                    if index.stored_format is None
+                    else f"is in format {index.stored_format}"
+                )
+                logger.warning(
+                    "The search index %s; this version writes format %s. It keeps answering as "
+                    "it was built; `exactdocs reindex` rebuilds it while serving.",
+                    stored,
+                    index.current_format,
+                )
             if jobs:
                 # Fetch folders a crash left behind. A data dir has exactly one job runner.
                 await asyncio.to_thread(sweep_stale_fetches, self.settings.data_dir / WORK_DIR)
@@ -267,4 +304,7 @@ class Container:
             else:
                 yield
         finally:
-            await self.engine.dispose()
+            try:
+                await self.engine.dispose()
+            finally:
+                self._run.release()

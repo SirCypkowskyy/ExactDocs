@@ -13,9 +13,11 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestHit,
+    RebuiltIndex,
     Removed,
     SearchableVersion,
     SearchHit,
+    SearchIndexState,
     SectionRef,
     StoredChunk,
     TagFilter,
@@ -147,6 +149,9 @@ class InMemoryChunkRepository:
         return len(changed)
 
 
+MEMORY_FORMAT = 1
+
+
 @dataclass(slots=True)
 class InMemorySearchIndex:
     """Reference ``ports.driven.SearchIndex``: a term-count score, not BM25.
@@ -160,6 +165,7 @@ class InMemorySearchIndex:
 
     chunks: InMemoryChunkRepository
     indexed: set[ChunkSetKey] = field(default_factory=set)
+    stored_format: int = MEMORY_FORMAT  # set it lower to stand for an index from an older build
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Remember the set; the text itself is read from the repository."""
@@ -196,6 +202,17 @@ class InMemorySearchIndex:
         ]
         found.sort(key=lambda f: (-f.hit.score, f.hit.chunk_id, f.manifest_id))
         return found[:limit]
+
+    async def state(self) -> SearchIndexState:
+        """Return the format the index was "built" in and the current one."""
+        return SearchIndexState(stored_format=self.stored_format, current_format=MEMORY_FORMAT)
+
+    async def rebuild(self) -> RebuiltIndex:
+        """Index every stored chunk set again (one step: nothing can search in between)."""
+        self.indexed = set(self.chunks.chunk_sets)
+        self.stored_format = MEMORY_FORMAT
+        entries = sum(len(s.chunks) for s in self.chunks.chunk_sets.values())
+        return RebuiltIndex(format=MEMORY_FORMAT, entries=entries)
 
     async def count_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter

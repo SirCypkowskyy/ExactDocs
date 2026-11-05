@@ -13,6 +13,7 @@ from exactdocs.retrieval.dtos import (
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
+    RebuiltIndexOut,
     RemoveChunksCommand,
     RemovedChunks,
     ResolveLibraryIdQuery,
@@ -23,6 +24,7 @@ from exactdocs.retrieval.dtos import (
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
+    SearchIndexStateOut,
 )
 
 
@@ -152,5 +154,25 @@ class RetagArticles(Protocol):
     """
 
     async def __call__(self, command: RetagArticlesCommand) -> RetaggedChunks:
+        """Run the use case."""
+        ...
+
+
+class GetSearchIndexState(Protocol):
+    """Say which format the search index is in and whether ``RebuildSearchIndex`` is needed."""
+
+    async def __call__(self) -> SearchIndexStateOut:
+        """Run the use case."""
+        ...
+
+
+class RebuildSearchIndex(Protocol):
+    """Rebuild the search index from the stored chunks while the old one keeps answering.
+
+    No import runs again: the chunks are already stored. Needed after a release whose notes say
+    "requires reindex"; harmless otherwise.
+    """
+
+    async def __call__(self) -> RebuiltIndexOut:
         """Run the use case."""
         ...

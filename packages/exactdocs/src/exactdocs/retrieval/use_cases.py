@@ -19,6 +19,7 @@ from exactdocs.retrieval.dtos import (
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
+    RebuiltIndexOut,
     RemoveChunksCommand,
     RemovedChunks,
     ResolveLibraryIdQuery,
@@ -29,6 +30,7 @@ from exactdocs.retrieval.dtos import (
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
+    SearchIndexStateOut,
     SearchResultOut,
     SetChunkOut,
 )
@@ -74,6 +76,7 @@ from exactdocs.retrieval.ports.driven import (
     RenamedPaths,
     SearchableVersions,
     SearchIndex,
+    SearchIndexMaintenance,
 )
 from exactdocs_kernel import NOTICE, Clock
 
@@ -508,6 +511,28 @@ class RetagArticlesUseCase:
         """Overwrite the tag copies of the named articles' chunk rows."""
         tags = {a.path: tuple(dict.fromkeys(a.tags)) for a in command.articles}
         return RetaggedChunks(chunks=await self.chunks.set_tags(command.manifest_id, tags))
+
+
+@dataclass(frozen=True, slots=True)
+class GetSearchIndexStateUseCase:
+    """Implements ``ports.driving.GetSearchIndexState``."""
+
+    maintenance: SearchIndexMaintenance
+
+    async def __call__(self) -> SearchIndexStateOut:
+        """Report the stored format against the current one."""
+        return SearchIndexStateOut.from_model(await self.maintenance.state())
+
+
+@dataclass(frozen=True, slots=True)
+class RebuildSearchIndexUseCase:
+    """Implements ``ports.driving.RebuildSearchIndex``."""
+
+    maintenance: SearchIndexMaintenance
+
+    async def __call__(self) -> RebuiltIndexOut:
+        """Build the new index beside the old one, then swap it in."""
+        return RebuiltIndexOut.from_model(await self.maintenance.rebuild())
 
 
 # Only the best name matches are looked at: each costs a search. Results are capped to the same.

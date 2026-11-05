@@ -9,14 +9,17 @@ from exactdocs.retrieval.ports.driven import (
     RenamedPaths,
     SearchableVersions,
     SearchIndex,
+    SearchIndexMaintenance,
 )
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
     GetChunkSets,
+    GetSearchIndexState,
     IndexManifest,
     QueryDocs,
     ReadChunk,
+    RebuildSearchIndex,
     RemoveChunks,
     ResolveLibraryId,
     RetagArticles,
@@ -28,9 +31,11 @@ from exactdocs.retrieval.use_cases import (
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
     GetChunkSetsUseCase,
+    GetSearchIndexStateUseCase,
     IndexManifestUseCase,
     QueryDocsUseCase,
     ReadChunkUseCase,
+    RebuildSearchIndexUseCase,
     RemoveChunksUseCase,
     ResolveLibraryIdUseCase,
     RetagArticlesUseCase,
@@ -55,6 +60,8 @@ class RetrievalModule:
     collect_chunks: CollectChunks
     remove_chunks: RemoveChunks
     retag_articles: RetagArticles
+    get_search_index_state: GetSearchIndexState
+    rebuild_search_index: RebuildSearchIndex
 
     @classmethod
     def build(
@@ -66,6 +73,7 @@ class RetrievalModule:
         manifests: ActiveManifests,
         chunks: ChunkRepository,
         search: SearchIndex,
+        maintenance: SearchIndexMaintenance,
         renames: RenamedPaths | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
@@ -84,4 +92,6 @@ class RetrievalModule:
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
             remove_chunks=RemoveChunksUseCase(manifests, chunks),
             retag_articles=RetagArticlesUseCase(chunks),
+            get_search_index_state=GetSearchIndexStateUseCase(maintenance),
+            rebuild_search_index=RebuildSearchIndexUseCase(maintenance),
         )

@@ -4,6 +4,7 @@ import asyncio
 import getpass
 import os
 import sys
+import time
 from collections.abc import AsyncGenerator, Coroutine
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -42,6 +43,7 @@ from exactdocs.identity.dtos import (
 )
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
+from exactdocs.retrieval.dtos import RebuiltIndexOut, SearchIndexStateOut
 from exactdocs_kernel import DomainError
 
 DEFAULT_TOKEN_DAYS = 90
@@ -314,6 +316,13 @@ def add(
     wait: WaitOption = False,
     wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
+    dry_run: Annotated[
+        bool,
+        Parameter(
+            help="List the files the import would take (and how many) without adding anything; "
+            "--id and --wait have no effect then, --tag-rule is only checked."
+        ),
+    ] = False,
     url: UrlOption = None,
     token: CredentialTokenOption = None,
 ) -> None:
@@ -323,8 +332,24 @@ def add(
     API token: with --git-token-file or --ssh-key you are asked for your password.
     """
     credential = _credential(git_token_file, ssh_key, git_user)
+    try:  # before any request or password prompt, so a dry run catches a bad rule too
+        lib.parse_tag_rules(tag_rule or ())
+    except ClientError as exc:
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
 
     async def go(api: ApiClient) -> None:
+        if dry_run:
+            await lib.preview_import(
+                api,
+                git_url,
+                ref=ref,
+                include=path or (),
+                exclude=exclude or (),
+                credential=credential,
+                as_json=json_output,
+            )
+            return
         await lib.add_library(
             api,
             git_url,
@@ -473,7 +498,7 @@ def sync(
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Re-sync the branch versions of a library (tags and commits never move)."""
+    """Re-sync the branch versions of a library; tags are checked and reported, never moved."""
 
     async def work() -> None:
         async with _api(url, token) as api:
@@ -784,6 +809,39 @@ async def _reset_password(settings: Settings, username: str, password: str) -> N
         await container.identity.reset_password(command)
 
 
+@app.command
+def reindex() -> None:
+    """Rebuild the search index from the stored chunks; a running server keeps answering.
+
+    Local: opens the database in the data directory (EXACTDOCS_DATA_DIR), so run it where the
+    server runs (in Docker: `docker exec <container> exactdocs reindex`). Nothing is imported
+    again. Needed after a release whose notes say "requires reindex"; harmless otherwise. Run one
+    at a time: a second run started meanwhile drops the first one's new table, which then fails
+    (the index that answers is not affected).
+    """
+    settings = Settings()
+    started = time.monotonic()
+    state, rebuilt = _run(_reindex(settings))
+    seconds = time.monotonic() - started
+    if state.stored_format is None:
+        was = "no format was recorded"
+    elif state.needs_rebuild:
+        was = f"was format {state.stored_format}"
+    else:
+        was = f"was format {state.stored_format}, not older; rebuilt anyway"
+    sys.stdout.write(
+        f"Search index rebuilt in format {rebuilt.format} ({was}): "
+        f"{rebuilt.entries} chunks in {seconds:.1f} s.\n"
+    )
+
+
+async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltIndexOut]:
+    container = _build(settings)
+    async with container.running(jobs=False):  # migrates first, as `serve` would
+        state = await container.retrieval.get_search_index_state()
+        return state, await container.retrieval.rebuild_search_index()
+
+
 async def _serve_stdio(settings: Settings) -> None:
     try:
         container = ReadOnlyContainer.build(settings)
@@ -821,7 +879,7 @@ def asgi_app() -> object:
     return create_app(Container.build(Settings()))
 
 
-LOCAL_COMMANDS = frozenset({"serve", "admin create", "admin reset-password"})
+LOCAL_COMMANDS = frozenset({"serve", "reindex", "admin create", "admin reset-password"})
 
 
 def main() -> None:

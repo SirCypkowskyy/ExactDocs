@@ -74,6 +74,63 @@ git switch develop && git pull && git tag v0.1.3.dev1 && git push origin v0.1.3.
 Creating a release in the GitHub UI with a new tag works too: it pushes the tag, the workflow
 runs, and it attaches the distributions to that release.
 
+## Upgrades, migrations and "requires reindex"
+
+Updating must never mean importing everything again (RUN-04). Two mechanisms keep it so:
+
+- **Schema migrations run on start.** Every schema change is an Alembic revision
+  (`bootstrap/migrations/versions`); `exactdocs serve` brings the database to the head before it
+  answers. A revision must keep the data: a new column gets a default or is filled from what is
+  stored, never "re-import to get it".
+- **The search index records its format** (`retrieval_search_format`, `FORMAT` in
+  `retrieval/adapters/driven/sqlite_fts.py`). A change to how index entries are made from chunks
+  (tokenizer, `identifier_tokens`, what goes in which column) bumps `FORMAT`. The old index keeps
+  answering as it was built; the server logs a warning, `/api/health` says
+  `"reindex_required": true`, and the release notes have a **Requires reindex** section.
+  `exactdocs reindex` (local: run it where the server runs, e.g. `docker exec exactdocs exactdocs
+  reindex`) rebuilds the index from the stored chunks into a second table while the old one keeps
+  answering, then swaps them in one transaction. Nothing is fetched or imported again. A change of
+  the index's *columns* is an Alembic revision that rebuilds the table on start instead, because
+  the search queries name them.
+
+**CI upgrade test** (job *uvx*, `deploy/upgrade_check.py`): the newest stable release from PyPI
+starts on an empty data directory and imports the fixture docs repository at two tags; then this
+build starts on the same directory and must migrate it to its head revision and serve the same
+libraries, articles and search results to the same API token. Last, `exactdocs reindex` runs while
+that server keeps answering searches. Run it locally with `python3 deploy/upgrade_check.py`
+(`--previous X.Y.Z` to pick the release). The behave scenario *Upgrading keeps the libraries*
+(`features/upgrade.feature`) is its in-process half: it takes the schema back to the previous
+release's head revision. After tagging a stable release, move `PREVIOUS_RELEASE` and
+`PREVIOUS_REVISION` in `features/steps/upgrade_steps.py` to it (the head is
+`uv run python -c "from alembic.script import ScriptDirectory; from exactdocs.bootstrap.database import alembic_config; print(ScriptDirectory.from_config(alembic_config()).get_current_head())"`).
+
+### Release notes template
+
+The release workflow creates the GitHub Release with generated notes, grouped by
+`.github/release.yml`: PRs labelled `requires reindex` get their own section. Edit the release
+afterwards so it reads like this (leave out a section that would be empty, except *Upgrading*):
+
+```markdown
+## Highlights
+- <what a user can do now that they could not before>
+
+## Upgrading
+Start the new version on the same data directory: the database is migrated on start.
+
+### Requires reindex
+<!-- Only when FORMAT changed (a PR labelled `requires reindex`); otherwise write "No reindex needed." -->
+Search keeps answering as before until you run, where the server runs:
+`exactdocs reindex` (Docker: `docker exec exactdocs exactdocs reindex`). It rebuilds the index
+while the server keeps serving; until then `/api/health` reports `"reindex_required": true`.
+Why: <what search finds better after it>.
+
+### Breaking changes
+- <configuration, REST, MCP tool contract or data-format changes; MAJOR only after 1.0>
+
+## Fixes
+- ...
+```
+
 ## Image retention
 
 `.github/workflows/ghcr-retention.yml` keeps the registry small: the **5 newest dev images**

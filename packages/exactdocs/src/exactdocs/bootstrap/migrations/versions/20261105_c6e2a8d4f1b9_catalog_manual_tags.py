@@ -1,7 +1,7 @@
 """Tags users set by hand on an article path, for every version of a library.
 
 Revision ID: c6e2a8d4f1b9
-Revises: b3d7f1a9c4e2
+Revises: d5e9a3c7f0b1
 
 Manifest entries keep `tags` as every tag of the article (what listings filter and count), and
 gain `manual_tags` and `imported_tags`: the latter is only set while an entry has manual tags, so
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c6e2a8d4f1b9"
-down_revision = "b3d7f1a9c4e2"
+down_revision = "d5e9a3c7f0b1"
 branch_labels = None
 depends_on = None
 

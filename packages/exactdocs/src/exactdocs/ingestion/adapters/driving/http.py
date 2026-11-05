@@ -195,13 +195,19 @@ def build_router(
     async def sync(owner: str, repo: str, request: Request, response: Response) -> SyncedLibrary:
         """Re-sync the library's branch versions: import the ones whose tip moved.
 
-        Only changed articles are re-chunked. Tags and commits are never moved (`pinned`). Read
-        each version's `status`, not the HTTP status, for what happened to it: `up_to_date`,
-        `queued`, `importing` (an import of it is already queued or running), `failed` (the
-        branch is gone upstream, or its import could not be queued). Queued imports answer 202,
-        anything else 200. 409 `version_importing` when a running import left nothing queued;
-        422 with the remote's error code when the remote cannot be read (deliberate, E9-02 owns
-        distinct codes): the failed jobs recorded for it are named in the message.
+        Only changed articles are re-chunked. Commits are never checked and tags never moved:
+        a tag that still names its commit is `pinned`. Read each version's `status`, not the HTTP
+        status, for what happened to it: `up_to_date`, `queued`, `importing` (an import of it is
+        already queued or running), `failed` with an `error_code`: `ref_deleted` (the branch or
+        tag is gone upstream), `tag_moved` (the tag names another commit now; it is reported,
+        never re-imported) or `unexpected` (its import could not be queued). Every version keeps
+        what it served. Queued imports answer 202, anything else 200. 409 `version_importing`
+        when a running import left nothing queued. 422 when the remote cannot be read, mostly
+        `repo_unreachable` (deleted, private, moved or down; also a login prompt for a library
+        without a credential) or `auth_failed` (the credential was refused or cannot be read).
+        Other codes are possible: `host_key_changed` (the SSH host key changed, possibly a man
+        in the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed
+        jobs recorded for it are named in the message.
         """
         synced = await sync_library(SyncLibraryCommand(library=f"/{owner}/{repo}".lower()))
         queued = [v.job_id for v in synced.versions if v.status is SyncStatus.QUEUED]

@@ -45,10 +45,12 @@ from typing import Any
 import httpx
 import httpx2
 import pytest
+from fastapi import FastAPI
 from fastmcp import Client, settings
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 
+from app_lifespan import serving
 from exactdocs.bootstrap.bridges import (
     CatalogLibrarySources,
     CatalogVersionPublisher,
@@ -228,13 +230,22 @@ def spawned(commit: str, monkeypatch: pytest.MonkeyPatch) -> list[Spawn]:
 
 
 @pytest.fixture
-async def container() -> AsyncIterator[Container]:
-    container = Container.build(Settings())
-    async with container.running(jobs=False):
+def container() -> Container:
+    return Container.build(Settings())
+
+
+@pytest.fixture
+async def app(container: Container) -> AsyncIterator[FastAPI]:
+    """The app, running: its lifespan is the container's one run (#203).
+
+    Yields:
+        The running app, with its first admin.
+    """
+    async with serving(create_app(container)) as app:
         await container.identity.create_first_admin(
             CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
         )
-        yield container
+        yield app
 
 
 def mcp_client(app: Any, token: str) -> Client[StreamableHttpTransport]:
@@ -370,6 +381,7 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
     commit: str,
     attempts: list[str],
     spawned: list[Spawn],
+    app: FastAPI,  # after the watches: the app starts under them
 ) -> None:
     assert docs_repo.http_url.startswith("http://127.0.0.1:")
     await container.catalog.create_library(
@@ -422,26 +434,22 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
 
     await importer(job, Quiet())  # ty: ignore[invalid-argument-type]
 
-    app = create_app(container)
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
-        ) as client:
-            login = await client.post(
-                "/api/v1/session", json={"username": "ada", "password": HORSE}
-            )
-            assert login.status_code == 201
-            token = (await client.post("/api/v1/tokens", json={"name": "agent"})).json()["token"]
-            rest = await client.get(
-                "/api/v1/libraries/fixture/docs-repo/search", params={"q": "token", "ref": REF}
-            )
-        async with mcp_client(app, token) as mcp:
-            search = await mcp.call_tool(
-                "search_docs", {"library": LIBRARY, "ref": REF, "query": "token"}
-            )
-            docs = await mcp.call_tool(
-                "query-docs", {"libraryId": f"{LIBRARY}/{REF}", "query": "token"}
-            )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        login = await client.post("/api/v1/session", json={"username": "ada", "password": HORSE})
+        assert login.status_code == 201
+        token = (await client.post("/api/v1/tokens", json={"name": "agent"})).json()["token"]
+        rest = await client.get(
+            "/api/v1/libraries/fixture/docs-repo/search", params={"q": "token", "ref": REF}
+        )
+    async with mcp_client(app, token) as mcp:
+        search = await mcp.call_tool(
+            "search_docs", {"library": LIBRARY, "ref": REF, "query": "token"}
+        )
+        docs = await mcp.call_tool(
+            "query-docs", {"libraryId": f"{LIBRARY}/{REF}", "query": "token"}
+        )
 
     assert rest.status_code == 200
     assert rest.json()["results"]

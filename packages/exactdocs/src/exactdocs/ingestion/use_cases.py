@@ -49,12 +49,16 @@ from exactdocs.ingestion.dtos import (
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     CommitImportedError,
+    CredentialsRequiredError,
     ImportInProgressError,
     ImportNotPinnedError,
     ImportTooLargeError,
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
+    RepositoryUnreachableError,
     SyncFailedError,
     UnknownJobKindError,
     UnknownLibraryError,
@@ -73,6 +77,7 @@ from exactdocs.ingestion.models import (
     IMPORT_KINDS,
     MAX_IMAGES,
     REFRESH_JOB,
+    UNEXPECTED_ERROR,
     ArticleChunk,
     Credential,
     GitRename,
@@ -95,6 +100,7 @@ from exactdocs.ingestion.models import (
     Removed,
     RepositoryUrl,
     ResolvedRef,
+    SyncErrorCode,
     SyncStatus,
     TagRule,
     article_tags,
@@ -267,7 +273,11 @@ class RecoverJobsUseCase:
             except Exception as error:
                 log.exception("recovery of job %s (%s) failed", job.id, job.kind)
                 await self.jobs.save(
-                    job.failed(f"recovery failed: {_describe(error)}", self.clock.now())
+                    job.failed(
+                        f"recovery failed: {_describe(error)}",
+                        self.clock.now(),
+                        code=failure_code(error),
+                    )
                 )
             else:
                 await self.jobs.save(job.requeued())
@@ -288,6 +298,7 @@ class RunNextJobUseCase:
             return False
         progress = _Progress(self.jobs, job)
         handler = self.handlers.get(job.kind)
+        code = UNEXPECTED_ERROR
         try:
             if handler is None:
                 failure = f"no handler is registered for job kind {job.kind!r}"
@@ -296,10 +307,12 @@ class RunNextJobUseCase:
                 failure = None
         except Exception as error:
             log.exception("job %s (%s) failed", job.id, job.kind)
-            failure = _describe(error)
+            failure, code = _describe(error), failure_code(error)
         now = self.clock.now()
         final = (
-            progress.job.succeeded(now) if failure is None else progress.job.failed(failure, now)
+            progress.job.succeeded(now)
+            if failure is None
+            else progress.job.failed(failure, now, code=code)
         )
         try:
             await self.jobs.save(final)
@@ -355,6 +368,42 @@ class _Progress:
 def _describe(error: Exception) -> str:
     """Return the text users see: a domain error says what is wrong, else only its type."""
     return str(error) if isinstance(error, DomainError) else f"unexpected {type(error).__name__}"
+
+
+# Upstream failures, by what users can do about them; the git adapter's finer errors stay the
+# HTTP answer of the request that met them (adding a library), a job records the coarse code.
+_UPSTREAM_CODES: tuple[tuple[type[DomainError], SyncErrorCode], ...] = (
+    (NotAGitRepositoryError, SyncErrorCode.REPO_UNREACHABLE),
+    (RepositoryUnreachableError, SyncErrorCode.REPO_UNREACHABLE),
+    (RepositoryAuthRequiredError, SyncErrorCode.AUTH_FAILED),
+    (CredentialsRequiredError, SyncErrorCode.AUTH_FAILED),
+)
+
+
+def failure_code(error: Exception) -> str:
+    """Return the stable code a failed job records for ``error``.
+
+    A repository that cannot be read is ``repo_unreachable``, a refused or unreadable credential
+    ``auth_failed`` (callers that sent no credential turn an auth demand into
+    ``NotAGitRepositoryError`` first, see ``_anonymous``); any other domain error keeps its own
+    code (``no_articles``, ``host_key_changed``...), anything else is ``unexpected``.
+    """
+    for kind, code in _UPSTREAM_CODES:
+        if isinstance(error, kind):
+            return code
+    return error.code if isinstance(error, DomainError) else UNEXPECTED_ERROR
+
+
+def _anonymous(error: DomainError, credential: Credential | None) -> DomainError:
+    """Return what ``error`` means for a library read with ``credential``.
+
+    A server that wants a login when none was sent is hiding the repository: it was deleted or
+    made private (GitHub answers a missing repository with 401, never 404). Only when a token or
+    key was sent and refused is it a credential problem.
+    """
+    if credential is None and isinstance(error, RepositoryAuthRequiredError):
+        return NotAGitRepositoryError()
+    return error
 
 
 @dataclass(frozen=True, slots=True)
@@ -560,6 +609,10 @@ def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
     }
 
 
+_CHECKED_KINDS = frozenset({RefKind.BRANCH, RefKind.TAG})
+"""What a sync asks the remote about: a commit names itself and cannot move or go."""
+
+
 @dataclass(frozen=True, slots=True)
 class SyncLibraryUseCase:
     """Implements ``ports.driving.SyncLibrary``."""
@@ -572,43 +625,48 @@ class SyncLibraryUseCase:
     vault: CredentialVault
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
-        """Ask the remote where each branch is now, queue an import for the ones that moved.
+        """Ask the remote where each branch and tag is now, queue an import for moved branches.
 
         The import is the one of adding a version: pinned to the new commit, it fetches it,
         reuses the chunks of every unchanged blob and activates the new manifest in place of the
-        old one (the version keeps its ID). A tag or a commit is never moved: it is reported as
-        pinned. A branch whose import is queued or running is reported as importing and left
-        alone (the job repository refuses a second one atomically); ``VersionImportingError`` is
-        raised only when that left nothing queued.
-        If the remote cannot be read, or a branch is gone, the failure is recorded on a failed
-        job of that version (once per distinct reason), so users see it next to the version that
-        keeps serving. When a branch that last failed is up to date again, a succeeded job
-        with no work says so. A version removed while this runs may still get such a record.
+        old one (the version keeps its ID). A commit is never checked; a tag is checked but never
+        re-imported: one that still names its commit is ``pinned``, one that now names another
+        is ``failed`` with ``tag_moved``. A branch whose import is queued or running is reported
+        as importing and left alone (the job repository refuses a second one atomically);
+        ``VersionImportingError`` is raised only when that left nothing queued.
+        If the remote cannot be read (``repo_unreachable``, ``auth_failed``), or a branch or tag
+        is gone (``ref_deleted``), the failure is recorded on a failed job of that version (once
+        per distinct reason), so users see it next to the version that keeps serving. When a
+        version that last failed is fine again, a succeeded job with no work says so. A version
+        removed while this runs may still get such a record.
         """
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
-        branches = {v.ref: v for v in versions if v.kind is RefKind.BRANCH}
+        checked = [v for v in versions if v.kind in _CHECKED_KINDS]
         jobs = await self.jobs.list_for_library(library)  # newest first
         busy = _busy_refs(jobs)
         newest: dict[str, Job] = {}
         for job in jobs:
             if job.version:
                 newest.setdefault(job.version, job)
-        tips: dict[str, str] = {}
-        if branches:
+        tips: dict[tuple[RefKind, str], str] = {}
+        if checked:
+            credential: Credential | None = None
             try:
                 # An unreadable or other-host credential is recorded like any failure to read.
                 credential = await self.vault.load(library, source.url.credential_scope)
                 refs = await self.remote.list_refs(source.url, credential=credential)
-            except DomainError as error:
+            except DomainError as raised:
+                error = _anonymous(raised, credential)
+                code = failure_code(error)
                 recorded = [
-                    (await self._failed(library, v, _describe(error), newest.get(v.ref))).id
-                    for v in branches.values()
+                    (await self._failed(library, v, _describe(error), code, newest.get(v.ref))).id
+                    for v in checked
                     if v.ref not in busy
                 ]
-                raise SyncFailedError(error, recorded) from error
-            tips = {t.name: t.commit_sha for t in ref_tips(refs) if t.kind is RefKind.BRANCH}
+                raise SyncFailedError(error, recorded, code) from raised
+            tips = {(t.kind, t.name): t.commit_sha for t in ref_tips(refs)}
         # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
         synced = [await self._sync(library, v, tips, busy, newest) for v in versions]
         importing = [v for v in synced if v.status is SyncStatus.IMPORTING]
@@ -620,7 +678,7 @@ class SyncLibraryUseCase:
         self,
         library: str,
         current: ImportedRef,
-        tips: Mapping[str, str],
+        tips: Mapping[tuple[RefKind, str], str],
         busy: Mapping[str, Job],
         newest: Mapping[str, Job],
     ) -> SyncedVersion:
@@ -636,25 +694,41 @@ class SyncLibraryUseCase:
                 job_id=job_id,
             )
 
-        if current.kind is not RefKind.BRANCH:
+        def failure(job: Job) -> SyncedVersion:
+            return outcome(SyncStatus.FAILED, current.commit_sha, job.id).model_copy(
+                update={"error_code": job.error_code, "error": job.error}
+            )
+
+        if current.kind not in _CHECKED_KINDS:
             return outcome(SyncStatus.PINNED, current.commit_sha)
         if current.ref in busy:
             return outcome(SyncStatus.IMPORTING, current.commit_sha, busy[current.ref].id)
-        tip = tips.get(current.ref)
+        last = newest.get(current.ref)
+        tip = tips.get((current.kind, current.ref))
         if tip is None:
-            failed = await self._failed(
-                library, current, "the branch no longer exists", newest.get(current.ref)
-            )
-            return outcome(SyncStatus.FAILED, current.commit_sha, failed.id)
+            what = "branch" if current.kind is RefKind.BRANCH else "tag"
+            reason = f"the {what} {current.ref!r} no longer exists in the repository"
+            failed = await self._failed(library, current, reason, SyncErrorCode.REF_DELETED, last)
+            return failure(failed)
         if tip == current.commit_sha:
-            noop = await self._confirm(library, current, tip, newest.get(current.ref))
-            return outcome(SyncStatus.UP_TO_DATE, tip, noop)
+            noop = await self._confirm(library, current, tip, last)
+            kept = SyncStatus.UP_TO_DATE if current.kind is RefKind.BRANCH else SyncStatus.PINNED
+            return outcome(kept, tip, noop)
+        if current.kind is RefKind.TAG:
+            # Never re-imported: a moved tag is a surprise upstream, not an update to follow.
+            reason = (
+                f"the tag {current.ref!r} now points at commit {tip}, not at {current.commit_sha} "
+                "which this version serves; it is not re-imported: remove the version and add "
+                "it again to import the new commit"
+            )
+            failed = await self._failed(library, current, reason, SyncErrorCode.TAG_MOVED, last)
+            return failure(failed)
         return await self._moved(library, current, tip, outcome)
 
     async def _confirm(
         self, library: str, current: ImportedRef, tip: str, last: Job | None
     ) -> str | None:
-        """Record a succeeded no-op job when the branch last failed: its error is over."""
+        """Record a succeeded no-op job when the version last failed: its error is over."""
         if last is None or last.state is not JobState.FAILED:
             return None
         now = self.clock.now()
@@ -684,7 +758,9 @@ class SyncLibraryUseCase:
         except Exception:
             # The imports queued for other branches stay queued; this one is reported, not lost.
             log.exception("could not queue the sync of %s in %s", current.ref, library)
-            return outcome(SyncStatus.FAILED, current.commit_sha, None)
+            return outcome(SyncStatus.FAILED, current.commit_sha, None).model_copy(
+                update={"error_code": UNEXPECTED_ERROR, "error": "the import could not be queued"}
+            )
         return outcome(SyncStatus.QUEUED, tip, job.id)
 
     def _job(
@@ -701,13 +777,17 @@ class SyncLibraryUseCase:
         )
 
     async def _failed(
-        self, library: str, current: ImportedRef, reason: str, last: Job | None
+        self, library: str, current: ImportedRef, reason: str, code: str, last: Job | None
     ) -> Job:
         """Record a failed job, unless the version's newest job already says the same."""
-        if last is not None and last.state is JobState.FAILED and last.error == reason:
+        if (
+            last is not None
+            and last.state is JobState.FAILED
+            and (last.error, last.error_code) == (reason, code)
+        ):
             return last
         now = self.clock.now()
-        job = self._job(library, current, now).failed(reason, now)
+        job = self._job(library, current, now).failed(reason, now, code=code)
         await self.jobs.add(job)
         return job
 
@@ -787,13 +867,16 @@ class ImportVersionUseCase:
         kind = job.ref_kind or RefKind.COMMIT
         refs = _full_refs(kind, job.version)
         config_hash = self.chunker.config_hash
-        async with self.gateway.fetch(
-            source.url, job.commit_sha, source.selection, refs=refs, credential=credential
-        ) as folder:
-            articles, wanted = await self._articles(folder, source, config_hash, progress)
-            readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
-            taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
-            taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
+        try:
+            async with self.gateway.fetch(
+                source.url, job.commit_sha, source.selection, refs=refs, credential=credential
+            ) as folder:
+                articles, wanted = await self._articles(folder, source, config_hash, progress)
+                readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
+                taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
+                taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
+        except RepositoryAuthRequiredError as error:
+            raise _anonymous(error, credential) from error
         if not articles:
             raise NoArticlesError
         await self._outside_images(job, source, credential, taken, progress)

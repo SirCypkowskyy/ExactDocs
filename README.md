@@ -75,7 +75,7 @@ Resolution order: flags, then `EXACTDOCS_URL` / `EXACTDOCS_TOKEN`, then that fil
 only used for the server it came from. Plain `http://` is accepted for loopback (`localhost`,
 `127.0.0.1`, `::1`) only; anything else needs `https://`. Proxy variables (`HTTPS_PROXY`, ...) are
 honoured for remote servers (the proxy sees where you connect, not your https traffic) and ignored
-for loopback. `serve` and `admin ...` stay local: they open the database directly.
+for loopback. `serve`, `reindex` and `admin ...` stay local: they open the database directly.
 
 Manage libraries and tokens from the same login (every command takes `--url`/`--token` and, for
 scripts, `--json`; progress of `--wait` goes to stderr):
@@ -83,9 +83,10 @@ scripts, `--json`; progress of `--wait` goes to stderr):
 ```bash
 uvx exactdocs add https://github.com/acme/docs --ref v1.4.0 --path docs/ --exclude docs/archive/ --wait
 uvx exactdocs add https://github.com/acme/docs --id /acme/docs --tag-rule 'docs/api/**=api'
+uvx exactdocs add https://github.com/acme/docs --ref v1.4.0 --path 'docs/**' --dry-run  # lists the files, stores nothing
 uvx exactdocs libraries --json
 uvx exactdocs version add /acme/docs v1.5.0 --wait
-uvx exactdocs sync /acme/docs --wait             # re-syncs the branch versions
+uvx exactdocs sync /acme/docs --wait             # re-syncs the branch versions, checks the tags
 uvx exactdocs remove /acme/docs/v1.4.0           # asks first; --yes skips the question
 uvx exactdocs remove /acme/docs --yes
 uvx exactdocs add git@github.com:acme/private.git --ssh-key ./deploy_key
@@ -112,10 +113,20 @@ trust score); there is no `ctx7 search` yet (it needs a search-all REST route).
 Exit codes: 0 done, 1 other failure, 2 usage or rejected input (also: `remove` without a terminal
 and without `--yes`), 3 not found, 4 conflict (an import is running, the ID is taken), 5 not signed
 in or refused, 6 an import or a sync failed (or `--wait` lost track of it), 130 interrupted.
+A sync that fails says why with a stable code, and every version keeps serving what it had:
+`repo_unreachable` (deleted, private or down), `auth_failed` (the token or key was refused),
+`ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now; it is never
+re-imported: remove the version and add it again). The same codes are on the jobs (`error_code`).
 
 `--wait` only watches: it follows an import for `--wait-timeout` seconds (default 600) and retries
 a poll that hiccups. When it times out, loses track or you press Ctrl-C (exit 130), it says so and
 the job keeps running on the server.
+
+`add --dry-run` sends the URL, `--ref`, `--path` and `--exclude` (and a credential) to
+`POST /repositories/preview` instead and prints the files the import would take, how many there
+are and, past 1000, `truncated`; nothing is stored. `--id` and `--wait` have no effect, and
+`--tag-rule` is only checked, so a malformed rule fails the dry run as it would fail `add`. There are no file sizes: knowing them would mean downloading every file. A server running
+as many previews as it allows answers "try again" (exit 1).
 
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
 from a file of at most 64 KB, never from the command line; group- or world-readable files get a
@@ -356,7 +367,7 @@ Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
 | Variable | Default | Description |
 |---|---|---|
 | `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, the generated secret key, `known_hosts` and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
-| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
 | `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
 | `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
@@ -367,6 +378,23 @@ Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
 | `EXACTDOCS_MAX_IMPORT_BYTES` | `268435456` (256 MiB) | An import whose selected text adds up to more fails with `import_too_large` instead of exhausting memory |
+
+### Upgrading
+
+Start the new version on the same data directory (`docker pull` and recreate the container, or
+`uvx --refresh exactdocs serve`): the database is migrated on start and every library keeps
+serving; nothing is imported again. CI proves it for each change, from the previous release's data
+directory. When a release changes how the search index is built, its notes have a **Requires
+reindex** section, the server logs a warning and `/api/health` reports `"reindex_required": true`.
+Search keeps answering as before until you run, where the server runs (it opens the data
+directory):
+
+```bash
+docker exec exactdocs exactdocs reindex     # or: uvx exactdocs reindex
+```
+
+It rebuilds the index from the stored chunks beside the one that answers, then swaps them in one
+step: the server keeps serving throughout. Running it when nothing changed is harmless.
 
 **Planned, not read by this version:** `EXACTDOCS_EMBEDDING_*`, `EXACTDOCS_RERANKER_*` and
 `EXACTDOCS_LLM_*` (optional model endpoints), `EXACTDOCS_RETRIEVAL_MODE` (`auto`, `bm25`, `hybrid`,

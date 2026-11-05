@@ -170,6 +170,17 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   hostile repository), git's rename limit (400: above 400 x 400 added x deleted files the scoring
   is skipped and only exact renames are kept; it bounds CPU, not downloads), a 16 MiB cap on git's
   list and 10,000 renames kept.
+- **Search index format and `exactdocs reindex` (E10-04):** `retrieval_search_format` holds the
+  format the FTS5 table was built in (`FORMAT` in `retrieval.adapters.driven.sqlite_fts`), read
+  through the `SearchIndexMaintenance` port (`GetSearchIndexState`, `RebuildSearchIndex`). A
+  change to how entries are made from chunks bumps `FORMAT`; the old index keeps answering, and
+  `/api/health` reports `reindex_required` until the operator runs `exactdocs reindex` (local).
+  The rebuild fills `retrieval_search_next` from `retrieval_chunks`, 500 chunks per write
+  transaction (readers never wait in WAL mode), with a trigger that removes chunks deleted
+  meanwhile; then one `BEGIN IMMEDIATE` transaction adds what was indexed since it began, drops the
+  old table and renames the new one over it. A rebuild that died leaves its table behind; the next
+  one starts over. A change of the table's columns stays an Alembic revision that rebuilds it on
+  start (as `a91c4e7b3d02` did). See *Upgrades* in [Releasing](releasing.md).
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
