@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useId } from "react";
+import { type ReactNode, useId } from "react";
 import { parseTags } from "@/shared/lib/tags";
 import { cn } from "@/shared/lib/utils";
 import { searchQueryOptions } from "../api/search-queries";
@@ -8,65 +8,13 @@ import { useSearchNav } from "../hooks/use-search-nav";
 import type { SearchContext } from "../model/context";
 import {
   countLabel,
-  highlightPieces,
   resultsNoun,
   type SearchHit,
   type SearchResults as SearchResultData,
 } from "../model/search";
+import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { onArrows } from "./keyboard";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
-
-const retry =
-  "inline-flex h-11 cursor-pointer items-center rounded-md bg-secondary px-3 text-sm font-medium outline-none transition-[background-color,transform] duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9";
-
-function Snippet({ hit }: { hit: SearchHit }) {
-  return (
-    <p className="mt-1.5 text-[15px] leading-[1.6] whitespace-pre-line text-foreground/90 [overflow-wrap:anywhere]">
-      {highlightPieces(hit.snippet, hit.highlights).map((piece) =>
-        piece.hit ? (
-          // No horizontal padding: a match inside a word ("RetryPolicy") must not open a gap in it.
-          <mark
-            key={piece.at}
-            className="rounded-[3px] bg-mark/[0.22] text-foreground [box-decoration-break:clone]"
-          >
-            {piece.text}
-          </mark>
-        ) : (
-          <span key={piece.at}>{piece.text}</span>
-        ),
-      )}
-    </p>
-  );
-}
-
-/** `A › B › C`; deeper than three levels shows `A › … › C` (the full path is the tooltip). */
-function Crumbs({ hit }: { hit: SearchHit }) {
-  const path = hit.heading_path;
-  const all = path.length > 0 ? path : [hit.article_path.split("/").pop() ?? hit.article_path];
-  const crumbs = all.length > 3 ? [all[0] ?? "", "…", all[all.length - 1] ?? ""] : all;
-  return (
-    <span
-      title={all.length > 3 ? all.join(" › ") : undefined}
-      className="block font-serif text-lg leading-snug font-semibold [overflow-wrap:anywhere]"
-    >
-      {crumbs.map((crumb, i) => (
-        <span
-          key={crumbs.slice(0, i + 1).join("\u0000")}
-          className={i < crumbs.length - 1 ? "font-normal text-muted-foreground" : ""}
-        >
-          {i > 0 && (
-            <>
-              <span aria-hidden="true" className="px-1.5 text-muted-foreground/70">
-                ›
-              </span>
-              <span className="sr-only"> / </span>
-            </>
-          )}
-          {crumb}
-        </span>
-      ))}
-    </span>
-  );
-}
 
 function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
   return (
@@ -96,26 +44,6 @@ function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
         </ul>
       )}
     </li>
-  );
-}
-
-/** Same rows as the real list (count line, title, path, two text lines, tags), so nothing moves when it lands. */
-function Skeleton() {
-  return (
-    <div aria-hidden="true" className="pending-in motion-safe:animate-pulse">
-      <span className="mb-4 block h-5 w-28 rounded bg-muted-foreground/[0.14]" />
-      <ul className="divide-y divide-border">
-        {["a", "b", "c", "d"].map((id) => (
-          <li key={id} className="space-y-2 py-3">
-            <span className="block h-5 w-2/5 rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3 w-1/4 rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3.5 w-full rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3.5 w-4/5 rounded bg-muted-foreground/[0.14]" />
-            <span className="block h-3 w-1/6 rounded bg-muted-foreground/[0.14]" />
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
 
@@ -163,19 +91,6 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
   );
 }
 
-function onArrows(event: KeyboardEvent<HTMLElement>) {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const links = [...event.currentTarget.querySelectorAll<HTMLElement>("a[data-result]")];
-  const at = links.indexOf(document.activeElement as HTMLElement);
-  if (at < 0) return;
-  event.preventDefault();
-  if (event.key === "ArrowUp" && at === 0) document.getElementById(INPUT_ID)?.focus();
-  else
-    links[
-      Math.min(Math.max(at + (event.key === "ArrowDown" ? 1 : -1), 0), links.length - 1)
-    ]?.focus();
-}
-
 function HitList({
   data,
   ctx,
@@ -188,7 +103,7 @@ function HitList({
   const count = data.results.length;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
-    <div onKeyDown={onArrows}>
+    <div onKeyDown={onArrows(() => document.getElementById(INPUT_ID)?.focus())}>
       <p aria-hidden="true" className="mb-4 flex h-5 items-center text-sm text-muted-foreground">
         <span className="font-medium text-foreground">
           {resultsNoun(count, data.coverage.complete)}

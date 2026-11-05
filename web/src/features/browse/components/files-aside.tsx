@@ -14,6 +14,8 @@ interface FilesAsideProps {
   repo: string;
   versions: readonly Version[];
   version: Version;
+  /** The library's default version is pinned (`default_pinned`). */
+  pinned: boolean;
   path: string | undefined;
   tags: string | undefined;
   /** The search box and its query, when the search slice is mounted. */
@@ -61,6 +63,7 @@ export function FilesAside({
   repo,
   versions,
   version,
+  pinned,
   path,
   tags: tagsParam,
   searchBox,
@@ -97,6 +100,7 @@ export function FilesAside({
           repo={repo}
           versions={versions}
           current={version}
+          pinned={pinned}
           keep={{ path, tags: tagsParam, q, match }}
         />
         <FilesToggle open={filesOpen} label={label} onToggle={() => setChosen(!filesOpen)} />

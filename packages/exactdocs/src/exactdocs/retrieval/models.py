@@ -181,6 +181,18 @@ class ManifestChunk:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SectionRef:
+    """A chunk of an article without its text: enough to tell sections apart."""
+
+    chunk_id: ChunkId
+    position: int
+    heading_path: tuple[str, ...]
+    occurrence_index: int
+    content_hash: str
+    anchor: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IndexedManifest:
     """A catalog manifest that has chunk rows. Its ID is held by value."""
 

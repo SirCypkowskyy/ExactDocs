@@ -16,6 +16,7 @@ const library = (over: Record<string, unknown> = {}) => {
     title: "Payments",
     description: "",
     default_version: "v1.4.0",
+    default_pinned: false,
     source_url: "https://github.com/acme/payments.git",
     version_count: versions.length,
     refs: versions.map((ref) => ({
@@ -124,6 +125,19 @@ describe("libraries slice", () => {
     );
     expect(within(row).getByText("a1b2c3d")).toBeInTheDocument();
     expect(within(row).getByText("api · guide")).toBeInTheDocument();
+  });
+
+  it("says when the default version is pinned", async () => {
+    serve([library({ default_pinned: true })], [job()]);
+    renderPage();
+
+    const row = (await screen.findByRole("heading", { name: "/acme/payments" })).closest("li");
+    if (!row) throw new Error("no row");
+    const [first] = within(within(row).getByRole("list", { name: "Versions" })).getAllByRole(
+      "listitem",
+    );
+    expect(first).toHaveTextContent("v1.4.0 (pinned default)");
+    expect(first).toHaveAttribute("title", expect.stringMatching(/^Pinned default version/));
   });
 
   it("shows a failed sync calmly and reveals the reason on demand", async () => {

@@ -34,9 +34,15 @@ class CreateFirstAdmin(Protocol):
 
 
 class Authenticate(Protocol):
-    """Check a username and password; raises ``InvalidCredentialsError`` on any mismatch."""
+    """Check a username and password; raises ``InvalidCredentialsError`` on any mismatch.
 
-    async def __call__(self, query: AuthenticateQuery) -> AccountSummary:
+    Raises ``SignInThrottledError`` without checking the password after too many failures from
+    the ``client`` address (the caller's IP, when known) or for the username.
+    """
+
+    async def __call__(
+        self, query: AuthenticateQuery, *, client: str | None = None
+    ) -> AccountSummary:
         """Run the use case."""
         ...
 
@@ -45,9 +51,16 @@ class SignIn(Protocol):
     """Check credentials and start a session; raises ``InvalidCredentialsError`` on a mismatch."""
 
     async def __call__(
-        self, query: AuthenticateQuery, previous_token: str | None = None
+        self,
+        query: AuthenticateQuery,
+        previous_token: str | None = None,
+        *,
+        client: str | None = None,
     ) -> SessionGrant:
-        """Run the use case; ``previous_token`` (the caller's current session) is ended."""
+        """Run the use case; ``previous_token`` (the caller's current session) is ended.
+
+        ``client`` is the caller's address, for the sign-in throttle (see ``Authenticate``).
+        """
         ...
 
 
@@ -94,8 +107,13 @@ class CreateToken(Protocol):
 class LoginForToken(Protocol):
     """Check credentials and mint a named API token; no session is started."""
 
-    async def __call__(self, command: LoginForTokenCommand) -> TokenGrant:
-        """Run the use case; ``InvalidCredentialsError`` on any mismatch."""
+    async def __call__(
+        self, command: LoginForTokenCommand, *, client: str | None = None
+    ) -> TokenGrant:
+        """Run the use case; ``InvalidCredentialsError`` on any mismatch.
+
+        ``client`` is the caller's address, for the sign-in throttle (see ``Authenticate``).
+        """
         ...
 
 

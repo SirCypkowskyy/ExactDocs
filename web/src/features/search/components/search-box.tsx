@@ -80,7 +80,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
 
   return (
     <div className="space-y-3">
-      <search>
+      <search aria-label={ctx.ref}>
         <form
           onSubmit={(event) => {
             event.preventDefault();
