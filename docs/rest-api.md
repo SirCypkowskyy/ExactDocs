@@ -84,24 +84,32 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
 - **`context7.json`** (LIB-06): a repository's root `context7.json` is read when a library is
-  added or previewed (only that one file of the pinned commit is fetched) and again by every
-  import. Used keys: `projectTitle`, `description`, `folders`, `excludeFolders`, `excludeFiles`,
-  `rules`, `previousVersions`; others (`$schema`, `url`, ...) are ignored. Sent **without**
-  `include_paths` and `exclude_paths`, `POST /libraries` and `POST /repositories/preview` apply its
-  folders and exclusions: a folder is that path and all below it (`.` is the whole repository); an
-  excluded folder or file given by its bare name (`archive`, `CHANGELOG.md`) is excluded wherever
-  it is, one with a `/` (`./docs/internal`) only at that path, and globs are taken as patterns.
-  Paths a user sends win, and the library keeps the paths it was created with for every later
-  version. The default version's `projectTitle` and `description` win over its README; a user's
-  edit wins over both. Its `rules` (at most 20 of at most 500 characters) are stored on the
-  library (`rules` in `GET /libraries/{owner}/{repo}`) and come first in every `query-docs`
-  answer, counted against its size budget. Both responses carry `include_paths` and
-  `exclude_paths` (what is applied), `context7` (the parsed file, with its paths translated, its
-  `rules` and `previous_versions` (`tag`, `title`) to offer for import with
-  `POST /libraries/{owner}/{repo}/versions`) and `context7_warning`. A file that is not a JSON
-  object of the right types, larger than 64 KiB, or that cannot be fetched is ignored: `context7`
-  is null, `context7_warning` says why, and an import lists it as a `context7` problem of its
-  job (the import goes on). All of it is untrusted repository text.
+  added or previewed (only that one file of the pinned commit: its tree entry, then its blob) and
+  again by every import. Reading it for an add or a preview uses a preview slot, never an
+  import's, and waits for one only as long as a preview does; when every slot stays busy it is
+  skipped with a warning. Used keys: `projectTitle`, `description`, `folders`, `excludeFolders`,
+  `excludeFiles`, `rules`, `previousVersions`; others (`$schema`, `url`, ...) are ignored. Sent
+  **without** `include_paths` and `exclude_paths`, `POST /libraries` and
+  `POST /repositories/preview` apply its folders and exclusions: a folder is that path and all
+  below it (`.` is the whole repository; a leading `./` or `/` means the root); an excluded
+  folder or file given by its bare name (`archive`, `CHANGELOG.md`) is excluded wherever it is,
+  one with a `/` (`./docs/internal`) only at that path, and globs are taken as patterns. Paths a
+  user sends win: to import every article and ignore the file's paths, send
+  `"include_paths": ["**"]`. The library keeps the paths it was created with for every later
+  version. The default version's `projectTitle` and `description` win over its README; a
+  user's edit wins over both. Its `rules` (at most 20 distinct ones of at most 500 characters)
+  are stored on the library (`rules` in `GET /libraries/{owner}/{repo}`) and come first in every
+  `query-docs` answer, under a heading that marks them as untrusted repository text. They take
+  at most a quarter of the size budget (whole rules, in order). They are the **default version's**
+  rules: `query-docs` for `/owner/repo/<ref>` shows them too, not that version's. Both responses
+  carry `include_paths` and `exclude_paths` (what is applied), `context7` (the parsed file, with
+  its paths translated, its `rules`, `previous_versions` (`tag`, `title`) to offer for import
+  with `POST /libraries/{owner}/{repo}/versions`, and `notes`) and `context7_warning`. A
+  `previousVersions` entry whose tag git would not accept as a ref name (`--upload-pack=x`,
+  `a..b`) is left out and named in `notes`; the rest of the file still applies. A file that is
+  not a JSON object of the right types, larger than 64 KiB, or that cannot be read is ignored:
+  `context7` is null and `context7_warning` says why. An import lists both kinds as `context7`
+  problems of its job (the import goes on). All of it is untrusted repository text.
 - **Pinning the default version**: `PUT /libraries/{owner}/{repo}/default-version` (`{"ref"}`, an
   imported ref exactly as listed, or a unique short SHA of a commit version) makes that version
   what `/owner/repo` without a ref means, even after a higher stable tag is imported (LIB-10).
@@ -128,7 +136,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `POST /repositories/preview` (`url`, optional `ref`, `include_paths`, `exclude_paths`, `credential`)
   is a dry run: it fetches the commit and its trees only (`--filter=blob:none`, depth 1, no
   checkout; git's process limits, and the fetch deadline and size watchdog, apply), plus the
-  root `context7.json` alone (see above), and answers `ref`, `ref_kind`, `commit_sha`, `files`
+  root `context7.json` alone (see above, a second blob-less fetch under a preview slot), and answers `ref`, `ref_kind`, `commit_sha`, `files`
   (sorted, 1000 at most), `total`, `truncated`, `include_paths`, `exclude_paths`, `context7` and
   `context7_warning`. The
   same selection rules as the import decide, so nothing is stored. Sizes are not included: they

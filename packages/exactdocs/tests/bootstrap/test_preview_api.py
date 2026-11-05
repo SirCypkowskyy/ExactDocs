@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -6,8 +7,9 @@ import pytest
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.adapters.driven.git_cli import MAX_FETCHES, GitCli
 from exactdocs.ingestion.errors import PreviewBusyError
+from exactdocs.ingestion.models import FetchedFile
 from fixture_repo import DocsRepo
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
@@ -69,31 +71,51 @@ async def test_nothing_is_stored_and_only_context7_json_is_downloaded(
     client: httpx.AsyncClient, docs_repo: DocsRepo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fetches: list[list[str]] = []
-    sparse: list[list[str]] = []
     original = GitCli._run  # ruff: ignore[private-member-access]
-    original_checkout = GitCli.checkout
 
     async def spy(self: GitCli, args: list[str], **kwargs: object) -> object:
         fetches.append(list(args))
         return await original(self, args, **kwargs)  # ty: ignore[invalid-argument-type]
 
-    def spy_checkout(self: GitCli, repository: object, sha: str, lines: list[str], *rest: object):
-        sparse.append(lines)
-        return original_checkout(self, repository, sha, lines, *rest)  # ty: ignore[invalid-argument-type]
-
     monkeypatch.setattr(GitCli, "_run", spy)
-    monkeypatch.setattr(GitCli, "checkout", spy_checkout)
 
-    assert (await preview(client, docs_repo.file_url)).status_code == 200
+    assert (await preview(client, docs_repo.file_url, ref="next")).status_code == 200
 
     git_args = [" ".join(a) for a in fetches]
     assert any("--filter=blob:none" in a for a in git_args)
-    assert not any("cat-file" in a for a in git_args)
-    # The tree is listed without a checkout; the one checkout is of the root context7.json only.
-    assert sum(" checkout " in a for a in git_args) == 1
-    assert sparse == [["/context7.json"]]
+    assert not any(" checkout " in a for a in git_args)
+    # The one blob read is the root context7.json, found in the tree as a regular file.
+    assert any(":(literal)context7.json" in a for a in git_args)
+    assert sum(" cat-file blob " in a for a in git_args) == 1
     assert (await client.get("/api/v1/libraries/fixture/docs-repo")).status_code == 404
     assert (await client.get("/api/v1/jobs/latest")).json()["jobs"] == []
+
+
+async def test_previewing_and_adding_do_not_wait_for_the_import_slots(
+    demo_catalog: dict[str, str], docs_repo: DocsRepo
+) -> None:
+    git = GitCli.locate()
+    for _ in range(MAX_FETCHES):
+        await git.fetch_slots.acquire()  # two long imports are running
+    container = Container.build(Settings(), remote=git, gateway=git, tree=git)
+    async with (
+        container.running(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(container)),
+            base_url="http://localhost",
+            cookies=demo_catalog,
+        ) as client,
+        asyncio.timeout(60),
+    ):
+        previewed = await preview(client, docs_repo.file_url, ref="next")
+        added = await client.post(
+            "/api/v1/libraries", json={"url": docs_repo.file_url, "ref": "next"}
+        )
+
+    assert previewed.status_code == 200, previewed.text
+    assert previewed.json()["context7"] is not None
+    assert added.status_code == 201, added.text
+    assert added.json()["include_paths"] == ["docs/"]
 
 
 async def test_without_paths_context7_json_pre_fills_the_preview(
@@ -168,6 +190,9 @@ async def test_an_unreachable_server(client: httpx.AsyncClient) -> None:
 async def test_busy_previews_answer_429(demo_catalog: dict[str, str], docs_repo: DocsRepo) -> None:
     class Busy:
         async def list_files(self, *_: object, **__: object) -> list[str]:
+            raise PreviewBusyError(retry_after=7)
+
+        async def read_file(self, *_: object, **__: object) -> FetchedFile:
             raise PreviewBusyError(retry_after=7)
 
     container = Container.build(Settings(), tree=Busy())

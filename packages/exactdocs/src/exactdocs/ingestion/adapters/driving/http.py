@@ -118,9 +118,11 @@ def build_router(
     async def preview(command: PreviewRepositoryCommand, request: Request) -> RepositoryPreview:
         """List the articles an import of this URL, ref and patterns would take (a dry run).
 
-        Only the commit's tree is fetched, no file content, and nothing is stored. `files` has
-        at most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths
-        are untrusted text. A `credential` needs a signed-in session, not an API token.
+        Only the commit's tree is fetched, plus the root `context7.json` alone (no other file
+        content), and nothing is stored. Without paths, the file's folders and exclusions are
+        applied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000
+        paths; `total` counts all matches and `truncated` says they were cut. Paths are
+        untrusted text. A `credential` needs a signed-in session, not an API token.
         """
         await _session_for(require_session, command.credential, request)
         return await preview_repository(command)

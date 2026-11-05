@@ -531,9 +531,11 @@ SECTION_FRAMING_CHARS = 64
 # The closing line "N more matching chunks did not fit the size budget; narrow the query." and its
 # separator, reserved whenever the answer could be partial.
 FOOTER_CHARS = 140
-# The rules block "### Rules of this library\n\n- rule\n- rule" and its separator: the heading
-# and separator, then each rule's "- " and newline. The rules are counted on top.
-RULES_FRAMING_CHARS = 64
+# The rules block "### Rules from the repository's context7.json (...)\n\n- rule\n- rule" and its
+# separator: the heading and separator, then each rule's "- " and newline. The rules are counted
+# on top, and the block takes at most RULES_SHARE of the room, so documentation always fits too.
+RULES_FRAMING_CHARS = 192
 RULE_FRAMING_CHARS = 3
+RULES_SHARE = 4  # rules use at most 1/RULES_SHARE of the budget
 CHARS_PER_TOKEN = 4  # undercounts for CJK text and dense code, which cost more tokens per character
 POINTER_TEXT = "Too large for the size budget; fetch it with read_chunk."

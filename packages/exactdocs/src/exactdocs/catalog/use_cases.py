@@ -200,9 +200,9 @@ class ApplyReadmeUseCase:
         description means none, so a field never keeps text a version dropped; the same goes
         for the rules (there is no user edit of them).
 
-        Only the two text columns are written, in one statement that keeps edited fields, so a
-        concurrent user edit survives. The caller does not retry: if this fails the library keeps
-        its old text until the default version is imported again.
+        Only the two text columns and the rules are written, in one statement that keeps edited
+        fields, so a concurrent user edit survives. The caller does not retry: if this fails the
+        library keeps its old text and rules until the default version is imported again.
         """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:

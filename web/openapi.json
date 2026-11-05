@@ -3440,7 +3440,7 @@
           "ingestion"
         ],
         "summary": "Preview",
-        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, no file content, and nothing is stored. `files` has\nat most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths\nare untrusted text. A `credential` needs a signed-in session, not an API token.",
+        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, plus the root `context7.json` alone (no other file\ncontent), and nothing is stored. Without paths, the file's folders and exclusions are\napplied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000\npaths; `total` counts all matches and `truncated` says they were cut. Paths are\nuntrusted text. A `credential` needs a signed-in session, not an API token.",
         "operationId": "ingestion-preview",
         "requestBody": {
           "content": {
@@ -5264,6 +5264,14 @@
             "type": "array",
             "title": "Previous Versions",
             "description": "Older tags to offer for import (`POST .../versions` each)."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "What was left out of the file (a `previousVersions` entry whose tag git would not take), and why."
           }
         },
         "additionalProperties": false,

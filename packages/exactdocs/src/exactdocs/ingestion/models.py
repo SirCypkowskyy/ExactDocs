@@ -1194,6 +1194,16 @@ class Context7Config:
     rules: tuple[str, ...] = ()
     previous_versions: tuple[PreviousVersion, ...] = ()
     selection: PathSelection | None = None
+    notes: tuple[str, ...] = ()
+    """What was left out of an otherwise usable file (``previousVersions`` entries), and why."""
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedFile:
+    """One file of a commit read on its own: its bytes, nothing (absent), or why it was not read."""
+
+    data: bytes | None = None
+    problem: str | None = None
 
 
 def parse_context7(data: bytes) -> Context7Config:
@@ -1203,7 +1213,9 @@ def parse_context7(data: bytes) -> Context7Config:
     ``excludeFolders``, ``excludeFiles``, ``rules``, ``previousVersions``); any other key
     (``$schema``, ``url``, ...) is ignored. A known key of the wrong type, too many rules or
     versions, or a path ExactDocs would refuse makes the whole file unusable: half-applying a
-    file would import something nobody asked for.
+    file would import something nobody asked for. A ``previousVersions`` entry that cannot be
+    imported (no tag, or one git would not take as a ref name) only offers nothing: it is left
+    out and named in ``notes``.
     """
     if len(data) > CONTEXT7_MAX_BYTES:
         reason = f"it is larger than {CONTEXT7_MAX_BYTES} bytes"
@@ -1222,7 +1234,8 @@ def parse_context7(data: bytes) -> Context7Config:
     folders = _c7_strings(document, "folders")
     exclude_folders = _c7_strings(document, "excludeFolders")
     exclude_files = _c7_strings(document, "excludeFiles")
-    rules = tuple(_c7_line(r, "rules") for r in _c7_strings(document, "rules"))
+    lines = (_c7_line(r, "rules") for r in _c7_strings(document, "rules"))
+    rules = tuple(dict.fromkeys(r for r in lines if r))  # the limit counts distinct rules
     if len(rules) > MAX_CONTEXT7_RULES or any(len(r) > MAX_CONTEXT7_RULE_CHARS for r in rules):
         message = (
             f"rules: at most {MAX_CONTEXT7_RULES} of at most {MAX_CONTEXT7_RULE_CHARS} characters"
@@ -1235,15 +1248,17 @@ def parse_context7(data: bytes) -> Context7Config:
         raise InvalidContext7Error(reason) from None
     title = _c7_text(document, "projectTitle")
     description = _c7_text(document, "description")
+    versions, notes = _c7_previous_versions(document.get("previousVersions"))
     return Context7Config(
         project_title=title[:README_TITLE_MAX].rstrip() if title else None,
         description=description[:README_DESCRIPTION_MAX].rstrip() if description else None,
         folders=folders,
         exclude_folders=exclude_folders,
         exclude_files=exclude_files,
-        rules=tuple(dict.fromkeys(r for r in rules if r)),
-        previous_versions=_c7_previous_versions(document.get("previousVersions")),
+        rules=rules,
+        previous_versions=versions,
         selection=selection,
+        notes=notes,
     )
 
 
@@ -1266,19 +1281,27 @@ def context7_selection(
     return PathSelection.of(include, exclude)
 
 
+def _c7_path(entry: str) -> tuple[str, bool]:
+    """Strip ``./`` and ``/`` at the start (both mean the repository root) and ``/`` at the end.
+
+    Also tell whether the entry is anchored at a path (it started at the root or has a ``/``).
+    """
+    stripped = entry.strip()
+    cleaned = stripped.removeprefix("./").lstrip("/").rstrip("/")
+    return cleaned, stripped.startswith(("./", "/")) or "/" in cleaned
+
+
 def _c7_root(folder: str) -> bool:
-    return folder.strip().removeprefix("./").strip("/") in {"", "."}
+    return _c7_path(folder)[0] in {"", "."}
 
 
 def _c7_folder(folder: str) -> str:
-    cleaned = folder.strip().removeprefix("./").rstrip("/")
+    cleaned, _ = _c7_path(folder)
     return cleaned if _GLOB_CHARS & set(cleaned) else f"{cleaned}/"
 
 
 def _c7_exclude(entry: str, *, folder: bool) -> str:
-    cleaned = entry.strip()
-    anchored = cleaned.startswith("./") or "/" in cleaned.rstrip("/")
-    cleaned = cleaned.removeprefix("./").rstrip("/")
+    cleaned, anchored = _c7_path(entry)
     if _GLOB_CHARS & set(cleaned):
         return cleaned
     suffix = "/" if folder else ""
@@ -1314,26 +1337,46 @@ def _c7_line(value: str, key: str) -> str:
     return line
 
 
-def _c7_previous_versions(value: object) -> tuple[PreviousVersion, ...]:
+def _c7_previous_versions(value: object) -> tuple[tuple[PreviousVersion, ...], tuple[str, ...]]:
+    """Return the importable entries and a note for each one that is left out."""
     if value is None:
-        return ()
-    message = 'previousVersions must be a list of {"tag": ..., "title": ...} objects'
+        return (), ()
     if not isinstance(value, list) or len(value) > MAX_PREVIOUS_VERSIONS:
-        reason = f"{message}, at most {MAX_PREVIOUS_VERSIONS}"
+        reason = (
+            'previousVersions must be a list of {"tag": ..., "title": ...} objects, '
+            f"at most {MAX_PREVIOUS_VERSIONS}"
+        )
         raise InvalidContext7Error(reason)
     found: dict[str, PreviousVersion] = {}
+    notes: list[str] = []
     for entry in value:
-        if not isinstance(entry, dict):
-            raise InvalidContext7Error(message)
-        tag, title = entry.get("tag"), entry.get("title", "")
-        if not isinstance(tag, str) or not isinstance(title, str):
-            raise InvalidContext7Error(message)
-        tag, title = _c7_line(tag, "previousVersions"), _c7_line(title, "previousVersions")
-        if not tag or max(len(tag), len(title)) > MAX_PREVIOUS_VERSION_CHARS or " " in tag:
-            reason = f"{message}; a tag is one word"
-            raise InvalidContext7Error(reason)
-        found.setdefault(tag, PreviousVersion(tag=tag, title=title))
-    return tuple(found.values())
+        version = _c7_previous_version(entry)
+        if isinstance(version, str):
+            notes.append(f"previousVersions: an entry is left out: {version}")
+        else:
+            found.setdefault(version.tag, version)
+    return tuple(found.values()), tuple(notes)
+
+
+def _c7_previous_version(entry: object) -> PreviousVersion | str:
+    """Validate one entry; a string says why it cannot be offered (never echoes control text)."""
+    if not isinstance(entry, dict):
+        return 'it is not a {"tag": ..., "title": ...} object'
+    tag, title = entry.get("tag"), entry.get("title", "")
+    if not isinstance(tag, str) or not isinstance(title, str):
+        return "its tag and title must be strings"
+    shown = " ".join(tag.split())[:MAX_PREVIOUS_VERSION_CHARS]
+    if not shown.isprintable():
+        return "its tag has control or invisible characters"
+    title = " ".join(title.split())
+    if (
+        len(tag) > MAX_PREVIOUS_VERSION_CHARS
+        or branch_name(tag) is None
+        or len(title) > MAX_PREVIOUS_VERSION_CHARS
+        or not title.isprintable()
+    ):
+        return f"{shown!r} is not a tag name git accepts, or its title is too long"
+    return PreviousVersion(tag=tag, title=title)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

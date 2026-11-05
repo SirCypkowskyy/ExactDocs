@@ -10,6 +10,7 @@ from exactdocs.ingestion.models import (
     ArticleChunk,
     Collected,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -203,7 +204,11 @@ class RenameSource(Protocol):
 
 
 class RepositoryTree(Protocol):
-    """List the files of one commit without downloading any file content."""
+    """Look at one commit's tree, and at most one small file of it, without a checkout.
+
+    Both methods run apart from imports (preview slots, never ``GitGateway`` fetch slots), so a
+    preview or an add never waits for a long import, and wait a bounded time for a slot.
+    """
 
     async def list_files(
         self,
@@ -220,6 +225,25 @@ class RepositoryTree(Protocol):
         (lossy-decoded, any characters). ``refs`` and ``credential`` are as in ``GitGateway.fetch``.
         Raises what ``GitGateway.fetch`` raises, ``TreeTooLargeError`` for a listing over the
         output cap and ``PreviewBusyError`` when no preview slot frees up in time.
+        """
+        ...
+
+    async def read_file(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        path: str,
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> FetchedFile:
+        """Read one file at the root of the commit (``path`` is a plain name) by itself.
+
+        The trees are fetched as by ``list_files``, then only that file's blob. A missing file
+        is an empty ``FetchedFile``; one that is not a regular file (a link, a folder) or is
+        larger than ``max_bytes`` has a ``problem`` and no data (a larger one is cut off while
+        it downloads). Raises what ``list_files`` raises.
         """
         ...
 

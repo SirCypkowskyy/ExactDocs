@@ -54,6 +54,7 @@ from exactdocs.ingestion.errors import (
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
+    PreviewBusyError,
     SyncFailedError,
     UnknownJobKindError,
     UnknownLibraryError,
@@ -77,6 +78,7 @@ from exactdocs.ingestion.models import (
     ArticleChunk,
     Context7Config,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedArticle,
     ImportedImage,
@@ -409,29 +411,29 @@ class PreviewRepositoryUseCase:
 
     remote: GitRemote
     tree: RepositoryTree
-    gateway: GitGateway | None = None
 
     async def __call__(self, command: PreviewRepositoryCommand) -> RepositoryPreview:
         """Validate, pin the ref, list the commit's tree and apply the selection to it.
 
         The same ``PathSelection.selects`` the import uses decides, so the preview and the
         import agree (except for files the import then skips as unreadable or too big). The
-        root ``context7.json`` is read too (that one blob): without paths its selection is the
-        one applied, as adding the library would, and the file is returned for the form.
+        root ``context7.json`` is read too (that one blob, under a preview slot like the
+        listing): without paths its selection is the one applied, as adding the library would,
+        and the file is returned for the form.
         """
         repository = RepositoryUrl.parse(command.url)
         credential = _credential(command.credential, repository)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
-        context7 = await _fetch_context7(self.gateway, repository, resolved, credential)
-        selection = _prefilled(selection, context7)
         paths = await self.tree.list_files(
             repository,
             resolved.commit_sha,
             refs=_full_refs(resolved.kind, resolved.name),
             credential=credential,
         )
+        context7 = await _fetch_context7(self.tree, repository, resolved, credential)
+        selection = _prefilled(selection, context7)
         matching = sorted(path for path in paths if selection.selects(path))
         return RepositoryPreview(
             ref=resolved.name,
@@ -467,7 +469,7 @@ class AddLibraryUseCase:
     libraries: NewLibraries
     enqueue_job: EnqueueJob
     vault: CredentialVault
-    gateway: GitGateway | None = None
+    tree: RepositoryTree | None = None
 
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
         """Check everything that can be checked first, then store the library and queue its import.
@@ -488,7 +490,7 @@ class AddLibraryUseCase:
             raise LibraryIdTakenError(library_id)
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
-        context7 = await _fetch_context7(self.gateway, repository, resolved, credential)
+        context7 = await _fetch_context7(self.tree, repository, resolved, credential)
         selection = _prefilled(selection, context7)
         created = await self.libraries.add(
             NewLibrary(
@@ -809,8 +811,8 @@ class ImportVersionUseCase:
             taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
         if not articles:
             raise NoArticlesError
-        if context7.warning:
-            await progress.problem(CONTEXT7_FILE, ProblemCode.CONTEXT7, context7.warning)
+        for note in context7.notes():
+            await progress.problem(CONTEXT7_FILE, ProblemCode.CONTEXT7, note)
         await self._outside_images(job, source, credential, taken, progress)
         # After the fetch above has given its slot back: a second slot held while waiting for one
         # could deadlock two imports.
@@ -1185,6 +1187,10 @@ class _Context7Read:
     config: Context7Config | None = None
     warning: str | None = None
 
+    def notes(self) -> tuple[str, ...]:
+        """Why the file is ignored, or what was left out of it."""
+        return (self.warning,) if self.warning else (self.config.notes if self.config else ())
+
 
 def _context7(folder: Path) -> _Context7Read:
     """Read and parse the root ``context7.json``; nothing if there is none. Never raises.
@@ -1207,32 +1213,50 @@ def _context7(folder: Path) -> _Context7Read:
 
 
 async def _fetch_context7(
-    gateway: GitGateway | None,
+    tree: RepositoryTree | None,
     repository: RepositoryUrl,
     resolved: ResolvedRef,
     credential: Credential | None,
 ) -> _Context7Read:
-    """Fetch only the root ``context7.json`` of the pinned commit and read it; never raises.
+    """Read only the root ``context7.json`` of the pinned commit; never raises.
 
-    A fetch that fails (the remote answered a moment ago) is a warning: the file is a
-    pre-fill, adding or previewing the library goes on without it. Without a gateway (a
-    module built with no git) there is no file.
+    The file is a pre-fill: whatever goes wrong (the remote, every preview slot busy for longer
+    than a preview waits, the disk) is a warning and adding or previewing goes on without it.
+    Without a tree (a module built with no git) there is no file.
     """
-    if gateway is None:
+    if tree is None:
         return _Context7Read()
     try:
-        async with gateway.fetch_files(
+        found = await tree.read_file(
             repository,
             resolved.commit_sha,
-            [CONTEXT7_FILE],
+            CONTEXT7_FILE,
             max_bytes=CONTEXT7_MAX_BYTES,
             refs=_full_refs(resolved.kind, resolved.name),
             credential=credential,
-        ) as folder:
-            return await asyncio.to_thread(_context7, folder)
+        )
+    except PreviewBusyError:
+        reason = "it was not read, every preview slot is busy; try again shortly"
     except DomainError as error:
         log.warning("could not fetch context7.json: %s", type(error).__name__)
-        return _Context7Read(warning=str(InvalidContext7Error(f"it could not be fetched: {error}")))
+        reason = f"it could not be fetched: {error}"
+    except Exception:
+        log.exception("could not read context7.json")
+        reason = "it could not be read"
+    else:
+        return _context7_of(found)
+    return _Context7Read(warning=str(InvalidContext7Error(reason)))
+
+
+def _context7_of(found: FetchedFile) -> _Context7Read:
+    if found.problem is not None:
+        return _Context7Read(warning=str(InvalidContext7Error(found.problem)))
+    if found.data is None:
+        return _Context7Read()
+    try:
+        return _Context7Read(config=parse_context7(found.data))
+    except InvalidContext7Error as error:
+        return _Context7Read(warning=str(error))
 
 
 @dataclass(frozen=True, slots=True)

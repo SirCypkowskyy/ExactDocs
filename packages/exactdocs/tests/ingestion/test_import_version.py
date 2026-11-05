@@ -486,6 +486,21 @@ async def test_an_invalid_context7_json_is_a_warning_and_ignored(
     assert not ProblemCode.CONTEXT7.is_skip
 
 
+async def test_dropped_previous_versions_are_listed_and_the_file_still_applies(
+    tmp_path: Path,
+) -> None:
+    context7 = b'{"rules": ["Use v2 client"], "previousVersions": [{"tag": "--x"}, {"tag": "v1"}]}'
+    files = {"docs/a.md": INSTALL.encode(), "context7.json": context7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.rules == [("Use v2 client",)]
+    ((path, code, reason),) = world.progress.problems
+    assert (path, code) == ("context7.json", ProblemCode.CONTEXT7)
+    assert reason.startswith("previousVersions: an entry is left out")
+
+
 async def test_a_context7_json_that_is_a_link_is_ignored(tmp_path: Path) -> None:
     world = build_world(
         tmp_path,

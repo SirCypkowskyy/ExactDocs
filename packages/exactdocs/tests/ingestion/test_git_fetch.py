@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from exactdocs.ingestion.adapters.driven.git_cli import (
+    MAX_FETCHES,
     GitCli,
     MissingGit,
     sparse_patterns,
@@ -23,7 +24,13 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
     TreeTooLargeError,
 )
-from exactdocs.ingestion.models import PathSelection, ProposedId, RepositoryHost, RepositoryUrl
+from exactdocs.ingestion.models import (
+    FetchedFile,
+    PathSelection,
+    ProposedId,
+    RepositoryHost,
+    RepositoryUrl,
+)
 from fixture_repo import DocsRepo, git
 
 
@@ -629,3 +636,90 @@ async def test_a_listing_leaves_symlinks_out(tmp_path: Path, gateway: GitCli) ->
     )
 
     assert listed == ["a.md"]
+
+
+@pytest.mark.parametrize("transport", ["file_url", "http_url"])
+async def test_one_root_file_is_read_from_the_tree_without_a_checkout(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path, transport: str
+) -> None:
+    url = getattr(docs_repo, transport)
+
+    found = await gateway.read_file(
+        repository(url), sha(docs_repo, "next"), "context7.json", max_bytes=2**16
+    )
+    absent = await gateway.read_file(
+        repository(url), sha(docs_repo, "v1.4.0"), "context7.json", max_bytes=2**16
+    )
+
+    expected = git("show", "next:context7.json", cwd=docs_repo.path)
+    assert found == FetchedFile(data=(expected + "\n").encode())
+    assert absent == FetchedFile()
+    assert leftovers(work) == []
+
+
+async def test_a_root_file_over_the_limit_is_not_downloaded(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    found = await gateway.read_file(
+        repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=10
+    )
+
+    assert found == FetchedFile(problem="larger than 10 bytes")
+
+
+async def test_a_root_file_that_is_a_link_or_a_folder_is_not_read(
+    tmp_path: Path, gateway: GitCli
+) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "target.json").write_text("{}")
+    (source / "context7.json").symlink_to("target.json")
+    (source / "docs").mkdir()
+    (source / "docs" / "a.md").write_text("a")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+    head = git("rev-parse", "HEAD", cwd=source)
+
+    link = await gateway.read_file(repository(source.as_uri()), head, "context7.json", max_bytes=99)
+    folder = await gateway.read_file(repository(source.as_uri()), head, "docs", max_bytes=99)
+
+    assert link == folder == FetchedFile(problem="not a regular file")
+
+
+async def test_reading_a_root_file_never_waits_for_an_import_slot(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(MAX_FETCHES):
+        await busy.fetch_slots.acquire()  # every import slot is taken by a long import
+
+    async with asyncio.timeout(30):
+        found = await busy.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=2**16
+        )
+
+    assert found.data
+
+
+async def test_reading_a_root_file_waits_a_bounded_time_for_a_preview_slot(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(2):
+        await busy.preview_slots.acquire()
+
+    with pytest.raises(PreviewBusyError):
+        await busy.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=99
+        )
+
+
+@pytest.mark.parametrize("path", ["docs/a.md", "*.json", "", "-x", ":(glob)*"])
+async def test_only_a_plain_root_name_can_be_read(
+    gateway: GitCli, docs_repo: DocsRepo, path: str
+) -> None:
+    with pytest.raises(ValueError, match="root file name"):
+        await gateway.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), path, max_bytes=99
+        )

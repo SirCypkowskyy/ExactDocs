@@ -1,22 +1,25 @@
 """A repository's ``context7.json`` (LIB-06): parsing, and how adding or previewing uses it."""
 
 import json
-from collections.abc import AsyncGenerator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.dtos import AddLibraryCommand, PreviewRepositoryCommand
-from exactdocs.ingestion.errors import InvalidContext7Error, RepositoryUnreachableError
+from exactdocs.ingestion.errors import (
+    InvalidContext7Error,
+    PreviewBusyError,
+    RepositoryUnreachableError,
+)
 from exactdocs.ingestion.models import (
     CONTEXT7_MAX_BYTES,
     IMPORT_JOB,
     MAX_CONTEXT7_RULES,
     Context7Config,
     Credential,
+    FetchedFile,
     NewLibrary,
     PathSelection,
     PreviousVersion,
@@ -110,12 +113,11 @@ def test_a_root_folder_or_only_exclusions_mean_every_article_but_those() -> None
             as_bytes({"rules": ["a" + chr(0x202E) + "b"]}),
             "rules has control or invisible characters",
         ),
-        (as_bytes({"rules": ["r"] * (MAX_CONTEXT7_RULES + 1)}), "rules: at most"),
+        (as_bytes({"rules": [f"r{i}" for i in range(MAX_CONTEXT7_RULES + 1)]}), "rules: at most"),
         (as_bytes({"rules": ["r" * 501]}), "rules: at most"),
         (as_bytes({"folders": ["../secrets"]}), "folders or excludes"),
-        (as_bytes({"previousVersions": ["v1"]}), "previousVersions must be"),
-        (as_bytes({"previousVersions": [{"title": "x"}]}), "previousVersions must be"),
-        (as_bytes({"previousVersions": [{"tag": "v 1"}]}), "a tag is one word"),
+        (as_bytes({"previousVersions": "v1"}), "previousVersions must be a list"),
+        (as_bytes({"previousVersions": [{"tag": "v1"}] * 51}), "previousVersions must be a list"),
     ],
 )
 def test_an_unusable_file_is_refused_with_the_reason(data: bytes, reason: str) -> None:
@@ -132,6 +134,44 @@ def test_deep_nesting_within_the_size_limit_is_refused_not_a_crash() -> None:
         parse_context7(b'{"rules": ' + b"[" * depth + b"]" * depth + b"}")
 
 
+def test_unusable_previous_versions_are_dropped_with_a_note_and_the_rest_kept() -> None:
+    entries = [
+        {"tag": "v1.0.0"},
+        {"tag": "--upload-pack=x"},  # would be read as a git option
+        {"tag": "v1..2"},
+        {"tag": "v 1"},
+        {"tag": "a" * 256},
+        "v0.9.0",
+        {"title": "no tag"},
+        {"tag": "v0.8.0", "title": 3},
+        {"tag": "release/2.0", "title": "two"},
+    ]
+
+    config = parse_context7(as_bytes({"previousVersions": entries}))
+
+    assert config.previous_versions == (
+        PreviousVersion("v1.0.0"),
+        PreviousVersion("release/2.0", "two"),
+    )
+    assert len(config.notes) == 7
+    assert all(n.startswith("previousVersions: an entry is left out") for n in config.notes)
+    assert "'--upload-pack=x'" in config.notes[0]
+
+
+def test_the_rule_limit_counts_distinct_rules() -> None:
+    config = parse_context7(as_bytes({"rules": ["a", "b", "", " "] * 10}))
+
+    assert config.rules == ("a", "b")
+
+
+def test_a_leading_slash_is_the_repository_root_as_in_context7() -> None:
+    config = parse_context7(
+        as_bytes({"folders": ["/docs"], "excludeFolders": ["/docs/old"], "excludeFiles": ["/x.md"]})
+    )
+
+    assert config.selection == PathSelection.of(["docs/"], ["docs/old/", "x.md"])
+
+
 @dataclass
 class FakeRemote:
     async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
@@ -145,47 +185,37 @@ class FakeRemote:
 
 
 @dataclass
-class FakeGateway:
-    """Plays ``GitGateway.fetch_files``: the repository's root holds ``files``."""
+class FakeTree:
+    """Plays ``RepositoryTree``: the commit's root holds ``files``."""
 
-    tmp: Path
-    files: dict[str, bytes] = field(default_factory=dict)
+    files: dict[str, FetchedFile] = field(default_factory=dict)
     error: Exception | None = None
-    asked: list[list[str]] = field(default_factory=list)
+    asked: list[tuple[str, int]] = field(default_factory=list)
 
-    def fetch(self, *args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError  # adding or previewing never checks out the docs
+    async def list_files(self, repository: RepositoryUrl, commit_sha: str, **_: object) -> list:
+        del repository, commit_sha
+        return ["README.md", "docs/a.md", "docs/archive/old.md", "guides/b.md", "src/c.md"]
 
-    @asynccontextmanager
-    async def fetch_files(
+    async def read_file(
         self,
         repository: RepositoryUrl,
         commit_sha: str,
-        paths: Sequence[str],
+        path: str,
         *,
         max_bytes: int,
         refs: Sequence[str] = (),
         credential: Credential | None = None,
-    ) -> AsyncGenerator[Path]:
-        del repository, max_bytes, refs, credential
+    ) -> FetchedFile:
+        del repository, refs, credential
         assert commit_sha == TIP
-        self.asked.append(list(paths))
+        self.asked.append((path, max_bytes))
         if self.error:
             raise self.error
-        folder = self.tmp / f"fetch-{len(self.asked)}"
-        folder.mkdir()
-        for name in paths:
-            if name in self.files:
-                (folder / name).write_bytes(self.files[name])
-        yield folder
+        return self.files.get(path, FetchedFile())
 
 
-@dataclass
-class FakeTree:
-    async def list_files(self, repository: RepositoryUrl, commit_sha: str, **_: object) -> list:
-        del repository, commit_sha
-        return ["README.md", "docs/a.md", "docs/archive/old.md", "guides/b.md", "src/c.md"]
+def tree_with(data: bytes) -> FakeTree:
+    return FakeTree({"context7.json": FetchedFile(data=data)})
 
 
 @dataclass
@@ -207,14 +237,13 @@ class FakeCatalog:
 async def _run(job: object, progress: object, /) -> None: ...
 
 
-def build(gateway: FakeGateway | None, catalog: FakeCatalog) -> IngestionModule:
+def build(tree: FakeTree | None, catalog: FakeCatalog) -> IngestionModule:
     handlers: dict = {IMPORT_JOB: _run}
     return IngestionModule.build(
         jobs=InMemoryJobRepository(),
         clock=SystemClock(),
         remote=FakeRemote(),
-        tree=FakeTree(),
-        gateway=gateway,  # ty: ignore[invalid-argument-type]
+        tree=tree,
         library_ids=catalog,
         libraries=catalog,
         removals=NoRemovals(),
@@ -229,11 +258,11 @@ def catalog() -> FakeCatalog:
 
 
 async def test_without_paths_the_library_takes_those_of_context7_json(
-    tmp_path: Path, catalog: FakeCatalog
+    catalog: FakeCatalog,
 ) -> None:
-    gateway = FakeGateway(tmp_path, {"context7.json": as_bytes(FULL)})
+    tree = tree_with(as_bytes(FULL))
 
-    added = await build(gateway, catalog).add_library(AddLibraryCommand(url=URL))
+    added = await build(tree, catalog).add_library(AddLibraryCommand(url=URL))
 
     (library,) = catalog.added
     expected = PathSelection.of(
@@ -250,8 +279,9 @@ async def test_without_paths_the_library_takes_those_of_context7_json(
         ("v1.0.0", "version 1.0"),
         ("v0.9.0", ""),
     ]
+    assert added.context7.notes == []
     assert added.context7_warning is None
-    assert gateway.asked == [["context7.json"]]
+    assert tree.asked == [("context7.json", CONTEXT7_MAX_BYTES)]
 
 
 @pytest.mark.parametrize(
@@ -263,11 +293,9 @@ async def test_without_paths_the_library_takes_those_of_context7_json(
     ids=["include", "exclude"],
 )
 async def test_paths_a_user_sends_win_over_context7_json(
-    tmp_path: Path, catalog: FakeCatalog, command: AddLibraryCommand
+    catalog: FakeCatalog, command: AddLibraryCommand
 ) -> None:
-    gateway = FakeGateway(tmp_path, {"context7.json": as_bytes(FULL)})
-
-    added = await build(gateway, catalog).add_library(command)
+    added = await build(tree_with(as_bytes(FULL)), catalog).add_library(command)
 
     (library,) = catalog.added
     assert library.selection == PathSelection.of(command.include_paths, command.exclude_paths)
@@ -275,30 +303,41 @@ async def test_paths_a_user_sends_win_over_context7_json(
 
 
 @pytest.mark.parametrize(
-    ("files", "error", "warning"),
+    ("tree", "warning"),
     [
-        ({}, None, None),
-        ({"context7.json": b"{"}, None, "context7.json is ignored: it is not valid JSON"),
-        ({}, RepositoryUnreachableError("gone"), "context7.json is ignored: it could not be"),
+        (FakeTree(), None),
+        (tree_with(b"{"), "context7.json is ignored: it is not valid JSON"),
+        (
+            FakeTree({"context7.json": FetchedFile(problem="larger than 65536 bytes")}),
+            "context7.json is ignored: larger than 65536 bytes",
+        ),
+        (
+            FakeTree(error=RepositoryUnreachableError("gone")),
+            "context7.json is ignored: it could not be fetched",
+        ),
+        (
+            FakeTree(error=PreviewBusyError(retry_after=5)),
+            "context7.json is ignored: it was not read, every preview slot is busy",
+        ),
+        (
+            FakeTree(error=OSError(28, "No space left on device")),
+            "context7.json is ignored: it could not be read",
+        ),
     ],
-    ids=["absent", "invalid", "unfetchable"],
+    ids=["absent", "invalid", "too-large", "unfetchable", "busy", "unexpected"],
 )
 async def test_a_missing_or_unusable_file_adds_the_library_as_if_there_were_none(
-    tmp_path: Path,
-    catalog: FakeCatalog,
-    files: dict[str, bytes],
-    error: Exception | None,
-    warning: str | None,
+    catalog: FakeCatalog, tree: FakeTree, warning: str | None
 ) -> None:
-    gateway = FakeGateway(tmp_path, files, error)
-
-    added = await build(gateway, catalog).add_library(AddLibraryCommand(url=URL))
+    added = await build(tree, catalog).add_library(AddLibraryCommand(url=URL))
 
     (library,) = catalog.added
     assert library.selection == PathSelection.of()
     assert added.context7 is None
-    assert (added.context7_warning or "").startswith(warning or "")
-    assert (added.context7_warning is None) is (warning is None)
+    if warning is None:
+        assert added.context7_warning is None
+    else:
+        assert (added.context7_warning or "").startswith(warning), added.context7_warning
 
 
 async def test_a_module_without_git_has_no_context7_json(catalog: FakeCatalog) -> None:
@@ -307,11 +346,20 @@ async def test_a_module_without_git_has_no_context7_json(catalog: FakeCatalog) -
     assert (added.context7, added.context7_warning) == (None, None)
 
 
+async def test_dropped_previous_versions_are_reported_as_notes(catalog: FakeCatalog) -> None:
+    tree = tree_with(as_bytes({"previousVersions": [{"tag": "v1"}, {"tag": "-x"}]}))
+
+    added = await build(tree, catalog).add_library(AddLibraryCommand(url=URL))
+
+    assert added.context7 is not None
+    assert [v.tag for v in added.context7.previous_versions] == ["v1"]
+    assert len(added.context7.notes) == 1
+
+
 async def test_the_preview_applies_and_returns_context7_json_without_paths(
-    tmp_path: Path, catalog: FakeCatalog
+    catalog: FakeCatalog,
 ) -> None:
-    gateway = FakeGateway(tmp_path, {"context7.json": as_bytes(FULL)})
-    module = build(gateway, catalog)
+    module = build(tree_with(as_bytes(FULL)), catalog)
 
     prefilled = await module.preview_repository(PreviewRepositoryCommand(url=URL))
     typed = await module.preview_repository(

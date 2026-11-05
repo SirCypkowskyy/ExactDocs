@@ -335,6 +335,11 @@ class Context7Out(_Dto):
     previous_versions: list[PreviousVersionOut] = Field(
         description="Older tags to offer for import (`POST .../versions` each)."
     )
+    notes: list[str] = Field(
+        default_factory=list,
+        description="What was left out of the file (a `previousVersions` entry whose tag git "
+        "would not take), and why.",
+    )
 
     @classmethod
     def from_model(cls, config: Context7Config) -> Self:
@@ -352,6 +357,7 @@ class Context7Out(_Dto):
             previous_versions=[
                 PreviousVersionOut(tag=v.tag, title=v.title) for v in config.previous_versions
             ],
+            notes=list(config.notes),
         )
 
 

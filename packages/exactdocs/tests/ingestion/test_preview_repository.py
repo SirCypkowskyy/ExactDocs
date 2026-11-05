@@ -5,7 +5,13 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.dtos import PreviewRepositoryCommand
-from exactdocs.ingestion.models import Credential, RemoteRef, RemoteRefs, RepositoryUrl
+from exactdocs.ingestion.models import (
+    Credential,
+    FetchedFile,
+    RemoteRef,
+    RemoteRefs,
+    RepositoryUrl,
+)
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs_kernel import SystemClock
 
@@ -47,6 +53,10 @@ class FakeTree:
         del repository, credential
         self.calls.append((commit_sha, tuple(refs)))
         return self.paths
+
+    async def read_file(self, repository: RepositoryUrl, commit_sha: str, path: str, **_: object):
+        del repository, commit_sha, path
+        return FetchedFile()  # no context7.json
 
 
 class _Libraries:

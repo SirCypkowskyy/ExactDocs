@@ -43,6 +43,7 @@ from exactdocs.retrieval.models import (
     POINTER_TEXT,
     RULE_FRAMING_CHARS,
     RULES_FRAMING_CHARS,
+    RULES_SHARE,
     SECTION_FRAMING_CHARS,
     Candidate,
     CatalogLibrary,
@@ -628,7 +629,8 @@ class QueryDocsUseCase:
         The budget covers the whole payload: the notice, the sections and the closing line. A
         chunk that could never fit is listed as a pointer (no text, ``too_large``) so the agent
         can fetch it; one that merely found no room left is counted in ``omitted``. The
-        library's rules (from its ``context7.json``) come first and are counted too.
+        library's rules (from its ``context7.json``) come first and are counted too; they take
+        at most a ``RULES_SHARE``-th of the room, in order, whole rules only.
         """
         text = SearchText(value=query.query)
         # `/owner/repo` or `/owner/repo/<ref>`; a ref may itself contain slashes.
@@ -654,7 +656,7 @@ class QueryDocsUseCase:
             sections = language_first(sections, lambda s: s.code_languages, query.language)
         budget = self.token_budget * CHARS_PER_TOKEN
         room = budget - len(NOTICE) - FOOTER_CHARS
-        rules = _fit_rules(version.rules, room)
+        rules = _fit_rules(version.rules, room // RULES_SHARE)
         if rules:
             room -= RULES_FRAMING_CHARS + sum(RULE_FRAMING_CHARS + len(r) for r in rules)
         kept = _pack(sections, room)
