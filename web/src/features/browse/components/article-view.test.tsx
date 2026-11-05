@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
 import type { Article, LibraryDetail, Version } from "../model/browse";
 import { ArticleView } from "./article-view";
@@ -66,6 +66,9 @@ function view(start = "/") {
   return render(<TestRouter pages={{ "/": Page }} start={start} />);
 }
 
+// The renderer is a lazy chunk. Load it once up front so its cold transform is not counted against
+// the first test's wait for the article: these tests are about the article, not chunk loading.
+beforeAll(() => import("../render/markdown"));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ArticleView", () => {
