@@ -24,6 +24,8 @@ from exactdocs.retrieval.dtos import (
     RemovedChunks,
     ResolveLibraryIdQuery,
     ResolveLibraryIdResult,
+    RetagArticlesCommand,
+    RetaggedChunks,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
@@ -497,6 +499,18 @@ class RemoveChunksUseCase:
         return RemovedChunks.from_model(
             await self.chunks.remove([i for i in asked if i not in known])
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RetagArticlesUseCase:
+    """Implements ``ports.driving.RetagArticles``."""
+
+    chunks: ChunkRepository
+
+    async def __call__(self, command: RetagArticlesCommand) -> RetaggedChunks:
+        """Overwrite the tag copies of the named articles' chunk rows."""
+        tags = {a.path: tuple(dict.fromkeys(a.tags)) for a in command.articles}
+        return RetaggedChunks(chunks=await self.chunks.set_tags(command.manifest_id, tags))
 
 
 @dataclass(frozen=True, slots=True)

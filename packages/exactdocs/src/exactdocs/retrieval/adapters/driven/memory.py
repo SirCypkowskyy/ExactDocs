@@ -1,7 +1,7 @@
 import sys
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from exactdocs.retrieval.errors import ChunkSetMismatchError
@@ -136,6 +136,17 @@ class InMemoryChunkRepository:
         for key in unused:
             del self.chunk_sets[key]
         return Removed(manifests=len(gone), chunk_sets=len(unused))
+
+    async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
+        """Replace the tags of the named articles' rows of the manifest."""
+        rows = self.rows.get(manifest_id, {})
+        changed = {
+            chunk_id: replace(row, tags=tags[row.article_path])
+            for chunk_id, row in rows.items()
+            if row.article_path in tags and row.tags != tags[row.article_path]
+        }
+        rows.update(changed)
+        return len(changed)
 
 
 MEMORY_FORMAT = 1
