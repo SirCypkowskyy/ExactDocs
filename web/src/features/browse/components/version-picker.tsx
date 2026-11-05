@@ -1,5 +1,5 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { Check, ChevronsUpDown, LoaderCircle } from "lucide-react";
 import { Popover } from "radix-ui";
 import { type KeyboardEvent, type MouseEvent, useRef, useState } from "react";
@@ -45,7 +45,13 @@ export function VersionPicker({
   const defaultLabel = pinned ? "pinned default" : "default";
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  const [switching, setSwitching] = useState<string | null>(null);
+  /** The version a click waits to switch to, and the page it was clicked on. */
+  const [switching, setSwitching] = useState<{ to: Version; from: string } | null>(null);
+  const href = useRouterState({ select: (s) => s.location.href });
+  // Once the user is on another page, the wait is over for them, whatever the lookup still does.
+  const waitingFor = switching?.from === href ? switching.to : null;
+  /** What the trigger shows: the version being switched to while a click waits. */
+  const shownVersion = waitingFor ?? current;
   const client = useQueryClient();
   const navigate = useNavigate();
   const router = useRouter();
@@ -77,10 +83,11 @@ export function VersionPicker({
   async function switchTo(target: Version, at: string) {
     const mine = ++latest.current;
     const from = router.state.location.href;
-    setSwitching(target.ref);
+    setSwitching({ to: target, from });
     try {
       const moved = await client
         .fetchQuery(pathInVersionQueryOptions(owner, repo, current, target, at))
+        .then((answer) => answer.path)
         .catch(() => at);
       if (mine !== latest.current || router.state.location.href !== from) return;
       await navigate({
@@ -103,31 +110,31 @@ export function VersionPicker({
     >
       <Popover.Trigger
         aria-label={
-          switching === null
+          waitingFor === null
             ? `Version: ${current.ref}. Change version`
-            : `Version: ${current.ref}, switching to ${switching}. Change version`
+            : `Version: ${current.ref}, switching to ${waitingFor.ref}. Change version`
         }
-        aria-busy={switching !== null || undefined}
+        aria-busy={waitingFor !== null || undefined}
         className="flex h-11 w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md bg-secondary px-3 text-sm outline-none ring-1 ring-inset ring-border transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[state=open]:ring-ring [@media(hover:hover)]:hover:bg-accent"
       >
         <span className="flex min-w-0 items-baseline gap-2">
           <span
             className={cn(
               "truncate font-mono font-semibold",
-              switching !== null && "text-muted-foreground",
+              waitingFor !== null && "text-muted-foreground",
             )}
           >
-            {switching ?? current.ref}
+            {shownVersion.ref}
           </span>
-          {current.is_default && (
+          {shownVersion.is_default && (
             <span className="text-xs text-mark max-sm:hidden">{defaultLabel}</span>
           )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span className="font-mono text-xs text-muted-foreground max-lg:hidden">
-            {shortSha(current.commit_sha)}
+            {shortSha(shownVersion.commit_sha)}
           </span>
-          {switching === null ? (
+          {waitingFor === null ? (
             <ChevronsUpDown aria-hidden="true" className="size-4 text-muted-foreground" />
           ) : (
             <LoaderCircle
@@ -166,7 +173,7 @@ export function VersionPicker({
           >
             {shown.map((v, i) => {
               const isCurrent = v.ref === current.ref;
-              const moved = resolved[i]?.data;
+              const moved = resolved[i]?.data?.path;
               const waits = path !== undefined && !isCurrent && moved === undefined;
               return (
                 <li key={v.ref}>

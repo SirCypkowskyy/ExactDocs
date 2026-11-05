@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { TestRouter } from "@/shared/lib/test-router";
-import { RENAME_LOOKUP_TIMEOUT_MS } from "../api/browse-queries";
+import { pathInVersionQueryOptions, RENAME_LOOKUP_TIMEOUT_MS } from "../api/browse-queries";
 import type { RenamedPath, Version } from "../model/browse";
 import { VersionPicker } from "./version-picker";
 
@@ -94,6 +94,14 @@ function Page() {
       <output aria-label="Showing">
         {ref} {path ?? "(root)"}
       </output>
+      {/* Any other link on the page, like an article in the sidebar. */}
+      <Link
+        to="/libraries/$owner/$repo"
+        params={{ owner: "fixture", repo: "docs-repo" }}
+        search={{ version: ref, path: "guide/auth.md" }}
+      >
+        Auth guide
+      </Link>
     </>
   );
 }
@@ -121,6 +129,20 @@ async function switchTo(ref: string) {
   await openPicker();
   await userEvent.click(linkTo(ref));
 }
+
+const byRef = (ref: string) => versions.find((v) => v.ref === ref) ?? version(ref, "0");
+
+/** The state of the answer for the open article (`guide/setup.md`) from `from` to `to`. */
+const answered = (client: QueryClient, from: string, to: string) =>
+  client.getQueryState(
+    pathInVersionQueryOptions("fixture", "docs-repo", byRef(from), byRef(to), "guide/setup.md")
+      .queryKey,
+  )?.status;
+
+const trigger = () => screen.getByRole("button", { name: /Change version/ });
+
+/** Lets a late navigation happen, if one is coming, before checking that none did. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 const showing = () => screen.findByRole("status", { name: "Showing" });
 
@@ -265,25 +287,105 @@ describe("VersionPicker follows renames", () => {
     slow.release();
     await waitFor(() => expect(trigger).not.toHaveAttribute("aria-busy"));
     // Give a late navigation the chance to happen before checking it did not.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await settle();
     expect(await showing()).toHaveTextContent("v1.2.0 guide/setup.md");
   });
 
   it("does not switch late when the user went elsewhere while waiting", async () => {
     const slow = gate();
     serve({ hold: { "v1.4.0": slow.held } });
-    view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
+    const client = view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
     await openPicker();
     // v1.2.0 has its answer: a plain link, followed at once while v1.4.0 still waits.
-    await waitFor(() =>
-      expect(linkTo("v1.2.0")).toHaveAttribute("href", expect.stringContaining("v1.2.0")),
-    );
+    await waitFor(() => expect(answered(client, "v1.3.0", "v1.2.0")).toBe("success"));
     await userEvent.click(linkTo("v1.4.0"));
     await switchTo("v1.2.0");
     expect(await screen.findByText("v1.2.0 guide/setup.md")).toBeInTheDocument();
     slow.release();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await settle();
     expect(await showing()).toHaveTextContent("v1.2.0 guide/setup.md");
+  });
+
+  it("stays on a page the user opened while a switch waited", async () => {
+    const slow = gate();
+    serve({ hold: { "v1.4.0": slow.held } });
+    view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
+    await switchTo("v1.4.0");
+    expect(trigger()).toHaveAttribute("aria-busy", "true");
+
+    await userEvent.click(screen.getByRole("link", { name: "Auth guide" }));
+    expect(await showing()).toHaveTextContent("v1.3.0 guide/auth.md");
+    // The wait is over for the user at once: no spinner on the page they went to.
+    expect(trigger()).not.toHaveAttribute("aria-busy");
+
+    slow.release();
+    await settle();
+    expect(await showing()).toHaveTextContent("v1.3.0 guide/auth.md");
+  });
+
+  it("drops a waiting switch when the current version is chosen instead", async () => {
+    const slow = gate();
+    serve({ hold: { "v1.4.0": slow.held } });
+    view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
+    await switchTo("v1.4.0");
+    expect(trigger()).toHaveAttribute("aria-busy", "true");
+
+    await switchTo("v1.3.0");
+    await waitFor(() => expect(trigger()).not.toHaveAttribute("aria-busy"));
+
+    slow.release();
+    await settle();
+    expect(await showing()).toHaveTextContent("v1.3.0 guide/setup.md");
+  });
+
+  it("shows the version it switches to without the current version's labels", async () => {
+    const slow = gate();
+    serve({ hold: { "v1.3.0": slow.held } });
+    view("/libraries/fixture/docs-repo?version=v1.4.0&path=guide%2Finstall.md");
+    expect(await screen.findByRole("button", { name: /Change version/ })).toHaveTextContent(
+      "default",
+    );
+    await switchTo("v1.3.0");
+
+    expect(trigger()).toHaveTextContent("v1.3.0");
+    expect(trigger()).toHaveTextContent("a".repeat(7));
+    expect(trigger()).not.toHaveTextContent("default");
+    expect(trigger()).not.toHaveTextContent("b".repeat(7));
+    slow.release();
+    expect(await showing()).toHaveTextContent("v1.3.0 guide/setup.md");
+  });
+
+  it("asks again, the next time the list opens, after a lookup that timed out", async () => {
+    let stalled = false;
+    const fetch = serve();
+    const answer = fetch.getMockImplementation();
+    // The first lookup on v1.4.0 stalls until it times out; later ones answer.
+    fetch.mockImplementation((url: string, init?: RequestInit) => {
+      const ref = new URL(url, "http://test").searchParams.get("ref");
+      if (ref !== "v1.4.0" || stalled) return answer?.(url, init) ?? Promise.reject();
+      stalled = true;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    });
+    const client = view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
+    await openPicker();
+    await waitFor(() => expect(answered(client, "v1.3.0", "v1.4.0")).toBe("success"), {
+      timeout: RENAME_LOOKUP_TIMEOUT_MS * 2,
+    });
+    expect(linkTo("v1.4.0")).toHaveAttribute(
+      "href",
+      expect.stringContaining("path=guide%2Fsetup.md"),
+    );
+
+    await userEvent.keyboard("{Escape}");
+    await openPicker();
+    await waitFor(() =>
+      expect(linkTo("v1.4.0")).toHaveAttribute(
+        "href",
+        expect.stringContaining("path=guide%2Finstall.md"),
+      ),
+    );
   });
 });
 

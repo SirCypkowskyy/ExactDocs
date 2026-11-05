@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getJson, type QueryOf } from "@/shared/lib/http";
+import { getJson, HttpError, type QueryOf } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import {
   type Article,
@@ -127,10 +127,24 @@ const renamedPathQueryOptions = (
     staleTime: 60_000,
   });
 
+/** Where the open article is in another version (see `pathInVersionQueryOptions`). */
+interface PathInVersion {
+  path: string;
+  /**
+   * False when a lookup failed in a way that may pass (a timeout, the network, a server error):
+   * the path is kept for now, and the answer is asked again the next time the list opens.
+   */
+  sure: boolean;
+}
+
+/** A failure that asking again will not change: the version has no rename map, or no access. */
+const lasting = (error: unknown) => error instanceof HttpError && error.status < 500;
+
 /**
  * The path of the article at `path` of `from` in `to`, following the renames between the two (see
  * `pathInVersion`). It never fails: without an answer the path is kept. The lookup on `from` is
- * shared by every target, so resolving N versions asks the server N + 1 times.
+ * shared by every target, so resolving N versions asks the server N + 1 times. An answer kept
+ * after a passing failure is stale at once, so a short stall does not stick for the full minute.
  */
 export const pathInVersionQueryOptions = (
   owner: string,
@@ -151,18 +165,26 @@ export const pathInVersionQueryOptions = (
       to.commit_sha,
       path,
     ] as const,
-    queryFn: ({ client }) =>
-      pathInVersion(
-        (ref, at, direction) => {
+    queryFn: async ({ client }): Promise<PathInVersion> => {
+      let sure = true;
+      const moved = await pathInVersion(
+        async (ref, at, direction) => {
           const sha = ref === from.ref ? from.commit_sha : to.commit_sha;
-          return client.fetchQuery(
-            renamedPathQueryOptions({ owner, repo, ref, sha }, at, direction),
-          );
+          try {
+            return await client.fetchQuery(
+              renamedPathQueryOptions({ owner, repo, ref, sha }, at, direction),
+            );
+          } catch (error) {
+            if (!lasting(error)) sure = false;
+            throw error;
+          }
         },
         from.ref,
         to.ref,
         path,
-      ),
+      );
+      return { path: moved, sure };
+    },
     retry: false,
-    staleTime: 60_000,
+    staleTime: (query) => (query.state.data?.sure === false ? 0 : 60_000),
   });
