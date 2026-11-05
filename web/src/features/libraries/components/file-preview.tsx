@@ -95,12 +95,15 @@ function Context7Note({
 
 interface VersionsProps {
   versions: Context7["previous_versions"];
+  /** The ref picked above: it is imported anyway, so it is not offered again. */
+  current: string | null;
   selected: ReadonlySet<string>;
   onSelect: (tag: string, on: boolean) => void;
 }
 
 /** The older tags `previousVersions` offers: ticked ones are imported once the library is added. */
-function OlderVersions({ versions, selected, onSelect }: VersionsProps) {
+function OlderVersions({ versions: all, current, selected, onSelect }: VersionsProps) {
+  const versions = all.filter((v) => v.tag !== current);
   if (versions.length === 0) return null;
   return (
     <fieldset className="mt-5" aria-describedby="older-hint">
@@ -138,10 +141,12 @@ interface Props {
   prefilled: boolean;
   selected: ReadonlySet<string>;
   onSelect: (tag: string, on: boolean) => void;
+  /** The ref the form will add now. */
+  current: string | null;
 }
 
 /** The files an import would take, as a tree with counts, and what `context7.json` adds. */
-function FilePreview({ preview, tree, stale, prefilled, selected, onSelect }: Props) {
+function FilePreview({ preview, tree, stale, prefilled, selected, onSelect, current }: Props) {
   return (
     <section
       aria-labelledby="preview-title"
@@ -163,8 +168,10 @@ function FilePreview({ preview, tree, stale, prefilled, selected, onSelect }: Pr
         </p>
       )}
       {preview.total > 0 && (
-        // Up to 1000 paths: the list scrolls on its own (browsers let the keyboard focus a scroller).
+        // Up to 1000 paths: the list scrolls on its own, and takes focus so every browser can scroll it.
         <section
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling list must be reachable by keyboard (Safari does not focus scrollers)
+          tabIndex={0}
           aria-label="Matching files"
           className={`mt-3 max-h-80 overflow-y-auto rounded-md bg-secondary px-3 py-2.5 font-mono text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring ${stale ? "opacity-60" : ""}`}
         >
@@ -178,6 +185,7 @@ function FilePreview({ preview, tree, stale, prefilled, selected, onSelect }: Pr
       />
       <OlderVersions
         versions={preview.context7?.previous_versions ?? []}
+        current={current}
         selected={selected}
         onSelect={onSelect}
       />
@@ -188,12 +196,12 @@ function FilePreview({ preview, tree, stale, prefilled, selected, onSelect }: Pr
 function PreviewButton({ pending, onClick }: { pending: boolean; onClick: () => void }) {
   return (
     <Button
-      variant="ghost"
+      variant="outline"
       aria-disabled={pending}
       aria-busy={pending}
       aria-describedby="preview-hint"
       onClick={onClick}
-      className="-ml-3 w-fit"
+      className="w-fit"
     >
       {pending && (
         <span
@@ -234,6 +242,7 @@ export function PreviewPanel({
           prefilled={shown.prefilled}
           selected={preview.selected}
           onSelect={preview.select}
+          current={form.ref}
         />
       )}
     </>
@@ -244,9 +253,11 @@ export function PreviewPanel({
 export function ExtraVersions({
   extras,
   libraryId,
+  onRetry,
 }: {
   extras: readonly Extra[];
   libraryId: string;
+  onRetry: (tag: string) => void;
 }) {
   if (extras.length === 0) return null;
   return (
@@ -261,7 +272,19 @@ export function ExtraVersions({
             {x.jobId ? (
               <JobLine jobId={x.jobId} label={`${libraryId} ${x.tag}`} />
             ) : x.error ? (
-              <p className="text-sm text-destructive">{x.error}</p>
+              <div className="flex flex-wrap items-center gap-x-3">
+                <p className="text-sm text-destructive">{x.error}</p>
+                {x.retry && (
+                  <Button
+                    variant="ghost"
+                    className="-ml-3 h-11 md:h-8"
+                    aria-label={`Try again to import ${x.tag}`}
+                    onClick={() => onRetry(x.tag)}
+                  >
+                    Try again
+                  </Button>
+                )}
+              </div>
             ) : (
               <p className="text-sm text-muted-foreground">Waiting to be queued</p>
             )}

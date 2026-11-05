@@ -3,7 +3,7 @@ import { addVersion, previewRepository } from "../api/add-library";
 import {
   type AddProblem,
   buildFileTree,
-  explainAddError,
+  explainOlderVersionError,
   explainPreviewError,
   lines,
   previewKey,
@@ -99,11 +99,13 @@ export function usePreview({ onFail, onPrefill, onStart }: Callbacks) {
     });
   }
 
-  /** The ticked `previousVersions` tags, in the order the file lists them. */
-  const chosen = () =>
-    (preview?.result.context7?.previous_versions ?? [])
+  /** The ticked `previousVersions` tags, in the order the file lists them, minus the refs being added. */
+  const chosen = (added: readonly (string | null)[]) => {
+    const skip = new Set(added);
+    return (preview?.result.context7?.previous_versions ?? [])
       .map((v) => v.tag)
-      .filter((tag) => selected.has(tag));
+      .filter((tag) => selected.has(tag) && !skip.has(tag));
+  };
 
   return { preview, tree, pending: waiting !== undefined, selected, select, start, forget, chosen };
 }
@@ -113,28 +115,40 @@ export interface Extra {
   tag: string;
   jobId?: string;
   error?: string;
+  /** Trying again can help (offline, server error); a refusal about the tag itself cannot. */
+  retry?: boolean;
 }
 
 /** Queues the ticked older versions once the library exists; each one shows how it went. */
 export function useOlderVersions() {
   const [extras, setExtras] = useState<Extra[]>([]);
   const run = useRef(0);
+  const library = useRef("");
 
-  async function queue(libraryId: string, tags: readonly string[]) {
-    const mine = ++run.current;
-    setExtras(tags.map((tag) => ({ tag })));
+  function send(tag: string, mine: number) {
     const settle = (done: Extra) => {
       if (run.current === mine) setExtras((xs) => xs.map((x) => (x.tag === done.tag ? done : x)));
     };
-    await Promise.all(
-      tags.map((tag) =>
-        addVersion(libraryId, tag).then(
-          (v) => settle({ tag, jobId: v.job_id }),
-          (error: unknown) =>
-            settle({ tag, error: `Not queued. ${explainAddError(error, tag).message}` }),
-        ),
-      ),
+    return addVersion(library.current, tag).then(
+      (v) => settle({ tag, jobId: v.job_id }),
+      (error: unknown) => {
+        const why = explainOlderVersionError(error, tag);
+        settle({ tag, error: `Not queued. ${why.message}`, retry: why.retry });
+      },
     );
+  }
+
+  async function queue(libraryId: string, tags: readonly string[]) {
+    const mine = ++run.current;
+    library.current = libraryId;
+    setExtras(tags.map((tag) => ({ tag })));
+    await Promise.all(tags.map((tag) => send(tag, mine)));
+  }
+
+  /** One failed tag again; the others keep their state. */
+  async function retry(tag: string) {
+    setExtras((xs) => xs.map((x) => (x.tag === tag ? { tag } : x)));
+    await send(tag, run.current);
   }
 
   function clear() {
@@ -142,5 +156,5 @@ export function useOlderVersions() {
     setExtras([]);
   }
 
-  return { extras, queue, clear };
+  return { extras, queue, retry, clear };
 }

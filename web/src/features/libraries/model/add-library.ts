@@ -311,6 +311,34 @@ export function explainPreviewError(error: unknown, ref: string | null): AddProb
   return explainAddError(error, ref);
 }
 
+/** Why an older version ticked in the preview was not queued, and whether trying again can help. */
+export function explainOlderVersionError(
+  error: unknown,
+  tag: string,
+): { message: string; retry: boolean } {
+  if (error instanceof HttpError) {
+    switch (error.code) {
+      case "version_importing":
+        return { message: "Already being imported.", retry: false };
+      case "version_exists":
+        return { message: "Already a version of this library.", retry: false };
+      case "commit_already_imported": {
+        // The server names the version: "commit … is already the version 'v1.4.0' of library …".
+        const other = /the version ['"](.+?)['"] of library/.exec(error.message)?.[1];
+        return {
+          message: other
+            ? `Same commit as version ${other}, already imported.`
+            : "Same commit as a version already imported.",
+          retry: false,
+        };
+      }
+    }
+  }
+  // Offline, a busy or failing server: worth another go. A refusal about the tag itself is not.
+  const retry = !(error instanceof HttpError) || error.status >= 500 || error.status === 429;
+  return { message: explainAddError(error, tag).message, retry };
+}
+
 /** What a preview was asked for; a different one means the result on screen is out of date. */
 export const previewKey = (form: {
   url: string;

@@ -9,6 +9,8 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         ghost: "px-3 text-foreground hover:bg-accent",
+        outline:
+          "border border-input bg-background px-4 text-foreground hover:bg-accent aria-disabled:bg-accent",
       },
     },
     defaultVariants: { variant: "default" },

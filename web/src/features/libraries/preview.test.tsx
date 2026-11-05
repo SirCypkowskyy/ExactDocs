@@ -368,6 +368,100 @@ describe("add library preview", () => {
     expect(await within(extras).findByText("Reading the repository")).toBeInTheDocument();
   });
 
+  /** Preview with context7.json, tick the given tags, add the library; returns the version route. */
+  async function addWithOlder(tags: string[], version?: (ref: string) => Reply) {
+    const served = serve({
+      preview: () => ({ status: 200, body: { ...PREVIEW, context7: CONTEXT7 } }),
+      ...(version && { version }),
+    });
+    renderAdd();
+    await checkRepo();
+    await userEvent.click(previewButton());
+    const older = await screen.findByRole("group", { name: "Also import older versions" });
+    for (const tag of tags) {
+      await userEvent.click(within(older).getByRole("checkbox", { name: new RegExp(tag) }));
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Add library" }));
+    return { ...served, extras: await screen.findByRole("region", { name: "Older versions" }) };
+  }
+
+  const refusal = (code: string, detail: string) => () => ({
+    status: 409,
+    body: { error: code, detail, fields: [] },
+  });
+
+  it.each([
+    [
+      "version_importing",
+      "an import of 'v1.3.0' into library '/acme/payments' is already in progress",
+      "Not queued. Already being imported.",
+    ],
+    [
+      "version_exists",
+      "library '/acme/payments' already has a version 'v1.3.0'",
+      "Not queued. Already a version of this library.",
+    ],
+    [
+      "commit_already_imported",
+      `commit ${SHA} is already the version 'main' of library '/acme/payments'`,
+      "Not queued. Same commit as version main, already imported.",
+    ],
+  ])(
+    "explains a %s refusal of an older version, with nothing to try again",
+    async (code, detail, text) => {
+      const { extras } = await addWithOlder(["v1.3.0"], refusal(code, detail));
+      expect(await within(extras).findByText(text)).toBeInTheDocument();
+      expect(within(extras).queryByRole("button", { name: /Try again/ })).not.toBeInTheDocument();
+    },
+  );
+
+  it("lets a failed older version be tried again", async () => {
+    let fail = true;
+    const { version, extras } = await addWithOlder(["v1.3.0"], (ref) =>
+      fail
+        ? { status: 500, body: { error: "internal", detail: "boom", fields: [] } }
+        : {
+            status: 201,
+            body: {
+              library_id: "/acme/payments",
+              ref,
+              ref_kind: "tag",
+              commit_sha: SHA,
+              job_id: `job-${ref}`,
+            },
+          },
+    );
+    expect(
+      await within(extras).findByText(/Something went wrong on the server \(500\)/),
+    ).toBeInTheDocument();
+    fail = false;
+    await userEvent.click(
+      within(extras).getByRole("button", { name: "Try again to import v1.3.0" }),
+    );
+    expect(await within(extras).findByText("Reading the repository")).toBeInTheDocument();
+    expect(version).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not offer, or queue, the tag picked as the version to import", async () => {
+    const { version } = serve({
+      preview: () => ({ status: 200, body: { ...PREVIEW, context7: CONTEXT7 } }),
+    });
+    renderAdd();
+    await checkRepo();
+    await userEvent.click(previewButton());
+    const older = await screen.findByRole("group", { name: "Also import older versions" });
+    await userEvent.click(within(older).getByRole("checkbox", { name: /v1\.3\.0/ }));
+    await userEvent.click(within(older).getByRole("checkbox", { name: /v1\.2\.0/ }));
+    // v1.3.0 becomes the version this add imports: it leaves the list of older ones.
+    await userEvent.selectOptions(screen.getByLabelText("Version to import"), "other");
+    await userEvent.type(screen.getByLabelText(/Branch, tag or commit/), "v1.3.0");
+    expect(within(older).queryByRole("checkbox", { name: /v1\.3\.0/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add library" }));
+    await screen.findByRole("region", { name: "Older versions" });
+    await waitFor(() => expect(version).toHaveBeenCalledTimes(1));
+    expect(version.mock.calls[0]?.[0]).toBe("v1.2.0");
+  });
+
   it("queues no older version when none is ticked", async () => {
     const { version } = serve({
       preview: () => ({ status: 200, body: { ...PREVIEW, context7: CONTEXT7 } }),

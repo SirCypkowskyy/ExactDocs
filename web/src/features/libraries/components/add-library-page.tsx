@@ -241,7 +241,7 @@ export function AddLibraryPage() {
       void queryClient.invalidateQueries({ queryKey: librariesKeys.latestJobs() });
       if (run.current === mine) {
         setAdded(result);
-        const tags = preview.chosen();
+        const tags = preview.chosen([ref, result.ref]);
         if (tags.length) void older.queue(result.library_id, tags);
       }
     } catch (error) {
@@ -292,7 +292,11 @@ export function AddLibraryPage() {
       <div className="mt-8 max-w-xl">
         {added ? (
           <ImportProgress added={added} onAddAnother={reset}>
-            <ExtraVersions extras={older.extras} libraryId={added.library_id} />
+            <ExtraVersions
+              extras={older.extras}
+              libraryId={added.library_id}
+              onRetry={(tag) => void older.retry(tag)}
+            />
           </ImportProgress>
         ) : (
           <form onSubmit={submit} noValidate className="flex flex-col gap-6">

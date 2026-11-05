@@ -37,7 +37,11 @@ export const previewRepository = (command: PreviewCommand) =>
 
 const seg = encodeURIComponent;
 
-/** Queue an older version of a library that was just added (a `previousVersions` tag). */
+/**
+ * Queue an older version of a library that was just added (a `previousVersions` tag).
+ * `library-settings` has the same call: slices never import each other, and this one call is
+ * smaller than a shared module for one endpoint.
+ */
 export const addVersion = (libraryId: string, ref: string) => {
   const [, owner = "", repo = ""] = libraryId.split("/");
   return sendJson<AddedVersion>("POST", `/v1/libraries/${seg(owner)}/${seg(repo)}/versions`, {
