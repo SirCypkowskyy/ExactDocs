@@ -50,6 +50,14 @@ function ReimportMovedTag({ library, version }: { library: string; version: stri
     onSettled: () => queryClient.invalidateQueries({ queryKey: librariesKeys.all }),
   });
   const problem = reimport.isError ? explainReimport(reimport.error) : undefined;
+  if (reimport.isSuccess) {
+    // Until the refetch replaces this error with the queued job: no second press, no 409.
+    return (
+      <p role="status" className="mt-3 font-medium">
+        Queued: the new commit of {version} is being imported.
+      </p>
+    );
+  }
   return (
     <div className="mt-3">
       {!problem?.final && (

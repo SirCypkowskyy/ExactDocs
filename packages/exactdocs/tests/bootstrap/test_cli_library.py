@@ -254,14 +254,17 @@ async def test_a_named_tag_that_did_not_move_is_said_not_re_imported() -> None:
     assert not [a for a in asked if "reimport" in a]
 
 
-async def test_a_busy_library_tells_a_confirming_sync_to_come_back() -> None:
+@pytest.mark.parametrize(("confirm", "flag"), [(True, "--confirm"), (["v1"], "--confirm-tag")])
+async def test_a_busy_library_tells_a_confirming_sync_to_come_back(
+    confirm: bool | list[str], flag: str
+) -> None:
     body = {"error": "version_importing", "detail": "an import of 'main' is already in progress"}
     async with ApiClient("http://localhost", "t", transport=_sync_answer(409, body)) as api:
         with pytest.raises(ApiError) as raised:
-            await sync_library(api, "/acme/docs", confirm=True)
+            await sync_library(api, "/acme/docs", confirm=confirm)
 
     assert exit_code(raised.value) == EXIT_CONFLICT
-    assert "--confirm again once that import finished" in str(raised.value)
+    assert f"with {flag} again once that import finished" in str(raised.value)
 
 
 async def test_a_refused_confirmation_leaves_the_tag_failed_with_the_refusal() -> None:
@@ -600,7 +603,14 @@ def test_remove_asks_on_stderr_and_a_bad_target_is_refused_first(
     assert _exit(["remove", "justone", "--yes"]) == EXIT_USAGE
 
 
-@pytest.mark.parametrize("args", [["sync", "/a/b/v1"], ["version", "add", "/a/b/v1", "v2"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["sync", "/a/b/v1"],
+        ["version", "add", "/a/b/v1", "v2"],
+        ["sync", "/a/b", "--confirm", "--confirm-tag", "v1"],  # every moved tag, or these?
+    ],
+)
 def test_a_ref_where_a_library_is_expected_is_a_usage_error(
     server: Recorder, args: list[str]
 ) -> None:

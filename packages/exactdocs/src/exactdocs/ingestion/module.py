@@ -20,6 +20,7 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     REFRESH_JOB,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedRef,
     ImportSource,
@@ -125,6 +126,12 @@ class _NoTree:
         del repository, commit_sha
         raise GitNotInstalledError
 
+    async def read_file(
+        self, repository: object, commit_sha: str, path: str, **_: object
+    ) -> FetchedFile:
+        del repository, commit_sha, path
+        raise GitNotInstalledError
+
 
 class _NoCredentials:
     """The default ``vault`` of ``build``: nothing is kept, so only public repositories work."""
@@ -189,7 +196,8 @@ class IngestionModule:
         ``handlers`` maps each job kind to what runs it; ``recovery_hooks`` maps a kind to its
         clean-up after an interrupted run (a kind without one needs none). With ``manual_tags``
         pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
-        activation take turns.
+        activation take turns. ``tree`` also reads a repository's ``context7.json`` when a
+        library is added; without it there is none.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
@@ -198,7 +206,7 @@ class IngestionModule:
         none = _NoLibrarySources()
         return cls(
             add_library=AddLibraryUseCase(
-                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials()
+                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials(), tree
             ),
             add_version=AddVersionUseCase(
                 remote, sources or _NoLibrarySources(), jobs, enqueue_job, vault or _NoCredentials()

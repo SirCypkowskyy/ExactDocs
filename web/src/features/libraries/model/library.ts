@@ -34,6 +34,11 @@ export function explainReimport(error: unknown): {
       return { final: true, message: `The tag is gone from the repository now. ${kept}` };
     case "version_importing":
       return { tone: "info", message: "This version is being imported right now." };
+    case "not_a_tag":
+      return {
+        final: true,
+        message: "Only a tag is re-imported this way: a branch is updated with a sync.",
+      };
     case "host_key_changed":
       return {
         message: `The SSH host key of the repository's server has changed, so nothing was fetched. ${kept}`,

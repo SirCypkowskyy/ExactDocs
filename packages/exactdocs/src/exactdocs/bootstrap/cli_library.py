@@ -455,14 +455,17 @@ async def _reimport_moved_tags(
     return queued
 
 
-async def _sync(api: ApiClient, library: str, *, confirming: bool) -> dict[str, Any]:
-    """``POST .../sync``: a 422 (the remote could not be read) is a failed sync, exit 6."""
+async def _sync(api: ApiClient, library: str, *, confirming: str | None) -> dict[str, Any]:
+    """``POST .../sync``: a 422 (the remote could not be read) is a failed sync, exit 6.
+
+    ``confirming`` is the confirmation flag the user passed, named in the hint of a 409.
+    """
     try:
         return await api.request("POST", f"{_library_path(library)}/sync")
     except ApiError as exc:
         if exc.status == CONFLICT_STATUS and confirming:
             # Nothing was checked, so no moved tag was seen either: say when to confirm.
-            detail = f"{exc.detail}; run the sync with --confirm again once that import finished"
+            detail = f"{exc.detail}; run the sync with {confirming} again once that import finished"
             raise ApiError(exc.status, exc.code, detail) from None
         if exc.status != SYNC_FAILED_STATUS:
             raise
@@ -490,7 +493,8 @@ async def sync_library(
     ``ImportFailedError`` naming each reason and code.
     """
     wanted = None if confirm is True else set(confirm or ())
-    synced = await _sync(api, library, confirming=bool(confirm))
+    flag = None if not confirm else "--confirm" if confirm is True else "--confirm-tag"
+    synced = await _sync(api, library, confirming=flag)
     reimported = await _reimport_moved_tags(api, library, synced, wanted) if confirm else []
     versions = synced["versions"]
     jobs: dict[str, Any] = {}

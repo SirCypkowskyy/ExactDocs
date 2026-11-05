@@ -55,6 +55,7 @@ python packages/exactdocs/tests/fixtures/fixture_repo.py /tmp/out/fixture/docs-r
 | `snake_case`, `camelCase`, `--flag`, `pkg.mod.fn` | `docs/reference/naming.md` |
 | `retry_policy`, only in `v1.4.0` and `next` | `docs/guide/resilience.md` |
 | root README, `AGENTS.md` | `README.md`, `AGENTS.md` |
+| root `context7.json` (folders `docs`, excludes `archive` and `CHANGELOG.md`, rules, `previousVersions`) | `context7.json` (`next` only) |
 | file renamed between tags | `docs/guide/setup.md` -> `docs/guide/install.md` |
 | Latin-1 file | `docs/legacy/latin1.md` |
 | undecodable file (no NUL, invalid as UTF-8, ASCII and cp1252) | `docs/legacy/undecodable.md` |

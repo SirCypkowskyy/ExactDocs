@@ -56,7 +56,8 @@ class InMemoryLibraryRepository:
         """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken."""
         if library.id in self.libraries:
             raise LibraryAlreadyExistsError(library.id.value)
-        self.libraries[library.id] = replace(library, pinned_version=None)  # pinned only later
+        # pinned and given rules only later
+        self.libraries[library.id] = replace(library, pinned_version=None, rules=())
 
     async def delete(self, library_id: LibraryId) -> None:
         """Remove the library, if present."""
@@ -86,6 +87,7 @@ class InMemoryLibraryRepository:
             library,
             versions=frozenset(merged.values()),
             pinned_version=stored.pinned_version if stored else None,
+            rules=stored.rules if stored else (),
         )
 
     async def set_text(
@@ -109,14 +111,17 @@ class InMemoryLibraryRepository:
         self.libraries[library_id] = replace(stored, pinned_version=ref)
         return True
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        """Set the fields no user edited."""
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        """Set the fields no user edited, and the rules."""
         if (stored := self.libraries.get(library_id)) is None:
             return
         self.libraries[library_id] = replace(
             stored,
             title=stored.title if stored.title_edited else title,
             description=stored.description if stored.description_edited else description,
+            rules=tuple(rules),
         )
 
 

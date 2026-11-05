@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from exactdocs.ingestion.models import (
     MAX_TAG_RULES,
     AccessToken,
+    Context7Config,
     Credential,
     DeployKey,
     FileProblem,
@@ -302,8 +303,8 @@ class AddLibraryCommand(_Dto):
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
 
 
-class AddedLibrary(_Dto):
-    """The new library, the commit its ref was pinned to, and the queued import."""
+class _PinnedImport(_Dto):
+    """A ref pinned to its commit and the import queued for it."""
 
     library_id: str
     ref: str = Field(description="The tag or branch name, or the full SHA of a commit.")
@@ -313,7 +314,7 @@ class AddedLibrary(_Dto):
 
     @classmethod
     def of(cls, library_id: str, resolved: ResolvedRef, job: JobSummary) -> Self:
-        """Combine the pieces of a created library."""
+        """Combine the pieces of a queued import."""
         return cls(
             library_id=library_id,
             ref=resolved.name,
@@ -321,6 +322,76 @@ class AddedLibrary(_Dto):
             commit_sha=resolved.commit_sha,
             job_id=job.id,
         )
+
+
+class PreviousVersionOut(_Dto):
+    """An older tag the repository's `context7.json` offers for import."""
+
+    tag: str
+    title: str = Field(description="Its display title; empty when the file gives none.")
+
+
+class Context7Out(_Dto):
+    """What the repository's `context7.json` says (LIB-06). All of it is untrusted text.
+
+    `include_paths` / `exclude_paths` are its folders and excludes as ExactDocs patterns: what a
+    library added without paths imports.
+    """
+
+    project_title: str | None
+    description: str | None
+    folders: list[str]
+    exclude_folders: list[str]
+    exclude_files: list[str]
+    include_paths: list[str]
+    exclude_paths: list[str]
+    rules: list[str] = Field(description="Shown to agents with every `query-docs` answer.")
+    previous_versions: list[PreviousVersionOut] = Field(
+        description="Older tags to offer for import (`POST .../versions` each)."
+    )
+    notes: list[str] = Field(
+        default_factory=list,
+        description="What was left out of the file (a `previousVersions` entry whose tag git "
+        "would not take), and why.",
+    )
+
+    @classmethod
+    def from_model(cls, config: Context7Config) -> Self:
+        """Map a parsed file."""
+        selection = config.selection
+        return cls(
+            project_title=config.project_title,
+            description=config.description,
+            folders=list(config.folders),
+            exclude_folders=list(config.exclude_folders),
+            exclude_files=list(config.exclude_files),
+            include_paths=list(selection.include) if selection else [],
+            exclude_paths=list(selection.exclude) if selection else [],
+            rules=list(config.rules),
+            previous_versions=[
+                PreviousVersionOut(tag=v.tag, title=v.title) for v in config.previous_versions
+            ],
+            notes=list(config.notes),
+        )
+
+
+_CONTEXT7 = (
+    "The repository's root `context7.json` at that commit; null when there is none or it is "
+    "ignored (see `context7_warning`)."
+)
+_CONTEXT7_WARNING = "Why the `context7.json` at that commit is ignored; null when it is not."
+
+
+class AddedLibrary(_PinnedImport):
+    """The new library, the commit its ref was pinned to, and the queued import."""
+
+    include_paths: list[str] = Field(
+        default_factory=list,
+        description="The library's paths: the ones sent, else those of `context7.json`.",
+    )
+    exclude_paths: list[str] = Field(default_factory=list)
+    context7: Context7Out | None = Field(default=None, description=_CONTEXT7)
+    context7_warning: str | None = Field(default=None, description=_CONTEXT7_WARNING)
 
 
 class AddVersionBody(_Dto):
@@ -344,8 +415,8 @@ class AddVersionCommand(AddVersionBody):
     library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
 
 
-class AddedVersion(AddedLibrary):
-    """Like ``AddedLibrary``, but ``library_id`` is the existing library."""
+class AddedVersion(_PinnedImport):
+    """The existing library, the commit the new version's ref was pinned to, and its import."""
 
 
 class ReimportVersionBody(_Dto):
@@ -432,6 +503,13 @@ class RepositoryPreview(_Dto):
     )
     total: int = Field(description="How many files match, also those not listed.")
     truncated: bool = Field(description="True when `files` is cut (`total` is more than listed).")
+    include_paths: list[str] = Field(
+        default_factory=list,
+        description="The paths applied: the ones sent, else those of `context7.json`.",
+    )
+    exclude_paths: list[str] = Field(default_factory=list)
+    context7: Context7Out | None = Field(default=None, description=_CONTEXT7)
+    context7_warning: str | None = Field(default=None, description=_CONTEXT7_WARNING)
 
 
 class RemoveVersionCommand(_Dto):

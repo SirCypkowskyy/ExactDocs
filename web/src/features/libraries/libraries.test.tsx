@@ -169,10 +169,10 @@ describe("libraries slice", () => {
     });
 
     /** `serve`, plus the re-import answer; `jobs` changes once the re-import was asked. */
-    function serveMoved(answer: { status: number; body: unknown }) {
+    function serveMoved(answer: { status: number; body: unknown }, { stale = false } = {}) {
       let asked = false;
       const latest = serve([library()], () =>
-        asked && answer.status === 202
+        asked && answer.status === 202 && !stale
           ? [job({ id: "r1", kind: "refresh", state: "queued" })]
           : [moved],
       );
@@ -218,6 +218,33 @@ describe("libraries slice", () => {
       // The queued re-import is the version's newest job: the error gives way to it.
       expect(await screen.findByText("Queued")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Sync failed/ })).not.toBeInTheDocument();
+    });
+
+    it("says it is queued while the list still shows the old error", async () => {
+      const calls = serveMoved(
+        {
+          status: 202,
+          body: {
+            library_id: "/acme/payments",
+            ref: "v1.4.0",
+            ref_kind: "tag",
+            previous_commit_sha: SHA,
+            commit_sha: "f".repeat(40),
+            job_id: "r1",
+          },
+        },
+        { stale: true }, // the refetch has not caught up yet
+      );
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+      );
+      expect(
+        await screen.findByText("Queued: the new commit of v1.4.0 is being imported."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
+      expect(calls).toHaveLength(1);
     });
 
     it("says why when the tag moved back, and offers no retry", async () => {

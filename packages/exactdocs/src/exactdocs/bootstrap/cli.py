@@ -510,6 +510,9 @@ def sync(
     token: TokenOption = None,
 ) -> None:
     """Re-sync the branch versions of a library; moved tags are re-imported only on --confirm."""
+    if confirm and confirm_tag:  # "every moved tag" and "only these" cannot both be meant
+        sys.stderr.write("exactdocs: use --confirm or --confirm-tag, not both\n")
+        raise SystemExit(lib.EXIT_USAGE)
 
     async def work() -> None:
         async with _api(url, token) as api:

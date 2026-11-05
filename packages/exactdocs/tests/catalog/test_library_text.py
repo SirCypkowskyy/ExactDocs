@@ -233,3 +233,21 @@ def test_invisible_characters_and_extra_spaces_are_removed() -> None:
     patch = LibraryPatch(title=" Pay\u200bments \x1b[31m  SDK\u202e ", description="a\u200bb\x07\n")
 
     assert (patch.title, patch.description) == ("Payments [31m SDK", "ab")
+
+
+async def test_the_default_versions_rules_replace_the_librarys_and_others_are_ignored() -> None:
+    catalog = build(V1, V2)
+
+    for ref, rules in [("v2.0.0", ["Use v2 client"]), ("v1.0.0", ["Use v1 client"])]:
+        await catalog.apply_readme(ApplyReadmeCommand(library=LIBRARY, ref=ref, rules=rules))
+    kept = (await catalog.get_library(GetLibraryQuery(id=LIBRARY))).rules
+    await catalog.apply_readme(ApplyReadmeCommand(library=LIBRARY, ref="v2.0.0"))
+    dropped = (await catalog.get_library(GetLibraryQuery(id=LIBRARY))).rules
+
+    assert (kept, dropped) == (["Use v2 client"], [])
+
+
+@pytest.mark.parametrize("rules", [[""], ["r" * 501], ["r"] * 21])
+def test_rules_are_bounded(rules: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        ApplyReadmeCommand(library=LIBRARY, ref="main", rules=rules)

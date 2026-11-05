@@ -1232,7 +1232,7 @@
           "ingestion"
         ],
         "summary": "Add",
-        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).\n\n`Location` is the new library.",
+        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).\n\n`Location` is the new library. Without paths, those of the repository's `context7.json`\nare taken; if every preview slot stays busy so it cannot be read, the answer is 429\n`preview_busy` and nothing is stored.",
         "operationId": "ingestion-add",
         "security": [
           {
@@ -1319,6 +1319,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sent without paths while every preview slot is taken, so the repository's `context7.json` could not be read (`preview_busy`); nothing is stored. Try again shortly.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before trying again.",
+                "schema": {
+                  "type": "integer"
                 }
               }
             }
@@ -3687,7 +3705,7 @@
           "ingestion"
         ],
         "summary": "Preview",
-        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, no file content, and nothing is stored. `files` has\nat most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths\nare untrusted text. A `credential` needs a signed-in session, not an API token.",
+        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, plus the root `context7.json` alone (no other file\ncontent), and nothing is stored. Without paths, the file's folders and exclusions are\napplied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000\npaths; `total` counts all matches and `truncated` says they were cut. Paths are\nuntrusted text. A `credential` needs a signed-in session, not an API token.",
         "operationId": "ingestion-preview",
         "requestBody": {
           "content": {
@@ -4844,6 +4862,44 @@
           "job_id": {
             "type": "string",
             "title": "Job Id"
+          },
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths",
+            "description": "The library's paths: the ones sent, else those of `context7.json`."
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths"
+          },
+          "context7": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Context7Out"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The repository's root `context7.json` at that commit; null when there is none or it is ignored (see `context7_warning`)."
+          },
+          "context7_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context7 Warning",
+            "description": "Why the `context7.json` at that commit is ignored; null when it is not."
           }
         },
         "additionalProperties": false,
@@ -4891,7 +4947,7 @@
           "job_id"
         ],
         "title": "AddedVersion",
-        "description": "Like ``AddedLibrary``, but ``library_id`` is the existing library."
+        "description": "The existing library, the commit the new version's ref was pinned to, and its import."
       },
       "Article": {
         "properties": {
@@ -5537,6 +5593,106 @@
         "title": "ChunkingOut",
         "description": "How articles are cut into chunks."
       },
+      "Context7Out": {
+        "properties": {
+          "project_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "exclude_folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Folders"
+          },
+          "exclude_files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Files"
+          },
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths"
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths"
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "Shown to agents with every `query-docs` answer."
+          },
+          "previous_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PreviousVersionOut"
+            },
+            "type": "array",
+            "title": "Previous Versions",
+            "description": "Older tags to offer for import (`POST .../versions` each)."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "What was left out of the file (a `previousVersions` entry whose tag git would not take), and why."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_title",
+          "description",
+          "folders",
+          "exclude_folders",
+          "exclude_files",
+          "include_paths",
+          "exclude_paths",
+          "rules",
+          "previous_versions"
+        ],
+        "title": "Context7Out",
+        "description": "What the repository's `context7.json` says (LIB-06). All of it is untrusted text.\n\n`include_paths` / `exclude_paths` are its folders and excludes as ExactDocs patterns: what a\nlibrary added without paths imports."
+      },
       "CoverageOut": {
         "properties": {
           "candidates": {
@@ -6168,6 +6324,14 @@
             "type": "boolean",
             "title": "Default Pinned",
             "description": "True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import)."
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "The rules of the default version's `context7.json`, shown to agents with every `query-docs` answer. Untrusted repository text."
           }
         },
         "additionalProperties": false,
@@ -6699,6 +6863,27 @@
         "title": "PreviewRepositoryCommand",
         "description": "Ask which files an import would take (a dry run: nothing is fetched beyond the tree)."
       },
+      "PreviousVersionOut": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Its display title; empty when the file gives none."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "title"
+        ],
+        "title": "PreviousVersionOut",
+        "description": "An older tag the repository's `context7.json` offers for import."
+      },
       "ProblemCode": {
         "type": "string",
         "enum": [
@@ -6712,7 +6897,8 @@
           "not_an_image",
           "image_budget",
           "missing_image",
-          "truncated"
+          "truncated",
+          "context7"
         ],
         "title": "ProblemCode",
         "description": "Why a file shows up in a job's problems; stable, clients may branch on it."
@@ -6964,6 +7150,44 @@
             "type": "boolean",
             "title": "Truncated",
             "description": "True when `files` is cut (`total` is more than listed)."
+          },
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths",
+            "description": "The paths applied: the ones sent, else those of `context7.json`."
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths"
+          },
+          "context7": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Context7Out"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The repository's root `context7.json` at that commit; null when there is none or it is ignored (see `context7_warning`)."
+          },
+          "context7_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context7 Warning",
+            "description": "Why the `context7.json` at that commit is ignored; null when it is not."
           }
         },
         "additionalProperties": false,

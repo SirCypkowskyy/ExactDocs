@@ -215,9 +215,11 @@ Then add your first library in the UI (**Add library**: URL, ref, paths) or over
 walkthrough above. The import runs as a background job whose progress, skipped files and problems
 the UI shows. ExactDocs splits every article by its headings; a branch version is re-synced on
 demand and re-chunks only the files that changed. The command line does the same (see
-[Use the CLI against an instance](#use-the-cli-against-an-instance)). Also planned: a preview of matching
-files before importing, auto-import of new tags, and pre-selection from a repository's
-`context7.json`. See the [Roadmap](#roadmap).
+[Use the CLI against an instance](#use-the-cli-against-an-instance)). A repository's root
+`context7.json` pre-fills the library: added without paths, it takes its folders and exclusions,
+its title and description win over the README's, and its rules come first in every `query-docs`
+answer (details in [docs/rest-api.md](docs/rest-api.md)). Also planned: auto-import of new tags.
+See the [Roadmap](#roadmap).
 
 ### Connect your agent
 
@@ -278,7 +280,7 @@ writable for that), and files owned by another user can stop the server from sta
 | Tool | Purpose |
 |---|---|
 | `resolve-library-id(libraryName, query)` | context7-compatible: find a library ID such as `/acme/payments` |
-| `query-docs(libraryId, query, language?)` | context7-compatible: documentation for `/owner/repo` (default version) or `/owner/repo/<ref>` (exactly that version, never another). Returns whole chunks, best first, within a size budget; `language` moves chunks with code in it first (it does not filter) |
+| `query-docs(libraryId, query, language?)` | context7-compatible: documentation for `/owner/repo` (default version) or `/owner/repo/<ref>` (exactly that version, never another). Returns whole chunks, best first, within a size budget; `language` moves chunks with code in it first (it does not filter). The library's `context7.json` rules, if any, come first |
 | `list_libraries(limit?, cursor?)` | Libraries and imported versions (`refs`: ref, kind, commit SHA, default flag) |
 | `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` | The article tree of a version |
 | `read_article(library, ref?, path)` | A full article, verbatim; an unknown path lists close matches |
