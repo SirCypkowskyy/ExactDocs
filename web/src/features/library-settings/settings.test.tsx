@@ -171,7 +171,10 @@ function renderPage(lib = library) {
   return queryClient;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("settings model", () => {
   it("validates the title and the description", () => {
@@ -350,10 +353,22 @@ describe("adding a version", () => {
     await waitFor(() => expect(screen.getByLabelText("Version to import")).toHaveFocus());
   });
 
-  /** Two frames: the window a focus request made with `requestAnimationFrame` would land in. */
-  const twoFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  /**
+   * Holds animation frames until `run()`, so a focus request made a frame late can never land
+   * before the test has checked focus and moved it elsewhere.
+   */
+  function holdFrames() {
+    const held: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => held.push(cb));
+    return {
+      run: () => {
+        for (const cb of held.splice(0)) cb(performance.now());
+      },
+    };
+  }
 
   it("does not pull focus away once the refusal is on screen", async () => {
+    const frames = holdFrames();
     serve({ addVersion: () => failure(422, "unknown_ref") });
     renderPage();
     await userEvent.selectOptions(await open(), "tag:v1.3.0");
@@ -363,11 +378,12 @@ describe("adding a version", () => {
     expect(screen.getByLabelText("Version to import")).toHaveFocus();
     const elsewhere = screen.getByRole("button", { name: "Cancel" });
     elsewhere.focus();
-    await twoFrames();
+    frames.run();
     expect(elsewhere).toHaveFocus();
   });
 
   it("does not pull focus away once the missing choice is on screen", async () => {
+    const frames = holdFrames();
     serve();
     renderPage();
     await open();
@@ -376,22 +392,24 @@ describe("adding a version", () => {
     expect(screen.getByLabelText("Version to import")).toHaveFocus();
     const elsewhere = screen.getByRole("button", { name: "Cancel" });
     elsewhere.focus();
-    await twoFrames();
+    frames.run();
     expect(elsewhere).toHaveFocus();
   });
 
   it("focuses the typed ref as it appears and leaves focus alone after", async () => {
+    const frames = holdFrames();
     serve();
     renderPage();
     await userEvent.selectOptions(await open(), "other");
     expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus();
     const elsewhere = screen.getByRole("button", { name: "Cancel" });
     elsewhere.focus();
-    await twoFrames();
+    frames.run();
     expect(elsewhere).toHaveFocus();
   });
 
   it("returns focus to the add button on cancel, and leaves it alone after", async () => {
+    const frames = holdFrames();
     serve();
     renderPage();
     await open();
@@ -399,7 +417,7 @@ describe("adding a version", () => {
     expect(screen.getByRole("button", { name: "Add a version" })).toHaveFocus();
     const elsewhere = screen.getByRole("button", { name: "Re-sync now" });
     elsewhere.focus();
-    await twoFrames();
+    frames.run();
     expect(elsewhere).toHaveFocus();
   });
 
