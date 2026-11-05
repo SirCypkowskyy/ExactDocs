@@ -262,6 +262,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before the next attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -419,6 +437,24 @@
           },
           "422": {
             "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before the next attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

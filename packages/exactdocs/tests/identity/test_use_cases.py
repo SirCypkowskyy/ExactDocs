@@ -6,6 +6,7 @@ from pydantic import SecretStr, ValidationError
 
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
+    InMemoryFailedSignInLog,
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
@@ -81,6 +82,7 @@ def identity(repository: InMemoryAccountRepository, hasher: FakeHasher) -> Ident
         sessions=InMemorySessionRepository(),
         tokens=InMemoryTokenRepository(),
         hasher=hasher,
+        failures=InMemoryFailedSignInLog(),
         clock=FixedClock(),
     )
 
@@ -138,6 +140,7 @@ async def test_a_lost_race_to_the_repository_is_refused_too(
         sessions=InMemorySessionRepository(),
         tokens=InMemoryTokenRepository(),
         hasher=hasher,
+        failures=InMemoryFailedSignInLog(),
         clock=FixedClock(),
     )
 

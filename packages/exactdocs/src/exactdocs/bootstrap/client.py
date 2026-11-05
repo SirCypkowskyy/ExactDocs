@@ -200,6 +200,8 @@ FRIENDLY: dict[str, str] = {
     "revoke one in the web UI or log in with --token",
     "not_found": "the server has no such endpoint; is that URL an ExactDocs instance "
     "of a compatible version?",
+    "rate_limited": "too many failed sign-ins from here or for this username; "
+    "wait a little and try again",
 }
 
 
@@ -211,11 +213,21 @@ def printable(text: str) -> str:
 class ApiError(ClientError):
     """The server answered with its error shape; ``code`` is the stable machine code."""
 
-    def __init__(self, status: int, code: str, detail: str, fields: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        detail: str,
+        fields: tuple[str, ...] = (),
+        retry_after: int | None = None,
+    ) -> None:
         self.status = status
         self.code = code
         self.detail = printable(detail)
+        self.retry_after = retry_after
         text = FRIENDLY.get(code) or self.detail or f"the server answered HTTP {status}"
+        if retry_after is not None:
+            text += f" (in {retry_after} seconds)"
         if fields:
             text += f" (invalid: {printable(', '.join(fields))})"
         super().__init__(text)
@@ -282,7 +294,14 @@ class ApiClient:
                 for item in body.get("fields", [])
                 if isinstance(item, dict) and isinstance(item.get("loc"), list)
             )
-            raise ApiError(response.status_code, body["error"], str(body.get("detail", "")), fields)
+            retry_after = response.headers.get("retry-after", "")
+            raise ApiError(
+                response.status_code,
+                body["error"],
+                str(body.get("detail", "")),
+                fields,
+                int(retry_after) if retry_after.isdecimal() else None,
+            )
         message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
         raise ClientError(message)
 

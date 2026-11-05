@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
+    InMemoryFailedSignInLog,
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
@@ -69,6 +70,7 @@ async def world() -> World:
         sessions=sessions,
         tokens=tokens,
         hasher=FakeHasher(),
+        failures=InMemoryFailedSignInLog(),
         clock=clock,
     )
     await identity.create_first_admin(
@@ -207,6 +209,7 @@ async def test_session_state_tells_setup_signed_out_and_signed_in(world: World) 
         sessions=InMemorySessionRepository(),
         tokens=InMemoryTokenRepository(),
         hasher=FakeHasher(),
+        failures=InMemoryFailedSignInLog(),
         clock=MovableClock(),
     )
     assert (await empty.get_session_state(None)).state == "setup_required"

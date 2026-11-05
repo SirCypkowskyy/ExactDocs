@@ -17,7 +17,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   Unknown routes and wrong methods are `not_found` / `method_not_allowed`; an unexpected failure
   is 500 `internal_error` (no internals in `detail`).
   `error` is the stable `DomainError.code` (`not_found` is 404, `conflict` 409, `validation_error`
-  and every `ValidationError` 422, anything else 400). Request validation failures are 422 with
+  and every `ValidationError` 422, `rate_limited` 429 with a `Retry-After` header in seconds,
+  anything else 400). Request validation failures are 422 with
   `error: "validation_error"` and one `fields` entry (`loc`, `msg`, `type`) per invalid field.
 - **First run**: until the first admin account exists, every `/api/v1` request except
   `POST /api/v1/setup`, `GET /api/v1/session` and the OpenAPI document is refused with 403
@@ -31,7 +32,16 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
-  `invalid_credentials`. `GET /session` returns `{"state": "setup_required" | "signed_out" |
+  `invalid_credentials`. Both credential endpoints, `POST /session` and `POST /tokens/login`,
+  share one sign-in throttle. Each attempt counts against its client address (IPv6: its /64) and
+  its username before the password is checked; after 5 that did not succeed, the next attempt
+  waits 5 s, then 10 s, doubling up to 15 min, and is refused meanwhile with 429 `rate_limited`
+  and `Retry-After` (its password is not checked, and it is not counted). Concurrent attempts
+  get no more tries than sequential ones. The address is the one uvicorn reports, so behind a
+  proxy listed in `EXACTDOCS_FORWARDED_ALLOW_IPS` it is the forwarded client. Counts are
+  forgotten after an hour without an attempt; a right password takes its attempt back (without restarting the wait), clears
+  its username's count, and lets that address skip the username's count for 30 days. The counts
+  live in the server's memory (a restart clears them). Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
   "signed_in", "account": ...}` and never fails; `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
