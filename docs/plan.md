@@ -2008,7 +2008,7 @@ Scenario: A removed version is gone everywhere
 
 - [ ] `RemoveVersion` / `RemoveLibrary` use cases; `DELETE` REST routes (the CLI command is MVP-2, E6-03)
 - [ ] use cases live in ingestion and call catalog and retrieval through bridges
-- [ ] GC job run by ingestion, calling each domain's `CollectGarbage` through bridges: superseded manifests past their grace period, blobs, chunk sets and FTS rows not referenced by any manifest are deleted; chunk IDs kept as tombstones (E7-03); credentials of a removed library deleted
+- [ ] GC job run by ingestion, calling each domain's `CollectGarbage` through bridges: superseded manifests past their grace period, blobs, chunk sets and FTS rows not referenced by any manifest are deleted; chunk IDs kept as tombstones (E7-03) together with their version, article path, heading path, occurrence and content hash, so a stale ID can still be pointed to its section (E7-09); credentials of a removed library deleted
 - [ ] default version recomputed after removal
 - [ ] behave scenario over REST and MCP; GC unit tests on shared content
 

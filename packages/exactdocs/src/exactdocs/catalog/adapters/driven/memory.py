@@ -56,7 +56,7 @@ class InMemoryLibraryRepository:
         """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken."""
         if library.id in self.libraries:
             raise LibraryAlreadyExistsError(library.id.value)
-        self.libraries[library.id] = library
+        self.libraries[library.id] = replace(library, pinned_version=None)  # pinned only later
 
     async def delete(self, library_id: LibraryId) -> None:
         """Remove the library, if present."""
@@ -82,7 +82,11 @@ class InMemoryLibraryRepository:
         stored = self.libraries.get(library.id)
         known = {v.ref: v for v in stored.versions} if stored else {}
         merged = known | {v.ref: v for v in library.versions if v.ref not in known}
-        self.libraries[library.id] = replace(library, versions=frozenset(merged.values()))
+        self.libraries[library.id] = replace(
+            library,
+            versions=frozenset(merged.values()),
+            pinned_version=stored.pinned_version if stored else None,
+        )
 
     async def set_text(
         self, library_id: LibraryId, *, title: str | None, description: str | None
@@ -96,6 +100,14 @@ class InMemoryLibraryRepository:
         if description is not None:
             changes |= {"description": description, "description_edited": True}
         self.libraries[library_id] = replace(stored, **changes)
+
+    async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
+        """Pin ``ref`` if the library has that version; ``None`` unpins."""
+        stored = self.libraries.get(library_id)
+        if stored is None or (ref is not None and all(v.ref != ref for v in stored.versions)):
+            return False
+        self.libraries[library_id] = replace(stored, pinned_version=ref)
+        return True
 
     async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
         """Set the fields no user edited."""
@@ -344,7 +356,10 @@ class InMemoryManifestRepository:
         for doomed_id in doomed:
             del self.manifests[doomed_id]
         kept = frozenset(v for v in library.versions if v.ref != ref)
-        self.libraries.libraries[library_id] = replace(library, versions=kept)
+        pinned = None if library.pinned_version == ref else library.pinned_version
+        self.libraries.libraries[library_id] = replace(
+            library, versions=kept, pinned_version=pinned
+        )
         return doomed
 
     async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:

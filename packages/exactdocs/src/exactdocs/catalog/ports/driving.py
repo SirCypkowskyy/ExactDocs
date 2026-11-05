@@ -31,6 +31,7 @@ from exactdocs.catalog.dtos import (
     ListTagsQuery,
     ManifestStates,
     ManualTagsOut,
+    PinDefaultVersionCommand,
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
@@ -315,5 +316,18 @@ class ApplyManualTags(Protocol):
     """
 
     async def __call__(self, command: ApplyManualTagsCommand) -> RetaggedManifest:
+        """Run the use case."""
+        ...
+
+
+class PinDefaultVersion(Protocol):
+    """Pin the library's default version to an imported one, or unpin it (LIB-10).
+
+    A ref is matched exactly (or as a unique short SHA), never approximated. Raises
+    ``LibraryNotFoundError`` / ``VersionNotFoundError``. Unpinned, the default follows the
+    default-version rule again. Removing the pinned version unpins the library.
+    """
+
+    async def __call__(self, command: PinDefaultVersionCommand) -> LibraryDetail:
         """Run the use case."""
         ...

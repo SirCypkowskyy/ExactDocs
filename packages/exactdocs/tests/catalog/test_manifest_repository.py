@@ -700,6 +700,24 @@ async def test_only_paths_are_listed_sorted_and_capped_for_suggestions(stores: S
     assert not await stores.manifests.list_paths(ManifestId("none"), limit=100)
 
 
+async def test_removing_the_pinned_version_clears_the_pin(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "next", "bbb222", entry(INSTALL, "b1"), kind=RefKind.TAG))
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+    assert await stores.libraries.pin_default(PAYMENTS.id, VersionRef("next"))
+
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("main"))  # not the pinned one
+    kept = await stores.libraries.get(PAYMENTS.id)
+    assert kept is not None
+    assert kept.pinned_version == VersionRef("next")
+
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("next"))
+    library = await stores.libraries.get(PAYMENTS.id)
+    assert library is not None
+    assert library.pinned_version is None  # an import of the ref again does not re-pin it
+
+
 async def test_removing_a_version_deletes_its_manifests_in_every_state_and_keeps_others(
     stores: Stores,
 ) -> None:

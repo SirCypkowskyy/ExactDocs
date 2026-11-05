@@ -17,6 +17,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogManualTags,
     CatalogNewLibraries,
     CatalogRemovals,
+    CatalogRenamedPaths,
     CatalogSearchableVersions,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
@@ -80,6 +81,7 @@ def _build_read_side(
         manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
         chunks=SqliteChunkRepository(engine),
         search=SqliteSearchIndex(engine),
+        renames=CatalogRenamedPaths(catalog.resolve_renamed_path),
         query_docs_token_budget=settings.query_docs_token_budget,
     )
     return catalog, retrieval

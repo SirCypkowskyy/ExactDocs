@@ -43,7 +43,10 @@ function Versions({ library }: { library: Library }) {
         return (
           <li
             key={version}
-            title={[isDefault && "Default version", sha && `commit ${sha}`]
+            title={[
+              isDefault && (library.default_pinned ? "Pinned default version" : "Default version"),
+              sha && `commit ${sha}`,
+            ]
               .filter(Boolean)
               .join(" · ")}
             className={cn("max-w-full", i >= SHOWN && "fade-in")}
@@ -57,7 +60,11 @@ function Versions({ library }: { library: Library }) {
               )}
             >
               <span className="truncate">{version}</span>
-              {isDefault && <span className="sr-only"> (default)</span>}
+              {isDefault && (
+                <span className="sr-only">
+                  {library.default_pinned ? " (pinned default)" : " (default)"}
+                </span>
+              )}
               {isDefault && sha && (
                 <span aria-hidden="true" className="font-normal opacity-70">
                   {shortSha(sha)}

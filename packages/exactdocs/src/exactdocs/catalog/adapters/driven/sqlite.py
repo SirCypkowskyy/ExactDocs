@@ -78,7 +78,7 @@ libraries = Table(
     Column("source_url", Text, nullable=False),
     Column("host", Text, nullable=False),
     Column("default_branch", Text),
-    Column("pinned_version", Text),  # LIB-10 (MVP-2): never written or read yet
+    Column("pinned_version", Text),  # LIB-10: written only by `pin_default`, never by `save`
     Column("settings", Text, nullable=False),
     Column("title_edited", Boolean, nullable=False, server_default="0"),
     Column("description_edited", Boolean, nullable=False, server_default="0"),
@@ -195,6 +195,7 @@ _LIBRARY_COLUMNS = (
     libraries.c.settings,
     libraries.c.title_edited,
     libraries.c.description_edited,
+    libraries.c.pinned_version,
 )
 
 
@@ -259,6 +260,24 @@ class SqliteLibraryRepository:
             await connection.execute(
                 update(libraries).where(libraries.c.id == library_id.value).values(**values)
             )
+
+    async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
+        """One UPDATE; with a ref it applies only while that version row exists."""
+        where = [libraries.c.id == library_id.value]
+        if ref is not None:
+            where.append(
+                exists().where(
+                    library_versions.c.library_id == library_id.value,
+                    library_versions.c.ref == ref.value,
+                )
+            )
+        async with self.engine.begin() as connection:
+            done = await connection.execute(
+                update(libraries)
+                .where(*where)
+                .values(pinned_version=None if ref is None else ref.value)
+            )
+        return done.rowcount > 0
 
     async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
         """One UPDATE that keeps every field whose edited flag is set."""
@@ -334,6 +353,7 @@ class SqliteLibraryRepository:
                 versions=frozenset(versions[row.id]),
                 title_edited=row.title_edited,
                 description_edited=row.description_edited,
+                pinned_version=VersionRef(row.pinned_version) if row.pinned_version else None,
             )
             for row in rows
         )
@@ -813,6 +833,11 @@ class SqliteManifestRepository:
             gone = await connection.execute(delete(library_versions).where(*version))
             if gone.rowcount == 0:
                 raise VersionNotFoundError(str(library_id), str(ref))
+            await connection.execute(
+                update(libraries)
+                .where(libraries.c.id == library_id.value, libraries.c.pinned_version == ref.value)
+                .values(pinned_version=None)
+            )
             ids = await connection.execute(
                 delete(manifests)
                 .where(manifests.c.library_id == library_id.value, manifests.c.ref == ref.value)

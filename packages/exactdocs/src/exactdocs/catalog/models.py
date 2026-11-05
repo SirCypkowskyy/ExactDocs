@@ -222,6 +222,8 @@ class Library:
     # Set once a user typed the field: README imports never touch it again.
     title_edited: bool = False
     description_edited: bool = False
+    # The version an owner chose as the default (LIB-10); it wins over the rule while imported.
+    pinned_version: VersionRef | None = None
 
     def __post_init__(self) -> None:
         refs = [v.ref for v in self.versions]
@@ -232,9 +234,12 @@ class Library:
     def default_version(self) -> Version | None:
         """Pick what `/owner/repo` without a ref means (docs/user-stories.md, *Default version*).
 
-        The highest stable semver tag; else the default branch's version; else the version
-        imported last. Ties go to the larger ref so the answer never depends on set order.
+        The pinned version while it is imported (LIB-10); else the highest stable semver tag;
+        else the default branch's version; else the version imported last. Ties go to the larger
+        ref so the answer never depends on set order.
         """
+        if pinned := self._pinned():
+            return pinned
         stable = [
             (semver, version)
             for version in self.versions
@@ -251,6 +256,13 @@ class Library:
         if not self.versions:
             return None
         return max(self.versions, key=lambda v: (v.imported_at, v.ref.value))
+
+    def default_is_pinned(self) -> bool:
+        """Tell whether the default version is the one an owner pinned, not the rule's choice."""
+        return self._pinned() is not None
+
+    def _pinned(self) -> Version | None:
+        return next((v for v in self.versions if v.ref == self.pinned_version), None)
 
     def find_version(self, ref: VersionRef) -> Version | None:
         """Find the version imported from exactly this ref, else the commit a short SHA names.

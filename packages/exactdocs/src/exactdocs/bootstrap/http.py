@@ -136,6 +136,7 @@ def create_app(container: Container) -> FastAPI:
             resolve_renamed_path=container.catalog.resolve_renamed_path,
             get_asset=container.catalog.get_asset,
             update_library=container.catalog.update_library,
+            pin_default_version=container.catalog.pin_default_version,
         )
     )
     protected.include_router(

@@ -17,6 +17,7 @@ from exactdocs.retrieval.models import (
     Removed,
     SearchableVersion,
     SearchHit,
+    SectionRef,
     StoredChunk,
     TagFilter,
     VersionCounts,
@@ -73,6 +74,17 @@ class ActiveManifests(Protocol):
         ...
 
 
+class RenamedPaths(Protocol):
+    """Renames git saw, in retrieval's terms (the catalog answers)."""
+
+    async def new_path(self, target: DocTarget, old_path: str) -> str | None:
+        """Return where ``old_path`` of the version before is in the target version, or ``None``.
+
+        ``None`` also when nothing is known (no map, no active manifest): never an error.
+        """
+        ...
+
+
 class ChunkRepository(Protocol):
     """Chunk sets (shared by content) and the per-manifest chunk rows that point at them."""
 
@@ -113,6 +125,13 @@ class ChunkRepository(Protocol):
         """Return the chunks that exist, by (manifest ID, chunk ID), for several manifests at once.
 
         One query, whatever the number of manifests; missing pairs are left out.
+        """
+        ...
+
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article of the manifest in order, without their text.
+
+        Empty if the manifest has no such article.
         """
         ...
 

@@ -27,6 +27,7 @@ from exactdocs.catalog.dtos import (
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RenameIn,
+    ResolveRenamedPathQuery,
     SetManualTagsCommand,
     StoreManifestCommand,
     TagRuleIn,
@@ -54,6 +55,7 @@ from exactdocs.catalog.ports.driving import (
     ListRenames,
     RemoveLibrary,
     RemoveVersion,
+    ResolveRenamedPath,
     SetManualTags,
     StoreManifest,
 )
@@ -236,6 +238,23 @@ class CatalogActiveManifests:
             GetManifestStatesQuery(manifest_ids=list(manifest_ids))
         )
         return {i: _STATUSES.get(state, ManifestStatus.OTHER) for i, state in found.states.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogRenamedPaths:
+    """Implements ``retrieval.ports.driven.RenamedPaths`` using the catalog."""
+
+    resolve_renamed_path: ResolveRenamedPath
+
+    async def new_path(self, target: DocTarget, old_path: str) -> str | None:
+        """Follow the rename map of the active manifest; ``None`` when nothing is known."""
+        try:
+            found = await self.resolve_renamed_path(
+                ResolveRenamedPathQuery(library=target.library, ref=target.version, path=old_path)
+            )
+        except NotFoundError:
+            return None
+        return None if found is None else found.new_path
 
 
 @dataclass(frozen=True, slots=True)

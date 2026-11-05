@@ -25,6 +25,7 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ListRenames,
     ListTags,
+    PinDefaultVersion,
     RemoveLibrary,
     RemoveVersion,
     ResolveRenamedPath,
@@ -52,6 +53,7 @@ from exactdocs.catalog.use_cases import (
     ListRenamesUseCase,
     ListTagsUseCase,
     ManualTagger,
+    PinDefaultVersionUseCase,
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
     ResolveRenamedPathUseCase,
@@ -86,6 +88,7 @@ class CatalogModule:
     get_active_manifest: GetActiveManifest
     list_default_manifests: ListDefaultManifests
     update_library: UpdateLibrary
+    pin_default_version: PinDefaultVersion
     apply_readme: ApplyReadme
     remove_version: RemoveVersion
     remove_library: RemoveLibrary
@@ -123,6 +126,7 @@ class CatalogModule:
             get_active_manifest=GetActiveManifestUseCase(repository, manifests),
             list_default_manifests=ListDefaultManifestsUseCase(repository, manifests),
             update_library=UpdateLibraryUseCase(repository),
+            pin_default_version=PinDefaultVersionUseCase(repository),
             apply_readme=ApplyReadmeUseCase(repository),
             remove_version=RemoveVersionUseCase(repository, manifests),
             remove_library=RemoveLibraryUseCase(repository, manifests),

@@ -38,6 +38,7 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     Removed,
+    SectionRef,
     StoredChunk,
     VersionCounts,
 )
@@ -278,6 +279,38 @@ class SqliteChunkRepository:
             for row in rows
             if row.chunk_id in wanted[row.manifest_id]
         }
+
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article in order: one indexed query, no chunk text."""
+        query = (
+            _stored_chunks()
+            .with_only_columns(
+                manifest_chunks.c.chunk_id,
+                manifest_chunks.c.position,
+                chunks.c.heading_path,
+                chunks.c.occurrence_index,
+                chunks.c.content_hash,
+                chunks.c.anchor,
+            )
+            .where(
+                manifest_chunks.c.manifest_id == manifest_id,
+                manifest_chunks.c.article_path == article_path,
+            )
+            .order_by(manifest_chunks.c.position)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [
+            SectionRef(
+                chunk_id=ChunkId(r.chunk_id),
+                position=r.position,
+                heading_path=tuple(json.loads(r.heading_path)),
+                occurrence_index=r.occurrence_index,
+                content_hash=r.content_hash,
+                anchor=r.anchor,
+            )
+            for r in rows
+        ]
 
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks."""
