@@ -101,13 +101,15 @@ class Fixture:
 def world() -> Fixture:
     chunks = InMemoryChunkRepository()
     versions = Versions()
+    index = InMemorySearchIndex(chunks)
     module = RetrievalModule.build(
         defaults=versions,
         libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=_Manifests(),
         chunks=chunks,
-        search=InMemorySearchIndex(chunks),
+        search=index,
+        maintenance=index,
     )
     return Fixture(module, versions)
 

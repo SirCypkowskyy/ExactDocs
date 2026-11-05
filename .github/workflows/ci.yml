@@ -178,9 +178,10 @@ jobs:
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
-  # them the way uvx does, then drives the whole loop in Chromium (e2e/, one test).
+  # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
+  # drives the whole loop in Chromium (e2e/, one test).
   uvx:
-    name: uvx smoke + browser end-to-end (built wheel)
+    name: uvx smoke, upgrade + browser end-to-end (built wheel)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 20
     steps:
@@ -232,6 +233,10 @@ jobs:
           fi
           echo "$out"
           grep -q "git is not installed" <<<"$out"
+      # RUN-04: a data directory written by the newest stable release (from PyPI) is migrated and
+      # served unchanged by these wheels, and `exactdocs reindex` runs while it serves.
+      - name: Upgrade from the previous release, then reindex while serving
+        run: python3 deploy/upgrade_check.py --wheels "$RUNNER_TEMP/dist"
       # The runners may have no browser: cache Playwright's (keyed by its version) and install the
       # missing part only. System libraries need root; installed when sudo is passwordless.
       - name: Playwright

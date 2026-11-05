@@ -14,4 +14,5 @@
 - { name: "area: backend", color: "bfdadc", description: "Python app or kernel" }
 - { name: "area: web", color: "bfd4f2", description: "React client" }
 - { name: "area: infra", color: "d4c5f9", description: "CI, release, Docker, runners" }
+- { name: "requires reindex", color: "e99695", description: "Changes the search index format: the release notes say to run exactdocs reindex" }
 - { name: "good first issue", color: "7057ff", description: "Small and well-scoped" }

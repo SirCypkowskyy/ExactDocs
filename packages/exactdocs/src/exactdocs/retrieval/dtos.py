@@ -14,10 +14,12 @@ from pydantic import (
 
 from exactdocs.retrieval.models import (
     Candidate,
+    RebuiltIndex,
     Removed,
     RetrievalMode,
     SearchableVersion,
     SearchHit,
+    SearchIndexState,
     StoredChunk,
     TagMatch,
     source_link,
@@ -364,6 +366,35 @@ class RemovedChunks(_Dto):
     def from_model(cls, removed: Removed) -> Self:
         """Map the domain value object."""
         return cls(manifests=removed.manifests, chunk_sets=removed.chunk_sets)
+
+
+class SearchIndexStateOut(_Dto):
+    """The stored search index's format, and whether a rebuild would change it."""
+
+    stored_format: int
+    current_format: int
+    needs_rebuild: bool
+
+    @classmethod
+    def from_model(cls, state: SearchIndexState) -> Self:
+        """Map the domain value object."""
+        return cls(
+            stored_format=state.stored_format,
+            current_format=state.current_format,
+            needs_rebuild=state.needs_rebuild,
+        )
+
+
+class RebuiltIndexOut(_Dto):
+    """The format the search index was rebuilt in and how many chunks it holds."""
+
+    format: int
+    entries: int
+
+    @classmethod
+    def from_model(cls, rebuilt: RebuiltIndex) -> Self:
+        """Map the domain value object."""
+        return cls(format=rebuilt.format, entries=rebuilt.entries)
 
 
 class ReadChunkQuery(_Dto):

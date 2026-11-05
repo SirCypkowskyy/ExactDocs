@@ -165,3 +165,22 @@ async def test_the_path_revision_reindexes_nested_headings_and_round_trips(tmp_p
         await connection.run_sync(_alembic, "downgrade", MIDDLE)
         await connection.run_sync(_alembic, "upgrade", AFTER)
     await engine.dispose()
+
+
+FORMAT_REVISION = "d4f8b2c6e9a3"
+
+
+async def test_the_format_revision_records_the_format_the_index_was_built_in(
+    tmp_path: Path,
+) -> None:
+    engine = await _engine(tmp_path)
+    async with engine.begin() as connection:
+        await connection.run_sync(_alembic, "upgrade", FORMAT_REVISION)
+
+    state = await SqliteSearchIndex(engine).state()
+
+    assert (state.stored_format, state.needs_rebuild) == (2, False)
+    async with engine.begin() as connection:
+        await connection.run_sync(_alembic, "downgrade", AFTER)
+        await connection.run_sync(_alembic, "upgrade", FORMAT_REVISION)
+    await engine.dispose()

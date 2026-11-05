@@ -44,7 +44,7 @@ from exactdocs.retrieval.models import (
     VersionCounts,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
+from exactdocs.retrieval.ports import ChunkRepository
 from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE, ReadChunkUseCase
 from exactdocs_kernel import NOTICE
 
@@ -163,7 +163,9 @@ class World:
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     catalog, clock = FakeCatalog(), FakeClock()
 
-    def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
+    def build(
+        chunks: ChunkRepository, search: InMemorySearchIndex | SqliteSearchIndex
+    ) -> RetrievalModule:
         return RetrievalModule.build(
             defaults=InMemoryDefaultVersions(),
             libraries=InMemoryLibraries(),
@@ -171,6 +173,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             manifests=catalog,
             chunks=chunks,
             search=search,
+            maintenance=search,
             clock=clock,
         )
 

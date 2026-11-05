@@ -247,6 +247,31 @@ class Removed:
     chunk_sets: int
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SearchIndexState:
+    """The format the stored search index was built in, against the one this build writes.
+
+    A format names how entries are made from chunks (columns, tokenizer, ``identifier_tokens``).
+    An index in an older format still answers, built the old way, until it is rebuilt.
+    """
+
+    stored_format: int
+    current_format: int
+
+    @property
+    def needs_rebuild(self) -> bool:
+        """Whether ``exactdocs reindex`` would change how chunks are found."""
+        return self.stored_format != self.current_format
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RebuiltIndex:
+    """What a rebuild left: the format it is now in and how many chunks it holds."""
+
+    format: int
+    entries: int
+
+
 class ManifestStatus(StrEnum):
     """What the catalog says about a manifest ID; an unknown ID is absent from its answer."""
 

@@ -101,6 +101,7 @@ class World:
     index_entries: Callable[[], Awaitable[int]]
     punch_gap: Callable[[], Awaitable[None]]  # lose one index entry, as a crash could
     engine: str
+    age_index: Callable[[], Awaitable[None]]  # record an older format, as an older build left it
 
     async def index(
         self,
@@ -145,7 +146,9 @@ class World:
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     clock = Clock()
 
-    def build(chunks: ChunkRepository, search: SearchIndex) -> RetrievalModule:
+    def build(
+        chunks: ChunkRepository, search: InMemorySearchIndex | SqliteSearchIndex
+    ) -> RetrievalModule:
         return RetrievalModule.build(
             defaults=InMemoryDefaultVersions(),
             libraries=InMemoryLibraries(),
@@ -153,6 +156,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             manifests=Gone(),
             chunks=chunks,
             search=search,
+            maintenance=search,
             clock=clock,
         )
 
@@ -169,7 +173,12 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
         async def forget() -> None:
             memory_index.indexed.clear()
 
-        yield World(build(memory, memory_index), memory_index, clock, entries, forget, "memory")
+        async def age() -> None:
+            memory_index.stored_format = 0
+
+        yield World(
+            build(memory, memory_index), memory_index, clock, entries, forget, "memory", age
+        )
         return
     container = Container.build(Settings())
     async with container.running():
@@ -190,6 +199,10 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                     )
                 )
 
+        async def age() -> None:
+            async with container.engine.begin() as connection:
+                await connection.execute(text("UPDATE retrieval_search_format SET format = 1"))
+
         yield World(
             build(SqliteChunkRepository(container.engine), index),
             index,
@@ -197,6 +210,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             count,
             lose_one,
             "sqlite",
+            age,
         )
 
 
@@ -397,6 +411,37 @@ async def test_indexing_again_fills_an_entry_lost_in_a_crash(world: World) -> No
     assert await world.index_entries() == 3
     assert len(await world.find("m14", "retry_policy")) == 2
     assert len(await world.find("m14", "tokens")) == 1
+
+
+async def test_a_rebuild_finds_the_same_and_fills_lost_entries(world: World) -> None:
+    await world.index("m13", "v1.3.0", V13)
+    await world.index("m14", "v1.4.0", V14)
+    before = [await world.find(m, q) for m in ("m13", "m14") for q in ("retry_policy", "retried")]
+    await world.punch_gap()
+
+    rebuilt = await world.retrieval.rebuild_search_index()
+
+    assert rebuilt.entries == await world.index_entries() == 4
+    after = [await world.find(m, q) for m in ("m13", "m14") for q in ("retry_policy", "retried")]
+    assert after == before
+    assert await world.find("m13", "retry_policy") == []  # still version-exact
+
+
+async def test_an_index_in_an_older_format_needs_a_rebuild_until_rebuilt(world: World) -> None:
+    await world.index("m14", "v1.4.0", V14)
+    assert not (await world.retrieval.get_search_index_state()).needs_rebuild
+    await world.age_index()
+
+    aged = await world.retrieval.get_search_index_state()
+    assert aged.needs_rebuild
+    assert aged.stored_format < aged.current_format
+    assert len(await world.find("m14", "retry_policy")) == 2  # the old index still answers
+
+    rebuilt = await world.retrieval.rebuild_search_index()
+
+    state = await world.retrieval.get_search_index_state()
+    assert (state.needs_rebuild, state.stored_format) == (False, rebuilt.format)
+    assert rebuilt.format == state.current_format
 
 
 async def test_a_word_inside_an_identifier_is_highlighted_where_it_stands(world: World) -> None:

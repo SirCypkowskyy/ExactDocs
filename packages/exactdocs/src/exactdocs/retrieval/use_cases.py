@@ -19,6 +19,7 @@ from exactdocs.retrieval.dtos import (
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
+    RebuiltIndexOut,
     RemoveChunksCommand,
     RemovedChunks,
     ResolveLibraryIdQuery,
@@ -27,6 +28,7 @@ from exactdocs.retrieval.dtos import (
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
+    SearchIndexStateOut,
     SearchResultOut,
     SetChunkOut,
 )
@@ -68,6 +70,7 @@ from exactdocs.retrieval.ports.driven import (
     Libraries,
     SearchableVersions,
     SearchIndex,
+    SearchIndexMaintenance,
 )
 from exactdocs_kernel import NOTICE, Clock
 
@@ -421,6 +424,28 @@ class RemoveChunksUseCase:
         return RemovedChunks.from_model(
             await self.chunks.remove([i for i in asked if i not in known])
         )
+
+
+@dataclass(frozen=True, slots=True)
+class GetSearchIndexStateUseCase:
+    """Implements ``ports.driving.GetSearchIndexState``."""
+
+    maintenance: SearchIndexMaintenance
+
+    async def __call__(self) -> SearchIndexStateOut:
+        """Report the stored format against the current one."""
+        return SearchIndexStateOut.from_model(await self.maintenance.state())
+
+
+@dataclass(frozen=True, slots=True)
+class RebuildSearchIndexUseCase:
+    """Implements ``ports.driving.RebuildSearchIndex``."""
+
+    maintenance: SearchIndexMaintenance
+
+    async def __call__(self) -> RebuiltIndexOut:
+        """Build the new index beside the old one, then swap it in."""
+        return RebuiltIndexOut.from_model(await self.maintenance.rebuild())
 
 
 # Only the best name matches are looked at: each costs a search. Results are capped to the same.
