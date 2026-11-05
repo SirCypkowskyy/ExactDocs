@@ -38,13 +38,16 @@ function serve(answer: (sent: Sent) => Response = () => new Response(null, { sta
   return sent;
 }
 
-function mount(client = new QueryClient()) {
-  render(
+type Shown = typeof article & { manual_tags: { tag: string; path: string }[] };
+
+function mount(client = new QueryClient(), shown: Shown = article) {
+  const page = (a: Shown) => (
     <QueryClientProvider client={client}>
-      <TagEditor owner="acme" repo="payments" article={article} />
-    </QueryClientProvider>,
+      <TagEditor owner="acme" repo="payments" article={a} />
+    </QueryClientProvider>
   );
-  return client;
+  const { rerender } = render(page(shown));
+  return Object.assign(client, { show: (a: Shown) => rerender(page(a)) });
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -62,13 +65,15 @@ describe("TagEditor", () => {
     expect(screen.getAllByRole("button", { name: /^Remove tag/ })).toHaveLength(2);
   });
 
-  it("adds a tag to the path's manual tags and reloads the browse queries of every version", async () => {
+  it("adds a tag to the path's manual tags and reloads the library's browse queries of every version", async () => {
     const sent = serve((s) =>
       Response.json({ library: "/acme/payments", path: "guide/install.md", tags: s.body }),
     );
     const client = mount();
     const other = [...BROWSE_KEY, "acme", "payments", "v1.0.0", "sha", "tags"];
-    client.setQueryData(other, { tags: [], truncated: false });
+    const unrelated = [...BROWSE_KEY, "acme", "billing", "v1.0.0", "sha", "tags"];
+    const everywhere = [...BROWSE_KEY, "*search-all*", "retries", ""];
+    for (const key of [other, unrelated, everywhere]) client.setQueryData(key, { tags: [] });
     await userEvent.click(screen.getByRole("button", { name: "Add tag" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "New tag" }),
@@ -80,6 +85,8 @@ describe("TagEditor", () => {
     expect(sent[0]?.url.searchParams.get("path")).toBe("guide/install.md");
     expect(sent[0]?.body).toEqual({ tags: ["onboarding", "getting-started"] });
     await waitFor(() => expect(client.getQueryState(other)?.isInvalidated).toBe(true));
+    expect(client.getQueryState(everywhere)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
     expect(screen.getByRole("textbox", { name: "New tag" })).toHaveValue("");
   });
 
@@ -98,21 +105,13 @@ describe("TagEditor", () => {
     const sent = serve((s) =>
       Response.json({ library: "/acme/payments", path: "x", tags: s.body }),
     );
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <TagEditor
-          owner="acme"
-          repo="payments"
-          article={{
-            ...article,
-            manual_tags: [
-              { tag: "a", path: "guide/install.md" },
-              { tag: "b", path: "guide/install.md" },
-            ],
-          }}
-        />
-      </QueryClientProvider>,
-    );
+    mount(new QueryClient(), {
+      ...article,
+      manual_tags: [
+        { tag: "a", path: "guide/install.md" },
+        { tag: "b", path: "guide/install.md" },
+      ],
+    });
     await userEvent.click(screen.getByRole("button", { name: "Remove tag a" }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]).toMatchObject({ method: "PUT", body: { tags: ["b"] } });
@@ -127,8 +126,19 @@ describe("TagEditor", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/starts with a letter or digit/);
     expect(input).toHaveAttribute("aria-invalid", "true");
     await userEvent.clear(input);
-    await userEvent.type(input, "onboarding{Enter}");
-    expect(screen.getByRole("status")).toHaveTextContent(/already has that tag/);
+    // The server keeps 40 characters at most.
+    await userEvent.clear(input);
+    await userEvent.type(input, `${"x".repeat(41)}{Enter}`);
+    expect(screen.getByRole("status")).toHaveTextContent(/40 characters at most/);
+    // Already on the article: set by hand here, inherited from an older path, or imported.
+    for (const tag of ["onboarding", "legacy", "guide"]) {
+      await userEvent.clear(input);
+      await userEvent.type(input, `${tag}{Enter}`);
+      expect(screen.getByRole("status")).toHaveTextContent(/already has that tag/);
+    }
+    // The reason is read with the field.
+    const status = screen.getByRole("status");
+    expect(input.getAttribute("aria-describedby")?.split(" ")).toContain(status.id);
     expect(sent).toHaveLength(0);
   });
 
@@ -143,5 +153,53 @@ describe("TagEditor", () => {
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("textbox", { name: "New tag" })).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("");
+    // Focus goes back where the field was opened from, not to the top of the page.
+    expect(screen.getByRole("button", { name: "Add tag" })).toHaveFocus();
+  });
+
+  it("returns focus to Add tag when the field is cancelled", async () => {
+    serve();
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add tag" })).toHaveFocus();
+  });
+
+  it("moves focus to the next tag's remove button after a removal, else to Add tag", async () => {
+    serve((s) => Response.json({ library: "/acme/payments", path: "x", tags: s.body }));
+    const client = mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remove tag onboarding" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Remove tag legacy, set on old/install.md" }),
+      ).toHaveFocus(),
+    );
+    // The reload drops the removed chip; then the last one goes too.
+    client.show({ ...article, manual_tags: [{ tag: "legacy", path: "old/install.md" }] });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove tag legacy, set on old/install.md" }),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add tag" })).toHaveFocus());
+  });
+
+  it("says that the front matter declares a manual tag too, and that a removed one stays when imported", async () => {
+    serve();
+    const shown = {
+      ...article,
+      tags: ["guide"],
+      manual_tags: [{ tag: "guide", path: "guide/install.md" }],
+    };
+    const client = mount(new QueryClient(), { ...shown, front_matter: { tags: ["guide"] } });
+    const byHand = screen.getByRole("list", { name: "Tags added by hand" });
+    expect(within(byHand).getByText("also in front matter")).toBeVisible();
+    // A tag set by hand is listed once, under "by hand", whatever else gives it.
+    expect(screen.queryByRole("list", { name: "Tags from path rules" })).toBeNull();
+    client.show(shown);
+    await userEvent.click(screen.getByRole("button", { name: "Remove tag guide" }));
+    client.show({ ...shown, manual_tags: [] });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "guide stays on this article: its import gives it too.",
+    );
+    expect(screen.getByRole("list", { name: "Tags from path rules" })).toHaveTextContent("guide");
   });
 });

@@ -35,7 +35,8 @@ describe("normalizeTag", () => {
     expect(normalizeTag("-lead")).toBeUndefined();
     expect(normalizeTag("a,b")).toBeUndefined();
     expect(normalizeTag("🙂")).toBeUndefined();
-    expect(normalizeTag("x".repeat(101))).toBeUndefined();
+    expect(normalizeTag("x".repeat(40))).toBe("x".repeat(40));
+    expect(normalizeTag("x".repeat(41))).toBeUndefined();
     expect(normalizeTag("")).toBeUndefined();
   });
 });

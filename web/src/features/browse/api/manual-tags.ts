@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { components } from "@/shared/lib/api-schema";
 import { sendJson } from "@/shared/lib/http";
-import { BROWSE_KEY } from "@/shared/lib/query-keys";
+import { BROWSE_KEY, SEARCH_ALL_KEY } from "@/shared/lib/query-keys";
 
 type TaggedArticle = components["schemas"]["TaggedArticle"];
 type ManualTagsIn = components["schemas"]["ManualTagsIn"];
@@ -28,8 +28,11 @@ export function setManualTags(
 
 /**
  * Manual tags hold for every version: the articles, the trees, the tag filters and the searches
- * of every version may have changed, so all of the browse queries reload.
+ * of every version of the library may have changed, and so may the search across libraries.
  */
-export function refreshTags(queryClient: QueryClient) {
-  return queryClient.invalidateQueries({ queryKey: BROWSE_KEY });
+export function refreshTags(queryClient: QueryClient, owner: string, repo: string) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: [...BROWSE_KEY, owner, repo] }),
+    queryClient.invalidateQueries({ queryKey: SEARCH_ALL_KEY }),
+  ]);
 }

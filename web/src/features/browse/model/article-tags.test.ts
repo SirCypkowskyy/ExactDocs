@@ -15,7 +15,7 @@ describe("tagGroups", () => {
     expect(tagGroups(article)).toEqual({
       frontMatter: ["setup"],
       rules: ["guide"],
-      manual: article.manual_tags,
+      manual: article.manual_tags.map((m) => ({ ...m, declared: false })),
     });
   });
 
@@ -34,22 +34,28 @@ describe("tagGroups", () => {
     expect(groups).toEqual({ frontMatter: [], rules: ["a"], manual: [] });
   });
 
-  it("shows a tag both declared and set by hand in both places", () => {
+  it("lists a tag set by hand only as manual, saying when the front matter declares it too", () => {
     const groups = tagGroups({
-      tags: ["setup"],
+      tags: ["setup", "guides"],
       front_matter: { tags: ["setup"] },
-      manual_tags: [{ tag: "setup", path: "a.md" }],
+      manual_tags: [
+        { tag: "setup", path: "a.md" },
+        { tag: "guides", path: "a.md" },
+      ],
     });
-    expect(groups.frontMatter).toEqual(["setup"]);
-    expect(groups.manual).toHaveLength(1);
+    expect(groups.frontMatter).toEqual([]);
     expect(groups.rules).toEqual([]);
+    expect(groups.manual).toEqual([
+      { tag: "setup", path: "a.md", declared: true },
+      { tag: "guides", path: "a.md", declared: false },
+    ]);
   });
 });
 
 describe("editing manual tags", () => {
   it("adds a tag to the path's own manual tags only, normalized", () => {
     expect(tagsSetOn(article.manual_tags, "guide/install.md")).toEqual(["onboarding"]);
-    expect(addTag(article.manual_tags, "guide/install.md", "  Getting Started ")).toEqual({
+    expect(addTag({ ...article, path: "guide/install.md" }, "  Getting Started ")).toEqual({
       ok: true,
       tag: "getting-started",
       tags: ["onboarding", "getting-started"],
@@ -57,14 +63,22 @@ describe("editing manual tags", () => {
   });
 
   it("refuses a value that is no tag, a duplicate and a 21st tag", () => {
-    expect(addTag([], "a.md", "#nope")).toEqual({ ok: false, reason: "invalid" });
-    expect(addTag([], "a.md", "   ")).toEqual({ ok: false, reason: "invalid" });
-    expect(addTag(article.manual_tags, "guide/install.md", "ONBOARDING")).toEqual({
-      ok: false,
-      reason: "duplicate",
-    });
+    const empty = { path: "a.md", tags: [], manual_tags: [] };
+    expect(addTag(empty, "#nope")).toEqual({ ok: false, reason: "invalid" });
+    expect(addTag(empty, "   ")).toEqual({ ok: false, reason: "invalid" });
+    expect(addTag(empty, "x".repeat(41))).toEqual({ ok: false, reason: "invalid" });
     const full = Array.from({ length: 20 }, (_, i) => ({ tag: `t${i}`, path: "a.md" }));
-    expect(addTag(full, "a.md", "one-more")).toEqual({ ok: false, reason: "too-many" });
+    expect(addTag({ ...empty, manual_tags: full }, "one-more")).toEqual({
+      ok: false,
+      reason: "too-many",
+    });
+  });
+
+  it("refuses a tag the article already has: set by hand here or on an older path, or imported", () => {
+    const install = { ...article, path: "guide/install.md" };
+    for (const tag of ["ONBOARDING", "legacy", "guide", "setup"]) {
+      expect(addTag(install, tag)).toEqual({ ok: false, reason: "duplicate" });
+    }
   });
 
   it("removes a tag on the path it was set on, keeping that path's others", () => {

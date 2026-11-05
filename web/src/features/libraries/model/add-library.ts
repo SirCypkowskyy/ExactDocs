@@ -1,5 +1,6 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import { normalizeTag } from "@/shared/lib/tags";
 
 export type CheckedRepository = components["schemas"]["CheckedRepository"];
 export type AddedLibrary = components["schemas"]["AddedLibrary"];
@@ -8,7 +9,6 @@ type ProblemCode = components["schemas"]["ProblemCode"];
 export type FileProblem = components["schemas"]["FileProblemSummary"];
 
 export const MAX_TAG_RULES = 64;
-const MAX_TAG_LENGTH = 40;
 
 /** Where a failed request belongs in the form: next to the field it is about, else the alert. */
 export type AddField = "url" | "id" | "ref" | "paths" | "tags";
@@ -67,7 +67,9 @@ export interface TagRuleDraft {
   tag: string;
 }
 
-const TAG = /^[a-z0-9][a-z0-9.+_-]*$/;
+/** What a tag may look like; the server stores it normalized (`Getting Started` is `getting-started`). */
+const TAG_RULE =
+  "Start with a letter or digit, then letters, digits, spaces and . + - _ (40 characters at most).";
 
 export function validateRule(rule: TagRuleDraft): { pattern?: string; tag?: string } {
   const problems: { pattern?: string; tag?: string } = {};
@@ -78,8 +80,8 @@ export function validateRule(rule: TagRuleDraft): { pattern?: string; tag?: stri
     problems.pattern = "Use a path inside the repository, like docs/api/**.";
   }
   if (!tag) problems.tag = "Add a tag, like api.";
-  else if (tag.length > MAX_TAG_LENGTH || !TAG.test(tag)) {
-    problems.tag = "Use lower-case letters, digits, and . + - _ (40 characters at most).";
+  else if (!normalizeTag(tag)) {
+    problems.tag = TAG_RULE;
   }
   return problems;
 }
@@ -178,8 +180,7 @@ export function explainAddError(error: unknown, ref: string | null): AddProblem 
     case "invalid_tag":
       return {
         field: "tags",
-        message:
-          "A tag isn't valid. Use lower-case letters, digits, and . + - _ (40 characters at most).",
+        message: `A tag isn't valid. ${TAG_RULE}`,
       };
     case "invalid_repository_url":
     case "not_a_git_repository":
