@@ -91,11 +91,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `ref`, `ref_kind`, `commit_sha`, `files` (sorted, 1000 at most), `total` and `truncated`. The
   same selection rules as the import decide, so nothing is stored. Sizes are not included: they
   would need the blobs. Paths are untrusted text; render them as text. Errors are those of
-  adding a library, plus 422 `commit_unavailable` and `repository_too_large`. A `credential`
-  needs a signed-in session, as for `/repositories/check`. It does a real fetch of the commit's
-  trees, so it is slower than `/repositories/check`; at most two run at once, and a third waits a
-  few seconds, then gets 429 `preview_busy`. A tree too large to list is 422
-  `repository_too_large`.
+  adding a library, plus 422 `commit_unavailable`, and 422 `repository_too_large` when the
+  fetch or the tree listing is too large. A `credential` needs a signed-in session, as for
+  `/repositories/check`. It does a real fetch of the commit's trees, so it is slower than
+  `/repositories/check`; at most two run at once, and a third waits a few seconds, then gets 429
+  `preview_busy` with a `Retry-After` header (seconds).
   Like `/repositories/check`, all of them accept `file://`, localhost and private addresses (see
   SECURITY.md).
 - **Re-syncing**: `POST /libraries/{owner}/{repo}/sync` (no body) asks the remote where each

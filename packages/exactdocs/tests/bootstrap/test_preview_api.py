@@ -125,7 +125,7 @@ async def test_an_unreachable_server(client: httpx.AsyncClient) -> None:
 async def test_busy_previews_answer_429(demo_catalog: dict[str, str], docs_repo: DocsRepo) -> None:
     class Busy:
         async def list_files(self, *_: object, **__: object) -> list[str]:
-            raise PreviewBusyError
+            raise PreviewBusyError(retry_after=7)
 
     container = Container.build(Settings(), tree=Busy())
     async with (
@@ -139,3 +139,4 @@ async def test_busy_previews_answer_429(demo_catalog: dict[str, str], docs_repo:
         response = await preview(busy, docs_repo.file_url)
 
     assert (response.status_code, response.json()["error"]) == (429, "preview_busy")
+    assert response.headers["retry-after"] == "7"

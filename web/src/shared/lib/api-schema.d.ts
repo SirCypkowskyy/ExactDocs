@@ -4156,6 +4156,17 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Every preview slot is taken (`preview_busy`); try again shortly. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before trying again. */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-add_another_version": {

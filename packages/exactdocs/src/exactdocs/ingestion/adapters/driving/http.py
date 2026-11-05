@@ -96,7 +96,25 @@ def build_router(
         """List the tags and branches of a repository (the URL is never echoed back)."""
         return await list_repository_refs(ListRepositoryRefsQuery(url=url))
 
-    @router.post("/repositories/preview")
+    @router.post(
+        "/repositories/preview",
+        responses={
+            # The envelope schema lives in bootstrap (every /api/v1 route documents it): only
+            # its name is referenced here, the domain does not import bootstrap.
+            status.HTTP_429_TOO_MANY_REQUESTS: {
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
+                },
+                "description": "Every preview slot is taken (`preview_busy`); try again shortly.",
+                "headers": {
+                    "Retry-After": {
+                        "description": "Seconds to wait before trying again.",
+                        "schema": {"type": "integer"},
+                    }
+                },
+            }
+        },
+    )
     async def preview(command: PreviewRepositoryCommand, request: Request) -> RepositoryPreview:
         """List the articles an import of this URL, ref and patterns would take (a dry run).
 

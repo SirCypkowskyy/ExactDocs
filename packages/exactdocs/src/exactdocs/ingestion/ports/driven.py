@@ -218,7 +218,8 @@ class RepositoryTree(Protocol):
         Only the commit and its trees are fetched (``--filter=blob:none``, depth 1), never a
         blob, and nothing is checked out. The paths are untrusted text from the repository
         (lossy-decoded, any characters). ``refs`` and ``credential`` are as in ``GitGateway.fetch``.
-        Raises what ``GitGateway.fetch`` raises.
+        Raises what ``GitGateway.fetch`` raises, ``TreeTooLargeError`` for a listing over the
+        output cap and ``PreviewBusyError`` when no preview slot frees up in time.
         """
         ...
 

@@ -134,7 +134,7 @@ class PreviewRepository(Protocol):
     """List the files an import of (URL, ref, patterns) would take, importing nothing.
 
     Raises what ``AddLibrary`` raises, plus ``CommitUnavailableError`` and
-    ``RepositoryTooLargeError`` from the tree fetch. Nothing is stored.
+    ``TreeTooLargeError`` from the tree fetch. Nothing is stored.
     """
 
     async def __call__(self, command: PreviewRepositoryCommand) -> RepositoryPreview:

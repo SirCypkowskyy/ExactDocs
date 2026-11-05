@@ -47,6 +47,7 @@ from the slots checks use). One data directory has exactly one job runner.
 
 import asyncio
 import json
+import math
 import os
 import re
 import shlex
@@ -480,7 +481,7 @@ class GitCli:
             async with asyncio.timeout(self.preview_wait):
                 await self.preview_slots.acquire()
         except TimeoutError:
-            raise PreviewBusyError from None
+            raise PreviewBusyError(retry_after=math.ceil(self.preview_wait)) from None
         try:
             yield
         finally:

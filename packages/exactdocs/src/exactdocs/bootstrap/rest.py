@@ -121,7 +121,8 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
     close = [str(path) for path in getattr(exc, "close_matches", ())]
     body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
-    return JSONResponse(body.model_dump(), status_code=status)
+    headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, BusyError) else None
+    return JSONResponse(body.model_dump(), status_code=status, headers=headers)
 
 
 async def _validation_error(_: Request, exc: Exception) -> Response:

@@ -135,11 +135,13 @@ class RepositoryTooLargeError(ValidationError):
         super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
 
 
-class TreeTooLargeError(RepositoryTooLargeError):
-    """The commit has more files than a preview can list."""
+class TreeTooLargeError(ValidationError):
+    """The commit has more files than a preview can list (same code as ``RepositoryTooLarge``)."""
+
+    code = "repository_too_large"
 
     def __init__(self) -> None:
-        ValidationError.__init__(self, "the repository has too many files to preview")
+        super().__init__("the repository has too many files to preview")
 
 
 class PreviewBusyError(BusyError):
@@ -147,8 +149,10 @@ class PreviewBusyError(BusyError):
 
     code = "preview_busy"
 
-    def __init__(self) -> None:
-        super().__init__("too many previews are running; try again in a moment")
+    def __init__(self, *, retry_after: int = 5) -> None:
+        super().__init__(
+            "too many previews are running; try again in a moment", retry_after=retry_after
+        )
 
 
 class LibraryIdTakenError(ConflictError):

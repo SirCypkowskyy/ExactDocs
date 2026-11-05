@@ -585,6 +585,7 @@ async def test_a_tree_over_the_output_cap_is_too_large_to_preview(
 
     assert raised.value.code == "repository_too_large"
     assert "refs" not in str(raised.value)
+    assert not isinstance(raised.value, RepositoryTooLargeError)  # no MiB limit to report
     assert leftovers(work) == []
 
 
@@ -593,8 +594,9 @@ async def test_a_preview_waits_a_bounded_time_for_a_slot(docs_repo: DocsRepo, wo
     for _ in range(2):
         await busy.preview_slots.acquire()
 
-    with pytest.raises(PreviewBusyError):
+    with pytest.raises(PreviewBusyError) as raised:
         await busy.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+    assert raised.value.retry_after == 1  # whole seconds, at least one
 
     busy.preview_slots.release()  # a slot is free again: the preview runs
     assert await busy.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))

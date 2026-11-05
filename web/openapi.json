@@ -3256,6 +3256,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Every preview slot is taken (`preview_busy`); try again shortly.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before trying again.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
