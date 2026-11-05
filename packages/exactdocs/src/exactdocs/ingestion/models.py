@@ -10,7 +10,7 @@ import ipaddress
 import json
 import math
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -416,6 +416,26 @@ class ProblemCode(StrEnum):
         return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED, ProblemCode.CONTEXT7}
 
 
+class SyncErrorCode(StrEnum):
+    """Why a re-sync could not bring a version up to date; stable, clients may branch on it.
+
+    The version keeps serving what it had in every case: these say which upstream problem it was.
+    """
+
+    REPO_UNREACHABLE = "repo_unreachable"
+    """The repository cannot be read: deleted, made private, moved, or the server is down."""
+    AUTH_FAILED = "auth_failed"
+    """The server refused the credential (expired, revoked) or the stored one cannot be read."""
+    REF_DELETED = "ref_deleted"
+    """The branch or tag the version follows is no longer in the repository."""
+    TAG_MOVED = "tag_moved"
+    """The tag now points at another commit; it is reported, never re-imported by a sync."""
+
+
+UNEXPECTED_ERROR = "unexpected"
+"""The ``error_code`` of a job that failed on something no domain error describes (a bug)."""
+
+
 @dataclass(frozen=True, slots=True)
 class FileProblem:
     """A problem with one file of an import: ``code`` is the stable kind, ``reason`` the text."""
@@ -451,6 +471,8 @@ class Job:
     chunked: int = 0
     reused: int = 0
     error: str | None = None
+    error_code: str | None = None
+    """The stable code of ``error``: a ``SyncErrorCode``, an error's own code or ``unexpected``."""
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -531,9 +553,9 @@ class Job:
         """Mark the job as finished."""
         return replace(self, state=JobState.SUCCEEDED, finished_at=now)
 
-    def failed(self, error: str, now: datetime) -> Self:
-        """Mark the job as stopped with ``error``."""
-        return replace(self, state=JobState.FAILED, error=error, finished_at=now)
+    def failed(self, error: str, now: datetime, *, code: str | None = None) -> Self:
+        """Mark the job as stopped with ``error`` (the text) and its stable ``code``."""
+        return replace(self, state=JobState.FAILED, error=error, error_code=code, finished_at=now)
 
     def requeued(self) -> Self:
         """Run again from the beginning, as if never started."""
@@ -547,6 +569,7 @@ class Job:
             reused=0,
             notes=0,
             error=None,
+            error_code=None,
             started_at=None,
             finished_at=None,
         )
@@ -1537,6 +1560,20 @@ class Removed:
     ref: str | None
     manifest_ids: tuple[str, ...]
     default_ref: str | None
+
+
+type ArticleTags = Mapping[str, tuple[str, ...]]
+"""Article path -> every tag the article carries now."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaggedPath:
+    """Manual tags the catalog stored for a path, and the manifests whose articles they touched."""
+
+    library: str
+    path: str
+    tags: tuple[str, ...]
+    retagged: Mapping[str, ArticleTags]  # manifest ID -> its touched articles
 
 
 @dataclass(frozen=True, slots=True)

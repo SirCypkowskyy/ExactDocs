@@ -65,6 +65,7 @@ jobs = Table(
     Column("chunked", Integer, nullable=False, server_default="0"),
     Column("reused", Integer, nullable=False, server_default="0"),
     Column("error", Text),
+    Column("error_code", Text),  # null on rows that failed before codes were recorded
     # UTC ISO-8601 with microseconds, so text order is time order
     Column("created_at", Text, nullable=False),
     Column("started_at", Text),
@@ -197,6 +198,7 @@ def _values(job: Job) -> Mapping[str, Any]:
         "chunked": job.chunked,
         "reused": job.reused,
         "error": job.error,
+        "error_code": job.error_code,
         "created_at": _text(job.created_at),
         "started_at": _text(job.started_at),
         "finished_at": _text(job.finished_at),
@@ -247,6 +249,7 @@ def _job(row: Row) -> Job:
         chunked=row.chunked,
         reused=row.reused,
         error=row.error,
+        error_code=row.error_code,
         created_at=created_at,
         started_at=_moment(row.started_at),
         finished_at=_moment(row.finished_at),

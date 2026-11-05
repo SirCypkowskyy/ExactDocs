@@ -145,6 +145,10 @@ class NoIndex:
         """Not expected to be called."""
         raise NotImplementedError
 
+    async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        """Not expected to be called."""
+        raise NotImplementedError
+
 
 @dataclass(slots=True)
 class InMemoryCredentialVault:

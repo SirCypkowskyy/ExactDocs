@@ -32,6 +32,7 @@ from exactdocs.bootstrap.client import (
 
 EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT = 1, 2, 3, 4, 5, 6
 POLL_SECONDS = 1.0
+SYNC_FAILED_STATUS = 422  # the remote could not be read: repo_unreachable, auth_failed, ...
 PAGE = 200  # the largest page the API serves
 MAX_REFS_SHOWN = 5
 WAIT_SECONDS = 600.0  # how long --wait follows a job before it leaves it to the server
@@ -167,7 +168,8 @@ async def _watch(
             return job
         if job["state"] == "failed":
             reason = job.get("error") or "no reason recorded"
-            message = f"importing {label} failed: {printable(reason)} (job {job_id})"
+            code = f" [{printable(job['error_code'])}]" if job.get("error_code") else ""
+            message = f"importing {label} failed{code}: {printable(reason)} (job {job_id})"
             raise ImportFailedError(message)
         if job["state"] not in {"queued", "running"}:
             message = f"job {job_id} is in the unknown state {printable(str(job['state']))!r}"
@@ -224,6 +226,20 @@ def _finished(job: dict[str, Any]) -> str:
     return f"imported {job['done']} files" + (f", skipped {skipped}" if skipped else "")
 
 
+def parse_tag_rules(tag_rules: Sequence[str]) -> list[dict[str, str]]:
+    """Turn ``PATTERN=TAG`` arguments into the API's tag rules; a malformed one is a usage error."""
+    rules = []
+    for rule in tag_rules:
+        pattern, _, tag = rule.rpartition("=")
+        if not pattern or not tag:
+            message = (
+                f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
+            )
+            raise UsageError(message)
+        rules.append({"pattern": pattern, "tag": tag})
+    return rules
+
+
 async def add_library(
     api: ApiClient,
     url: str,
@@ -240,15 +256,7 @@ async def add_library(
     give_up_after: float = WAIT_SECONDS,
 ) -> None:
     """``POST /libraries``, then optionally follow the import job."""
-    rules = []
-    for rule in tag_rules:
-        pattern, _, tag = rule.rpartition("=")
-        if not pattern or not tag:
-            message = (
-                f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
-            )
-            raise UsageError(message)
-        rules.append({"pattern": pattern, "tag": tag})
+    rules = parse_tag_rules(tag_rules)
     body: dict[str, Any] = {
         "url": url,
         "library_id": library_id,
@@ -262,6 +270,49 @@ async def add_library(
     await _report_added(
         api, added, wait=wait, as_json=as_json, interval=interval, give_up_after=give_up_after
     )
+
+
+async def preview_import(
+    api: ApiClient,
+    url: str,
+    *,
+    ref: str | None = None,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+    credential: dict[str, str] | None = None,
+    as_json: bool = False,
+) -> None:
+    """``add --dry-run``: ``POST /repositories/preview`` with what ``add`` would send.
+
+    Prints the files an import would take, how many there are and whether the list was cut;
+    no sizes (the server would have to download every file to know them). Nothing is stored.
+    """
+    body: dict[str, Any] = {
+        "url": url,
+        "ref": ref,
+        "include_paths": list(include),
+        "exclude_paths": list(exclude),
+        "credential": credential,
+    }
+    preview = await api.request(
+        "POST", "/repositories/preview", json={k: v for k, v in body.items() if v}
+    )
+    if as_json:
+        dump(preview)
+        return
+    files, total = preview["files"], preview["total"]
+    kind = preview["ref_kind"]
+    sha = "" if kind == "commit" else f", {preview['commit_sha'][:9]}"  # the ref is the SHA
+    where = f"{preview['ref']} ({kind}{sha})"
+    if not total:
+        say(f"Dry run of {where}: no file matches; check --path and --exclude. Nothing stored.")
+        return
+    noun = "file" if total == 1 else "files"
+    say(f"Dry run of {where}: an import would take {total} {noun}. Nothing stored.")
+    for path in files:
+        say(path)
+    if preview["truncated"]:
+        say(f"... truncated: {len(files)} of {total} files listed.")
 
 
 async def add_version(
@@ -378,8 +429,18 @@ async def sync_library(
     interval: float = POLL_SECONDS,
     give_up_after: float = WAIT_SECONDS,
 ) -> None:
-    """``POST /libraries/{owner}/{repo}/sync``; ``--wait`` follows every queued import."""
-    synced = await api.request("POST", f"{_library_path(library)}/sync")
+    """``POST /libraries/{owner}/{repo}/sync``; ``--wait`` follows every queued import.
+
+    Any version that could not be synced (the remote could not be read, a branch or tag is gone,
+    a tag moved, a queued import failed) raises ``ImportFailedError`` naming each reason and code.
+    """
+    try:
+        synced = await api.request("POST", f"{_library_path(library)}/sync")
+    except ApiError as exc:
+        if exc.status != SYNC_FAILED_STATUS:
+            raise
+        message = f"sync of {printable(library)} failed [{printable(exc.code)}]: {exc.detail}"
+        raise ImportFailedError(message) from None
     versions = synced["versions"]
     jobs: dict[str, Any] = {}
     failure = None
@@ -395,12 +456,17 @@ async def sync_library(
             say(f"{queued} import(s) queued; follow them with --wait or in the web UI.")
         for ref, job in jobs.items():
             say(f"{ref}: {_finished(job)}.")
-    failed = [v["ref"] for v in versions if v["status"] == "failed"]
+    failed = [v for v in versions if v["status"] == "failed"]
     if failure or failed:
         parts = [str(failure)] if failure else []
-        if failed:
-            parts.append(f"sync failed for {printable(', '.join(failed))} (see the jobs)")
+        parts += [_sync_failure(v) for v in failed]
         raise ImportFailedError("; ".join(parts))
+
+
+def _sync_failure(version: dict[str, Any]) -> str:
+    code = f" [{printable(version['error_code'])}]" if version.get("error_code") else ""
+    reason = printable(version.get("error") or "see the jobs")
+    return f"sync of {printable(version['ref'])} failed{code}: {reason}"
 
 
 def removal_prompt(target: str) -> str:

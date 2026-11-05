@@ -9,6 +9,7 @@ from typing import Self
 from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
     CreateLibrary,
@@ -29,11 +30,13 @@ from exactdocs.catalog.ports.driving import (
     RemoveVersion,
     ResolveRenamedPath,
     ResolveVersion,
+    SetManualTags,
     StoreManifest,
     UpdateLibrary,
 )
 from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
+    ApplyManualTagsUseCase,
     ApplyReadmeUseCase,
     CollectGarbageUseCase,
     CreateLibraryUseCase,
@@ -49,11 +52,13 @@ from exactdocs.catalog.use_cases import (
     ListLibrariesUseCase,
     ListRenamesUseCase,
     ListTagsUseCase,
+    ManualTagger,
     PinDefaultVersionUseCase,
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
     ResolveRenamedPathUseCase,
     ResolveVersionUseCase,
+    SetManualTagsUseCase,
     StoreManifestUseCase,
     UpdateLibraryUseCase,
 )
@@ -87,6 +92,8 @@ class CatalogModule:
     apply_readme: ApplyReadme
     remove_version: RemoveVersion
     remove_library: RemoveLibrary
+    set_manual_tags: SetManualTags
+    apply_manual_tags: ApplyManualTags
 
     @classmethod
     def build(
@@ -98,6 +105,7 @@ class CatalogModule:
     ) -> Self:
         """Assemble the use cases around the given driven adapters."""
         clock = clock or SystemClock()
+        tagger = ManualTagger(repository, manifests)
         return cls(
             list_libraries=ListLibrariesUseCase(repository),
             create_library=CreateLibraryUseCase(repository),
@@ -122,4 +130,6 @@ class CatalogModule:
             apply_readme=ApplyReadmeUseCase(repository),
             remove_version=RemoveVersionUseCase(repository, manifests),
             remove_library=RemoveLibraryUseCase(repository, manifests),
+            set_manual_tags=SetManualTagsUseCase(repository, tagger),
+            apply_manual_tags=ApplyManualTagsUseCase(manifests, tagger),
         )

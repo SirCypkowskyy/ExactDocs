@@ -20,7 +20,7 @@ from exactdocs.ingestion.models import (
     ResolvedRef,
     SyncStatus,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, MAX_TAGS, Page
 
 
 class _Dto(BaseModel):
@@ -46,6 +46,16 @@ class FileProblemSummary(_Dto):
         )
 
 
+ERROR_CODE = (
+    "The stable code of `error`, null unless the job failed (or failed before codes were "
+    "recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made "
+    "private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot "
+    "be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points "
+    "elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or "
+    "`unexpected`."
+)
+
+
 class JobSummary(_Dto):
     """A job and how far it got. ``total`` is 0 until the job knows its size."""
 
@@ -65,6 +75,7 @@ class JobSummary(_Dto):
         description="Articles whose chunk set an earlier import had stored (files, not blobs)."
     )
     error: str | None
+    error_code: str | None = Field(description=ERROR_CODE)
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -85,6 +96,7 @@ class JobSummary(_Dto):
             chunked=job.chunked,
             reused=job.reused,
             error=job.error,
+            error_code=job.error_code,
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
@@ -119,6 +131,7 @@ class LatestJob(_Dto):
     total: int
     skipped: int = Field(description="How many files the job skipped; see `/jobs/{id}`.")
     error: str | None
+    error_code: str | None = Field(description=ERROR_CODE)
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -136,6 +149,7 @@ class LatestJob(_Dto):
             total=job.total,
             skipped=job.skipped_count,
             error=job.error,
+            error_code=job.error_code,
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
@@ -486,6 +500,35 @@ class RemoveLibraryCommand(_Dto):
     library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
 
 
+class ManualTagsIn(_Dto):
+    """The tags to set by hand on an article path; they replace its earlier manual tags."""
+
+    tags: list[Annotated[str, Field(max_length=MAX_TAG_INPUT)]] = Field(
+        max_length=MAX_TAGS,
+        description=(
+            "Normalized like every tag (lower-case, trimmed, deduplicated). Empty removes them."
+        ),
+    )
+
+
+class TagArticleCommand(ManualTagsIn):
+    """Set the manual tags of `path` for every version of `library`."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+
+
+class TaggedArticle(_Dto):
+    """The manual tags of a path as stored: every version's article at that path carries them.
+
+    So does, in a later version, the article git saw it renamed to.
+    """
+
+    library: str
+    path: str
+    tags: list[str]
+
+
 class RemovalResult(_Dto):
     """A removal is done for readers when this is returned; the disk is freed by a job."""
 
@@ -518,9 +561,20 @@ class SyncedVersion(_Dto):
     job_id: str | None = Field(
         description=(
             "The queued import; the import already in progress (`importing`); the failed job "
-            "that records why the branch is gone (`failed`); or the no-op job that cleared an "
-            "earlier failure."
+            "that records why the version could not be synced (`failed`); or the no-op job "
+            "that cleared an earlier failure."
         )
+    )
+    error_code: str | None = Field(
+        default=None,
+        description=(
+            "Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is "
+            "gone upstream), `tag_moved` (the tag names another commit now; it is not "
+            "re-imported) or `unexpected` (its import could not be queued); null otherwise."
+        ),
+    )
+    error: str | None = Field(
+        default=None, description="The reason of a `failed` version, for people; null otherwise."
     )
 
 

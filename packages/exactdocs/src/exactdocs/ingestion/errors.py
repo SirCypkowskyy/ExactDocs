@@ -355,10 +355,15 @@ class CheckoutUnreadableError(DomainError):
 
 
 class SyncFailedError(ValidationError):
-    """The remote could not be read during a sync: the cause's code, plus the jobs that say so."""
+    """The remote could not be read during a sync: why (``code``), plus the jobs that say so.
 
-    def __init__(self, cause: DomainError, job_ids: Sequence[str]) -> None:
+    ``code`` is the sync's own (``repo_unreachable``, ``auth_failed``...), the one the failed
+    jobs record too; ``cause_code`` is the finer code of the git error behind it.
+    """
+
+    def __init__(self, cause: DomainError, job_ids: Sequence[str], code: str) -> None:
         jobs = f" (failed jobs recorded: {', '.join(job_ids)})" if job_ids else ""
         super().__init__(f"{cause}{jobs}")
-        self.code = cause.code
+        self.code = code
+        self.cause_code = cause.code
         self.job_ids = tuple(job_ids)

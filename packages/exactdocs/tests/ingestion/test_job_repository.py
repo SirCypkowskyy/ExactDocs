@@ -57,7 +57,7 @@ async def test_every_field_survives_a_round_trip(repository: JobRepository) -> N
         .progressed(done=4, total=10)
         .with_problem("assets/logo.png", ProblemCode.BINARY, "binary file")
         .with_problem("guide/ünï.md", ProblemCode.UNDECODABLE, "not text")
-        .failed("boom", T0 + timedelta(seconds=9, microseconds=7))
+        .failed("boom", T0 + timedelta(seconds=9, microseconds=7), code="tag_moved")
     )
 
     await repository.add(job)

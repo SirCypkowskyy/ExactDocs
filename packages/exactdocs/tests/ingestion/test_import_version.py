@@ -23,6 +23,8 @@ from exactdocs.ingestion.errors import (
     ImportNotPinnedError,
     ImportTooLargeError,
     NoArticlesError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
@@ -52,7 +54,7 @@ from exactdocs.ingestion.models import (
     git_blob_sha,
     parse_article,
 )
-from exactdocs.ingestion.module import import_job
+from exactdocs.ingestion.module import TagLocks, import_job
 from exactdocs.ingestion.ports import RenameSource
 from exactdocs.ingestion.use_cases import (
     MAX_WANTED_IMAGES,
@@ -178,6 +180,7 @@ class Side:
     fail_at: str | None = None
     hang_at: str | None = None
     broken_discard: bool = False
+    manual_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reached: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def _step(self, step: str) -> None:
@@ -195,6 +198,13 @@ class Side:
 
     async def activate(self, manifest_id: str) -> None:
         await self._step(f"activate {manifest_id}")
+
+    async def apply_manual_tags(self, manifest_id: str) -> dict[str, tuple[str, ...]]:
+        await self._step(f"apply_manual_tags {manifest_id}")
+        return dict(self.manual_tags)
+
+    async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        await self._step(f"retag {manifest_id} {sorted(tags)}")
 
     async def describe(
         self,
@@ -327,6 +337,7 @@ def build_world(
         renames=renames,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
+        tag_locks=TagLocks(),
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -340,6 +351,7 @@ async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_fi
     assert world.log == [
         "catalog store",
         "chunks index m1",
+        "catalog apply_manual_tags m1",
         "catalog activate m1",
         "catalog describe",
     ]
@@ -516,6 +528,35 @@ async def test_a_context7_json_that_is_a_link_is_ignored(tmp_path: Path) -> None
     ]
 
 
+async def test_manual_tags_reach_the_chunks_before_the_version_is_activated(
+    world: World,
+) -> None:
+    world.catalog.manual_tags = {"docs/install.md": ("install", "onboarding")}
+
+    await world.run(make_job(), world.progress)
+
+    assert world.log[1:5] == [
+        "chunks index m1",
+        "catalog apply_manual_tags m1",
+        "chunks retag m1 ['docs/install.md']",
+        "catalog activate m1",
+    ]
+
+
+async def test_a_failing_retag_discards_the_version(world: World) -> None:
+    world.catalog.manual_tags = {"docs/install.md": ("onboarding",)}
+    world.chunks.fail_at = "retag m1 ['docs/install.md']"
+
+    with pytest.raises(RuntimeError):
+        await world.run(make_job(), world.progress)
+
+    assert "catalog activate m1" not in world.log
+    assert [e for e in world.log if " discard " in e] == [
+        "chunks discard m1 /a/b",
+        "catalog discard m1 /a/b",
+    ]
+
+
 async def test_a_catalog_that_refuses_the_readme_does_not_fail_the_import(tmp_path: Path) -> None:
     world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "README.md": README})
     world.catalog.fail_at = "describe"
@@ -525,6 +566,7 @@ async def test_a_catalog_that_refuses_the_readme_does_not_fail_the_import(tmp_pa
     assert world.log == [
         "catalog store",
         "chunks index m1",
+        "catalog apply_manual_tags m1",
         "catalog activate m1",
         "catalog describe",
     ]
@@ -593,7 +635,30 @@ async def test_a_fetch_that_fails_stores_nothing(world: World) -> None:
     assert world.log == []
 
 
-@pytest.mark.parametrize("failing", ["store", "index m1", "activate m1"])
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_an_auth_demand_without_a_credential_means_the_repository_is_gone_or_private(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    # GitHub answers a deleted repository with 401, not 404, so it does not reveal private ones.
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, kind=kind)
+    world.gateway.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(NotAGitRepositoryError):
+        await world.run(make_job(), world.progress)
+
+
+async def test_an_auth_demand_with_a_stored_credential_stays_an_auth_failure(
+    tmp_path: Path,
+) -> None:
+    vault = InMemoryCredentialVault({"/a/b": AccessToken(token="ghp_revoked")})
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault)
+    world.gateway.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(RepositoryAuthRequiredError):
+        await world.run(make_job(), world.progress)
+
+
+@pytest.mark.parametrize("failing", ["store", "index m1", "apply_manual_tags m1", "activate m1"])
 async def test_a_failure_before_activation_discards_chunks_then_manifest(
     world: World, failing: str
 ) -> None:

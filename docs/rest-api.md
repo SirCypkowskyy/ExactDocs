@@ -57,6 +57,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
   carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.
+- **Manual tags**: `PUT /libraries/{owner}/{repo}/tags?path=` with `{"tags": [...]}` (at most 20,
+  normalized like every tag) sets the tags of an article path by hand, for every version of the
+  library, replacing the path's earlier manual tags; it answers `{"library", "path", "tags"}`.
+  `DELETE` on the same URL removes them (204); imported tags stay. They combine with the imported
+  tags (front matter, path rules) of the article at `path` in every version, and of the article git
+  saw it renamed to in a later version (rename maps are followed back across versions, never from a
+  new name to an old one), and later imports get them too. Articles show every tag in `tags` and the
+  manual ones again in `manual_tags` as `[{"tag", "path"}]`, where `path` is the path the tag was
+  set on: the article's own, or an older one it was renamed from. `PUT` and `DELETE` act on the path
+  that was tagged, never on its successors: to remove a tag that came with a rename, remove it on
+  the `path` it names (which removes it from every version). Listings, tag counts and search see them at once (the tag
+  copies on chunks are refreshed, nothing is chunked again). A path no version has is accepted and
+  waits for one. An unknown library is 404; a value that cannot be a tag is 422 `invalid_tags`.
 - **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&path=&direction=` follows `path` one
   hop across the renames git saw when `ref` was imported (default version without `ref`).
   `direction=forward` (default): `path` is from the version imported before `ref`; `back`: `path`
@@ -164,22 +177,34 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (the version before), so an ID that is several re-syncs old may get no location.
   The body lists every version with a `status`; read it rather than the HTTP status:
   `queued` (with the `job_id`), `up_to_date`, `importing` (an import of that branch is already
-  queued or running: it is left alone and the others still sync), `pinned` (tags and commits never
-  move) or `failed` (the branch no longer exists upstream, or its import could not be queued; the
-  version keeps serving). **202 Accepted** with `Location` (the import job, or the library's jobs
-  when several were queued) when anything was queued, else **200**. At most one import per
-  library and ref is unfinished at any time (a unique index), so concurrent syncs cannot queue it
-  twice. Errors: 404 `not_found`; 409 `version_importing` when an import is running and nothing
-  could be queued; and, when the remote cannot be read, the repository error of
-  `/repositories/check` (422 `repository_unreachable`, ...). The 422 is deliberate (distinct
-  codes are E9-02): the versions keep what they served, and a failed job is recorded per branch
-  (once per distinct reason) and named in the message. A later sync that finds the branch up to
-  date after a failure records a succeeded no-op job, so the error no longer shows.
+  queued or running: it is left alone and the others still sync), `pinned` (commits, and tags
+  that still name the commit they were imported at) or `failed` with an `error_code` and an
+  `error`: `ref_deleted` (the branch or tag no longer exists upstream), `tag_moved` (the tag
+  names another commit now; it is reported, **never re-imported**: remove the version and add
+  it again to take the new commit) or `unexpected` (its import could not be queued). A failed
+  version keeps serving what it had. **202 Accepted** with `Location` (the import job, or the
+  library's jobs when several were queued) when anything was queued, else **200**. At most one
+  import per library and ref is unfinished at any time (a unique index), so concurrent syncs
+  cannot queue it twice. Errors: 404 `not_found`; 409 `version_importing` when an import is
+  running and nothing could be queued; and, when the remote cannot be read, 422
+  `repo_unreachable` (the repository was deleted, made private, moved, or the server cannot be
+  reached; a login prompt for a library stored without a credential counts too, because GitHub
+  answers a missing repository that way) or `auth_failed` (the stored token or key was refused,
+  e.g. expired or revoked, or cannot be read with the current secret key); an SSH host key that
+  changed stays `host_key_changed`, and a server without git answers `git_not_installed`. The
+  versions keep what they served, and a failed job with that code is recorded per branch and tag
+  (once per distinct reason) and named in the message. A later sync that finds the version fine
+  again records a succeeded no-op job, so the error no longer shows.
 
 ## Jobs, access and health
 
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh` or `collect`; state `queued`,
   `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; problems).
+  A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its
+  `finished_at`. The code of an upstream problem is one of `repo_unreachable`, `auth_failed`,
+  `ref_deleted` and `tag_moved`, the same for a sync and for an import that meets it; any other
+  failure keeps the error's own code (`no_articles`, `commit_unavailable`, ...) or is
+  `unexpected`. Jobs that failed before codes were recorded have `error_code: null`.
   `GET /jobs/latest` is the newest job of every library version in one call (`{"jobs": [...]}`,
   with `skipped` instead of the problem list), which the library list uses to show freshness and
   sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one

@@ -153,10 +153,22 @@ export function explainSync(error: unknown): Problem {
         "A version is still importing, so there is nothing new to queue. Re-sync once it finishes.",
     };
   }
+  if (error.status === 422 && error.code === "auth_failed") {
+    return {
+      message:
+        "The stored credentials were refused or can't be read, so nothing changed: send the token or key again. Every version keeps what it served.",
+    };
+  }
+  if (error.status === 422 && error.code === "host_key_changed") {
+    return {
+      message:
+        "The SSH host key of the repository's server has changed since it was first seen, so nothing was fetched. Check with whoever runs that server before trusting the new key. Every version keeps what it served.",
+    };
+  }
   if (error.status === 422) {
     return {
       message:
-        "The repository couldn't be read, so nothing changed. Every version keeps what it served.",
+        "The repository couldn't be read (deleted, made private or unreachable), so nothing changed. Every version keeps what it served.",
     };
   }
   return generic(error);
@@ -186,6 +198,21 @@ const STATUS_WORDS: Record<SyncedVersion["status"], string> = {
   failed: "Failed",
 };
 export const statusWords = (s: SyncedVersion["status"]) => STATUS_WORDS[s];
+
+/** Why a `failed` version could not be synced, by its stable `error_code`. */
+export function failureWords(v: SyncedVersion): string {
+  const kept = "The version keeps serving what it had.";
+  switch (v.error_code) {
+    case "ref_deleted":
+      return `The ${v.ref_kind === "tag" ? "tag" : "branch"} is gone from the repository. ${kept}`;
+    case "tag_moved":
+      return `The tag now points at another commit. It is never re-imported: remove this version and add it again to take the new commit. ${kept}`;
+    case "unexpected":
+      return `Its import could not be queued. ${kept}`;
+    default:
+      return `It could not be synced. ${kept}`;
+  }
+}
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 

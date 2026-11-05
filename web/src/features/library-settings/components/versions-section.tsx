@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
+import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
@@ -88,6 +89,9 @@ function fieldMessage(p: Problem): ReactNode {
   );
 }
 
+/** The field a ref error belongs to: the typed ref when it is shown, else the picker. */
+const refField = () => document.getElementById("ref-typed") ?? document.getElementById("ref");
+
 function AddVersionForm({
   owner,
   repo,
@@ -97,6 +101,7 @@ function AddVersionForm({
   onStart,
 }: Props & { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const focusAfterRender = useFocusAfterRender();
   // No version is preselected: adding one is a decision, not a default.
   const [choice, setChoice] = useState<RefChoice>({ kind: "none" });
   const [typed, setTyped] = useState("");
@@ -117,9 +122,8 @@ function AddVersionForm({
       if (p.field) {
         setFieldError(fieldMessage(p));
         setProblem(undefined);
-        requestAnimationFrame(() =>
-          (document.getElementById("ref-typed") ?? document.getElementById("ref"))?.focus(),
-        );
+        // In the commit that shows the error, never a frame later.
+        focusAfterRender(refField);
       } else {
         setProblem(p);
       }
@@ -136,9 +140,7 @@ function AddVersionForm({
     setProblem(undefined);
     if (!ref) {
       setFieldError("Choose a branch or tag from the list, or pick “Another ref or commit…”.");
-      requestAnimationFrame(() =>
-        (document.getElementById("ref-typed") ?? document.getElementById("ref"))?.focus(),
-      );
+      focusAfterRender(refField);
       return;
     }
     setFieldError(undefined);
@@ -177,7 +179,7 @@ function AddVersionForm({
             setChoice(c);
             setFieldError(undefined);
             if (c.kind === "other") {
-              requestAnimationFrame(() => document.getElementById("ref-typed")?.focus());
+              focusAfterRender(() => document.getElementById("ref-typed"));
             }
           }}
           onUnavailable={unavailable}
@@ -227,6 +229,7 @@ export function VersionsSection(props: Props) {
   const trigger = useRef<HTMLElement | null>(null);
   const removedOk = useRef(false);
   const now = useNow();
+  const focusAfterRender = useFocusAfterRender();
 
   const remove = useMutation({
     mutationFn: (version: SettingsVersion) =>
@@ -260,7 +263,8 @@ export function VersionsSection(props: Props) {
     setAdding(false);
     // `transitionend` unmounts the card; without a transition (reduced motion) nothing fires it.
     setTimeout(() => setMounted(false), 300);
-    requestAnimationFrame(() => addButton.current?.focus());
+    // The button sits outside the card, so it is on screen in the commit that closes it.
+    focusAfterRender(() => addButton.current);
   }
 
   return (

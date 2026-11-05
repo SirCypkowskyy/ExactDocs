@@ -8,6 +8,7 @@ from typing import Protocol
 
 from exactdocs.ingestion.models import (
     ArticleChunk,
+    ArticleTags,
     Collected,
     Credential,
     FetchedFile,
@@ -25,6 +26,7 @@ from exactdocs.ingestion.models import (
     RemoteRefs,
     Removed,
     RepositoryUrl,
+    TaggedPath,
 )
 
 
@@ -318,6 +320,14 @@ class VersionPublisher(Protocol):
         """Make the pending manifest what its version serves, all at once."""
         ...
 
+    async def apply_manual_tags(self, manifest_id: str) -> ArticleTags:
+        """Give the pending manifest the manual tags its library has now (renames followed).
+
+        Returns the articles that carry manual tags, with every tag they carry: the chunk index
+        must get the same.
+        """
+        ...
+
     async def describe(
         self,
         *,
@@ -353,6 +363,10 @@ class ChunkIndex(Protocol):
 
     async def index(self, manifest_id: str, version: ImportedVersion) -> None:
         """Store and index the version's chunks of a pending manifest (before it is activated)."""
+        ...
+
+    async def retag(self, manifest_id: str, tags: ArticleTags) -> None:
+        """Make the chunks of these articles of the manifest carry these tags; no re-chunking."""
         ...
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
@@ -419,4 +433,16 @@ class SecretBox(Protocol):
 
     def open(self, sealed: str) -> str:
         """Return the original text; raises ``CredentialsRequiredError`` when it cannot be read."""
+        ...
+
+
+class ManualTagStore(Protocol):
+    """Where the tags users set by hand on an article path are kept (the catalog)."""
+
+    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
+        """Replace the path's manual tags for every version; re-tag the pending and active ones.
+
+        Raises a not-found error for an unknown library and a validation error for a bad path or
+        tag.
+        """
         ...

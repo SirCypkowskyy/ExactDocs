@@ -22,6 +22,7 @@ from exactdocs.retrieval.ports.driving import (
     RebuildSearchIndex,
     RemoveChunks,
     ResolveLibraryId,
+    RetagArticles,
     SearchAllLibraries,
     SearchDocs,
 )
@@ -37,6 +38,7 @@ from exactdocs.retrieval.use_cases import (
     RebuildSearchIndexUseCase,
     RemoveChunksUseCase,
     ResolveLibraryIdUseCase,
+    RetagArticlesUseCase,
     SearchAllLibrariesUseCase,
     SearchDocsUseCase,
 )
@@ -57,6 +59,7 @@ class RetrievalModule:
     discard_pending_chunks: DiscardPendingChunks
     collect_chunks: CollectChunks
     remove_chunks: RemoveChunks
+    retag_articles: RetagArticles
     get_search_index_state: GetSearchIndexState
     rebuild_search_index: RebuildSearchIndex
 
@@ -88,6 +91,7 @@ class RetrievalModule:
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
             remove_chunks=RemoveChunksUseCase(manifests, chunks),
+            retag_articles=RetagArticlesUseCase(chunks),
             get_search_index_state=GetSearchIndexStateUseCase(maintenance),
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance),
         )

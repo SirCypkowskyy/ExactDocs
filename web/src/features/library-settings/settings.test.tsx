@@ -11,6 +11,7 @@ import {
   explainAddVersion,
   explainRemove,
   explainSync,
+  failureWords,
   syncHeadline,
   validateDetails,
 } from "./model/settings";
@@ -170,7 +171,10 @@ function renderPage(lib = library) {
   return queryClient;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("settings model", () => {
   it("validates the title and the description", () => {
@@ -210,10 +214,23 @@ describe("settings model", () => {
     expect(explainAddVersion(new TypeError("net"), "v1").message).toMatch(/Can't reach/);
     expect(explainSync(e(409, "version_importing")).message).toMatch(/still importing/);
     expect(explainSync(e(409, "version_importing")).tone).toBe("info");
-    expect(explainSync(e(422, "repository_unreachable")).tone).toBeUndefined();
+    expect(explainSync(e(422, "repo_unreachable")).tone).toBeUndefined();
+    expect(explainSync(e(422, "repo_unreachable")).message).toMatch(/couldn't be read/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/refused or can't be read/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/send the token or key again/);
+    expect(explainSync(e(422, "host_key_changed")).message).toMatch(/SSH host key .* changed/);
+    expect(explainSync(e(422, "host_key_changed")).message).not.toMatch(/deleted/);
     expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
       /never cancels/,
     );
+  });
+
+  it("explains a failed version without guessing when its code is unknown", () => {
+    const v = (error_code: string | null) =>
+      ({ ref: "main", ref_kind: "branch", status: "failed", error_code }) as never;
+    expect(failureWords(v("ref_deleted"))).toMatch(/branch is gone/);
+    expect(failureWords(v(null))).toMatch(/^It could not be synced\./);
+    expect(failureWords(v("something_new"))).not.toMatch(/queued/);
   });
 
   it("headlines a re-sync", () => {
@@ -336,6 +353,74 @@ describe("adding a version", () => {
     await waitFor(() => expect(screen.getByLabelText("Version to import")).toHaveFocus());
   });
 
+  /**
+   * Holds animation frames until `run()`, so a focus request made a frame late can never land
+   * before the test has checked focus and moved it elsewhere.
+   */
+  function holdFrames() {
+    const held: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => held.push(cb));
+    return {
+      run: () => {
+        for (const cb of held.splice(0)) cb(performance.now());
+      },
+    };
+  }
+
+  it("does not pull focus away once the refusal is on screen", async () => {
+    const frames = holdFrames();
+    serve({ addVersion: () => failure(422, "unknown_ref") });
+    renderPage();
+    await userEvent.selectOptions(await open(), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/no branch, tag or commit/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("does not pull focus away once the missing choice is on screen", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/Choose a branch or tag from the list/);
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("focuses the typed ref as it appears and leaves focus alone after", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await userEvent.selectOptions(await open(), "other");
+    expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("returns focus to the add button on cancel, and leaves it alone after", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add a version" })).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Re-sync now" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
   it("keeps a typed ref when the list of branches cannot load", async () => {
     const calls = serve();
     const real = globalThis.fetch;
@@ -393,10 +478,20 @@ describe("re-sync", () => {
   });
 
   it("explains a branch that is gone", async () => {
-    serve({ sync: () => synced([v({ status: "failed" })]) });
+    serve({ sync: () => synced([v({ status: "failed", error_code: "ref_deleted" })]) });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/branch is gone from the repository/)).toBeInTheDocument();
+  });
+
+  it("explains a tag that moved, and that it is not re-imported", async () => {
+    const moved = { ref: "v1.4.0", ref_kind: "tag", status: "failed", error_code: "tag_moved" };
+    serve({ sync: () => synced([v(moved)], 200) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/tag now points at another commit/)).toBeInTheDocument();
+    expect(screen.getByText(/never re-imported: remove this version/)).toBeInTheDocument();
+    expect(screen.getByText("v1.4.0")).toBeInTheDocument();
   });
 
   it("explains 409 and 422", async () => {
@@ -407,7 +502,7 @@ describe("re-sync", () => {
     // A wait state is neutral, not red.
     expect(wait.closest("p")).toHaveClass("bg-accent");
 
-    serve({ sync: () => failure(422, "repository_unreachable", "failed job j7: unreachable") });
+    serve({ sync: () => failure(422, "repo_unreachable", "failed job j7: unreachable") });
     await userEvent.click(screen.getByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/couldn't be read/)).toBeInTheDocument();
     // Job IDs mean nothing to a person: they are not shown.

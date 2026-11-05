@@ -29,6 +29,7 @@ from exactdocs.bootstrap.cli_library import (
     list_libraries,
     read_secret,
     split_target,
+    sync_library,
     table,
     token_create,
     token_list,
@@ -103,6 +104,58 @@ async def test_a_failed_job_ends_the_wait_with_its_reason() -> None:
         with pytest.raises(ImportFailedError, match="boom") as raised:
             await wait_for_job(api, "j1", label="/a/b@v1", interval=0)
     assert "\x1b" not in str(raised.value)
+
+
+async def test_a_failed_job_names_its_error_code() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        job = {"state": "failed", "done": 0, "total": 0, "error": "gone", "error_code": "x\x1b"}
+        return httpx2.Response(200, json=job)
+
+    async with ApiClient("http://localhost", "t", transport=httpx2.MockTransport(handler)) as api:
+        with pytest.raises(ImportFailedError, match=r"failed \[x.*\]: gone") as raised:
+            await wait_for_job(api, "j1", label="/a/b@v1", interval=0)
+    assert "\x1b" not in str(raised.value)
+
+
+def _sync_answer(status: int, body: dict) -> httpx2.MockTransport:
+    return httpx2.MockTransport(lambda _: httpx2.Response(status, json=body))
+
+
+async def test_a_sync_whose_remote_cannot_be_read_fails_with_its_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    body = {"error": "auth_failed", "detail": "the repository requires authentication"}
+    async with ApiClient("http://localhost", "t", transport=_sync_answer(422, body)) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs")
+    assert exit_code(raised.value) == EXIT_IMPORT
+    assert "[auth_failed]: the repository requires authentication" in str(raised.value)
+    assert not capsys.readouterr().out
+
+
+async def test_a_sync_names_each_version_that_failed_and_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def version(ref: str, status: str, **error: str) -> dict:
+        sha = "a" * 40
+        return {"ref": ref, "ref_kind": "tag", "status": status, "commit_sha": sha} | error
+
+    body = {
+        "library_id": "/acme/docs",
+        "versions": [
+            version("main", "up_to_date"),
+            version("v1", "failed", error_code="tag_moved", error="the tag 'v1' now points at"),
+            version("old", "failed", error_code="ref_deleted", error="the branch 'old' is gone"),
+        ],
+    }
+    async with ApiClient("http://localhost", "t", transport=_sync_answer(200, body)) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs")
+    message = str(raised.value)
+    assert "sync of v1 failed [tag_moved]: the tag 'v1' now points at" in message
+    assert "sync of old failed [ref_deleted]" in message
+    assert exit_code(raised.value) == EXIT_IMPORT
+    assert "tag_moved" not in capsys.readouterr().out  # the table, then the reason on stderr
 
 
 async def test_progress_is_reported_once_per_change() -> None:
@@ -479,3 +532,134 @@ def test_ctrl_c_exits_130(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EXACTDOCS_URL", "http://localhost")
     monkeypatch.setenv("EXACTDOCS_TOKEN", "t")
     assert _exit(["libraries"]) == EXIT_INTERRUPTED
+
+
+# --- add --dry-run ----------------------------------------------------------------------------
+
+PREVIEW = {
+    "ref": "v1",
+    "ref_kind": "tag",
+    "commit_sha": "0123456789abcdef",
+    "files": ["docs/a.md", "docs/b.md"],
+    "total": 2,
+    "truncated": False,
+}
+ADD_ARGS = ["https://x.io/a/b", "--ref", "v1", "--path", "docs/**", "--path", "README.md",
+            "--exclude", "docs/old/**"]  # fmt: skip
+
+
+def test_a_dry_run_sends_what_add_would_and_stores_nothing(server: Recorder) -> None:
+    server.routes = {
+        ("POST", "/api/v1/libraries"): [httpx2.Response(201, json=ADDED)],
+        ("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)],
+    }
+    assert _exit(["add", *ADD_ARGS]) == 0
+    assert _exit(["add", *ADD_ARGS, "--id", "/a/b", "--tag-rule", "x=y", "--dry-run"]) == 0
+    assert server.calls == ["POST /api/v1/libraries", "POST /api/v1/repositories/preview"]
+    added, previewed = (json.loads(r.content) for r in server.requests)
+    same = ("url", "ref", "include_paths", "exclude_paths")
+    assert {k: previewed[k] for k in same} == {k: added[k] for k in same}
+    assert set(previewed) == set(same)  # nothing that only matters to a stored library
+
+
+def test_a_dry_run_prints_the_files_and_their_count_but_no_sizes(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "Dry run of v1 (tag, 012345678): an import would take 2 files. Nothing stored.",
+        "docs/a.md",
+        "docs/b.md",
+    ]
+
+
+def test_a_cut_list_says_truncated(server: Recorder, capsys: pytest.CaptureFixture[str]) -> None:
+    cut = PREVIEW | {"files": ["docs/a.md"], "total": 1500, "truncated": True}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=cut)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "1500 files" in out
+    assert out.splitlines()[-1] == "... truncated: 1 of 1500 files listed."
+
+
+def test_a_dry_run_matching_nothing_says_which_flags_to_check(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = PREVIEW | {"files": [], "total": 0}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=empty)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    assert "no file matches; check --path and --exclude" in capsys.readouterr().out
+
+
+def test_a_dry_run_in_json_is_the_preview_as_the_server_sent_it(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run", "--json", "--wait"]) == 0
+    assert json.loads(capsys.readouterr().out) == PREVIEW
+    assert server.calls == ["POST /api/v1/repositories/preview"]  # --wait has nothing to follow
+
+
+def test_a_path_from_the_repository_cannot_drive_the_terminal(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hostile = PREVIEW | {"files": ["docs/\x1b[2Jevil.md"], "total": 1}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=hostile)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "docs/[2Jevil.md" in out
+
+
+def test_busy_previews_are_reported_as_try_again(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    busy = httpx2.Response(
+        429,
+        json={"error": "preview_busy", "detail": "too many previews are running"},
+        headers={"Retry-After": "5"},
+    )
+    server.routes = {("POST", "/api/v1/repositories/preview"): [busy]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == EXIT_FAILED
+    err = capsys.readouterr().err
+    assert "try again" in err
+    assert "in 5 seconds" in err
+
+
+def test_a_dry_run_of_a_private_repository_goes_through_a_session(
+    server: Recorder, tmp_path: Path
+) -> None:
+    server.routes = {
+        ("POST", "/api/v1/session"): [httpx2.Response(201, json=SESSION)],
+        ("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)],
+        ("DELETE", "/api/v1/session"): [httpx2.Response(204)],
+    }
+    args = ["add", "https://x.io/a/b", "--dry-run", "--git-token-file", _secret(tmp_path, "tok"),
+            "--username", "ada", "--password-stdin"]  # fmt: skip
+    assert _exit(args, HORSE + "\n") == 0
+    assert server.calls[1] == "POST /api/v1/repositories/preview"
+    assert all("authorization" not in r.headers for r in server.requests)
+    assert json.loads(server.requests[1].content)["credential"] == {"kind": "token", "token": "tok"}
+
+
+def test_a_malformed_tag_rule_fails_the_dry_run_before_any_request(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)]}
+    assert _exit(["add", *ADD_ARGS, "--tag-rule", "bogus", "--dry-run"]) == EXIT_USAGE
+    assert "'bogus' is not a tag rule" in capsys.readouterr().err
+    assert server.calls == []
+    assert _exit(["add", *ADD_ARGS, "--tag-rule", "docs/api/**=api", "--dry-run"]) == 0
+
+
+def test_a_commit_ref_is_not_followed_by_its_own_short_sha(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    pinned = PREVIEW | {"ref": sha, "ref_kind": "commit", "commit_sha": sha}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=pinned)]}
+    assert _exit(["add", "https://x.io/a/b", "--ref", sha, "--dry-run"]) == 0
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first.startswith(f"Dry run of {sha} (commit): ")
