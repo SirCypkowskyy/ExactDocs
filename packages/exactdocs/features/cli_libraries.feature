@@ -21,6 +21,17 @@ Feature: Libraries and tokens from the command line
     And stdout is JSON that names the job and its state "succeeded"
     And stderr shows the import progress
 
+  Scenario: A dry run from the CLI lists files without storing anything
+    When the user runs the command "exactdocs add <fixture-url> --ref v1.4.0 --path 'docs/**' --dry-run"
+    Then the command succeeds
+    And the output lists the files the preview matches, with their count
+    And no library, version or job exists afterwards
+
+  Scenario: A dry run gives scripts the preview as JSON
+    When the user runs the command "exactdocs add <fixture-url> --ref v1.4.0 --path 'docs/**' --dry-run --json"
+    Then the command succeeds
+    And stdout is JSON with the files, their total and whether the list was cut
+
   Scenario: Another version is added to a library
     Given the user ran the command "exactdocs add <fixture-url> --ref v1.3.0 --path docs/ --wait"
     When the user runs the command "exactdocs version add /fixture/docs-repo v1.4.0 --wait"

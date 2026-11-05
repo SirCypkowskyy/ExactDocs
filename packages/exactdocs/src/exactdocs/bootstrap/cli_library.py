@@ -264,6 +264,47 @@ async def add_library(
     )
 
 
+async def preview_import(
+    api: ApiClient,
+    url: str,
+    *,
+    ref: str | None = None,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+    credential: dict[str, str] | None = None,
+    as_json: bool = False,
+) -> None:
+    """``add --dry-run``: ``POST /repositories/preview`` with what ``add`` would send.
+
+    Prints the files an import would take, how many there are and whether the list was cut;
+    no sizes (the server would have to download every file to know them). Nothing is stored.
+    """
+    body: dict[str, Any] = {
+        "url": url,
+        "ref": ref,
+        "include_paths": list(include),
+        "exclude_paths": list(exclude),
+        "credential": credential,
+    }
+    preview = await api.request(
+        "POST", "/repositories/preview", json={k: v for k, v in body.items() if v}
+    )
+    if as_json:
+        dump(preview)
+        return
+    files, total = preview["files"], preview["total"]
+    where = f"{preview['ref']} ({preview['ref_kind']}, {preview['commit_sha'][:9]})"
+    if not total:
+        say(f"Dry run of {where}: no file matches; check --path and --exclude. Nothing stored.")
+        return
+    noun = "file" if total == 1 else "files"
+    say(f"Dry run of {where}: an import would take {total} {noun}. Nothing stored.")
+    for path in files:
+        say(path)
+    if preview["truncated"]:
+        say(f"... truncated: {len(files)} of {total} files listed.")
+
+
 async def add_version(
     api: ApiClient,
     library: str,

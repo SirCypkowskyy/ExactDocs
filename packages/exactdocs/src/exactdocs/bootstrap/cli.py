@@ -311,6 +311,13 @@ def add(
     wait: WaitOption = False,
     wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
+    dry_run: Annotated[
+        bool,
+        Parameter(
+            help="List the files the import would take (and how many) without adding anything; "
+            "--id, --tag-rule and --wait have no effect then."
+        ),
+    ] = False,
     url: UrlOption = None,
     token: CredentialTokenOption = None,
 ) -> None:
@@ -322,6 +329,17 @@ def add(
     credential = _credential(git_token_file, ssh_key, git_user)
 
     async def go(api: ApiClient) -> None:
+        if dry_run:
+            await lib.preview_import(
+                api,
+                git_url,
+                ref=ref,
+                include=path or (),
+                exclude=exclude or (),
+                credential=credential,
+                as_json=json_output,
+            )
+            return
         await lib.add_library(
             api,
             git_url,

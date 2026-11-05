@@ -479,3 +479,113 @@ def test_ctrl_c_exits_130(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EXACTDOCS_URL", "http://localhost")
     monkeypatch.setenv("EXACTDOCS_TOKEN", "t")
     assert _exit(["libraries"]) == EXIT_INTERRUPTED
+
+
+# --- add --dry-run ----------------------------------------------------------------------------
+
+PREVIEW = {
+    "ref": "v1",
+    "ref_kind": "tag",
+    "commit_sha": "0123456789abcdef",
+    "files": ["docs/a.md", "docs/b.md"],
+    "total": 2,
+    "truncated": False,
+}
+ADD_ARGS = ["https://x.io/a/b", "--ref", "v1", "--path", "docs/**", "--path", "README.md",
+            "--exclude", "docs/old/**"]  # fmt: skip
+
+
+def test_a_dry_run_sends_what_add_would_and_stores_nothing(server: Recorder) -> None:
+    server.routes = {
+        ("POST", "/api/v1/libraries"): [httpx2.Response(201, json=ADDED)],
+        ("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)],
+    }
+    assert _exit(["add", *ADD_ARGS]) == 0
+    assert _exit(["add", *ADD_ARGS, "--id", "/a/b", "--tag-rule", "x=y", "--dry-run"]) == 0
+    assert server.calls == ["POST /api/v1/libraries", "POST /api/v1/repositories/preview"]
+    added, previewed = (json.loads(r.content) for r in server.requests)
+    same = ("url", "ref", "include_paths", "exclude_paths")
+    assert {k: previewed[k] for k in same} == {k: added[k] for k in same}
+    assert set(previewed) == set(same)  # nothing that only matters to a stored library
+
+
+def test_a_dry_run_prints_the_files_and_their_count_but_no_sizes(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "Dry run of v1 (tag, 012345678): an import would take 2 files. Nothing stored.",
+        "docs/a.md",
+        "docs/b.md",
+    ]
+
+
+def test_a_cut_list_says_truncated(server: Recorder, capsys: pytest.CaptureFixture[str]) -> None:
+    cut = PREVIEW | {"files": ["docs/a.md"], "total": 1500, "truncated": True}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=cut)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "1500 files" in out
+    assert out.splitlines()[-1] == "... truncated: 1 of 1500 files listed."
+
+
+def test_a_dry_run_matching_nothing_says_which_flags_to_check(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = PREVIEW | {"files": [], "total": 0}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=empty)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    assert "no file matches; check --path and --exclude" in capsys.readouterr().out
+
+
+def test_a_dry_run_in_json_is_the_preview_as_the_server_sent_it(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run", "--json", "--wait"]) == 0
+    assert json.loads(capsys.readouterr().out) == PREVIEW
+    assert server.calls == ["POST /api/v1/repositories/preview"]  # --wait has nothing to follow
+
+
+def test_a_path_from_the_repository_cannot_drive_the_terminal(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hostile = PREVIEW | {"files": ["docs/\x1b[2Jevil.md"], "total": 1}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=hostile)]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "docs/[2Jevil.md" in out
+
+
+def test_busy_previews_are_reported_as_try_again(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    busy = httpx2.Response(
+        429,
+        json={"error": "preview_busy", "detail": "too many previews are running"},
+        headers={"Retry-After": "5"},
+    )
+    server.routes = {("POST", "/api/v1/repositories/preview"): [busy]}
+    assert _exit(["add", *ADD_ARGS, "--dry-run"]) == EXIT_FAILED
+    err = capsys.readouterr().err
+    assert "try again" in err
+    assert "in 5 seconds" in err
+
+
+def test_a_dry_run_of_a_private_repository_goes_through_a_session(
+    server: Recorder, tmp_path: Path
+) -> None:
+    server.routes = {
+        ("POST", "/api/v1/session"): [httpx2.Response(201, json=SESSION)],
+        ("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)],
+        ("DELETE", "/api/v1/session"): [httpx2.Response(204)],
+    }
+    args = ["add", "https://x.io/a/b", "--dry-run", "--git-token-file", _secret(tmp_path, "tok"),
+            "--username", "ada", "--password-stdin"]  # fmt: skip
+    assert _exit(args, HORSE + "\n") == 0
+    assert server.calls[1] == "POST /api/v1/repositories/preview"
+    assert all("authorization" not in r.headers for r in server.requests)
+    assert json.loads(server.requests[1].content)["credential"] == {"kind": "token", "token": "tok"}

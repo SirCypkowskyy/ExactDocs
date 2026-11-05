@@ -195,3 +195,33 @@ def step_revoked(context: Context) -> None:
             return 200
 
     assert asyncio.run(check()) == HTTPStatus.UNAUTHORIZED
+
+
+def _rest_preview(context: Context) -> dict:
+    """What the preview endpoint answers for the fixture at v1.4.0 and ``docs/**``."""
+    _admin_rest(context)
+    response = context.client.post(
+        "/api/v1/repositories/preview",
+        json={"url": context.fixture_repo.file_url, "ref": "v1.4.0", "include_paths": ["docs/**"]},
+    )
+    assert response.status_code == HTTPStatus.OK, response.text
+    return response.json()
+
+
+@then("the output lists the files the preview matches, with their count")
+def step_dry_run_listed(context: Context) -> None:
+    lines = context.output.splitlines()
+    preview = _rest_preview(context)
+    assert preview["files"], preview
+    assert all(f in lines for f in preview["files"]), context.output
+    assert f"{preview['total']} files" in context.output, context.output
+    assert "truncated" not in context.output, context.output
+    assert "bytes" not in context.output.lower(), context.output  # the preview has no sizes
+
+
+@then("stdout is JSON with the files, their total and whether the list was cut")
+def step_dry_run_json(context: Context) -> None:
+    body = json.loads(context.output)  # stdout holds nothing but the JSON
+    assert body["files"], body
+    assert body["total"] == len(body["files"]), body
+    assert body["truncated"] is False, body
