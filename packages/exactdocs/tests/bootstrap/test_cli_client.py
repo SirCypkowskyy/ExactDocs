@@ -11,7 +11,7 @@ import httpx2
 import pytest
 from pydantic import SecretStr
 
-from exactdocs.bootstrap import cli, client
+from exactdocs.bootstrap import cli, cli_library, client
 from exactdocs.bootstrap.client import (
     ApiClient,
     ApiError,
@@ -193,10 +193,18 @@ def test_only_the_listed_commands_are_local() -> None:
             assert forbidden not in source, f"{name} must use the REST client only"
 
 
-def test_the_client_module_stays_free_of_the_server() -> None:
-    source = Path(client.__file__).read_text(encoding="utf-8")
-    for forbidden in ("bootstrap.container", "sqlalchemy", "bootstrap.settings"):
-        assert forbidden not in source
+def test_the_client_modules_stay_free_of_the_server() -> None:
+    for module in (client, cli_library):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for forbidden in ("bootstrap.container", "sqlalchemy", "bootstrap.settings"):
+            assert forbidden not in source, module.__name__
+
+
+def test_the_helpers_of_the_remote_commands_stay_free_of_the_server() -> None:
+    for helper in (cli._session, cli._credential, cli._call, cli._api):  # ruff: ignore[private-member-access]
+        source = inspect.getsource(helper)
+        for forbidden in ("Container", "Settings", "_build(", "_run(", "sqlalchemy"):
+            assert forbidden not in source, helper.__name__
 
 
 @pytest.mark.parametrize(

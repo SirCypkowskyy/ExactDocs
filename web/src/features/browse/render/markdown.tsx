@@ -8,7 +8,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { Token } from "markdown-it";
-import { Fragment, type ReactNode, useEffect, useMemo } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
 import { CodeBlock } from "./code-block";
 import { type Budget, createBudget } from "./limits";
 import { anchorsOf, inertMdx, md, type Variant, variantOf } from "./parse";
@@ -21,8 +21,12 @@ export interface Where {
   path: string;
   /** The article's title: a leading `# Title` that repeats it is not shown twice. */
   title: string;
-  /** The image's bytes at the commit, or undefined: a private library never gets one (alt text only). */
-  imageUrl: (repoPath: string) => string | undefined;
+  /**
+   * Where to load a repository image from, best first: ExactDocs's imported copy, then (public
+   * libraries only) the host's raw file. A source that fails (404 on a version imported without
+   * images) falls through to the next; when none is left the alt text shows.
+   */
+  imageSources: (repoPath: string) => string[];
   /** The page of a file that is not an article, at the commit. */
   fileUrl: (repoPath: string) => string | undefined;
   /** A link to another article of this version: the app's own `Link`, so it navigates without a page load. */
@@ -123,13 +127,40 @@ function many(nodes: readonly Node[], ctx: Ctx): ReactNode[] {
   return nodes.map((node) => <Fragment key={node.key}>{one(node, ctx)}</Fragment>);
 }
 
+/** A same-page `#x` link. Heading ids are `doc-<anchor>`, so the browser's own jump finds nothing: scroll there ourselves. */
+function hashLink(href: string, kids: ReactNode) {
+  return (
+    <a
+      href={href}
+      onClick={() => {
+        try {
+          document.getElementById(idOf(decodeURIComponent(href.slice(1))))?.scrollIntoView();
+        } catch {
+          // a malformed fragment points at nothing
+        }
+      }}
+    >
+      {kids}
+    </a>
+  );
+}
+
+/** A paragraph whose only content is one image (whitespace aside): the image stands as a block. */
+const isFigure = (node: Node) => {
+  const inline = node.children[0]?.children ?? [];
+  const solid = inline.filter(
+    (c) => !(c.token.type === "softbreak" || (c.token.type === "text" && !c.token.content.trim())),
+  );
+  return solid.length === 1 && solid[0]?.token.type === "image";
+};
+
 function link(node: Node, ctx: Ctx) {
   const { where } = ctx;
   const target = classifyLink(where.path, attr(node.token, "href"));
   const kids = many(node.children, ctx);
   switch (target.kind) {
     case "hash":
-      return <a href={target.href}>{kids}</a>;
+      return hashLink(target.href, kids);
     case "external":
       return (
         <a href={target.href} target="_blank" rel="noopener noreferrer">
@@ -137,7 +168,11 @@ function link(node: Node, ctx: Ctx) {
         </a>
       );
     case "doc":
-      return where.docLink(target.path, target.hash, kids);
+      // A link to this article's own heading: the hash may already be the URL's, so the router
+      // would not scroll again. Treat it as a same-page link, which scrolls on every click.
+      return target.path === where.path && target.hash
+        ? hashLink(target.hash, kids)
+        : where.docLink(target.path, target.hash, kids);
     case "file": {
       const url = where.fileUrl(target.path);
       return url ? (
@@ -153,20 +188,40 @@ function link(node: Node, ctx: Ctx) {
   }
 }
 
-function image(token: Token, { where }: Ctx) {
-  const alt = token.content;
-  const target = classifyLink(where.path, attr(token, "src"));
-  // Only the repository's own files are loaded, at the commit; nothing is fetched from elsewhere.
-  const url = target.kind === "file" ? where.imageUrl(target.path) : undefined;
-  if (url) {
-    return <img src={url} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />;
-  }
+function NoImage({ alt }: { alt: string }) {
   return (
     <span className="doc-noimage">
       <ImageOff aria-hidden="true" className="size-4 shrink-0" />
-      <span>Image not shown: {alt || "Image"}</span>
+      <span>Image not available: {alt || "Image"}</span>
     </span>
   );
+}
+
+/** An image that tries each source in turn, then shows its alt text. Size is not known: CSS bounds it. */
+function Img({ sources, alt }: { sources: readonly string[]; alt: string }) {
+  // `failed` counts the sources that errored. The caller keys this by `sources`, so a changed list
+  // (a late access answer adding the host fallback) starts again at the first.
+  const [failed, setFailed] = useState(0);
+  const src = sources[failed];
+  if (!src) return <NoImage alt={alt} />;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed((n) => n + 1)}
+    />
+  );
+}
+
+function image(token: Token, { where }: Ctx) {
+  const alt = token.content;
+  const target = classifyLink(where.path, attr(token, "src"));
+  // Only the repository's own files are loaded; nothing is fetched from elsewhere.
+  const sources = target.kind === "file" ? where.imageSources(target.path) : [];
+  return <Img key={sources.join("\n")} sources={sources} alt={alt} />;
 }
 
 function heading(node: Node, ctx: Ctx) {
@@ -221,7 +276,8 @@ function one(node: Node, ctx: Ctx): ReactNode {
       return image(token, ctx);
     case "paragraph_open":
       if (node.children[0]?.children.length === 0) return null;
-      return token.hidden ? kids() : <p>{kids()}</p>;
+      if (token.hidden) return kids();
+      return isFigure(node) ? <p className="doc-figure">{kids()}</p> : <p>{kids()}</p>;
     case "heading_open":
       return heading(node, ctx);
     case "blockquote_open": {

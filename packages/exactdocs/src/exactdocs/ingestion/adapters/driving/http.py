@@ -21,9 +21,11 @@ from exactdocs.ingestion.dtos import (
     LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    PreviewRepositoryCommand,
     RemovalResult,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RepositoryPreview,
     RepositoryRefs,
     SyncedLibrary,
     SyncLibraryCommand,
@@ -38,6 +40,7 @@ from exactdocs.ingestion.ports.driving import (
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
+    PreviewRepository,
     RemoveLibrary,
     RemoveVersion,
     SyncLibrary,
@@ -61,6 +64,7 @@ def build_router(
     list_library_jobs: ListLibraryJobs,
     check_repository: CheckRepository,
     list_repository_refs: ListRepositoryRefs,
+    preview_repository: PreviewRepository,
     add_library: AddLibrary,
     add_version: AddVersion,
     remove_version: RemoveVersion,
@@ -91,6 +95,35 @@ def build_router(
     ) -> RepositoryRefs:
         """List the tags and branches of a repository (the URL is never echoed back)."""
         return await list_repository_refs(ListRepositoryRefsQuery(url=url))
+
+    @router.post(
+        "/repositories/preview",
+        responses={
+            # The envelope schema lives in bootstrap (every /api/v1 route documents it): only
+            # its name is referenced here, the domain does not import bootstrap.
+            status.HTTP_429_TOO_MANY_REQUESTS: {
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
+                },
+                "description": "Every preview slot is taken (`preview_busy`); try again shortly.",
+                "headers": {
+                    "Retry-After": {
+                        "description": "Seconds to wait before trying again.",
+                        "schema": {"type": "integer"},
+                    }
+                },
+            }
+        },
+    )
+    async def preview(command: PreviewRepositoryCommand, request: Request) -> RepositoryPreview:
+        """List the articles an import of this URL, ref and patterns would take (a dry run).
+
+        Only the commit's tree is fetched, no file content, and nothing is stored. `files` has
+        at most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths
+        are untrusted text. A `credential` needs a signed-in session, not an API token.
+        """
+        await _session_for(require_session, command.credential, request)
+        return await preview_repository(command)
 
     @router.post("/libraries", status_code=status.HTTP_201_CREATED)
     async def add(command: AddLibraryCommand, request: Request, response: Response) -> AddedLibrary:

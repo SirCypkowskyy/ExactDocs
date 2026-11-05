@@ -32,10 +32,12 @@ from exactdocs.ingestion.dtos import (
     LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    PreviewRepositoryCommand,
     RefOut,
     RemovalResult,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RepositoryPreview,
     RepositoryRefs,
     SyncedLibrary,
     SyncedVersion,
@@ -120,6 +122,7 @@ from exactdocs.ingestion.ports.driven import (
     RecoveryHook,
     Removals,
     RenameSource,
+    RepositoryTree,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob
@@ -128,6 +131,7 @@ from exactdocs_kernel import Clock, DomainError, paginate
 log = logging.getLogger(__name__)
 
 MAX_LISTED_REFS = 1000
+MAX_PREVIEW_FILES = 1000
 
 
 def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
@@ -390,6 +394,41 @@ class ListRepositoryRefsUseCase:
             branches=branches[:MAX_LISTED_REFS],
             tags=tags[:MAX_LISTED_REFS],
             truncated=max(len(branches), len(tags)) > MAX_LISTED_REFS,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewRepositoryUseCase:
+    """Implements ``ports.driving.PreviewRepository``."""
+
+    remote: GitRemote
+    tree: RepositoryTree
+
+    async def __call__(self, command: PreviewRepositoryCommand) -> RepositoryPreview:
+        """Validate, pin the ref, list the commit's tree and apply the selection to it.
+
+        The same ``PathSelection.selects`` the import uses decides, so the preview and the
+        import agree (except for files the import then skips as unreadable or too big).
+        """
+        repository = RepositoryUrl.parse(command.url)
+        credential = _credential(command.credential, repository)
+        selection = PathSelection.of(command.include_paths, command.exclude_paths)
+        refs = await self.remote.list_refs(repository, credential=credential)
+        resolved = resolve_ref(refs, command.ref)
+        paths = await self.tree.list_files(
+            repository,
+            resolved.commit_sha,
+            refs=_full_refs(resolved.kind, resolved.name),
+            credential=credential,
+        )
+        matching = sorted(path for path in paths if selection.selects(path))
+        return RepositoryPreview(
+            ref=resolved.name,
+            ref_kind=resolved.kind,
+            commit_sha=resolved.commit_sha,
+            files=matching[:MAX_PREVIEW_FILES],
+            total=len(matching),
+            truncated=len(matching) > MAX_PREVIEW_FILES,
         )
 
 
