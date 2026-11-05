@@ -31,10 +31,10 @@ changed key is a hard ``HostKeyChangedError``) and never against a system file.
 ``fetch`` (the ``GitGateway`` port) builds on the same ``_run``. Into a folder of its own it
 fetches one commit by SHA, ``--depth 1`` and ``--filter=blob:none`` (a server without filters just
 sends more), and checks out only the sparse patterns made from the selection plus the root
-README, so only those blobs are downloaded. The repository config is written by us and sets no
-hooks, no submodules, no symlinks (they become small text files, so a link can never point out
-of the folder), no fsmonitor, no auto-gc. A server that refuses a bare SHA is asked for the
-caller's ref names instead, and the result must still be the pinned commit.
+README and ``context7.json``, so only those blobs are downloaded. The repository config is
+written by us and sets no hooks, no submodules, no symlinks (they become small text files, so a
+link can never point out of the folder), no fsmonitor, no auto-gc. A server that refuses a bare
+SHA is asked for the caller's ref names instead, and the result must still be the pinned commit.
 
 Content stays verbatim: ``.git/info/attributes`` (which beats the repository's own
 ``.gitattributes``) switches off text/eol conversion, filters, ``$Id$`` expansion and
@@ -78,6 +78,7 @@ from exactdocs.ingestion.errors import (
     UrlProblem,
 )
 from exactdocs.ingestion.models import (
+    CONTEXT7_FILE,
     MAX_RENAMES,
     MAX_SIMILARITY,
     AccessToken,
@@ -109,6 +110,7 @@ _MAX_STEP_OUTPUT = 1024 * 1024
 _MAX_BRACE_EXPANSIONS = 64
 _PREFIX = "fetch-"
 _ROOT_README = ("/README.md", "/README.mdx")
+_ROOT_CONTEXT7 = f"/{CONTEXT7_FILE}"  # last: no exclusion can drop it
 # models.ARTICLE_SUFFIXES, whatever the letter case: never fetch the blobs of other files
 _ARTICLE_PATHSPEC = (":(icase)*.md", ":(icase)*.mdx")
 # What servers say when they will not serve a bare SHA (or the ref we named instead).
@@ -839,9 +841,10 @@ def _measure(folder: Path) -> tuple[int, int]:
 def sparse_patterns(selection: PathSelection) -> list[str]:
     """Non-cone sparse-checkout patterns that cover (at least) every file the selection picks.
 
-    Includes come first, the root README next, exclusions last as ``!`` lines (the last matching
-    line wins, as with ``PathSelection``). Over-fetching is harmless because the importer applies
-    ``PathSelection.selects`` again; a folder pattern brings its non-article files too.
+    Includes come first, the root README next, then exclusions as ``!`` lines (the last matching
+    line wins, as with ``PathSelection``), and the root ``context7.json`` at the very end.
+    Over-fetching is harmless because the importer applies ``PathSelection.selects`` again; a
+    folder pattern brings its non-article files too.
     """
     # ponytail: no include means "all articles", fetched as every file; narrow it if repos with
     # big non-doc trees show up.
@@ -853,7 +856,7 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
         includes = ["/*"]
     # An overflowing exclusion is dropped: over-fetching is safe, `selects` runs again later.
     excludes = [f"!{p}" for e in selection.exclude if (part := _anchored(e)) for p in part]
-    return [*includes, *_ROOT_README, *excludes]
+    return [*includes, *_ROOT_README, *excludes, _ROOT_CONTEXT7]
 
 
 _GIT_OVERHEAD = 4 * 2**20  # .git of a one-commit, blob-less fetch: trees, refs, config

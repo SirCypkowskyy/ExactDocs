@@ -255,12 +255,14 @@ def test_sparse_patterns_follow_the_selection() -> None:
 
     assert sparse_patterns(selection) == [
         "/docs/", "/guide/*.md", "/a/x", "/b/x", "/\\[z]",
-        "/README.md", "/README.mdx", "!/docs/archive/",
+        "/README.md", "/README.mdx", "!/docs/archive/", "/context7.json",
     ]  # fmt: skip
 
 
 def test_no_include_means_every_file() -> None:
-    assert sparse_patterns(PathSelection.of()) == ["/*", "/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of()) == [
+        "/*", "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
 
 
 async def test_fetches_run_side_by_side(gateway: GitCli, docs_repo: DocsRepo) -> None:
@@ -444,16 +446,26 @@ def test_brace_overflow_drops_an_exclusion_but_widens_an_include() -> None:
     many = "{a,b,c,d,e,f,g,h,i}{a,b,c,d,e,f,g,h,i}/x.md"
 
     assert sparse_patterns(PathSelection.of(["docs/"], [many])) == [
-        "/docs/", "/README.md", "/README.mdx",
+        "/docs/", "/README.md", "/README.mdx", "/context7.json",
     ]  # fmt: skip
-    assert sparse_patterns(PathSelection.of([many])) == ["/*", "/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of([many])) == [
+        "/*", "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
 
 
-def test_an_include_that_matches_nothing_fetches_only_the_readme() -> None:
-    assert sparse_patterns(PathSelection.of(["{}"])) == ["/README.md", "/README.mdx"]
+def test_an_include_that_matches_nothing_fetches_only_the_readme_and_context7_json() -> None:
+    assert sparse_patterns(PathSelection.of(["{}"])) == [
+        "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
     assert sparse_patterns(PathSelection.of(["{}", "docs/"])) == [
-        "/docs/", "/README.md", "/README.mdx",
+        "/docs/", "/README.md", "/README.mdx", "/context7.json",
     ]  # fmt: skip
+
+
+def test_no_exclusion_can_drop_context7_json() -> None:
+    assert sparse_patterns(PathSelection.of([], ["**/*.json", "context7.json"]))[-1] == (
+        "/context7.json"
+    )
 
 
 def test_special_characters_are_neutralised() -> None:

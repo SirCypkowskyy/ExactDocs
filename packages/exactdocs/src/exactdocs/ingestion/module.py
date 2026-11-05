@@ -155,6 +155,7 @@ class IngestionModule:
         clock: Clock,
         remote: GitRemote,
         tree: RepositoryTree | None = None,
+        gateway: GitGateway | None = None,
         library_ids: LibraryIds,
         libraries: NewLibraries,
         sources: LibrarySources | None = None,
@@ -167,13 +168,15 @@ class IngestionModule:
         """Assemble the use cases around the given driven adapters.
 
         ``handlers`` maps each job kind to what runs it; ``recovery_hooks`` maps a kind to its
-        clean-up after an interrupted run (a kind without one needs none).
+        clean-up after an interrupted run (a kind without one needs none). ``gateway`` reads a
+        repository's ``context7.json`` when a library is added or previewed; without it there
+        is none.
         """
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         none = _NoLibrarySources()
         return cls(
             add_library=AddLibraryUseCase(
-                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials()
+                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials(), gateway
             ),
             add_version=AddVersionUseCase(
                 remote, sources or _NoLibrarySources(), jobs, enqueue_job, vault or _NoCredentials()
@@ -185,7 +188,7 @@ class IngestionModule:
             list_latest_jobs=ListLatestJobsUseCase(jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
-            preview_repository=PreviewRepositoryUseCase(remote, tree or _NoTree()),
+            preview_repository=PreviewRepositoryUseCase(remote, tree or _NoTree(), gateway),
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),
             remove_library=RemoveLibraryUseCase(
                 jobs, removals, index, enqueue_job, vault or _NoCredentials()

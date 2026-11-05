@@ -206,6 +206,7 @@ class Container:
             clock=SystemClock(),
             remote=remote,
             tree=tree,
+            gateway=gateway,
             library_ids=CatalogLibraryIds(catalog.get_library),
             libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
             sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),

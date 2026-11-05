@@ -152,8 +152,12 @@ class LibraryRemovedWhilePinning:
         await self.inner.delete(library_id)
         return await self.inner.pin_default(library_id, ref)
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        await self.inner.follow_readme(library_id, title=title, description=description)
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        await self.inner.follow_readme(
+            library_id, title=title, description=description, rules=rules
+        )
 
 
 async def test_a_library_removed_while_pinning_is_reported_as_missing() -> None:

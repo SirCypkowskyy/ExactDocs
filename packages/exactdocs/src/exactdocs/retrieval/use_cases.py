@@ -41,6 +41,8 @@ from exactdocs.retrieval.models import (
     CHARS_PER_TOKEN,
     FOOTER_CHARS,
     POINTER_TEXT,
+    RULE_FRAMING_CHARS,
+    RULES_FRAMING_CHARS,
     SECTION_FRAMING_CHARS,
     Candidate,
     CatalogLibrary,
@@ -601,6 +603,16 @@ def _pack(sections: Sequence[DocSectionOut], room: int) -> list[DocSectionOut]:
     return kept
 
 
+def _fit_rules(rules: Sequence[str], room: int) -> list[str]:
+    """Take the library's rules in order while they fit ``room``; they come before any chunk."""
+    used, kept = RULES_FRAMING_CHARS, []
+    for rule in rules:
+        if used + RULE_FRAMING_CHARS + len(rule) <= room:
+            kept.append(rule)
+            used += RULE_FRAMING_CHARS + len(rule)
+    return kept
+
+
 @dataclass(frozen=True, slots=True)
 class QueryDocsUseCase:
     """Implements ``ports.driving.QueryDocs``."""
@@ -615,7 +627,8 @@ class QueryDocsUseCase:
 
         The budget covers the whole payload: the notice, the sections and the closing line. A
         chunk that could never fit is listed as a pointer (no text, ``too_large``) so the agent
-        can fetch it; one that merely found no room left is counted in ``omitted``.
+        can fetch it; one that merely found no room left is counted in ``omitted``. The
+        library's rules (from its ``context7.json``) come first and are counted too.
         """
         text = SearchText(value=query.query)
         # `/owner/repo` or `/owner/repo/<ref>`; a ref may itself contain slashes.
@@ -640,7 +653,11 @@ class QueryDocsUseCase:
         if query.language:
             sections = language_first(sections, lambda s: s.code_languages, query.language)
         budget = self.token_budget * CHARS_PER_TOKEN
-        kept = _pack(sections, budget - len(NOTICE) - FOOTER_CHARS)
+        room = budget - len(NOTICE) - FOOTER_CHARS
+        rules = _fit_rules(version.rules, room)
+        if rules:
+            room -= RULES_FRAMING_CHARS + sum(RULE_FRAMING_CHARS + len(r) for r in rules)
+        kept = _pack(sections, room)
         return QueryDocsResult(
             library=version.library,
             version=version.version,
@@ -649,4 +666,5 @@ class QueryDocsUseCase:
             sections=kept,
             omitted=len(sections) - len(kept),
             budget_chars=budget,
+            rules=rules,
         )

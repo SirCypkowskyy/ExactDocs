@@ -223,6 +223,8 @@ class Library:
     description_edited: bool = False
     # The version an owner chose as the default (LIB-10); it wins over the rule while imported.
     pinned_version: VersionRef | None = None
+    # What the default version's `context7.json` tells agents (LIB-06); untrusted repository text.
+    rules: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         refs = [v.ref for v in self.versions]
@@ -354,6 +356,9 @@ class ManifestRename:
             raise InvalidSimilarityError(self.similarity)
 
 
+MAX_LIBRARY_RULES = 20
+MAX_LIBRARY_RULE_CHARS = 500
+"""A library's rules: at most this many, each one line of at most this many characters."""
 MAX_SIMILARITY = 100
 MAX_RENAMES = 10_000
 IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"})

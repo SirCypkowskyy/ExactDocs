@@ -348,6 +348,8 @@ class SearchableVersion:
     commit_sha: str
     repository_url: str
     host: SourceHost
+    rules: tuple[str, ...] = ()
+    """The library's ``context7.json`` rules (LIB-06), untrusted repository text."""
 
 
 def source_link(version: SearchableVersion, article_path: str, anchor: str) -> str | None:
@@ -529,5 +531,9 @@ SECTION_FRAMING_CHARS = 64
 # The closing line "N more matching chunks did not fit the size budget; narrow the query." and its
 # separator, reserved whenever the answer could be partial.
 FOOTER_CHARS = 140
+# The rules block "### Rules of this library\n\n- rule\n- rule" and its separator: the heading
+# and separator, then each rule's "- " and newline. The rules are counted on top.
+RULES_FRAMING_CHARS = 64
+RULE_FRAMING_CHARS = 3
 CHARS_PER_TOKEN = 4  # undercounts for CJK text and dense code, which cost more tokens per character
 POINTER_TEXT = "Too large for the size budget; fetch it with read_chunk."

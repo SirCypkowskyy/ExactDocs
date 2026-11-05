@@ -15,6 +15,8 @@ from pydantic import (
 )
 
 from exactdocs.catalog.models import (
+    MAX_LIBRARY_RULE_CHARS,
+    MAX_LIBRARY_RULES,
     GarbageCollected,
     HostKind,
     Library,
@@ -177,6 +179,11 @@ class LibraryDetail(_Dto):
     versions: list[VersionOut]
     default_version: str | None
     default_pinned: bool = Field(description=_PINNED)
+    rules: list[str] = Field(
+        default_factory=list,
+        description="The rules of the default version's `context7.json`, shown to agents with "
+        "every `query-docs` answer. Untrusted repository text.",
+    )
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -196,6 +203,7 @@ class LibraryDetail(_Dto):
             ],
             default_version=str(default.ref) if default else None,
             default_pinned=library.default_is_pinned(),
+            rules=list(library.rules),
         )
 
 
@@ -737,6 +745,7 @@ MAX_TITLE = 200
 MAX_DESCRIPTION = 1000
 _Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
 _Description = Annotated[str, Field(max_length=MAX_DESCRIPTION)]
+_Rule = Annotated[str, Field(min_length=1, max_length=MAX_LIBRARY_RULE_CHARS)]
 
 
 def _clean(text: str) -> str:
@@ -808,16 +817,18 @@ class PinDefaultVersionCommand(_Dto):
 
 
 class ApplyReadmeCommand(_Dto):
-    """What the root README of an imported version says; used only if it is the default version.
+    """What an imported version says about its library; used only if it is the default version.
 
-    A missing value (the README has no heading or no paragraph) means: the repository name as
-    title, no description.
+    Title and description come from its ``context7.json``, else its root README. A missing value
+    means: the repository name as title, no description. ``rules`` replace the library's rules
+    (empty: the version has none).
     """
 
     library: str = Field(min_length=1)
     ref: str = Field(min_length=1)
     title: _Title | None = None
     description: _Description | None = None
+    rules: list[_Rule] = Field(default_factory=list, max_length=MAX_LIBRARY_RULES)
 
 
 class DiscardLibraryCommand(_Dto):

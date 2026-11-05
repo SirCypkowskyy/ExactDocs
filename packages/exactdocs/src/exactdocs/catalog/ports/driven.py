@@ -68,11 +68,14 @@ class LibraryRepository(Protocol):
         """
         ...
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        """Set title and description, except a field a user edited, in one atomic step.
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        """Set title and description, except a field a user edited, and the rules, atomically.
 
         The edited flags are read by the write itself, so a user's edit that lands in between
-        is never overwritten. Absent IDs are ignored.
+        is never overwritten. Absent IDs are ignored. Rules are written only here (``add`` and
+        ``save`` leave them alone), so a stale ``save`` cannot undo them.
         """
         ...
 

@@ -286,6 +286,15 @@ class InvalidTagError(ValidationError):
         super().__init__(f"invalid tag: {problem.value}")
 
 
+class InvalidContext7Error(ValidationError):
+    """A repository's ``context7.json`` cannot be used; it is reported as a warning and ignored."""
+
+    code = "invalid_context7"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"context7.json is ignored: {reason}")
+
+
 class UnknownRefError(ValidationError):
     """The repository has no tag, branch or commit like the requested ref."""
 

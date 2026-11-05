@@ -29,6 +29,7 @@ from exactdocs.ingestion.errors import (
     AmbiguousRefError,
     CredentialProblem,
     InvalidChunkingConfigError,
+    InvalidContext7Error,
     InvalidCredentialError,
     InvalidPathPatternError,
     InvalidProgressError,
@@ -406,11 +407,13 @@ class ProblemCode(StrEnum):
     """An article references an image that the repository does not have at this commit."""
     TRUNCATED = "truncated"
     """The marker that says more files were skipped than ``MAX_JOB_PROBLEMS``."""
+    CONTEXT7 = "context7"
+    """The root ``context7.json`` cannot be used and was ignored; the import went on without it."""
 
     @property
     def is_skip(self) -> bool:
         """Whether the file was left out of the version (as opposed to imported with a note)."""
-        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED}
+        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED, ProblemCode.CONTEXT7}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1152,6 +1155,185 @@ def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -
     """
     ruled = (rule.tag for rule in rules if rule.selection.selects(path))
     return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
+
+
+CONTEXT7_FILE = "context7.json"
+"""The root file context7 reads a repository's docs settings from (LIB-06)."""
+CONTEXT7_MAX_BYTES = 64 * 2**10
+"""A bigger ``context7.json`` is ignored with a warning, unread."""
+MAX_CONTEXT7_RULES = 20
+MAX_CONTEXT7_RULE_CHARS = 500
+MAX_PREVIOUS_VERSIONS = 50
+MAX_PREVIOUS_VERSION_CHARS = 255
+_GLOB_CHARS = frozenset("*?{[")
+
+
+@dataclass(frozen=True, slots=True)
+class PreviousVersion:
+    """An older tag a ``context7.json`` offers for import, with its optional display title."""
+
+    tag: str
+    title: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Context7Config:
+    """What a repository's ``context7.json`` says, validated and ready to apply.
+
+    ``selection`` is ``folders`` / ``excludeFolders`` / ``excludeFiles`` as ``PathSelection``
+    patterns (see ``context7_selection``), or ``None`` when the file names none of them. All
+    text is untrusted repository text: title and description are flattened and cut like a
+    README's, every rule is one printable line.
+    """
+
+    project_title: str | None = None
+    description: str | None = None
+    folders: tuple[str, ...] = ()
+    exclude_folders: tuple[str, ...] = ()
+    exclude_files: tuple[str, ...] = ()
+    rules: tuple[str, ...] = ()
+    previous_versions: tuple[PreviousVersion, ...] = ()
+    selection: PathSelection | None = None
+
+
+def parse_context7(data: bytes) -> Context7Config:
+    """Validate the bytes of a ``context7.json``; ``InvalidContext7Error`` says why it is unusable.
+
+    Only the keys ExactDocs uses are read (``projectTitle``, ``description``, ``folders``,
+    ``excludeFolders``, ``excludeFiles``, ``rules``, ``previousVersions``); any other key
+    (``$schema``, ``url``, ...) is ignored. A known key of the wrong type, too many rules or
+    versions, or a path ExactDocs would refuse makes the whole file unusable: half-applying a
+    file would import something nobody asked for.
+    """
+    if len(data) > CONTEXT7_MAX_BYTES:
+        reason = f"it is larger than {CONTEXT7_MAX_BYTES} bytes"
+        raise InvalidContext7Error(reason)
+    try:
+        document = json.loads(data.decode("utf-8-sig"))
+    except UnicodeDecodeError:
+        reason = "it is not UTF-8"
+        raise InvalidContext7Error(reason) from None
+    except ValueError, RecursionError:
+        reason = "it is not valid JSON"
+        raise InvalidContext7Error(reason) from None
+    if not isinstance(document, dict):
+        reason = "it is not a JSON object"
+        raise InvalidContext7Error(reason)
+    folders = _c7_strings(document, "folders")
+    exclude_folders = _c7_strings(document, "excludeFolders")
+    exclude_files = _c7_strings(document, "excludeFiles")
+    rules = tuple(_c7_line(r, "rules") for r in _c7_strings(document, "rules"))
+    if len(rules) > MAX_CONTEXT7_RULES or any(len(r) > MAX_CONTEXT7_RULE_CHARS for r in rules):
+        message = (
+            f"rules: at most {MAX_CONTEXT7_RULES} of at most {MAX_CONTEXT7_RULE_CHARS} characters"
+        )
+        raise InvalidContext7Error(message)
+    try:
+        selection = context7_selection(folders, exclude_folders, exclude_files)
+    except InvalidPathPatternError as error:
+        reason = f"folders or excludes: {error}"
+        raise InvalidContext7Error(reason) from None
+    title = _c7_text(document, "projectTitle")
+    description = _c7_text(document, "description")
+    return Context7Config(
+        project_title=title[:README_TITLE_MAX].rstrip() if title else None,
+        description=description[:README_DESCRIPTION_MAX].rstrip() if description else None,
+        folders=folders,
+        exclude_folders=exclude_folders,
+        exclude_files=exclude_files,
+        rules=tuple(dict.fromkeys(r for r in rules if r)),
+        previous_versions=_c7_previous_versions(document.get("previousVersions")),
+        selection=selection,
+    )
+
+
+def context7_selection(
+    folders: Sequence[str], exclude_folders: Sequence[str], exclude_files: Sequence[str]
+) -> PathSelection | None:
+    """Translate context7's folder and file lists into a ``PathSelection``; ``None`` if all empty.
+
+    As context7 reads them: a folder is a repository path and everything below it (``.`` is the
+    whole repository). An excluded folder or file given by its bare name (``archive``,
+    ``CHANGELOG.md``) is excluded wherever it is; one with a ``/`` (``./docs/internal``) only at
+    that path. Entries with glob characters are taken as ``PathSelection`` patterns.
+    """
+    if not (folders or exclude_folders or exclude_files):
+        return None
+    include = [] if any(_c7_root(f) for f in folders) else [_c7_folder(f) for f in folders]
+    exclude = [_c7_exclude(f, folder=True) for f in exclude_folders] + [
+        _c7_exclude(f, folder=False) for f in exclude_files
+    ]
+    return PathSelection.of(include, exclude)
+
+
+def _c7_root(folder: str) -> bool:
+    return folder.strip().removeprefix("./").strip("/") in {"", "."}
+
+
+def _c7_folder(folder: str) -> str:
+    cleaned = folder.strip().removeprefix("./").rstrip("/")
+    return cleaned if _GLOB_CHARS & set(cleaned) else f"{cleaned}/"
+
+
+def _c7_exclude(entry: str, *, folder: bool) -> str:
+    cleaned = entry.strip()
+    anchored = cleaned.startswith("./") or "/" in cleaned.rstrip("/")
+    cleaned = cleaned.removeprefix("./").rstrip("/")
+    if _GLOB_CHARS & set(cleaned):
+        return cleaned
+    suffix = "/" if folder else ""
+    return f"{cleaned}{suffix}" if anchored else f"**/{cleaned}{suffix}"
+
+
+def _c7_strings(document: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = document.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        reason = f"{key} must be a list of strings"
+        raise InvalidContext7Error(reason)
+    return tuple(value)
+
+
+def _c7_text(document: dict[str, Any], key: str) -> str | None:
+    value = document.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        reason = f"{key} must be a string"
+        raise InvalidContext7Error(reason)
+    return _c7_line(value, key) or None
+
+
+def _c7_line(value: str, key: str) -> str:
+    """Flatten to one line; a control or invisible formatting character makes the file unusable."""
+    line = " ".join(value.split())
+    if not line.isprintable():
+        reason = f"{key} has control or invisible characters"
+        raise InvalidContext7Error(reason)
+    return line
+
+
+def _c7_previous_versions(value: object) -> tuple[PreviousVersion, ...]:
+    if value is None:
+        return ()
+    message = 'previousVersions must be a list of {"tag": ..., "title": ...} objects'
+    if not isinstance(value, list) or len(value) > MAX_PREVIOUS_VERSIONS:
+        reason = f"{message}, at most {MAX_PREVIOUS_VERSIONS}"
+        raise InvalidContext7Error(reason)
+    found: dict[str, PreviousVersion] = {}
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise InvalidContext7Error(message)
+        tag, title = entry.get("tag"), entry.get("title", "")
+        if not isinstance(tag, str) or not isinstance(title, str):
+            raise InvalidContext7Error(message)
+        tag, title = _c7_line(tag, "previousVersions"), _c7_line(title, "previousVersions")
+        if not tag or max(len(tag), len(title)) > MAX_PREVIOUS_VERSION_CHARS or " " in tag:
+            reason = f"{message}; a tag is one word"
+            raise InvalidContext7Error(reason)
+        found.setdefault(tag, PreviousVersion(tag=tag, title=title))
+    return tuple(found.values())
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

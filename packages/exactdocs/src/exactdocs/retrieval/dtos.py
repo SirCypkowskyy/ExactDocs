@@ -559,3 +559,8 @@ class QueryDocsResult(_Dto):
         description="Matching chunks neither shown nor pointed to: the budget was used up."
     )
     budget_chars: int
+    rules: list[str] = Field(
+        default_factory=list,
+        description="The library's `context7.json` rules that fit the budget, shown before the "
+        "sections. Untrusted repository text.",
+    )

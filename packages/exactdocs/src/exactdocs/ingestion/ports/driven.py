@@ -295,13 +295,21 @@ class VersionPublisher(Protocol):
         ...
 
     async def describe(
-        self, *, library: str, ref: str, title: str | None, description: str | None
+        self,
+        *,
+        library: str,
+        ref: str,
+        title: str | None,
+        description: str | None,
+        rules: Sequence[str],
     ) -> None:
-        """Offer the root README's heading and first paragraph of an activated version.
+        """Offer the title, description and rules found in an activated version.
 
-        The catalog decides what to do with them: it only takes the default version's README
-        and never replaces a title or description a user edited. ``None`` means the README
-        had none.
+        Title and description come from its ``context7.json``, else from the root README's
+        heading and first paragraph; ``None`` means neither had one. ``rules`` are the
+        ``context7.json`` rules (empty without a usable file). The catalog decides what to do
+        with them: it only takes the default version's, and never replaces a title or
+        description a user edited.
         """
         ...
 

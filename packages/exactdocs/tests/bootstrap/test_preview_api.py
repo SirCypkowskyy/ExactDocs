@@ -65,25 +65,68 @@ async def test_lists_the_files_an_import_would_take(
     assert len(body["commit_sha"]) == 40
 
 
-async def test_nothing_is_stored_and_no_blob_is_downloaded(
+async def test_nothing_is_stored_and_only_context7_json_is_downloaded(
     client: httpx.AsyncClient, docs_repo: DocsRepo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fetches: list[list[str]] = []
+    sparse: list[list[str]] = []
     original = GitCli._run  # ruff: ignore[private-member-access]
+    original_checkout = GitCli.checkout
 
     async def spy(self: GitCli, args: list[str], **kwargs: object) -> object:
         fetches.append(list(args))
         return await original(self, args, **kwargs)  # ty: ignore[invalid-argument-type]
 
+    def spy_checkout(self: GitCli, repository: object, sha: str, lines: list[str], *rest: object):
+        sparse.append(lines)
+        return original_checkout(self, repository, sha, lines, *rest)  # ty: ignore[invalid-argument-type]
+
     monkeypatch.setattr(GitCli, "_run", spy)
+    monkeypatch.setattr(GitCli, "checkout", spy_checkout)
 
     assert (await preview(client, docs_repo.file_url)).status_code == 200
 
     git_args = [" ".join(a) for a in fetches]
     assert any("--filter=blob:none" in a for a in git_args)
-    assert not any(" checkout " in a or "cat-file" in a for a in git_args)
+    assert not any("cat-file" in a for a in git_args)
+    # The tree is listed without a checkout; the one checkout is of the root context7.json only.
+    assert sum(" checkout " in a for a in git_args) == 1
+    assert sparse == [["/context7.json"]]
     assert (await client.get("/api/v1/libraries/fixture/docs-repo")).status_code == 404
     assert (await client.get("/api/v1/jobs/latest")).json()["jobs"] == []
+
+
+async def test_without_paths_context7_json_pre_fills_the_preview(
+    client: httpx.AsyncClient, docs_repo: DocsRepo
+) -> None:
+    body = (await preview(client, docs_repo.file_url, ref="next")).json()
+
+    assert body["context7_warning"] is None
+    assert body["context7"]["rules"][0] == "Use v2 client"
+    assert [v["tag"] for v in body["context7"]["previous_versions"]] == ["v1.4.0", "v1.3.0"]
+    assert body["include_paths"] == ["docs/"]
+    assert body["exclude_paths"] == body["context7"]["exclude_paths"]
+    assert body["files"]
+    assert all(f.startswith("docs/") and "/archive/" not in f for f in body["files"])
+
+
+async def test_paths_a_user_sends_win_over_context7_json(
+    client: httpx.AsyncClient, docs_repo: DocsRepo
+) -> None:
+    body = (await preview(client, docs_repo.file_url, ref="next", include_paths=["**"])).json()
+
+    assert (body["include_paths"], body["exclude_paths"]) == (["**"], [])
+    assert "README.md" in body["files"]
+    assert body["context7"]["include_paths"] == ["docs/"]  # still offered to the form
+
+
+async def test_a_ref_without_context7_json_has_none(
+    client: httpx.AsyncClient, docs_repo: DocsRepo
+) -> None:
+    body = (await preview(client, docs_repo.file_url, ref="v1.4.0")).json()
+
+    assert (body["context7"], body["context7_warning"]) == (None, None)
+    assert body["include_paths"] == []
 
 
 async def test_the_list_is_capped_but_counted(

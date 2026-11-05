@@ -81,7 +81,27 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   tokens. The three token routes need the **session cookie**, not a token, so a stolen token
   cannot create a successor.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
-  field is kept across re-imports instead of following the root README (LIB-07).
+  field is kept across re-imports instead of following the default version's `context7.json` or
+  root README (LIB-07).
+- **`context7.json`** (LIB-06): a repository's root `context7.json` is read when a library is
+  added or previewed (only that one file of the pinned commit is fetched) and again by every
+  import. Used keys: `projectTitle`, `description`, `folders`, `excludeFolders`, `excludeFiles`,
+  `rules`, `previousVersions`; others (`$schema`, `url`, ...) are ignored. Sent **without**
+  `include_paths` and `exclude_paths`, `POST /libraries` and `POST /repositories/preview` apply its
+  folders and exclusions: a folder is that path and all below it (`.` is the whole repository); an
+  excluded folder or file given by its bare name (`archive`, `CHANGELOG.md`) is excluded wherever
+  it is, one with a `/` (`./docs/internal`) only at that path, and globs are taken as patterns.
+  Paths a user sends win, and the library keeps the paths it was created with for every later
+  version. The default version's `projectTitle` and `description` win over its README; a user's
+  edit wins over both. Its `rules` (at most 20 of at most 500 characters) are stored on the
+  library (`rules` in `GET /libraries/{owner}/{repo}`) and come first in every `query-docs`
+  answer, counted against its size budget. Both responses carry `include_paths` and
+  `exclude_paths` (what is applied), `context7` (the parsed file, with its paths translated, its
+  `rules` and `previous_versions` (`tag`, `title`) to offer for import with
+  `POST /libraries/{owner}/{repo}/versions`) and `context7_warning`. A file that is not a JSON
+  object of the right types, larger than 64 KiB, or that cannot be fetched is ignored: `context7`
+  is null, `context7_warning` says why, and an import lists it as a `context7` problem of its
+  job (the import goes on). All of it is untrusted repository text.
 - **Pinning the default version**: `PUT /libraries/{owner}/{repo}/default-version` (`{"ref"}`, an
   imported ref exactly as listed, or a unique short SHA of a commit version) makes that version
   what `/owner/repo` without a ref means, even after a higher stable tag is imported (LIB-10).
@@ -107,8 +127,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
   `POST /repositories/preview` (`url`, optional `ref`, `include_paths`, `exclude_paths`, `credential`)
   is a dry run: it fetches the commit and its trees only (`--filter=blob:none`, depth 1, no
-  checkout; git's process limits, and the fetch deadline and size watchdog, apply) and answers
-  `ref`, `ref_kind`, `commit_sha`, `files` (sorted, 1000 at most), `total` and `truncated`. The
+  checkout; git's process limits, and the fetch deadline and size watchdog, apply), plus the
+  root `context7.json` alone (see above), and answers `ref`, `ref_kind`, `commit_sha`, `files`
+  (sorted, 1000 at most), `total`, `truncated`, `include_paths`, `exclude_paths`, `context7` and
+  `context7_warning`. The
   same selection rules as the import decide, so nothing is stored. Sizes are not included: they
   would need the blobs. Paths are untrusted text; render them as text. Errors are those of
   adding a library, plus 422 `commit_unavailable`, and 422 `repository_too_large` when the
