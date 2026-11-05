@@ -5,6 +5,7 @@ Keep it small, stable and framework-free. It must never import ``exactdocs``.
 
 from exactdocs_kernel.clock import Clock, SystemClock
 from exactdocs_kernel.errors import (
+    BusyError,
     ConflictError,
     DomainError,
     NotFoundError,
@@ -44,6 +45,7 @@ __all__ = [
     "MAX_TAG_LENGTH",
     "NOTICE",
     "TOOL_HINTS",
+    "BusyError",
     "Clock",
     "ConflictError",
     "DomainError",

@@ -859,17 +859,18 @@ Scenario: A second version uses the library's settings
 **Milestone** MVP-2 · **Labels** `type: feature` `status: triage` `area: backend` · **Area** backend / ingestion · **Stories** LIB-03 · **Depends on** E3-03 · **Size** M
 
 **Context.** A wrong glob is only noticed after a long import. A dry run shows count, size and the
-file tree first, without storing anything.
+file tree first, without storing anything. No sizes: `git ls-tree -l` lazily downloads every blob it
+lists (measured on a `--filter=blob:none --depth=1` clone), which defeats a dry run.
 
 ```gherkin
 Scenario: A dry run lists files without storing anything
   When a user previews the fixture repository at "v1.4.0" with paths "docs/**"
-  Then the matching files are listed with their count and total size
+  Then the matching files are listed with their count
   And no library, version or job exists afterwards
 ```
 
-- [ ] `POST /api/v1/repositories/preview` (URL, ref, patterns, optional credentials) fetches the tree only (no blobs beyond sizes) and returns paths, sizes, totals
-- [ ] `exactdocs add --dry-run` prints the same list
+- [ ] `POST /api/v1/repositories/preview` (URL, ref, patterns, optional credentials) fetches the tree only (no blobs) and returns paths, the total count and a truncated flag (no sizes: `ls-tree -l` downloads the blobs)
+- [ ] `exactdocs add --dry-run` prints the same list (moved to a follow-up issue, which depends on E6-02 and E3-08)
 - [ ] behave scenario; test that the database is unchanged
 
 ### E3-09 · feat: a repository's `context7.json` pre-fills the library
@@ -1878,7 +1879,7 @@ Scenario: Saving new paths warns about re-processing
 ```gherkin
 Scenario: Preview before import
   When the user enters URL, ref and paths and clicks "Preview"
-  Then the matching tree is shown with file count and total size
+  Then the matching tree is shown with its file count
 ```
 
 - [ ] preview tree with counts; `context7.json` pre-fill and `previousVersions` checkboxes shown
