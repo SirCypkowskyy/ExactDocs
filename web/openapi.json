@@ -3168,6 +3168,124 @@
         }
       }
     },
+    "/api/v1/repositories/preview": {
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Preview",
+        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, no file content, and nothing is stored. `files` has\nat most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths\nare untrusted text. A `credential` needs a signed-in session, not an API token.",
+        "operationId": "ingestion-preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRepositoryCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Every preview slot is taken (`preview_busy`); try again shortly.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before trying again.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/versions": {
       "post": {
         "tags": [
@@ -5758,6 +5876,80 @@
         "title": "LoginForTokenCommand",
         "description": "Credentials exchanged for an API token (the CLI's login); ``name`` labels the token."
       },
+      "PreviewRepositoryCommand": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "description": "https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref",
+            "description": "A tag, a branch or a full or short commit SHA; omitted: the default branch."
+          },
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths",
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths",
+            "description": "Folders, files or globs to leave out; they win."
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AccessTokenIn"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeployKeyIn"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "ssh_key": "#/components/schemas/DeployKeyIn",
+                    "token": "#/components/schemas/AccessTokenIn"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "PreviewRepositoryCommand",
+        "description": "Ask which files an import would take (a dry run: nothing is fetched beyond the tree)."
+      },
       "ProblemCode": {
         "type": "string",
         "enum": [
@@ -5932,6 +6124,52 @@
         ],
         "title": "RepositoryHost",
         "description": "Where a repository is hosted, by exact host name; ``git`` is any other server."
+      },
+      "RepositoryPreview": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "title": "Ref",
+            "description": "The tag or branch name, or the full SHA of a commit."
+          },
+          "ref_kind": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as markup or a link target."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many files match, also those not listed."
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "True when `files` is cut (`total` is more than listed)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref",
+          "ref_kind",
+          "commit_sha",
+          "files",
+          "total",
+          "truncated"
+        ],
+        "title": "RepositoryPreview",
+        "description": "The articles an import would take: the first ones, and how many there are in all."
       },
       "RepositoryRefs": {
         "properties": {

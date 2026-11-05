@@ -126,7 +126,11 @@ When it fails:
    move tag and digest together; merging one is usually the fix). Debian packages are not
    pinned: the Dockerfile's `DEBIAN_REFRESH` build argument (the date in a release, the ISO week
    in CI) makes a new build fetch fresh package indexes, so it also picks up a fixed `git` or
-   `openssh-client`.
+   `openssh-client`. It does not upgrade the packages that come with the base image (`apt`,
+   `libc6`, `dpkg`, ...): `apt-get install` leaves installed packages alone, so a finding in one
+   of those is fixed only by a newer base digest. Each runner VM caches its own Trivy DB, so the
+   same image can pass on one runner and fail on the other until both DBs know the advisory;
+   the failing run is the real result.
    Because the week is part of the cache key, the first Docker build of each ISO week (Monday)
    re-runs the apt steps and is about a minute slower; that is expected, not a cache bug.
 2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.

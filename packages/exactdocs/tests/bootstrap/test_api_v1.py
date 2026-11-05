@@ -82,6 +82,14 @@ async def test_only_v1_operations_are_published(spec: dict[str, Any]) -> None:
     assert not any(path.startswith(("/mcp", "/api/health")) for path in spec["paths"])
 
 
+async def test_the_preview_documents_its_429_and_retry_after(spec: dict[str, Any]) -> None:
+    busy = spec["paths"]["/api/v1/repositories/preview"]["post"]["responses"]["429"]
+
+    assert busy["content"]["application/json"]["schema"]["$ref"].endswith("/ErrorResponse")
+    assert "preview_busy" in busy["description"]
+    assert "Retry-After" in busy["headers"]
+
+
 def test_committed_openapi_file_is_up_to_date(app) -> None:
     """If this fails the API changed: run `just api` and commit `web/openapi.json` + types."""
     assert COMMITTED_SPEC.read_text() == v1_openapi_json(app)
