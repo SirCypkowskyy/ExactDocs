@@ -1,6 +1,7 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
 import unicodedata
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
@@ -34,7 +35,9 @@ from exactdocs_kernel import (
     MAX_LIMIT,
     MAX_NAME,
     MAX_PATH,
+    MAX_TAG_INPUT,
     MAX_TAG_LENGTH,
+    MAX_TAGS,
     NOTICE,
     Page,
 )
@@ -434,7 +437,7 @@ class ArticleSummary(_Dto):
     @classmethod
     def from_model(cls, entry: ManifestEntry) -> Self:
         """Map a manifest entry."""
-        return cls(path=entry.path, title=entry.title, tags=list(entry.tags), size=entry.size)
+        return cls(path=entry.path, title=entry.title, tags=list(entry.all_tags), size=entry.size)
 
 
 class ArticleList(_Dto):
@@ -592,7 +595,10 @@ class ArticleInfo(_Dto):
     manifest_id: str
     path: str
     title: str
-    tags: list[str]
+    tags: list[str] = Field(description="Every tag: from front matter, path rules and by hand.")
+    manual_tags: list[str] = Field(
+        description="The tags among `tags` set by hand: for this path or one it was renamed from."
+    )
     size: int
     front_matter: dict[str, Any]
     source_url: str | None = Field(
@@ -612,7 +618,8 @@ class ArticleInfo(_Dto):
             manifest_id=stored.manifest_id,
             path=entry.path,
             title=entry.title,
-            tags=list(entry.tags),
+            tags=list(entry.all_tags),
+            manual_tags=list(entry.manual_tags),
             size=entry.size,
             front_matter=entry.front_matter,
             source_url=source_url,
@@ -628,6 +635,64 @@ class Article(ArticleInfo):
     def with_content(cls, info: ArticleInfo, content: str) -> Self:
         """Add the text to an article's metadata."""
         return cls(**dict(info), content=content)
+
+
+class ManualTagsIn(_Dto):
+    """The tags to set by hand on an article path; they replace its earlier manual tags."""
+
+    tags: list[Annotated[str, StringConstraints(max_length=MAX_TAG_INPUT)]] = Field(
+        max_length=MAX_TAGS,
+        description="Normalized like every tag (lower-case, trimmed, deduplicated). Empty: none.",
+    )
+
+
+class SetManualTagsCommand(ManualTagsIn):
+    """Set the manual tags of `path` for every version of `library`."""
+
+    library: str = Field(min_length=1)
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+
+
+class ArticleTags(_Dto):
+    """Every tag an article carries now (`ManifestEntry.all_tags`)."""
+
+    path: str
+    tags: list[str]
+
+
+class RetaggedManifest(_Dto):
+    """The articles of a manifest that have manual tags, or had some before: their tags now.
+
+    Other domains keep copies of article tags (search filters by them) and refresh these.
+    """
+
+    manifest_id: str
+    articles: list[ArticleTags]
+
+    @classmethod
+    def of(cls, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> Self:
+        """Map what the repository reports."""
+        return cls(
+            manifest_id=manifest_id,
+            articles=[ArticleTags(path=p, tags=list(t)) for p, t in sorted(tags.items())],
+        )
+
+
+class ManualTagsOut(_Dto):
+    """The manual tags of a path, as stored: every version's article at that path gets them."""
+
+    library: str
+    path: str
+    tags: list[str]
+    retagged: list[RetaggedManifest] = Field(
+        description="The pending and active manifests whose articles' tags are touched."
+    )
+
+
+class ApplyManualTagsCommand(_Dto):
+    """Give a (pending) manifest the manual tags its library has now."""
+
+    manifest_id: str = Field(min_length=1)
 
 
 class GetAssetQuery(_Dto):

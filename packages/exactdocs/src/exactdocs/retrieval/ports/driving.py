@@ -17,6 +17,8 @@ from exactdocs.retrieval.dtos import (
     RemovedChunks,
     ResolveLibraryIdQuery,
     ResolveLibraryIdResult,
+    RetagArticlesCommand,
+    RetaggedChunks,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
@@ -138,5 +140,17 @@ class QueryDocs(Protocol):
     """
 
     async def __call__(self, query: QueryDocsQuery) -> QueryDocsResult:
+        """Run the use case."""
+        ...
+
+
+class RetagArticles(Protocol):
+    """Copy an article's current tags onto its chunk rows in one manifest (no re-chunking).
+
+    Tags change outside an import (a user tags an article by hand); the chunk rows hold a copy
+    so a search can filter by tag. Unknown manifests and paths change nothing.
+    """
+
+    async def __call__(self, command: RetagArticlesCommand) -> RetaggedChunks:
         """Run the use case."""
         ...

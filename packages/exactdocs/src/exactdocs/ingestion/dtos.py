@@ -19,7 +19,7 @@ from exactdocs.ingestion.models import (
     ResolvedRef,
     SyncStatus,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, Page
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, MAX_TAGS, Page
 
 
 class _Dto(BaseModel):
@@ -406,6 +406,35 @@ class RemoveLibraryCommand(_Dto):
     """Remove a library, with all its versions, everywhere and free its content."""
 
     library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+
+
+class ManualTagsIn(_Dto):
+    """The tags to set by hand on an article path; they replace its earlier manual tags."""
+
+    tags: list[Annotated[str, Field(max_length=MAX_TAG_INPUT)]] = Field(
+        max_length=MAX_TAGS,
+        description=(
+            "Normalized like every tag (lower-case, trimmed, deduplicated). Empty removes them."
+        ),
+    )
+
+
+class TagArticleCommand(ManualTagsIn):
+    """Set the manual tags of `path` for every version of `library`."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+
+
+class TaggedArticle(_Dto):
+    """The manual tags of a path as stored: every version's article at that path carries them.
+
+    So does, in a later version, the article git saw it renamed to.
+    """
+
+    library: str
+    path: str
+    tags: list[str]
 
 
 class RemovalResult(_Dto):

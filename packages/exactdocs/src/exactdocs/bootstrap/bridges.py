@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
+    ApplyManualTagsCommand,
     ApplyReadmeCommand,
     ArticleIn,
     CollectGarbageCommand,
@@ -26,6 +27,7 @@ from exactdocs.catalog.dtos import (
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RenameIn,
+    SetManualTagsCommand,
     StoreManifestCommand,
     TagRuleIn,
 )
@@ -38,6 +40,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
     CreateLibrary,
@@ -51,6 +54,7 @@ from exactdocs.catalog.ports.driving import (
     ListRenames,
     RemoveLibrary,
     RemoveVersion,
+    SetManualTags,
     StoreManifest,
 )
 from exactdocs.ingestion.models import (
@@ -67,16 +71,19 @@ from exactdocs.ingestion.models import (
     RefKind,
     Removed,
     RepositoryUrl,
+    TaggedPath,
     TagRule,
 )
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
+    ArticleTagsIn,
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
     GetChunkSetsQuery,
     IndexManifestCommand,
     RemoveChunksCommand,
+    RetagArticlesCommand,
 )
 from exactdocs.retrieval.models import (
     CatalogLibrary,
@@ -91,6 +98,7 @@ from exactdocs.retrieval.ports.driving import (
     GetChunkSets,
     IndexManifest,
     RemoveChunks,
+    RetagArticles,
 )
 from exactdocs_kernel import MAX_LIMIT, NotFoundError, ValidationError
 
@@ -303,6 +311,7 @@ class CatalogVersionPublisher:
     activate_manifest: ActivateManifest
     discard_pending_manifests: DiscardPendingManifests
     apply_readme: ApplyReadme
+    apply_manual_tags_to: ApplyManualTags
 
     async def store(self, version: ImportedVersion) -> str:
         """Store the articles as a pending manifest."""
@@ -313,6 +322,11 @@ class CatalogVersionPublisher:
     async def activate(self, manifest_id: str) -> None:
         """Make the manifest what its version serves."""
         await self.activate_manifest(ActivateManifestCommand(manifest_id=manifest_id))
+
+    async def apply_manual_tags(self, manifest_id: str) -> dict[str, tuple[str, ...]]:
+        """Give the pending manifest its library's manual tags."""
+        found = await self.apply_manual_tags_to(ApplyManualTagsCommand(manifest_id=manifest_id))
+        return {a.path: tuple(a.tags) for a in found.articles}
 
     async def describe(
         self, *, library: str, ref: str, title: str | None, description: str | None
@@ -339,6 +353,7 @@ class RetrievalChunkIndex:
     get_chunk_sets: GetChunkSets
     discard_pending_chunks: DiscardPendingChunks
     remove_chunks: RemoveChunks
+    retag_articles: RetagArticles
 
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
@@ -379,6 +394,36 @@ class RetrievalChunkIndex:
     async def remove(self, manifest_ids: Sequence[str]) -> None:
         """Delete the chunks of manifests the catalog has just deleted."""
         await self.remove_chunks(RemoveChunksCommand(manifest_ids=list(manifest_ids)))
+
+    async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        """Copy the articles' tags onto their chunk rows."""
+        await self.retag_articles(
+            RetagArticlesCommand(
+                manifest_id=manifest_id,
+                articles=[ArticleTagsIn(path=p, tags=list(t)) for p, t in tags.items()],
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogManualTags:
+    """Implements ``ingestion.ports.driven.ManualTagStore`` using the catalog."""
+
+    set_manual_tags: SetManualTags
+
+    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
+        """Store the path's manual tags; the catalog re-tags its manifests and says which."""
+        done = await self.set_manual_tags(
+            SetManualTagsCommand(library=library, path=path, tags=list(tags))
+        )
+        return TaggedPath(
+            library=done.library,
+            path=done.path,
+            tags=tuple(done.tags),
+            retagged={
+                m.manifest_id: {a.path: tuple(a.tags) for a in m.articles} for m in done.retagged
+            },
+        )
 
 
 @dataclass(frozen=True, slots=True)

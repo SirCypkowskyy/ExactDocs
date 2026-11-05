@@ -38,6 +38,7 @@ from exactdocs.catalog.models import (
     ManifestImage,
     ManifestRename,
     ManifestState,
+    ManualTags,
     RefKind,
     StoredImage,
     TagMatch,
@@ -956,3 +957,79 @@ async def test_a_discarded_pending_manifest_leaves_no_listed_images(stores: Stor
     )
 
     assert (await stores.manifests.collect_garbage(superseded_before=T0)).images == 1
+
+
+async def test_manual_tags_are_kept_per_library_and_path_until_cleared(stores: Stores) -> None:
+    libraries = stores.libraries
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("a.md", ["x", "y"]))
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("b.md", ["z"]))
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("a.md", ["w"]))
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("b.md", []))
+    await libraries.set_manual_tags(LibraryId("/acme/unknown"), ManualTags.of("a.md", ["x"]))
+
+    assert await libraries.get_manual_tags(PAYMENTS.id) == {"a.md": ("w",)}
+    assert await libraries.get_manual_tags(LibraryId("/acme/unknown")) == {}
+
+
+async def test_manual_tags_go_with_their_library(stores: Stores) -> None:
+    await stores.libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("a.md", ["x"]))
+
+    await stores.manifests.remove_library(PAYMENTS.id)
+    await stores.libraries.save(PAYMENTS)
+
+    assert await stores.libraries.get_manual_tags(PAYMENTS.id) == {}
+
+
+async def test_live_manifests_are_the_pending_and_active_ones(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "a1"))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "main", "a2", created_at=T0 + timedelta(seconds=1)))
+    await stores.manifests.activate(ManifestId("m2"), at=T0)  # m1 is superseded
+    await store(stores, manifest("m3", "v1", "a3"))
+
+    live = await stores.manifests.list_live(PAYMENTS.id)
+
+    assert sorted((m.id, m.state, m.entries) for m in live) == [
+        ("m2", ManifestState.ACTIVE, ()),
+        ("m3", ManifestState.PENDING, ()),
+    ]
+
+
+async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undone(
+    stores: Stores,
+) -> None:
+    api = entry("a.md", "a", tags=("api",))
+    plain = entry("b.md", "b")
+    await store(stores, manifest("m1", "main", "a1", api, plain))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    manifests = stores.manifests
+
+    touched = await manifests.set_manual_tags(
+        ManifestId("m1"), {"a.md": ("api", "onboarding"), "gone.md": ("x",)}
+    )
+    listed = await manifests.list_entries(
+        ManifestId("m1"),
+        prefix="",
+        tags=TagSelection.of(["onboarding"]),
+        after=None,
+        limit=10,
+    )
+    article = await manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+    counted = await manifests.count_tags(ManifestId("m1"), limit=10)
+
+    assert touched == {"a.md": ("api", "onboarding")}
+    assert [(e.path, e.tags, e.manual_tags, e.all_tags) for e in listed] == [
+        ("a.md", ("api",), ("api", "onboarding"), ("api", "onboarding"))
+    ]
+    assert article is not None
+    assert article.entry.manual_tags == ("api", "onboarding")
+    assert list(counted) == [("api", 1), ("onboarding", 1)]
+
+    undone = await manifests.set_manual_tags(ManifestId("m1"), {})
+
+    assert undone == {"a.md": ("api",)}
+    entries = await manifests.list_entries(
+        ManifestId("m1"), prefix="", tags=TagSelection(), after=None, limit=10
+    )
+    assert entries == (api, plain)
+    assert await manifests.set_manual_tags(ManifestId("none"), {"a.md": ("x",)}) == {}

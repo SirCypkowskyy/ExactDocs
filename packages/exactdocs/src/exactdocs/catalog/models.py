@@ -1,7 +1,7 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import get_close_matches
@@ -19,6 +19,7 @@ from exactdocs.catalog.errors import (
     InvalidImageTypeError,
     InvalidImportTimeError,
     InvalidLibraryIdError,
+    InvalidManualTagsError,
     InvalidSettingsError,
     InvalidSimilarityError,
     InvalidTagFilterError,
@@ -302,13 +303,21 @@ class ManifestEntry:
     content_version: int
     title: str
     tags: tuple[str, ...] = ()
+    """Imported: from front matter and the library's path rules."""
     front_matter: dict[str, Any] = field(default_factory=dict)
     size: int = 0  # bytes of the content
+    manual_tags: tuple[str, ...] = ()
+    """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
 
     def __post_init__(self) -> None:
         _check_path(self.path)
         if not _OBJECT_ID.fullmatch(self.blob_sha):
             raise InvalidBlobShaError(self.blob_sha)
+
+    @property
+    def all_tags(self) -> tuple[str, ...]:
+        """What readers see and filter by: the imported tags, then the manual ones they lack."""
+        return (*self.tags, *(t for t in self.manual_tags if t not in self.tags))
 
     @property
     def content_key(self) -> ContentKey:
@@ -319,6 +328,44 @@ class ManifestEntry:
 def _check_path(path: str) -> None:
     if not path or any(part in {"", ".", ".."} for part in path.split("/")):
         raise InvalidArticlePathError(path)
+
+
+@dataclass(frozen=True, slots=True)
+class ManualTags:
+    """Tags a user set by hand on an article path of a library: they hold for every version.
+
+    Keyed by path, not by version. A version whose import saw ``old`` renamed to ``new`` gives
+    ``new`` the manual tags of ``old`` too (``ManualTags.reaching``), and so on back through the
+    versions each rename map names, so a tag follows the article forward across moves.
+    """
+
+    path: str
+    tags: tuple[str, ...]
+
+    @classmethod
+    def of(cls, path: str, tags: Iterable[str]) -> Self:
+        """Normalize what a user typed (sorted, no duplicates); refuse a value that is no tag."""
+        _check_path(path)
+        raw = list(tags)
+        found = [normalize_tag(tag) for tag in raw]
+        if len(raw) > MAX_TAGS or None in found:
+            raise InvalidManualTagsError
+        return cls(path, tuple(sorted({t for t in found if t})))
+
+    @staticmethod
+    def reaching(
+        origins: Mapping[str, Iterable[str]], by_path: Mapping[str, tuple[str, ...]]
+    ) -> dict[str, tuple[str, ...]]:
+        """Merge the manual tags each article gets: its own and those of the paths it came from.
+
+        ``origins`` maps an article path to the older paths it was renamed from (any number of
+        versions back); paths it leaves out only have their own tags.
+        """
+        reached = {path: set(tags) for path, tags in by_path.items()}
+        for path, olds in origins.items():
+            for old in olds:
+                reached.setdefault(path, set()).update(by_path.get(old, ()))
+        return {path: tuple(sorted(tags)) for path, tags in reached.items() if tags}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

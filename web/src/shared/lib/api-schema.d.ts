@@ -219,9 +219,22 @@ export interface paths {
         };
         /** List Version Tags */
         readonly get: operations["catalog-list_version_tags"];
-        readonly put?: never;
+        /**
+         * Set Manual Tags
+         * @description Tag an article path by hand, for every version of the library.
+         *
+         *     The tags replace the path's manual tags and combine with the imported ones (front matter,
+         *     path rules) of the article at `path` in every version, and of the article git saw it
+         *     renamed to in later versions. Listings, tag counts and search see them on return; nothing
+         *     is imported or chunked again.
+         */
+        readonly put: operations["ingestion-set_manual_tags"];
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Remove Manual Tags
+         * @description Remove every manual tag of an article path; the imported tags stay.
+         */
+        readonly delete: operations["ingestion-remove_manual_tags"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -716,8 +729,16 @@ export interface components {
             readonly path: string;
             /** Title */
             readonly title: string;
-            /** Tags */
+            /**
+             * Tags
+             * @description Every tag: from front matter, path rules and by hand.
+             */
             readonly tags: readonly string[];
+            /**
+             * Manual Tags
+             * @description The tags among `tags` set by hand: for this path or one it was renamed from.
+             */
+            readonly manual_tags: readonly string[];
             /** Size */
             readonly size: number;
             /** Front Matter */
@@ -1424,6 +1445,17 @@ export interface components {
             readonly expires_at?: string | null;
         };
         /**
+         * ManualTagsIn
+         * @description The tags to set by hand on an article path; they replace its earlier manual tags.
+         */
+        readonly ManualTagsIn: {
+            /**
+             * Tags
+             * @description Normalized like every tag (lower-case, trimmed, deduplicated). Empty removes them.
+             */
+            readonly tags: readonly string[];
+        };
+        /**
          * PreviewRepositoryCommand
          * @description Ask which files an import would take (a dry run: nothing is fetched beyond the tree).
          */
@@ -1842,6 +1874,20 @@ export interface components {
             readonly pattern: string;
             /** Tag */
             readonly tag: string;
+        };
+        /**
+         * TaggedArticle
+         * @description The manual tags of a path as stored: every version's article at that path carries them.
+         *
+         *     So does, in a later version, the article git saw it renamed to.
+         */
+        readonly TaggedArticle: {
+            /** Library */
+            readonly library: string;
+            /** Path */
+            readonly path: string;
+            /** Tags */
+            readonly tags: readonly string[];
         };
         /**
          * TokenGrant
@@ -3302,6 +3348,168 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["TagList"];
                 };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-set_manual_tags": {
+        readonly parameters: {
+            readonly query: {
+                /** @description An article path, as in any version; the articles renamed from it follow. */
+                readonly path: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ManualTagsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaggedArticle"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-remove_manual_tags": {
+        readonly parameters: {
+            readonly query: {
+                /** @description An article path, as in any version; the articles renamed from it follow. */
+                readonly path: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {

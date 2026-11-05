@@ -14,6 +14,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySources,
+    CatalogManualTags,
     CatalogNewLibraries,
     CatalogRemovals,
     CatalogSearchableVersions,
@@ -179,7 +180,9 @@ class Container:
             retrieval.get_chunk_sets,
             retrieval.discard_pending_chunks,
             retrieval.remove_chunks,
+            retrieval.retag_articles,
         )
+        tag_lock = asyncio.Lock()  # tagging and an import's activation take turns
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=MarkdownChunker(),
@@ -189,6 +192,7 @@ class Container:
                 catalog.activate_manifest,
                 catalog.discard_pending_manifests,
                 catalog.apply_readme,
+                catalog.apply_manual_tags,
             ),
             index=index,
             vault=vault,
@@ -197,6 +201,7 @@ class Container:
             renames=renames,
             max_image_bytes=settings.max_image_bytes,
             max_images_bytes=settings.max_images_bytes,
+            tag_lock=tag_lock,
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),
@@ -220,9 +225,8 @@ class Container:
                 ),
             },
             recovery_hooks=recovery_hooks,
-        )
-        job_worker = JobWorker(
-            recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job
+            manual_tags=CatalogManualTags(catalog.set_manual_tags),
+            tag_lock=tag_lock,
         )
         return cls(
             settings=settings,
@@ -237,7 +241,9 @@ class Container:
             ),
             ingestion=ingestion,
             retrieval=retrieval,
-            job_worker=job_worker,
+            job_worker=JobWorker(
+                recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job
+            ),
         )
 
     @asynccontextmanager

@@ -10,7 +10,7 @@ import ipaddress
 import json
 import math
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -1311,6 +1311,20 @@ class Removed:
     ref: str | None
     manifest_ids: tuple[str, ...]
     default_ref: str | None
+
+
+type ArticleTags = Mapping[str, tuple[str, ...]]
+"""Article path -> every tag the article carries now."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaggedPath:
+    """Manual tags the catalog stored for a path, and the manifests whose articles they touched."""
+
+    library: str
+    path: str
+    tags: tuple[str, ...]
+    retagged: Mapping[str, ArticleTags]  # manifest ID -> its touched articles
 
 
 @dataclass(frozen=True, slots=True)

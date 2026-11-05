@@ -42,6 +42,8 @@ from exactdocs.ingestion.dtos import (
     SyncedLibrary,
     SyncedVersion,
     SyncLibraryCommand,
+    TagArticleCommand,
+    TaggedArticle,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
@@ -118,6 +120,7 @@ from exactdocs.ingestion.ports.driven import (
     JobRepository,
     LibraryIds,
     LibrarySources,
+    ManualTagStore,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -748,6 +751,8 @@ class ImportVersionUseCase:
     refresh: bool = False
     renames: RenameSource | None = None
     """Where renames come from; without it none are detected. Never a reason to fail."""
+    tag_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    """Shared with ``TagArticleUseCase``: see there."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import from the beginning; raising fails the job."""
@@ -789,7 +794,7 @@ class ImportVersionUseCase:
         try:
             manifest_id = await self.versions.store(version)
             await self.index.index(manifest_id, version)
-            await self.versions.activate(manifest_id)
+            await self._activate(manifest_id)
         except BaseException:
             # Run as a task of its own and shielded, so that the cancellation that got us here
             # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
@@ -808,6 +813,17 @@ class ImportVersionUseCase:
             )
         except Exception:
             log.exception("could not apply the README of %s %s", job.library, job.version)
+
+    async def _activate(self, manifest_id: str) -> None:
+        """Give the manifest its library's manual tags, chunks included, then activate it.
+
+        Last, so a tag set while the version was stored and indexed counts too.
+        """
+        async with self.tag_lock:
+            tagged = await self.versions.apply_manual_tags(manifest_id)
+            if tagged:
+                await self.index.retag(manifest_id, tagged)
+            await self.versions.activate(manifest_id)
 
     async def _renames(
         self,
@@ -1279,6 +1295,29 @@ async def _forget_chunks(index: ChunkIndex, removed: Removed) -> None:
         await index.remove(removed.manifest_ids)
     except Exception:
         log.exception("could not remove the chunks of %s", removed.library)
+
+
+@dataclass(frozen=True, slots=True)
+class TagArticleUseCase:
+    """Implements ``ports.driving.TagArticle``.
+
+    The catalog re-tags its manifests, then the chunk index gets the same tags. ``lock`` (shared
+    with the importer) keeps that pair whole against an import that re-tags the manifest it is
+    about to activate: otherwise the older of two writes could land last in the chunk index.
+    One process runs the jobs and serves the API, so a process lock is enough.
+    """
+
+    tags: ManualTagStore
+    index: ChunkIndex
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
+        """Store the tags, then copy every touched article's tags onto its chunks."""
+        async with self.lock:
+            tagged = await self.tags.set_tags(command.library, command.path, command.tags)
+            for manifest_id, articles in tagged.retagged.items():
+                await self.index.retag(manifest_id, articles)
+        return TaggedArticle(library=tagged.library, path=tagged.path, tags=list(tagged.tags))
 
 
 @dataclass(frozen=True, slots=True)

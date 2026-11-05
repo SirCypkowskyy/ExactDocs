@@ -18,6 +18,7 @@ from exactdocs.retrieval.ports.driving import (
     ReadChunk,
     RemoveChunks,
     ResolveLibraryId,
+    RetagArticles,
     SearchAllLibraries,
     SearchDocs,
 )
@@ -31,6 +32,7 @@ from exactdocs.retrieval.use_cases import (
     ReadChunkUseCase,
     RemoveChunksUseCase,
     ResolveLibraryIdUseCase,
+    RetagArticlesUseCase,
     SearchAllLibrariesUseCase,
     SearchDocsUseCase,
 )
@@ -51,6 +53,7 @@ class RetrievalModule:
     discard_pending_chunks: DiscardPendingChunks
     collect_chunks: CollectChunks
     remove_chunks: RemoveChunks
+    retag_articles: RetagArticles
 
     @classmethod
     def build(
@@ -78,4 +81,5 @@ class RetrievalModule:
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
             collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
             remove_chunks=RemoveChunksUseCase(manifests, chunks),
+            retag_articles=RetagArticlesUseCase(chunks),
         )
