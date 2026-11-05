@@ -137,12 +137,16 @@ def _chunked(stream: BufferedIOBase) -> bytes:
 def _handler(  # ruff: ignore[complex-structure]
     root: Path,
     *,
-    token: str | None = None,
+    token: str | Callable[[], str | None] | None = None,
     seen: list[tuple[str, str | None]] | None = None,
     redirect_base: Callable[[], str] | None = None,
     redirect_only_with_token: bool = False,
 ) -> type[http.server.BaseHTTPRequestHandler]:
-    wanted = "Basic " + base64.b64encode(f"{USER}:{token}".encode()).decode() if token else None
+    def wanted() -> str | None:
+        current = token() if callable(token) else token
+        return (
+            "Basic " + base64.b64encode(f"{USER}:{current}".encode()).decode() if current else None
+        )
 
     class GitHandler(http.server.BaseHTTPRequestHandler):
         """Speaks CGI to ``git http-backend`` (python's own CGI handler is being removed)."""
@@ -166,7 +170,8 @@ def _handler(  # ruff: ignore[complex-structure]
         def _cgi(self, body: bytes) -> None:
             if seen is not None:
                 seen.append((self.headers.get("Host", ""), self.headers.get("Authorization")))
-            allowed = wanted is None or self.headers.get("Authorization") == wanted
+            expected = wanted()
+            allowed = expected is None or self.headers.get("Authorization") == expected
             if redirect_base is not None and (allowed or not redirect_only_with_token):
                 self._answer(302, ("Location", redirect_base() + self.path))
                 return
@@ -214,6 +219,37 @@ def _handler(  # ruff: ignore[complex-structure]
             """Stay quiet: access logs do not belong in test output."""
 
     return GitHandler
+
+
+@dataclass(slots=True)
+class GitServer:
+    """A smart HTTP server for one copy of the repository; set ``token`` to rotate it."""
+
+    url: str
+    token: str | None = TOKEN
+
+
+@contextlib.contextmanager
+def serve_copy(base: Path, token: str | None = TOKEN) -> Generator[GitServer]:
+    """Serve ``base/fixture/docs-repo`` (a copy, so a test may change or delete it) over HTTP.
+
+    The server asks for ``x-access-token:<token>`` while ``token`` is set, and reads it on every
+    request: changing it makes the server refuse the old one, like an expired credential.
+
+    Yields:
+        The server's URL and its current token.
+    """
+    state = GitServer(url="", token=token)
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), _handler(base, token=lambda: state.token)
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        state.url = f"http://127.0.0.1:{server.server_address[1]}/{REPO_PATH.as_posix()}.git"
+        yield state
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 @contextlib.contextmanager

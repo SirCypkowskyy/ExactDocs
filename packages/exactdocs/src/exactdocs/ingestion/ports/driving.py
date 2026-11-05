@@ -171,11 +171,13 @@ class RemoveLibrary(Protocol):
 class SyncLibrary(Protocol):
     """Re-sync a library: queue an import for each branch version whose tip moved.
 
-    Tags and commits are reported as pinned, a branch that did not move as up to date, a branch
-    whose import is queued or running as importing. Raises ``NotFoundError`` for an unknown
-    library, ``VersionImportingError`` when an import is running and nothing could be queued,
-    and ``SyncFailedError`` (the remote's own error code, plus the IDs of the failed jobs that
-    record it) when the remote cannot be read: the versions keep what they served.
+    Commits and tags that still name their commit are reported as pinned, a branch that did not
+    move as up to date, a branch whose import is queued or running as importing; a branch or tag
+    gone upstream (``ref_deleted``) or a tag that moved (``tag_moved``, never re-imported) as
+    failed, with the code on a failed job. Raises ``NotFoundError`` for an unknown library,
+    ``VersionImportingError`` when an import is running and nothing could be queued, and
+    ``SyncFailedError`` (``repo_unreachable`` or ``auth_failed``, plus the IDs of the failed jobs
+    that record it) when the remote cannot be read: the versions keep what they served.
     """
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
