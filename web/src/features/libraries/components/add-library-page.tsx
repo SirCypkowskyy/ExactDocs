@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check } from "lucide-react";
 import { type FormEvent, useCallback, useRef, useState } from "react";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
+import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
@@ -83,13 +84,13 @@ function SubmitButton({ pending, checked }: { pending: boolean; checked: boolean
 }
 
 /** Focus goes to the first mistake, in the order the form reads. */
-function focusFirstMistake(form: { id?: string | undefined; paths?: string | undefined }) {
+function firstMistake(form: { id?: string | undefined; paths?: string | undefined }) {
   const target =
     (form.id && "library-id") ||
     (form.paths && "include") ||
     document.querySelector<HTMLElement>("[data-rules] [aria-invalid=true]")?.id ||
     "add-rule";
-  document.getElementById(target)?.focus();
+  return document.getElementById(target);
 }
 
 interface Checked extends CheckedRepository {
@@ -99,6 +100,7 @@ interface Checked extends CheckedRepository {
 export function AddLibraryPage() {
   const queryClient = useQueryClient();
   const heading = usePageTitle("Add a library");
+  const focusAfterRender = useFocusAfterRender();
   const [url, setUrl] = useState("");
   const [checked, setChecked] = useState<Checked>();
   const [libraryId, setLibraryId] = useState("");
@@ -125,11 +127,12 @@ export function AddLibraryPage() {
       setErrors({ [field]: p.message });
       setProblem(undefined);
       if (field === "paths" || field === "tags") setAdvanced(true);
-      // After the field (or its details) is on screen.
-      requestAnimationFrame(() => {
-        const typed = field === "ref" && document.getElementById("ref-typed");
-        (typed || document.getElementById(FOCUS[field]))?.focus();
-      });
+      // In the commit that shows the field (or opens its details), never a frame later.
+      focusAfterRender(
+        () =>
+          (field === "ref" && document.getElementById("ref-typed")) ||
+          document.getElementById(FOCUS[field]),
+      );
     } else {
       setErrors({});
       setProblem(p);
@@ -193,7 +196,7 @@ export function AddLibraryPage() {
       setShowRuleErrors(true);
       setErrors({ id: form.id, paths: form.paths });
       if (form.paths || form.badRule) setAdvanced(true);
-      requestAnimationFrame(() => focusFirstMistake(form));
+      focusAfterRender(() => firstMistake(form));
       return;
     }
 
@@ -242,7 +245,7 @@ export function AddLibraryPage() {
     setErrors({});
     setShowRuleErrors(false);
     setAdded(undefined);
-    requestAnimationFrame(() => document.getElementById("url")?.focus());
+    focusAfterRender(() => document.getElementById("url"));
   }
 
   return (
@@ -312,7 +315,7 @@ export function AddLibraryPage() {
                     clear("ref");
                     // A new field appears for a typed ref: the user's next move is to type.
                     if (c.kind === "other") {
-                      requestAnimationFrame(() => document.getElementById("ref-typed")?.focus());
+                      focusAfterRender(() => document.getElementById("ref-typed"));
                     }
                   }}
                   onUnavailable={unavailable}

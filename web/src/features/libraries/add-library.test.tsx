@@ -556,6 +556,19 @@ describe("add library flow, review fixes", () => {
     expect(screen.queryByText(/already used/)).not.toBeInTheDocument();
   });
 
+  it("does not pull focus away once the refusal is on screen", async () => {
+    serve({ create: () => err(409, "library_id_taken") });
+    renderAdd();
+    await addDefault();
+    await screen.findByText(/already used/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Library ID")).toHaveFocus();
+    const address = screen.getByLabelText("Repository address");
+    address.focus();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(address).toHaveFocus();
+  });
+
   it("rejects an address over 2048 characters before asking", async () => {
     const { fetchMock } = serve();
     renderAdd();

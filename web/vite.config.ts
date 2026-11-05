@@ -30,5 +30,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     css: false,
+    // The slowest tests take ~2.5 s on an idle machine and pass 5 s when the CPU is shared
+    // (measured with the suite run beside CPU burners). A ceiling, so passing tests are no slower.
+    testTimeout: 15_000,
   },
 });
