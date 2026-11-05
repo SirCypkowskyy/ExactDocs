@@ -9,6 +9,7 @@ import { useNow } from "../hooks/use-now";
 import {
   type Activity,
   explainSync,
+  failureWords,
   type JobViews,
   type Problem,
   type SyncedLibrary,
@@ -57,12 +58,7 @@ function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
           <span className="sr-only"> (previous commit to new commit)</span>
         </p>
       )}
-      {failed && (
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          The branch is gone from the repository, or its import could not be queued. The version
-          keeps serving what it had.
-        </p>
-      )}
+      {failed && <p className="mt-0.5 text-sm text-muted-foreground">{failureWords(v)}</p>}
       {live && (
         <div className="mt-2 max-w-sm">
           <Line jobId={v.job_id ?? ""} label={v.ref} />
@@ -109,7 +105,7 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
       </h2>
       <p className="mt-1.5 max-w-prose text-muted-foreground">
         Check the repository for new commits on each branch version and import only what changed.
-        Tags and commits are pinned, so they are left alone.
+        Tags and commits are pinned: a tag that moved upstream is reported, never re-imported.
       </p>
       <div className="mt-5">
         <Button

@@ -210,7 +210,9 @@ describe("settings model", () => {
     expect(explainAddVersion(new TypeError("net"), "v1").message).toMatch(/Can't reach/);
     expect(explainSync(e(409, "version_importing")).message).toMatch(/still importing/);
     expect(explainSync(e(409, "version_importing")).tone).toBe("info");
-    expect(explainSync(e(422, "repository_unreachable")).tone).toBeUndefined();
+    expect(explainSync(e(422, "repo_unreachable")).tone).toBeUndefined();
+    expect(explainSync(e(422, "repo_unreachable")).message).toMatch(/couldn't be read/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/refused the stored credentials/);
     expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
       /never cancels/,
     );
@@ -393,10 +395,20 @@ describe("re-sync", () => {
   });
 
   it("explains a branch that is gone", async () => {
-    serve({ sync: () => synced([v({ status: "failed" })]) });
+    serve({ sync: () => synced([v({ status: "failed", error_code: "ref_deleted" })]) });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/branch is gone from the repository/)).toBeInTheDocument();
+  });
+
+  it("explains a tag that moved, and that it is not re-imported", async () => {
+    const moved = { ref: "v1.4.0", ref_kind: "tag", status: "failed", error_code: "tag_moved" };
+    serve({ sync: () => synced([v(moved)], 200) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/tag now points at another commit/)).toBeInTheDocument();
+    expect(screen.getByText(/never re-imported: remove this version/)).toBeInTheDocument();
+    expect(screen.getByText("v1.4.0")).toBeInTheDocument();
   });
 
   it("explains 409 and 422", async () => {
@@ -407,7 +419,7 @@ describe("re-sync", () => {
     // A wait state is neutral, not red.
     expect(wait.closest("p")).toHaveClass("bg-accent");
 
-    serve({ sync: () => failure(422, "repository_unreachable", "failed job j7: unreachable") });
+    serve({ sync: () => failure(422, "repo_unreachable", "failed job j7: unreachable") });
     await userEvent.click(screen.getByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/couldn't be read/)).toBeInTheDocument();
     // Job IDs mean nothing to a person: they are not shown.

@@ -6,7 +6,15 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ListLibraryJobsQuery
-from exactdocs.ingestion.errors import JobNotFoundError, UnknownJobKindError
+from exactdocs.ingestion.errors import (
+    CredentialsRequiredError,
+    JobNotFoundError,
+    NoArticlesError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
+    RepositoryUnreachableError,
+    UnknownJobKindError,
+)
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
 from exactdocs.ingestion.ports import JobProgress
 from exactdocs_kernel import ValidationError
@@ -81,7 +89,33 @@ async def test_a_domain_error_fails_the_job_with_its_message(build_module) -> No
 
     failed = await module.get_job(GetJobQuery(job_id=waiting.id))
     assert (failed.state, failed.error) == (JobState.FAILED, "the repository has no docs folder")
+    assert failed.error_code == "validation_error"
     assert failed.finished_at is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (NotAGitRepositoryError(), "repo_unreachable"),
+        (RepositoryUnreachableError("connection refused"), "repo_unreachable"),
+        (RepositoryAuthRequiredError(), "auth_failed"),
+        (CredentialsRequiredError(), "auth_failed"),
+        (NoArticlesError(), "no_articles"),
+    ],
+)
+async def test_an_import_that_meets_an_upstream_problem_records_its_code(
+    build_module, error: Exception, code: str
+) -> None:
+    async def refuse(_job: Job, _progress: JobProgress) -> None:
+        raise error
+
+    module = build_module({IMPORT: refuse})
+    waiting = await module.enqueue_job(enqueue())
+
+    await module.run_next_job()
+
+    failed = await module.get_job(GetJobQuery(job_id=waiting.id))
+    assert (failed.state, failed.error_code, failed.error) == (JobState.FAILED, code, str(error))
 
 
 async def test_an_unexpected_error_fails_the_job_without_leaking_internals(
@@ -104,6 +138,7 @@ async def test_an_unexpected_error_fails_the_job_without_leaking_internals(
         "unexpected RuntimeError",
         2,
     )
+    assert failed.error_code == "unexpected"
     assert "token.txt" in caplog.text  # the details go to the log
 
 

@@ -115,6 +115,11 @@ def step_lists(context: Context, library: str, ref: str) -> None:
     assert ref in context.output, context.output
 
 
+@then('the error output says "{text}"')
+def step_error_says(context: Context, text: str) -> None:
+    assert text in context.errors, context.errors
+
+
 @then('the output says "{text}"')
 def step_says(context: Context, text: str) -> None:
     assert text in context.output, context.output

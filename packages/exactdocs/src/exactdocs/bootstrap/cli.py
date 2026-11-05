@@ -416,7 +416,7 @@ def sync(
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Re-sync the branch versions of a library (tags and commits never move)."""
+    """Re-sync the branch versions of a library; tags are checked and reported, never moved."""
 
     async def work() -> None:
         async with _api(url, token) as api:

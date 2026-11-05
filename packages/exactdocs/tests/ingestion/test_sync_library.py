@@ -15,6 +15,9 @@ from exactdocs.ingestion.adapters.driven.memory import (
 from exactdocs.ingestion.dtos import EnqueueJobCommand, SyncLibraryCommand
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
+    HostKeyChangedError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
     RepositoryUnreachableError,
     SyncFailedError,
     VersionImportingError,
@@ -35,6 +38,7 @@ from exactdocs.ingestion.models import (
     RemoteRefs,
     RepositoryHost,
     RepositoryUrl,
+    SyncErrorCode,
     SyncStatus,
 )
 from exactdocs.ingestion.module import IngestionModule
@@ -53,6 +57,7 @@ SOURCE = ImportSource(url=URL, selection=PathSelection.of([]), tag_rules=())
 @dataclass
 class Remote:
     heads: dict[str, str] = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)
     error: Exception | None = None
     slow: bool = False
     credentials: list[Credential | None] = field(default_factory=list)
@@ -71,12 +76,19 @@ class Remote:
             raise self.error
         return RemoteRefs(
             default_branch="main",
-            refs=tuple(RemoteRef(name=f"refs/heads/{n}", sha=s) for n, s in self.heads.items()),
+            refs=(
+                *(RemoteRef(name=f"refs/heads/{n}", sha=s) for n, s in self.heads.items()),
+                *(RemoteRef(name=f"refs/tags/{n}", sha=s) for n, s in self.tags.items()),
+            ),
         )
 
 
 def branch(ref: str, sha: str = OLD) -> ImportedRef:
     return ImportedRef(ref=ref, kind=RefKind.BRANCH, commit_sha=sha)
+
+
+def tag(ref: str, sha: str = TAG) -> ImportedRef:
+    return ImportedRef(ref=ref, kind=RefKind.TAG, commit_sha=sha)
 
 
 async def _noop(job: object, progress: object, /) -> None: ...
@@ -166,22 +178,114 @@ async def test_nothing_is_queued_when_no_branch_moved(
     assert not jobs.jobs
 
 
-async def test_tags_and_commits_are_pinned_and_never_ask_the_remote(
+async def test_commits_are_pinned_and_never_ask_the_remote(
     module: IngestionModule,
     remote: Remote,
     versions: list[ImportedRef],
     jobs: InMemoryJobRepository,
 ) -> None:
-    versions[:] = [
-        ImportedRef(ref="v1", kind=RefKind.TAG, commit_sha=TAG),
-        ImportedRef(ref=OLD, kind=RefKind.COMMIT, commit_sha=OLD),
-    ]
+    versions[:] = [ImportedRef(ref=OLD, kind=RefKind.COMMIT, commit_sha=OLD)]
     remote.error = RepositoryUnreachableError("down")  # would fail if the remote were asked
 
     result = await module.sync_library(SYNC)
 
-    assert [v.status for v in result.versions] == [SyncStatus.PINNED, SyncStatus.PINNED]
+    assert [v.status for v in result.versions] == [SyncStatus.PINNED]
+    assert remote.credentials == []
     assert not jobs.jobs
+
+
+async def test_a_tag_that_still_names_its_commit_is_pinned(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = TAG
+
+    result = await module.sync_library(SYNC)
+
+    assert [(v.status, v.error_code, v.job_id) for v in result.versions] == [
+        (SyncStatus.PINNED, None, None)
+    ]
+    assert not jobs.jobs
+
+
+async def test_an_annotated_tag_is_compared_by_the_commit_it_peels_to(
+    module: IngestionModule, remote: Remote, versions: list[ImportedRef]
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags |= {"v1": NEWER, "v1^{}": TAG}  # NEWER is the tag object, TAG its commit
+
+    result = await module.sync_library(SYNC)
+
+    assert [v.status for v in result.versions] == [SyncStatus.PINNED]
+
+
+async def test_a_moved_tag_is_reported_and_never_re_imported(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions.append(tag("v1"))
+    remote.tags["v1"] = NEW
+
+    result = await module.sync_library(SYNC)
+
+    moved = {v.ref: v for v in result.versions}["v1"]
+    assert (moved.status, moved.error_code, moved.commit_sha) == (
+        SyncStatus.FAILED,
+        SyncErrorCode.TAG_MOVED,
+        TAG,  # still what it serves
+    )
+    assert moved.error
+    assert NEW in moved.error
+    assert TAG in moved.error
+    (job,) = jobs.jobs.values()  # a record of the failure, no import
+    assert (job.id, job.state, job.error_code, job.version) == (
+        moved.job_id,
+        JobState.FAILED,
+        "tag_moved",
+        "v1",
+    )
+    assert job.finished_at is not None
+
+
+async def test_a_moved_tag_is_recorded_once_and_cleared_when_it_comes_back(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+    await module.sync_library(SYNC)
+    await module.sync_library(SYNC)
+    remote.tags["v1"] = TAG
+
+    result = await module.sync_library(SYNC)
+
+    assert [v.status for v in result.versions] == [SyncStatus.PINNED]
+    states = [j.state for j in sorted(jobs.jobs.values(), key=lambda j: j.id)]
+    assert states == [JobState.FAILED, JobState.SUCCEEDED]
+
+
+@pytest.mark.parametrize("kind", ["branch", "tag"])
+async def test_a_ref_deleted_upstream_is_ref_deleted(
+    module: IngestionModule,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+    kind: str,
+) -> None:
+    versions[:] = [branch("gone") if kind == "branch" else tag("gone")]
+
+    result = await module.sync_library(SYNC)
+
+    (gone,) = result.versions
+    assert (gone.status, gone.error_code) == (SyncStatus.FAILED, SyncErrorCode.REF_DELETED)
+    assert gone.error == f"the {kind} 'gone' no longer exists in the repository"
+    assert jobs.jobs[gone.job_id].error_code == "ref_deleted"  # ty: ignore[invalid-argument-type]
 
 
 async def test_a_busy_branch_is_reported_and_the_others_still_sync(
@@ -233,9 +337,12 @@ async def test_an_unreachable_remote_fails_a_job_per_branch_and_names_them(
     with pytest.raises(SyncFailedError) as raised:
         await module.sync_library(SYNC)
 
-    assert raised.value.code == RepositoryUnreachableError.code
+    assert raised.value.code == "repo_unreachable"
+    assert raised.value.cause_code == RepositoryUnreachableError.code
     assert sorted(j.version or "" for j in jobs.jobs.values()) == ["main", "next"]
-    assert {j.state for j in jobs.jobs.values()} == {JobState.FAILED}
+    assert {(j.state, j.error_code) for j in jobs.jobs.values()} == {
+        (JobState.FAILED, "repo_unreachable")
+    }
     assert all("connection refused" in (j.error or "") for j in jobs.jobs.values())
     assert sorted(raised.value.job_ids) == sorted(jobs.jobs)
     assert all(job_id in str(raised.value) for job_id in jobs.jobs)
@@ -282,7 +389,8 @@ async def test_a_branch_gone_upstream_fails_its_job_and_the_others_still_sync(
     assert by_ref["main"].status is SyncStatus.QUEUED
     assert by_ref["next"].status is SyncStatus.FAILED
     failed = jobs.jobs[by_ref["next"].job_id]  # ty: ignore[invalid-argument-type]
-    assert (failed.state, failed.error) == (JobState.FAILED, "the branch no longer exists")
+    assert (failed.state, failed.error_code) == (JobState.FAILED, SyncErrorCode.REF_DELETED)
+    assert failed.error == "the branch 'next' no longer exists in the repository"
 
 
 class FailsFor(InMemoryJobRepository):
@@ -362,9 +470,11 @@ async def test_an_unreadable_credential_is_recorded_on_each_branch_and_nothing_i
     with pytest.raises(SyncFailedError) as raised:
         await module.sync_library(SYNC)
 
-    assert raised.value.code == "credentials_required"
+    assert (raised.value.code, raised.value.cause_code) == ("auth_failed", "credentials_required")
     assert remote.credentials == []  # the remote was never asked
-    assert {j.state for j in jobs.jobs.values()} == {JobState.FAILED}
+    assert {(j.state, j.error_code) for j in jobs.jobs.values()} == {
+        (JobState.FAILED, "auth_failed")
+    }
     assert sorted(j.version or "" for j in jobs.jobs.values()) == ["main", "next"]
 
 
@@ -378,5 +488,33 @@ async def test_a_credential_stored_for_another_host_is_not_used_by_a_sync(
     with pytest.raises(SyncFailedError) as raised:
         await module.sync_library(SYNC)
 
-    assert raised.value.code == "credentials_required"
+    assert raised.value.code == "auth_failed"
     assert remote.credentials == []
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (NotAGitRepositoryError(), "repo_unreachable"),  # deleted, or private without a login
+        (RepositoryUnreachableError("connection refused"), "repo_unreachable"),
+        (RepositoryAuthRequiredError(), "auth_failed"),  # an expired or revoked token
+        (HostKeyChangedError(), "host_key_changed"),  # not a credential problem: a warning
+    ],
+)
+async def test_a_remote_that_cannot_be_read_says_why(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+    error: Exception,
+    code: str,
+) -> None:
+    versions.append(tag("v1"))
+    remote.error = error
+
+    with pytest.raises(SyncFailedError) as raised:
+        await module.sync_library(SYNC)
+
+    assert raised.value.code == code
+    assert sorted(j.version or "" for j in jobs.jobs.values()) == ["main", "next", "v1"]
+    assert {j.error_code for j in jobs.jobs.values()} == {code}

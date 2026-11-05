@@ -19,6 +19,7 @@ def before_all(context: Context) -> None:
     base = Path(context.stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-fx-")))
     context.fixture_repo = context.stack.enter_context(fixture_repo.served(base))
     context.fixture_git = fixture_repo.git
+    context.fixture_serve_copy = fixture_repo.serve_copy
 
 
 def after_all(context: Context) -> None:
