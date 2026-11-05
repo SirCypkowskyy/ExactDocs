@@ -124,18 +124,41 @@ def build_router(
     async def preview(command: PreviewRepositoryCommand, request: Request) -> RepositoryPreview:
         """List the articles an import of this URL, ref and patterns would take (a dry run).
 
-        Only the commit's tree is fetched, no file content, and nothing is stored. `files` has
-        at most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths
-        are untrusted text. A `credential` needs a signed-in session, not an API token.
+        Only the commit's tree is fetched, plus the root `context7.json` alone (no other file
+        content), and nothing is stored. Without paths, the file's folders and exclusions are
+        applied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000
+        paths; `total` counts all matches and `truncated` says they were cut. Paths are
+        untrusted text. A `credential` needs a signed-in session, not an API token.
         """
         await _session_for(require_session, command.credential, request)
         return await preview_repository(command)
 
-    @router.post("/libraries", status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "/libraries",
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            status.HTTP_429_TOO_MANY_REQUESTS: {
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
+                },
+                "description": "Sent without paths while every preview slot is taken, so the "
+                "repository's `context7.json` could not be read (`preview_busy`); nothing is "
+                "stored. Try again shortly.",
+                "headers": {
+                    "Retry-After": {
+                        "description": "Seconds to wait before trying again.",
+                        "schema": {"type": "integer"},
+                    }
+                },
+            }
+        },
+    )
     async def add(command: AddLibraryCommand, request: Request, response: Response) -> AddedLibrary:
         """Create a library, pin its ref to a commit and queue the import (see the job ID).
 
-        `Location` is the new library.
+        `Location` is the new library. Without paths, those of the repository's `context7.json`
+        are taken; if every preview slot stays busy so it cannot be read, the answer is 429
+        `preview_busy` and nothing is stored.
         """
         await _session_for(require_session, command.credential, request)
         added = await add_library(command)

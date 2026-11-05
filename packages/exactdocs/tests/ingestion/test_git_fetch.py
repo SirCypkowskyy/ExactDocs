@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from exactdocs.ingestion.adapters.driven.git_cli import (
+    MAX_FETCHES,
     GitCli,
     MissingGit,
     sparse_patterns,
@@ -23,7 +24,13 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
     TreeTooLargeError,
 )
-from exactdocs.ingestion.models import PathSelection, ProposedId, RepositoryHost, RepositoryUrl
+from exactdocs.ingestion.models import (
+    FetchedFile,
+    PathSelection,
+    ProposedId,
+    RepositoryHost,
+    RepositoryUrl,
+)
 from fixture_repo import DocsRepo, git
 
 
@@ -255,12 +262,14 @@ def test_sparse_patterns_follow_the_selection() -> None:
 
     assert sparse_patterns(selection) == [
         "/docs/", "/guide/*.md", "/a/x", "/b/x", "/\\[z]",
-        "/README.md", "/README.mdx", "!/docs/archive/",
+        "/README.md", "/README.mdx", "!/docs/archive/", "/context7.json",
     ]  # fmt: skip
 
 
 def test_no_include_means_every_file() -> None:
-    assert sparse_patterns(PathSelection.of()) == ["/*", "/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of()) == [
+        "/*", "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
 
 
 async def test_fetches_run_side_by_side(gateway: GitCli, docs_repo: DocsRepo) -> None:
@@ -444,16 +453,26 @@ def test_brace_overflow_drops_an_exclusion_but_widens_an_include() -> None:
     many = "{a,b,c,d,e,f,g,h,i}{a,b,c,d,e,f,g,h,i}/x.md"
 
     assert sparse_patterns(PathSelection.of(["docs/"], [many])) == [
-        "/docs/", "/README.md", "/README.mdx",
+        "/docs/", "/README.md", "/README.mdx", "/context7.json",
     ]  # fmt: skip
-    assert sparse_patterns(PathSelection.of([many])) == ["/*", "/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of([many])) == [
+        "/*", "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
 
 
-def test_an_include_that_matches_nothing_fetches_only_the_readme() -> None:
-    assert sparse_patterns(PathSelection.of(["{}"])) == ["/README.md", "/README.mdx"]
+def test_an_include_that_matches_nothing_fetches_only_the_readme_and_context7_json() -> None:
+    assert sparse_patterns(PathSelection.of(["{}"])) == [
+        "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
     assert sparse_patterns(PathSelection.of(["{}", "docs/"])) == [
-        "/docs/", "/README.md", "/README.mdx",
+        "/docs/", "/README.md", "/README.mdx", "/context7.json",
     ]  # fmt: skip
+
+
+def test_no_exclusion_can_drop_context7_json() -> None:
+    assert sparse_patterns(PathSelection.of([], ["**/*.json", "context7.json"]))[-1] == (
+        "/context7.json"
+    )
 
 
 def test_special_characters_are_neutralised() -> None:
@@ -617,3 +636,90 @@ async def test_a_listing_leaves_symlinks_out(tmp_path: Path, gateway: GitCli) ->
     )
 
     assert listed == ["a.md"]
+
+
+@pytest.mark.parametrize("transport", ["file_url", "http_url"])
+async def test_one_root_file_is_read_from_the_tree_without_a_checkout(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path, transport: str
+) -> None:
+    url = getattr(docs_repo, transport)
+
+    found = await gateway.read_file(
+        repository(url), sha(docs_repo, "next"), "context7.json", max_bytes=2**16
+    )
+    absent = await gateway.read_file(
+        repository(url), sha(docs_repo, "v1.4.0"), "context7.json", max_bytes=2**16
+    )
+
+    expected = git("show", "next:context7.json", cwd=docs_repo.path)
+    assert found == FetchedFile(data=(expected + "\n").encode())
+    assert absent == FetchedFile()
+    assert leftovers(work) == []
+
+
+async def test_a_root_file_over_the_limit_is_not_downloaded(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    found = await gateway.read_file(
+        repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=10
+    )
+
+    assert found == FetchedFile(problem="larger than 10 bytes")
+
+
+async def test_a_root_file_that_is_a_link_or_a_folder_is_not_read(
+    tmp_path: Path, gateway: GitCli
+) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "target.json").write_text("{}")
+    (source / "context7.json").symlink_to("target.json")
+    (source / "docs").mkdir()
+    (source / "docs" / "a.md").write_text("a")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+    head = git("rev-parse", "HEAD", cwd=source)
+
+    link = await gateway.read_file(repository(source.as_uri()), head, "context7.json", max_bytes=99)
+    folder = await gateway.read_file(repository(source.as_uri()), head, "docs", max_bytes=99)
+
+    assert link == folder == FetchedFile(problem="not a regular file")
+
+
+async def test_reading_a_root_file_never_waits_for_an_import_slot(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(MAX_FETCHES):
+        await busy.fetch_slots.acquire()  # every import slot is taken by a long import
+
+    async with asyncio.timeout(30):
+        found = await busy.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=2**16
+        )
+
+    assert found.data
+
+
+async def test_reading_a_root_file_waits_a_bounded_time_for_a_preview_slot(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(2):
+        await busy.preview_slots.acquire()
+
+    with pytest.raises(PreviewBusyError):
+        await busy.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=99
+        )
+
+
+@pytest.mark.parametrize("path", ["docs/a.md", "*.json", "", "-x", ":(glob)*"])
+async def test_only_a_plain_root_name_can_be_read(
+    gateway: GitCli, docs_repo: DocsRepo, path: str
+) -> None:
+    with pytest.raises(ValueError, match="root file name"):
+        await gateway.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), path, max_bytes=99
+        )

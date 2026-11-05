@@ -136,6 +136,7 @@ class CatalogSearchableVersions:
             commit_sha=active.commit_sha,
             repository_url=detail.source_url,
             host=SourceHost(detail.host.value),
+            rules=tuple(detail.rules),
         )
 
 
@@ -348,11 +349,19 @@ class CatalogVersionPublisher:
         return {a.path: tuple(a.tags) for a in found.articles}
 
     async def describe(
-        self, *, library: str, ref: str, title: str | None, description: str | None
+        self,
+        *,
+        library: str,
+        ref: str,
+        title: str | None,
+        description: str | None,
+        rules: Sequence[str],
     ) -> None:
-        """Offer the README's text to the catalog, which decides whether it applies."""
+        """Offer the version's text and rules to the catalog, which decides whether they apply."""
         await self.apply_readme(
-            ApplyReadmeCommand(library=library, ref=ref, title=title, description=description)
+            ApplyReadmeCommand(
+                library=library, ref=ref, title=title, description=description, rules=list(rules)
+            )
         )
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:

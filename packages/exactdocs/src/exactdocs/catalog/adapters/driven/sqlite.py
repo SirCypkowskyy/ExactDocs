@@ -82,6 +82,8 @@ libraries = Table(
     Column("settings", Text, nullable=False),
     Column("title_edited", Boolean, nullable=False, server_default="0"),
     Column("description_edited", Boolean, nullable=False, server_default="0"),
+    # LIB-06: a JSON list, written only by `follow_readme`, never by `save`
+    Column("rules", Text, nullable=False, server_default="[]"),
 )
 library_versions = Table(
     "catalog_library_versions",
@@ -196,6 +198,7 @@ _LIBRARY_COLUMNS = (
     libraries.c.title_edited,
     libraries.c.description_edited,
     libraries.c.pinned_version,
+    libraries.c.rules,
 )
 
 
@@ -279,8 +282,10 @@ class SqliteLibraryRepository:
             )
         return done.rowcount > 0
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        """One UPDATE that keeps every field whose edited flag is set."""
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        """One UPDATE that keeps every field whose edited flag is set, and sets the rules."""
         async with self.engine.begin() as connection:
             await connection.execute(
                 update(libraries)
@@ -291,6 +296,7 @@ class SqliteLibraryRepository:
                         (libraries.c.description_edited, libraries.c.description),
                         else_=description,
                     ),
+                    rules=json.dumps(list(rules)),
                 )
             )
 
@@ -354,6 +360,7 @@ class SqliteLibraryRepository:
                 title_edited=row.title_edited,
                 description_edited=row.description_edited,
                 pinned_version=VersionRef(row.pinned_version) if row.pinned_version else None,
+                rules=tuple(json.loads(row.rules)),
             )
             for row in rows
         )

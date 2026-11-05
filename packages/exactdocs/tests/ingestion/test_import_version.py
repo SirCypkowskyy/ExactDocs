@@ -174,6 +174,7 @@ class Side:
     log: list[str]
     stored: list[ImportedVersion] = field(default_factory=list)
     described: list[tuple[str, str, str | None, str | None]] = field(default_factory=list)
+    rules: list[tuple[str, ...]] = field(default_factory=list)
     known_sets: dict[str, tuple[ArticleChunk, ...]] = field(default_factory=dict)
     known_calls: list[int] = field(default_factory=list)
     fail_at: str | None = None
@@ -206,10 +207,17 @@ class Side:
         await self._step(f"retag {manifest_id} {sorted(tags)}")
 
     async def describe(
-        self, *, library: str, ref: str, title: str | None, description: str | None
+        self,
+        *,
+        library: str,
+        ref: str,
+        title: str | None,
+        description: str | None,
+        rules: Sequence[str],
     ) -> None:
         await self._step("describe")
         self.described.append((library, ref, title, description))
+        self.rules.append(tuple(rules))
 
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
@@ -442,6 +450,82 @@ async def test_an_unusable_readme_is_offered_as_empty(tmp_path: Path, readme: by
     await world.run(make_job(), world.progress)
 
     assert world.catalog.described == [("/a/b", "v1", None, None)]
+
+
+CONTEXT7 = (
+    b'{"projectTitle": "Acme SDK", "description": "From context7.", "rules": ["Use v2 client"]}'
+)
+
+
+async def test_context7_json_wins_over_the_readme_and_brings_its_rules(tmp_path: Path) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.md": README, "context7.json": CONTEXT7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Acme SDK", "From context7.")]
+    assert world.catalog.rules == [("Use v2 client",)]
+    assert world.progress.problems == []
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/a.md"]
+
+
+async def test_the_readme_fills_what_context7_json_leaves_out(tmp_path: Path) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.md": README, "context7.json": b"{}"}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Acme", "A payments SDK.")]
+    assert world.catalog.rules == [()]
+
+
+@pytest.mark.parametrize(
+    "context7", [b"{not json", b'{"rules": "Use v2 client"}', b"\xff\xfe", b"[]"]
+)
+async def test_an_invalid_context7_json_is_a_warning_and_ignored(
+    tmp_path: Path, context7: bytes
+) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.md": README, "context7.json": context7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Acme", "A payments SDK.")]
+    assert world.catalog.rules == [()]
+    ((path, code, reason),) = world.progress.problems
+    assert (path, code) == ("context7.json", ProblemCode.CONTEXT7)
+    assert reason.startswith("context7.json is ignored: ")
+    assert not ProblemCode.CONTEXT7.is_skip
+
+
+async def test_dropped_previous_versions_are_listed_and_the_file_still_applies(
+    tmp_path: Path,
+) -> None:
+    context7 = b'{"rules": ["Use v2 client"], "previousVersions": [{"tag": "--x"}, {"tag": "v1"}]}'
+    files = {"docs/a.md": INSTALL.encode(), "context7.json": context7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.rules == [("Use v2 client",)]
+    ((path, code, reason),) = world.progress.problems
+    assert (path, code) == ("context7.json", ProblemCode.CONTEXT7)
+    assert reason.startswith("previousVersions: an entry is left out")
+
+
+async def test_a_context7_json_that_is_a_link_is_ignored(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": INSTALL.encode(), "secret.json": CONTEXT7},
+        links={"context7.json": "secret.json"},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.rules == [()]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("context7.json", ProblemCode.CONTEXT7)
+    ]
 
 
 async def test_manual_tags_reach_the_chunks_before_the_version_is_activated(

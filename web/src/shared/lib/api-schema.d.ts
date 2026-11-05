@@ -158,7 +158,9 @@ export interface paths {
          * Add
          * @description Create a library, pin its ref to a commit and queue the import (see the job ID).
          *
-         *     `Location` is the new library.
+         *     `Location` is the new library. Without paths, those of the repository's `context7.json`
+         *     are taken; if every preview slot stays busy so it cannot be read, the answer is 429
+         *     `preview_busy` and nothing is stored.
          */
         readonly post: operations["ingestion-add"];
         readonly delete?: never;
@@ -467,9 +469,11 @@ export interface paths {
          * Preview
          * @description List the articles an import of this URL, ref and patterns would take (a dry run).
          *
-         *     Only the commit's tree is fetched, no file content, and nothing is stored. `files` has
-         *     at most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths
-         *     are untrusted text. A `credential` needs a signed-in session, not an API token.
+         *     Only the commit's tree is fetched, plus the root `context7.json` alone (no other file
+         *     content), and nothing is stored. Without paths, the file's folders and exclusions are
+         *     applied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000
+         *     paths; `total` counts all matches and `truncated` says they were cut. Paths are
+         *     untrusted text. A `credential` needs a signed-in session, not an API token.
          */
         readonly post: operations["ingestion-preview"];
         readonly delete?: never;
@@ -719,10 +723,24 @@ export interface components {
             readonly commit_sha: string;
             /** Job Id */
             readonly job_id: string;
+            /**
+             * Include Paths
+             * @description The library's paths: the ones sent, else those of `context7.json`.
+             */
+            readonly include_paths?: readonly string[];
+            /** Exclude Paths */
+            readonly exclude_paths?: readonly string[];
+            /** @description The repository's root `context7.json` at that commit; null when there is none or it is ignored (see `context7_warning`). */
+            readonly context7?: components["schemas"]["Context7Out"] | null;
+            /**
+             * Context7 Warning
+             * @description Why the `context7.json` at that commit is ignored; null when it is not.
+             */
+            readonly context7_warning?: string | null;
         };
         /**
          * AddedVersion
-         * @description Like ``AddedLibrary``, but ``library_id`` is the existing library.
+         * @description The existing library, the commit the new version's ref was pinned to, and its import.
          */
         readonly AddedVersion: {
             /** Library Id */
@@ -1041,6 +1059,44 @@ export interface components {
             readonly max_chars: number | null;
         };
         /**
+         * Context7Out
+         * @description What the repository's `context7.json` says (LIB-06). All of it is untrusted text.
+         *
+         *     `include_paths` / `exclude_paths` are its folders and excludes as ExactDocs patterns: what a
+         *     library added without paths imports.
+         */
+        readonly Context7Out: {
+            /** Project Title */
+            readonly project_title: string | null;
+            /** Description */
+            readonly description: string | null;
+            /** Folders */
+            readonly folders: readonly string[];
+            /** Exclude Folders */
+            readonly exclude_folders: readonly string[];
+            /** Exclude Files */
+            readonly exclude_files: readonly string[];
+            /** Include Paths */
+            readonly include_paths: readonly string[];
+            /** Exclude Paths */
+            readonly exclude_paths: readonly string[];
+            /**
+             * Rules
+             * @description Shown to agents with every `query-docs` answer.
+             */
+            readonly rules: readonly string[];
+            /**
+             * Previous Versions
+             * @description Older tags to offer for import (`POST .../versions` each).
+             */
+            readonly previous_versions: readonly components["schemas"]["PreviousVersionOut"][];
+            /**
+             * Notes
+             * @description What was left out of the file (a `previousVersions` entry whose tag git would not take), and why.
+             */
+            readonly notes?: readonly string[];
+        };
+        /**
          * CoverageOut
          * @description How much of the index the answer stands on.
          */
@@ -1327,6 +1383,11 @@ export interface components {
              * @description True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import).
              */
             readonly default_pinned: boolean;
+            /**
+             * Rules
+             * @description The rules of the default version's `context7.json`, shown to agents with every `query-docs` answer. Untrusted repository text.
+             */
+            readonly rules?: readonly string[];
         };
         /**
          * LibraryFacetOut
@@ -1563,11 +1624,24 @@ export interface components {
             readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
         };
         /**
+         * PreviousVersionOut
+         * @description An older tag the repository's `context7.json` offers for import.
+         */
+        readonly PreviousVersionOut: {
+            /** Tag */
+            readonly tag: string;
+            /**
+             * Title
+             * @description Its display title; empty when the file gives none.
+             */
+            readonly title: string;
+        };
+        /**
          * ProblemCode
          * @description Why a file shows up in a job's problems; stable, clients may branch on it.
          * @enum {string}
          */
-        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated";
+        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7";
         /**
          * RefOut
          * @description A tag or branch and the commit it points at.
@@ -1669,6 +1743,20 @@ export interface components {
              * @description True when `files` is cut (`total` is more than listed).
              */
             readonly truncated: boolean;
+            /**
+             * Include Paths
+             * @description The paths applied: the ones sent, else those of `context7.json`.
+             */
+            readonly include_paths?: readonly string[];
+            /** Exclude Paths */
+            readonly exclude_paths?: readonly string[];
+            /** @description The repository's root `context7.json` at that commit; null when there is none or it is ignored (see `context7_warning`). */
+            readonly context7?: components["schemas"]["Context7Out"] | null;
+            /**
+             * Context7 Warning
+             * @description Why the `context7.json` at that commit is ignored; null when it is not.
+             */
+            readonly context7_warning?: string | null;
         };
         /**
          * RepositoryRefs
@@ -3106,6 +3194,17 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Sent without paths while every preview slot is taken, so the repository's `context7.json` could not be read (`preview_busy`); nothing is stored. Try again shortly. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before trying again. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {

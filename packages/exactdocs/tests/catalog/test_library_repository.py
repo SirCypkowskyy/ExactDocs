@@ -244,8 +244,32 @@ async def test_set_text_changes_only_the_given_fields_and_marks_them(
 async def test_follow_readme_keeps_edited_fields(repository: LibraryRepository) -> None:
     await repository.save(replace(PAYMENTS, title_edited=True, description_edited=False))
 
-    await repository.follow_readme(PAYMENTS.id, title="README", description="README text")
+    await repository.follow_readme(
+        PAYMENTS.id, title="README", description="README text", rules=["Use v2 client"]
+    )
 
     assert await repository.get(PAYMENTS.id) == replace(
-        PAYMENTS, title_edited=True, description="README text", description_edited=False
+        PAYMENTS,
+        title_edited=True,
+        description="README text",
+        description_edited=False,
+        rules=("Use v2 client",),
     )
+
+
+async def test_rules_are_written_only_by_follow_readme(repository: LibraryRepository) -> None:
+    await repository.save(PAYMENTS)
+    await repository.follow_readme(
+        PAYMENTS.id, title="T", description="D", rules=["Use v2 client", "Pin the SDK"]
+    )
+
+    # A save from a copy read before the rules arrived does not undo them.
+    await repository.save(replace(PAYMENTS, title="T", description="D"))
+    kept = await repository.get(PAYMENTS.id)
+    await repository.follow_readme(PAYMENTS.id, title="T", description="D", rules=[])
+    cleared = await repository.get(PAYMENTS.id)
+
+    assert kept is not None
+    assert kept.rules == ("Use v2 client", "Pin the SDK")
+    assert cleared is not None
+    assert cleared.rules == ()
