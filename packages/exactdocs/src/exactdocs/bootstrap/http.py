@@ -155,6 +155,7 @@ def create_app(container: Container) -> FastAPI:
             list_library_jobs=container.ingestion.list_library_jobs,
             check_repository=container.ingestion.check_repository,
             list_repository_refs=container.ingestion.list_repository_refs,
+            preview_repository=container.ingestion.preview_repository,
             add_library=container.ingestion.add_library,
             add_version=container.ingestion.add_version,
             require_session=require_session,

@@ -48,7 +48,12 @@ from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecre
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault, SqliteJobRepository
 from exactdocs.ingestion.adapters.driving.worker import JobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError
-from exactdocs.ingestion.ports.driven import GitGateway, GitRemote, RenameSource
+from exactdocs.ingestion.ports.driven import (
+    GitGateway,
+    GitRemote,
+    RenameSource,
+    RepositoryTree,
+)
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
@@ -126,6 +131,7 @@ class Container:
         remote: GitRemote | None = None,
         gateway: GitGateway | None = None,
         renames: RenameSource | None = None,
+        tree: RepositoryTree | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -137,12 +143,12 @@ class Container:
         reported as ``git_not_installed`` by everything that needs it, so the rest still runs.
         """
         engine = open_database(settings)  # creates the data dir first (or says why not)
-        if remote is None or gateway is None:
+        if remote is None or gateway is None or tree is None:
             try:
-                known_hosts = settings.data_dir / KNOWN_HOSTS_FILE
-                seed_known_hosts(known_hosts)
+                seed_known_hosts(settings.data_dir / KNOWN_HOSTS_FILE)
                 git: GitCli | MissingGit = GitCli.locate(
-                    work_root=settings.data_dir / WORK_DIR, known_hosts=known_hosts
+                    work_root=settings.data_dir / WORK_DIR,
+                    known_hosts=settings.data_dir / KNOWN_HOSTS_FILE,
                 )
             except GitNotInstalledError as exc:
                 logger.warning("%s", exc)
@@ -150,6 +156,7 @@ class Container:
             remote = remote or git
             renames = renames or (git if gateway is None else None)
             gateway = gateway or git
+            tree = tree or git
         try:
             secret_box = (
                 FernetSecretBox.from_secrets(
@@ -195,6 +202,7 @@ class Container:
             jobs=SqliteJobRepository(engine),
             clock=SystemClock(),
             remote=remote,
+            tree=tree,
             library_ids=CatalogLibraryIds(catalog.get_library),
             libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
             sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),

@@ -18,9 +18,11 @@ from exactdocs.ingestion.dtos import (
     LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    PreviewRepositoryCommand,
     RemovalResult,
     RemoveLibraryCommand,
     RemoveVersionCommand,
+    RepositoryPreview,
     RepositoryRefs,
     SyncedLibrary,
     SyncLibraryCommand,
@@ -124,6 +126,18 @@ class ListRepositoryRefs(Protocol):
     """List a repository's branches and tags; raises what ``CheckRepository`` raises."""
 
     async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
+        """Run the use case."""
+        ...
+
+
+class PreviewRepository(Protocol):
+    """List the files an import of (URL, ref, patterns) would take, importing nothing.
+
+    Raises what ``AddLibrary`` raises, plus ``CommitUnavailableError`` and
+    ``TreeTooLargeError`` from the tree fetch. Nothing is stored.
+    """
+
+    async def __call__(self, command: PreviewRepositoryCommand) -> RepositoryPreview:
         """Run the use case."""
         ...
 
