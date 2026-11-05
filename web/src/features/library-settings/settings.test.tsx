@@ -336,6 +336,59 @@ describe("adding a version", () => {
     await waitFor(() => expect(screen.getByLabelText("Version to import")).toHaveFocus());
   });
 
+  /** Two frames: the window a focus request made with `requestAnimationFrame` would land in. */
+  const twoFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  it("does not pull focus away once the refusal is on screen", async () => {
+    serve({ addVersion: () => failure(422, "unknown_ref") });
+    renderPage();
+    await userEvent.selectOptions(await open(), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/no branch, tag or commit/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    await twoFrames();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("does not pull focus away once the missing choice is on screen", async () => {
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/Choose a branch or tag from the list/);
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    await twoFrames();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("focuses the typed ref as it appears and leaves focus alone after", async () => {
+    serve();
+    renderPage();
+    await userEvent.selectOptions(await open(), "other");
+    expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    await twoFrames();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("returns focus to the add button on cancel, and leaves it alone after", async () => {
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add a version" })).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Re-sync now" });
+    elsewhere.focus();
+    await twoFrames();
+    expect(elsewhere).toHaveFocus();
+  });
+
   it("keeps a typed ref when the list of branches cannot load", async () => {
     const calls = serve();
     const real = globalThis.fetch;
