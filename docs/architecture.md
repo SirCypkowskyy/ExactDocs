@@ -326,7 +326,8 @@ free count and the doubling wait). `FailedSignInLog.charge` checks the wait and 
 attempt in one atomic step, before the hash, so concurrent attempts cannot all pass the check;
 an attempt that must wait raises `SignInThrottledError` (kernel `RateLimitedError`, 429 with
 `Retry-After`) without a hash and without being counted. A right password refunds its attempt
-on the address, clears the username's count and is remembered as a known (username, address)
+on the address (putting back the earlier `last_at` when no later attempt came, so the wait is
+not restarted), clears the username's count and is remembered as a known (username, address)
 pair for 30 days; from a known address, the username's count does not apply. The adapter is
 in-process memory, bounded to 10,000 counts and 10,000 pairs, and evicts counts that hold no
 one back first; several processes (TEAM-01) would each count their own, and a shared adapter

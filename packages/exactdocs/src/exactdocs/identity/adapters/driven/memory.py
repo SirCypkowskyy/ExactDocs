@@ -154,12 +154,12 @@ class InMemoryFailedSignInLog:
             self._put(key, record.plus_one(now) if record else FailedSignIns(count=1, last_at=now))
         return timedelta(0)
 
-    async def refund(self, key: str) -> None:
-        """Take back one attempt under ``key``; its place in the eviction order stays."""
+    async def refund(self, key: str, charged_at: datetime) -> None:
+        """Take back the attempt charged under ``key`` at ``charged_at``; its place stays."""
         record = self.records.get(key)
         if record is None:
             return
-        if (fewer := record.minus_one()) is None:
+        if (fewer := record.refunded(charged_at)) is None:
             del self.records[key]
         else:
             self.records[key] = fewer

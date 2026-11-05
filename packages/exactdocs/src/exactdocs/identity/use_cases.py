@@ -128,15 +128,14 @@ class AuthenticateUseCase:
         except InvalidUsernameError:
             username = None
         address = address_key(client) if client else None
-        known = f"{username}@{address}"
-        trusted = bool(username and address) and await self.failures.signed_in_before(
-            known, self.clock.now()
-        )
+        known = f"{username}@{address}" if username and address else None
+        now = self.clock.now()
+        trusted = known is not None and await self.failures.signed_in_before(known, now)
         keys = [
             *([address] if address else []),
             *([f"username:{username}"] if username and not trusted else []),
         ]
-        wait = await self.failures.charge(keys, self.clock.now())
+        wait = await self.failures.charge(keys, now)
         if wait > timedelta(0):
             raise SignInThrottledError(math.ceil(wait.total_seconds()))
         account = await self.repository.get(username) if username else None
@@ -147,11 +146,12 @@ class AuthenticateUseCase:
             raise InvalidCredentialsError
         if not await self.hasher.verify(account.password_hash, password):
             raise InvalidCredentialsError
-        # The account's own count starts over; the address only gets this attempt back, so one
-        # good password does not buy an address a fresh round of guesses at others.
+        # The account's own count starts over; the address only gets this attempt back (its
+        # wait is not restarted), so one good password does not buy an address a fresh round of
+        # guesses at others.
         await self.failures.forget(f"username:{username}")
-        if address:
-            await self.failures.refund(address)
+        if address and known:
+            await self.failures.refund(address, now)
             await self.failures.remember_sign_in(known, self.clock.now())
         return AccountSummary.from_model(account)
 

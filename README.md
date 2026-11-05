@@ -145,7 +145,8 @@ attempt counts against its client address (IPv6: its /64) and its username at on
 password is checked, so a burst of concurrent guesses gets no more tries than guesses sent one
 by one. After 5 attempts that did not succeed, each further one must wait (5 seconds, doubling up
 to 15 minutes) and is answered 429 `rate_limited` with a `Retry-After` header meanwhile. A right
-password takes its own attempt back and clears its username's count. An address that has signed
+password takes its own attempt back (without restarting the address's wait) and clears its
+username's count. An address that has signed
 into a username in the last 30 days is held to its own count only, not to the username's, so
 others failing for the admin's username cannot lock the admin out of a machine they already
 use; a new address still waits. Behind a reverse proxy, list it in
@@ -418,9 +419,25 @@ volumes:
   exactdocs-data:
 ```
 
-Behind a reverse proxy in another container, add its address to `EXACTDOCS_FORWARDED_ALLOW_IPS`
-(e.g. `172.16.0.0/12` for a Docker network). Otherwise every client looks like the proxy, and 5
-failed sign-ins from anyone throttle everyone.
+Behind a reverse proxy in another container, add that proxy's own address to
+`EXACTDOCS_FORWARDED_ALLOW_IPS`. Otherwise every client looks like the proxy, and 5 failed
+sign-ins from anyone throttle everyone. Whatever this setting lists can choose the client
+address the server sees (through `X-Forwarded-For`), so list only the proxy: not a range such as
+`172.16.0.0/12`, which covers every container on every Docker network of the host. To pin the
+proxy's address, give it a fixed one on a network of its own:
+
+```yaml
+services:
+  proxy:
+    networks: { edge: { ipv4_address: 172.30.0.2 } }
+  exactdocs:
+    environment:
+      EXACTDOCS_FORWARDED_ALLOW_IPS: "172.30.0.2"
+    networks: [edge]
+networks:
+  edge:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
+```
 
 ## How it works
 

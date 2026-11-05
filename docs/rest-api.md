@@ -39,7 +39,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and `Retry-After` (its password is not checked, and it is not counted). Concurrent attempts
   get no more tries than sequential ones. The address is the one uvicorn reports, so behind a
   proxy listed in `EXACTDOCS_FORWARDED_ALLOW_IPS` it is the forwarded client. Counts are
-  forgotten after an hour without an attempt; a right password takes its attempt back, clears
+  forgotten after an hour without an attempt; a right password takes its attempt back (without restarting the wait), clears
   its username's count, and lets that address skip the username's count for 30 days. The counts
   live in the server's memory (a restart clears them). Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
   "signed_in", "account": ...}` and never fails; `DELETE /session` ends the session on the server

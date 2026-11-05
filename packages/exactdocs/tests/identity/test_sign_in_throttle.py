@@ -182,6 +182,50 @@ async def test_a_right_password_clears_the_username_but_not_the_address(world: W
     assert record.count == FREE_FAILURES - 1
 
 
+@pytest.mark.parametrize("typos", [FREE_FAILURES, FREE_FAILURES + 8], ids=["first-wait", "long"])
+async def test_a_second_sign_in_right_after_a_correct_one_is_not_refused(
+    world: World, typos: int
+) -> None:
+    last_typo = START
+    for _ in range(typos):  # typos from the address, waiting each wait out
+        world.clock.advance(timedelta(seconds=1))
+        await fail(world, 1, username="ada", client=ADMIN_HOST)
+        last_typo = world.clock.now()
+        record = await world.failures.get(f"address:{ADMIN_HOST}")
+        assert record is not None
+        world.clock.advance(record.wait(world.clock.now()))
+
+    await world.identity.authenticate(credentials(), client=ADMIN_HOST)  # e.g. the web sign-in
+    world.clock.advance(timedelta(seconds=1))
+    signed_in = await world.identity.authenticate(credentials(), client=ADMIN_HOST)  # the CLI
+
+    assert signed_in.username == "ada"
+    record = await world.failures.get(f"address:{ADMIN_HOST}")
+    assert record == FailedSignIns(count=typos, last_at=last_typo)
+
+
+async def test_a_refund_after_a_later_attempt_only_lowers_the_count() -> None:
+    log = InMemoryFailedSignInLog()
+    later = START + timedelta(seconds=1)
+    await log.charge(["address:a"], START)
+    await log.charge(["address:a"], later)
+
+    await log.refund("address:a", START)  # the first attempt was the right password
+
+    record = await log.get("address:a")
+    assert record is not None
+    assert (record.count, record.last_at) == (1, later)
+
+
+async def test_refunding_the_only_attempt_leaves_no_record() -> None:
+    log = InMemoryFailedSignInLog()
+    await log.charge(["address:a"], START)
+
+    await log.refund("address:a", START)
+
+    assert await log.get("address:a") is None
+
+
 async def test_invalid_usernames_count_against_the_address(world: World) -> None:
     await fail(world, FREE_FAILURES, username="not a valid\nname")
 
@@ -291,6 +335,8 @@ async def test_ipv6_clients_are_counted_per_64(world: World) -> None:
     [
         ("203.0.113.7", "address:203.0.113.7"),
         ("::ffff:203.0.113.7", "address:203.0.113.7"),
+        ("64:ff9b::203.0.113.7", "address:203.0.113.7"),
+        ("64:ff9b::1:203.0.113.7", "address:64:ff9b::/64"),
         ("2001:db8:1:2:3:4:5:6", "address:2001:db8:1:2::/64"),
         ("testclient", "address:testclient"),
     ],

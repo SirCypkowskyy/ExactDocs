@@ -30,6 +30,9 @@ FORGET_FAILURES_AFTER = timedelta(hours=1)
 # others cause for the username cannot lock its owner out of a machine they already use.
 REMEMBER_SIGN_INS_FOR = timedelta(days=30)
 _IPV6_NETWORK_BITS = 64  # one IPv6 client usually holds a whole /64
+# NAT64 (RFC 6052 well-known prefix) puts the IPv4 client in the last 32 bits, so every IPv4
+# client reached through it would share one /64.
+_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 _MAX_DOUBLINGS = 8  # FIRST_WAIT * 2**8 is past LONGEST_WAIT; also keeps the arithmetic small
 
 
@@ -128,10 +131,15 @@ class ApiToken:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FailedSignIns:
-    """The recent failed sign-ins of one client address or of one username."""
+    """The recent failed sign-ins of one client address or of one username.
+
+    ``previous_at`` is the ``last_at`` before the latest attempt (``None`` when that attempt
+    started the count), so the attempt can be taken back without moving the wait.
+    """
 
     count: int
     last_at: datetime
+    previous_at: datetime | None = None
 
     def is_forgotten(self, now: datetime) -> bool:
         """Whether no failure came for long enough that the count starts over."""
@@ -139,8 +147,9 @@ class FailedSignIns:
 
     def plus_one(self, now: datetime) -> FailedSignIns:
         """Return the record after one more failure at ``now``."""
-        count = 1 if self.is_forgotten(now) else self.count + 1
-        return FailedSignIns(count=count, last_at=now)
+        if self.is_forgotten(now):
+            return FailedSignIns(count=1, last_at=now)
+        return FailedSignIns(count=self.count + 1, last_at=now, previous_at=self.last_at)
 
     def wait(self, now: datetime) -> timedelta:
         """How long the next attempt must wait from ``now`` (zero when it may go ahead)."""
@@ -150,16 +159,30 @@ class FailedSignIns:
         until = self.last_at + min(FIRST_WAIT * 2**doublings, LONGEST_WAIT)
         return max(until - now, timedelta(0))
 
-    def minus_one(self) -> FailedSignIns | None:
-        """Return the record with one attempt taken back, or ``None`` when none is left."""
-        return FailedSignIns(count=self.count - 1, last_at=self.last_at) if self.count > 1 else None
+    def refunded(self, charged_at: datetime) -> FailedSignIns | None:
+        """Return the record with the attempt charged at ``charged_at`` taken back.
+
+        When that attempt is still the latest, the record goes back to how it was before it
+        (``None`` when it started the count), so a right password does not restart the wait.
+        When a later attempt came since, only the count goes down.
+        """
+        if self.last_at == charged_at:
+            if self.previous_at is None or self.count <= 1:
+                return None
+            return FailedSignIns(count=self.count - 1, last_at=self.previous_at)
+        if self.count <= 1:
+            return None
+        return FailedSignIns(
+            count=self.count - 1, last_at=self.last_at, previous_at=self.previous_at
+        )
 
 
 def address_key(client: str) -> str:
     """Return the throttle key of a client address.
 
     IPv4 counts per address, IPv6 per /64 (one client usually holds a whole /64, so counting per
-    address would give it endless fresh counts). Anything else is used as it is.
+    address would give it endless fresh counts). IPv4-mapped and NAT64 addresses count as the
+    IPv4 client they carry. Anything else is used as it is.
     """
     try:
         ip = ipaddress.ip_address(client)
@@ -168,5 +191,7 @@ def address_key(client: str) -> str:
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d is the IPv4 client a.b.c.d
             return f"address:{ip.ipv4_mapped}"
+        if ip in _NAT64:  # 64:ff9b::a.b.c.d is the IPv4 client a.b.c.d
+            return f"address:{ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)}"
         return f"address:{ipaddress.ip_network((ip, _IPV6_NETWORK_BITS), strict=False)}"
     return f"address:{ip}"

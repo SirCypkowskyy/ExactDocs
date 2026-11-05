@@ -118,8 +118,12 @@ class FailedSignInLog(Protocol):
         """
         ...
 
-    async def refund(self, key: str) -> None:
-        """Take back one attempt counted under ``key`` (it turned out to be a right password)."""
+    async def refund(self, key: str, charged_at: datetime) -> None:
+        """Take back the attempt charged under ``key`` at ``charged_at`` (a right password).
+
+        If no later attempt was charged since, the record goes back to how it was before that
+        attempt, so the wait is not restarted; otherwise only the count goes down.
+        """
         ...
 
     async def get(self, key: str) -> FailedSignIns | None:
