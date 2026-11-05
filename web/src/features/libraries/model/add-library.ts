@@ -6,6 +6,10 @@ export type AddedLibrary = components["schemas"]["AddedLibrary"];
 export type AddLibraryCommand = components["schemas"]["AddLibraryCommand"];
 type ProblemCode = components["schemas"]["ProblemCode"];
 export type FileProblem = components["schemas"]["FileProblemSummary"];
+export type RepositoryPreview = components["schemas"]["RepositoryPreview"];
+export type Context7 = components["schemas"]["Context7Out"];
+export type PreviewCommand = components["schemas"]["PreviewRepositoryCommand"];
+export type AddedVersion = components["schemas"]["AddedVersion"];
 
 export const MAX_TAG_RULES = 64;
 const MAX_TAG_LENGTH = 40;
@@ -146,12 +150,26 @@ export function explainCheckError(error: unknown): AddProblem {
   }
 }
 
+/** `preview_busy`: the server is reading other repositories; say how long to wait when it did. */
+const busy = (error: HttpError, what: string): AddProblem => ({
+  message: `The server is busy ${what}. Try again in ${
+    error.retryAfter
+      ? `${error.retryAfter} ${error.retryAfter === 1 ? "second" : "seconds"}`
+      : "a moment"
+  }.`,
+});
+
 /** The submit step. */
 export function explainAddError(error: unknown, ref: string | null): AddProblem {
   if (!(error instanceof HttpError)) return OFFLINE;
   const gone = session(error);
   if (gone) return gone;
   switch (error.code) {
+    case "preview_busy":
+      return busy(
+        error,
+        "reading other repositories, so it couldn't read this one's context7.json",
+      );
     case "library_id_taken":
       return {
         field: "id",
@@ -283,3 +301,82 @@ export function badPathBox(include: string, exclude: string): "include" | "exclu
 /** `1000` listed and a truncation marker: the real count is higher, so say "1000+". */
 export const skippedLabel = (summary: ProblemSummary) =>
   summary.truncated ? `${summary.skipped}+` : String(summary.skipped);
+
+/** The preview step: the same refusals as an add (minus the ID), and a busy server. */
+export function explainPreviewError(error: unknown, ref: string | null): AddProblem {
+  if (error instanceof HttpError && error.code === "preview_busy") {
+    return busy(error, "previewing other repositories");
+  }
+  return explainAddError(error, ref);
+}
+
+/** What a preview was asked for; a different one means the result on screen is out of date. */
+export const previewKey = (form: {
+  url: string;
+  ref: string | null;
+  include: string;
+  exclude: string;
+}) => JSON.stringify([form.url, form.ref, lines(form.include), lines(form.exclude)]);
+
+/** A folder of the preview tree: its own files, its subfolders, and how many files sit below it. */
+export interface PreviewFolder {
+  /** Shown name; a chain of folders holding only one folder reads as one (`docs/guides`). */
+  name: string;
+  /** Repository-relative, unique: a React key. */
+  path: string;
+  folders: PreviewFolder[];
+  files: string[];
+  count: number;
+}
+
+interface Building {
+  folders: Map<string, Building>;
+  files: string[];
+}
+
+function finish(name: string, path: string, node: Building): PreviewFolder {
+  const folders = [...node.folders.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([child, sub]) => finish(child, path ? `${path}/${child}` : child, sub));
+  const count = node.files.length + folders.reduce((n, f) => n + f.count, 0);
+  const only = folders[0];
+  // A folder with nothing but one folder in it would be a row that says nothing: merge them.
+  if (name && node.files.length === 0 && folders.length === 1 && only) {
+    return { ...only, name: `${name}/${only.name}` };
+  }
+  return { name, path, folders, files: [...node.files].sort((a, b) => a.localeCompare(b)), count };
+}
+
+/** Repository paths as a folder tree (the root has an empty name); files keep only their name. */
+export function buildFileTree(paths: readonly string[]): PreviewFolder {
+  const root: Building = { folders: new Map(), files: [] };
+  for (const path of paths) {
+    const parts = path.split("/");
+    const file = parts.pop() ?? path;
+    let node = root;
+    for (const part of parts) {
+      let next = node.folders.get(part);
+      if (!next) {
+        next = { folders: new Map(), files: [] };
+        node.folders.set(part, next);
+      }
+      node = next;
+    }
+    node.files.push(file);
+  }
+  // The root has no name, so it is never merged into its only folder.
+  return finish("", "", root);
+}
+
+const files = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "file" : "files"}`;
+
+/** The headline of a preview: how many files an import would take, and whether all are listed. */
+export function previewCountText(
+  preview: Pick<RepositoryPreview, "total" | "truncated" | "files">,
+) {
+  if (preview.total === 0) return "No Markdown files match.";
+  const match = `${files(preview.total)} ${preview.total === 1 ? "matches" : "match"}.`;
+  return preview.truncated
+    ? `${match} The first ${preview.files.length.toLocaleString("en-US")} are listed.`
+    : match;
+}

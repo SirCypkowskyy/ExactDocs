@@ -11,6 +11,7 @@ import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
 import { addLibrary, checkRepository } from "../api/add-library";
 import { librariesKeys } from "../api/libraries-query";
+import { useOlderVersions, usePreview } from "../hooks/use-preview";
 import {
   type AddedLibrary,
   type AddField,
@@ -24,6 +25,7 @@ import {
   validateForm,
   validateUrl,
 } from "../model/add-library";
+import { ExtraVersions, PreviewPanel } from "./file-preview";
 import { AdvancedOptions } from "./file-selection";
 import { ImportProgress } from "./import-progress";
 
@@ -139,6 +141,21 @@ export function AddLibraryPage() {
     }
   }
 
+  // A preview never blocks an add; it shares the form's place for refusals.
+  const preview = usePreview({
+    onFail: fail,
+    onStart: () => {
+      setErrors({});
+      setProblem(undefined);
+    },
+    onPrefill: (inc, exc) => {
+      setInclude(inc);
+      setExclude(exc);
+      setAdvanced(true);
+    },
+  });
+  const older = useOlderVersions();
+
   const unavailable = useCallback(() => setChoice({ kind: "other" }), []);
   const clear = (field: AddField) => setErrors((e) => ({ ...e, [field]: undefined }));
 
@@ -158,6 +175,7 @@ export function AddLibraryPage() {
       setProblem(undefined);
       setErrors({});
       setShowRuleErrors(false);
+      preview.forget();
     }
   }
 
@@ -221,7 +239,11 @@ export function AddLibraryPage() {
       // Only the list and the newest-job feed; the progress screen owns the job's own query.
       void queryClient.invalidateQueries({ queryKey: librariesKeys.list() });
       void queryClient.invalidateQueries({ queryKey: librariesKeys.latestJobs() });
-      if (run.current === mine) setAdded(result);
+      if (run.current === mine) {
+        setAdded(result);
+        const tags = preview.chosen();
+        if (tags.length) void older.queue(result.library_id, tags);
+      }
     } catch (error) {
       if (run.current === mine) fail(explainAddError(error, ref));
     } finally {
@@ -245,6 +267,8 @@ export function AddLibraryPage() {
     setErrors({});
     setShowRuleErrors(false);
     setAdded(undefined);
+    older.clear();
+    preview.forget();
     focusAfterRender(() => document.getElementById("url"));
   }
 
@@ -267,7 +291,9 @@ export function AddLibraryPage() {
 
       <div className="mt-8 max-w-xl">
         {added ? (
-          <ImportProgress added={added} onAddAnother={reset} />
+          <ImportProgress added={added} onAddAnother={reset}>
+            <ExtraVersions extras={older.extras} libraryId={added.library_id} />
+          </ImportProgress>
         ) : (
           <form onSubmit={submit} noValidate className="flex flex-col gap-6">
             <FormAlert id={ALERT_ID} message={problem?.message} link={problem?.link} />
@@ -345,6 +371,10 @@ export function AddLibraryPage() {
                     setRules(r);
                     clear("tags");
                   }}
+                />
+                <PreviewPanel
+                  preview={preview}
+                  form={{ url: checked.url, ref: refToSend(choice, typedRef), include, exclude }}
                 />
               </div>
             )}

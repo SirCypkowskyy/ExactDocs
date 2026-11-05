@@ -1,6 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getJson, HttpError, sendJson } from "@/shared/lib/http";
-import type { AddedLibrary, AddLibraryCommand, CheckedRepository } from "../model/add-library";
+import type {
+  AddedLibrary,
+  AddedVersion,
+  AddLibraryCommand,
+  CheckedRepository,
+  PreviewCommand,
+  RepositoryPreview,
+} from "../model/add-library";
 import type { Job } from "../model/library";
 import { librariesKeys } from "./libraries-query";
 
@@ -24,3 +31,16 @@ export const importJobQueryOptions = (id: string) =>
       return data && !live(data.state) ? false : 1500;
     },
   });
+
+export const previewRepository = (command: PreviewCommand) =>
+  sendJson<RepositoryPreview>("POST", "/v1/repositories/preview", command);
+
+const seg = encodeURIComponent;
+
+/** Queue an older version of a library that was just added (a `previousVersions` tag). */
+export const addVersion = (libraryId: string, ref: string) => {
+  const [, owner = "", repo = ""] = libraryId.split("/");
+  return sendJson<AddedVersion>("POST", `/v1/libraries/${seg(owner)}/${seg(repo)}/versions`, {
+    ref,
+  });
+};
