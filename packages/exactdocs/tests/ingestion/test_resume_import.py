@@ -17,6 +17,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
     ArticleChunk,
+    ArticleTags,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -123,6 +124,13 @@ class Catalog:
 
     async def activate(self, manifest_id: str) -> None:
         self._call(f"activate {manifest_id}")
+
+    async def apply_manual_tags(self, manifest_id: str) -> ArticleTags:
+        del manifest_id
+        return {}
+
+    async def retag(self, manifest_id: str, tags: ArticleTags) -> None:
+        del manifest_id, tags
 
     async def describe(self, **_: object) -> None:
         self._call("describe")

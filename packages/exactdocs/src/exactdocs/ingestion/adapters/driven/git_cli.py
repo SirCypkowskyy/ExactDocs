@@ -31,10 +31,10 @@ changed key is a hard ``HostKeyChangedError``) and never against a system file.
 ``fetch`` (the ``GitGateway`` port) builds on the same ``_run``. Into a folder of its own it
 fetches one commit by SHA, ``--depth 1`` and ``--filter=blob:none`` (a server without filters just
 sends more), and checks out only the sparse patterns made from the selection plus the root
-README, so only those blobs are downloaded. The repository config is written by us and sets no
-hooks, no submodules, no symlinks (they become small text files, so a link can never point out
-of the folder), no fsmonitor, no auto-gc. A server that refuses a bare SHA is asked for the
-caller's ref names instead, and the result must still be the pinned commit.
+README and ``context7.json``, so only those blobs are downloaded. The repository config is
+written by us and sets no hooks, no submodules, no symlinks (they become small text files, so a
+link can never point out of the folder), no fsmonitor, no auto-gc. A server that refuses a bare
+SHA is asked for the caller's ref names instead, and the result must still be the pinned commit.
 
 Content stays verbatim: ``.git/info/attributes`` (which beats the repository's own
 ``.gitattributes``) switches off text/eol conversion, filters, ``$Id$`` expansion and
@@ -78,10 +78,12 @@ from exactdocs.ingestion.errors import (
     UrlProblem,
 )
 from exactdocs.ingestion.models import (
+    CONTEXT7_FILE,
     MAX_RENAMES,
     MAX_SIMILARITY,
     AccessToken,
     Credential,
+    FetchedFile,
     GitRename,
     PathSelection,
     RemoteRef,
@@ -109,6 +111,8 @@ _MAX_STEP_OUTPUT = 1024 * 1024
 _MAX_BRACE_EXPANSIONS = 64
 _PREFIX = "fetch-"
 _ROOT_README = ("/README.md", "/README.mdx")
+_ROOT_CONTEXT7 = f"/{CONTEXT7_FILE}"  # last: no exclusion can drop it
+_ROOT_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")  # one plain name, never an option or glob
 # models.ARTICLE_SUFFIXES, whatever the letter case: never fetch the blobs of other files
 _ARTICLE_PATHSPEC = (":(icase)*.md", ":(icase)*.mdx")
 # What servers say when they will not serve a bare SHA (or the ref we named instead).
@@ -393,10 +397,16 @@ class GitCli:
     def _stepper(
         self, folder: Path, url: str, deadline: float, auth: _Auth | None
     ) -> Callable[..., Awaitable[_Output]]:
-        """Return ``git(*args)``: one isolated step inside ``folder`` under the call's deadline."""
+        """Return ``git(*args)``: one isolated step inside ``folder`` under the call's deadline.
+
+        A step may pass ``watch_bytes`` to hold ``folder`` to fewer bytes than
+        ``max_fetch_bytes`` while it runs.
+        """
         local = url.lower().startswith("file:")
 
-        async def git(*args: str, cap: int = _MAX_STEP_OUTPUT) -> _Output:
+        async def git(
+            *args: str, cap: int = _MAX_STEP_OUTPUT, watch_bytes: int | None = None
+        ) -> _Output:
             # every step may authenticate: checkout fetches the blobs it needs lazily
             return await self._run(
                 ["-C", str(folder), *args],
@@ -404,6 +414,7 @@ class GitCli:
                 deadline=deadline,
                 trust_local=local,
                 watch=folder,
+                watch_bytes=watch_bytes,
                 auth=auth,
             )
 
@@ -444,6 +455,79 @@ class GitCli:
         ``fetch``, with ``preview_slots`` of its own. No blob is downloaded and nothing is checked
         out. More than ``max_output`` bytes of paths is an error (``RepositoryUnreachableError``).
         """
+        async with self._trees(repository, commit_sha, refs, credential) as trees:
+            try:
+                out = await trees.git(
+                    "ls-tree", "-r", "-z", "--full-tree", commit_sha, cap=self.max_output
+                )
+            except _OutputTooBigError:
+                raise TreeTooLargeError from None
+            if out.code:
+                raise _failure(out.stderr, ssh=trees.ssh)
+            return _tree_files(out.stdout)
+
+    async def read_file(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        path: str,
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> FetchedFile:
+        """Implement ``RepositoryTree.read_file``: the trees, then that one blob, lazily.
+
+        Runs under a preview slot like ``list_files``, never an import's ``fetch_slots``. The
+        tree entry must be a regular file (not a link, a folder or a submodule). The blob is
+        then read with ``cat-file`` (the partial clone fetches only it); its output is capped at
+        ``max_bytes`` and the download by a watchdog limit of what is already there plus
+        ``max_bytes`` and git's overhead, so a huge file costs at most that much.
+        """
+        if not _ROOT_NAME.fullmatch(path):
+            message = f"not a plain root file name: {path!r}"
+            raise ValueError(message)
+        async with self._trees(repository, commit_sha, refs, credential) as trees:
+            out = await trees.git(
+                "ls-tree", "-z", "--full-tree", commit_sha, "--", f":(literal){path}"
+            )
+            if out.code:
+                raise _failure(out.stderr, ssh=trees.ssh)
+            entry = out.stdout.split(b"\0")[0]
+            if not entry:
+                return FetchedFile()
+            mode, kind, blob = entry.partition(b"\t")[0].decode().split()
+            if kind != "blob" or mode not in {"100644", "100755"}:
+                return FetchedFile(problem="not a regular file")
+            used, _ = await asyncio.to_thread(_measure, trees.folder)
+            try:
+                data = await trees.git(
+                    "cat-file",
+                    "blob",
+                    blob,
+                    cap=max_bytes,
+                    watch_bytes=used + max_bytes + _GIT_OVERHEAD,
+                )
+            except _OutputTooBigError, RepositoryTooLargeError:
+                return FetchedFile(problem=f"larger than {max_bytes} bytes")
+            if data.code:
+                raise _failure(data.stderr, ssh=trees.ssh)
+            return FetchedFile(data=data.stdout)
+
+    @asynccontextmanager
+    async def _trees(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        refs: Sequence[str],
+        credential: Credential | None,
+    ) -> AsyncGenerator[_Trees]:
+        """Hold a preview slot and fetch the commit and its trees, no blob, into a fresh folder.
+
+        Yields:
+            The fetched folder (removed afterwards) and how to run git in it.
+
+        """
         if (
             repository.url.startswith("-")
             or not repository.url.isprintable()
@@ -462,15 +546,7 @@ class GitCli:
                 ssh = repository_url_is_ssh(url)
                 await _prepare(git, folder, url, "", ssh=ssh)
                 await _fetch_commit(git, commit_sha, refs, ssh=ssh)
-                try:
-                    out = await git(
-                        "ls-tree", "-r", "-z", "--full-tree", commit_sha, cap=self.max_output
-                    )
-                except _OutputTooBigError:
-                    raise TreeTooLargeError from None
-                if out.code:
-                    raise _failure(out.stderr, ssh=ssh)
-                return _tree_files(out.stdout)
+                yield _Trees(git=git, ssh=ssh, folder=folder, deadline=deadline)
             finally:
                 shutil.rmtree(folder, ignore_errors=True)
 
@@ -549,13 +625,15 @@ class GitCli:
         deadline: float | None = None,
         trust_local: bool = False,
         watch: Path | None = None,
+        watch_bytes: int | None = None,
         auth: _Auth | None = None,
     ) -> _Output:
         """Run ``git <args>`` isolated (see the module docstring); the shared base for fetches.
 
         ``trust_local`` lets git read local repositories owned by another user. ``deadline`` (a
         loop time) replaces ``limit`` and is read once the slot is held. ``watch`` is a folder
-        whose size is limited while git runs (``RepositoryTooLargeError``). ``auth`` is made
+        whose size is limited (to ``watch_bytes``, else ``max_fetch_bytes``) while git runs
+        (``RepositoryTooLargeError``). ``auth`` is made
         available to this one process, in its private directory, and gone when it ends.
 
         Raises ``RepositoryUnreachableError`` when it runs out of time or prints more than
@@ -579,6 +657,7 @@ class GitCli:
                     home=home,
                     trust_local=trust_local,
                     watch=watch,
+                    watch_bytes=watch_bytes,
                     auth=auth,
                 )
 
@@ -591,8 +670,10 @@ class GitCli:
         home: str,
         trust_local: bool,
         watch: Path | None = None,
+        watch_bytes: int | None = None,
         auth: _Auth | None = None,
     ) -> _Output:
+        max_bytes = self.max_fetch_bytes if watch_bytes is None else watch_bytes
         environment = _environment(home, self.known_hosts)
         if auth is not None:
             await asyncio.to_thread(_offer, environment, home, auth, self.known_hosts)
@@ -605,7 +686,7 @@ class GitCli:
             stdin=DEVNULL, stdout=PIPE, stderr=PIPE, cwd=home, env=environment,
             start_new_session=True,
         )  # fmt: skip
-        guard = asyncio.create_task(self._guard(process, watch)) if watch else None
+        guard = asyncio.create_task(self._guard(process, watch, max_bytes)) if watch else None
         tripped = False
         try:
             async with asyncio.timeout(limit):
@@ -625,19 +706,29 @@ class GitCli:
             _kill_group(process)
             await process.wait()
         if tripped:
-            raise RepositoryTooLargeError(self.max_fetch_bytes)
+            raise RepositoryTooLargeError(max_bytes)
         if len(out) > cap:
             raise _OutputTooBigError(_TOO_BIG)
         return _Output(out, err.decode(errors="replace").lower(), code)
 
-    async def _guard(self, process: Process, folder: Path) -> None:
+    async def _guard(self, process: Process, folder: Path, max_bytes: int) -> None:
         """Return (after killing git) as soon as ``folder`` holds too many bytes or files."""
         while True:
             await asyncio.sleep(self.watch_interval)
             size, count = await asyncio.to_thread(_measure, folder)
-            if size > self.max_fetch_bytes or count > self.max_fetch_files:
+            if size > max_bytes or count > self.max_fetch_files:
                 _kill_group(process)
                 return
+
+
+@dataclass(frozen=True, slots=True)
+class _Trees:
+    """A blob-less fetch of one commit: its folder, and ``git`` steps under its deadline."""
+
+    git: Callable[..., Awaitable[_Output]]
+    ssh: bool
+    folder: Path
+    deadline: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -682,6 +773,20 @@ class MissingGit:
     ) -> list[str]:
         """Refuse with ``GitNotInstalledError``."""
         del repository, commit_sha, refs, credential
+        raise GitNotInstalledError
+
+    async def read_file(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        path: str,
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> FetchedFile:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository, commit_sha, path, max_bytes, refs, credential
         raise GitNotInstalledError
 
     async def renames(
@@ -839,9 +944,10 @@ def _measure(folder: Path) -> tuple[int, int]:
 def sparse_patterns(selection: PathSelection) -> list[str]:
     """Non-cone sparse-checkout patterns that cover (at least) every file the selection picks.
 
-    Includes come first, the root README next, exclusions last as ``!`` lines (the last matching
-    line wins, as with ``PathSelection``). Over-fetching is harmless because the importer applies
-    ``PathSelection.selects`` again; a folder pattern brings its non-article files too.
+    Includes come first, the root README next, then exclusions as ``!`` lines (the last matching
+    line wins, as with ``PathSelection``), and the root ``context7.json`` at the very end.
+    Over-fetching is harmless because the importer applies ``PathSelection.selects`` again; a
+    folder pattern brings its non-article files too.
     """
     # ponytail: no include means "all articles", fetched as every file; narrow it if repos with
     # big non-doc trees show up.
@@ -853,7 +959,7 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
         includes = ["/*"]
     # An overflowing exclusion is dropped: over-fetching is safe, `selects` runs again later.
     excludes = [f"!{p}" for e in selection.exclude if (part := _anchored(e)) for p in part]
-    return [*includes, *_ROOT_README, *excludes]
+    return [*includes, *_ROOT_README, *excludes, _ROOT_CONTEXT7]
 
 
 _GIT_OVERHEAD = 4 * 2**20  # .git of a one-commit, blob-less fetch: trees, refs, config

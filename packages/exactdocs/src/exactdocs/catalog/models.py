@@ -1,7 +1,7 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import get_close_matches
@@ -19,6 +19,7 @@ from exactdocs.catalog.errors import (
     InvalidImageTypeError,
     InvalidImportTimeError,
     InvalidLibraryIdError,
+    InvalidManualTagsError,
     InvalidSettingsError,
     InvalidSimilarityError,
     InvalidTagFilterError,
@@ -223,6 +224,8 @@ class Library:
     description_edited: bool = False
     # The version an owner chose as the default (LIB-10); it wins over the rule while imported.
     pinned_version: VersionRef | None = None
+    # What the default version's `context7.json` tells agents (LIB-06); untrusted repository text.
+    rules: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         refs = [v.ref for v in self.versions]
@@ -314,13 +317,22 @@ class ManifestEntry:
     content_version: int
     title: str
     tags: tuple[str, ...] = ()
+    """Imported: from front matter and the library's path rules."""
     front_matter: dict[str, Any] = field(default_factory=dict)
     size: int = 0  # bytes of the content
+    manual_tags: tuple[ManualTag, ...] = ()
+    """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
 
     def __post_init__(self) -> None:
         _check_path(self.path)
         if not _OBJECT_ID.fullmatch(self.blob_sha):
             raise InvalidBlobShaError(self.blob_sha)
+
+    @property
+    def all_tags(self) -> tuple[str, ...]:
+        """What readers see and filter by: the imported tags, then the manual ones they lack."""
+        manual = dict.fromkeys(t.tag for t in self.manual_tags if t.tag not in self.tags)
+        return (*self.tags, *manual)
 
     @property
     def content_key(self) -> ContentKey:
@@ -331,6 +343,58 @@ class ManifestEntry:
 def _check_path(path: str) -> None:
     if not path or any(part in {"", ".", ".."} for part in path.split("/")):
         raise InvalidArticlePathError(path)
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class ManualTag:
+    """A tag an entry carries because a user set it by hand on ``path``.
+
+    ``path`` is the entry's own path, or an older path it was renamed from: the tag is changed or
+    removed there (``ManualTags`` is keyed by the path that was tagged, not by its successors).
+    """
+
+    tag: str
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManualTags:
+    """Tags a user set by hand on an article path of a library: they hold for every version.
+
+    Keyed by path, not by version. A version whose import saw ``old`` renamed to ``new`` gives
+    ``new`` the manual tags of ``old`` too (``ManualTags.reaching``), and so on back through the
+    versions each rename map names, so a tag follows the article forward across moves.
+    """
+
+    path: str
+    tags: tuple[str, ...]
+
+    @classmethod
+    def of(cls, path: str, tags: Iterable[str]) -> Self:
+        """Normalize what a user typed (sorted, no duplicates); refuse a value that is no tag."""
+        _check_path(path)
+        raw = list(tags)
+        found = [normalize_tag(tag) for tag in raw]
+        if len(raw) > MAX_TAGS or None in found:
+            raise InvalidManualTagsError
+        return cls(path, tuple(sorted({t for t in found if t})))
+
+    @staticmethod
+    def reaching(
+        origins: Mapping[str, Iterable[str]], by_path: Mapping[str, tuple[str, ...]]
+    ) -> dict[str, tuple[ManualTag, ...]]:
+        """Merge the manual tags each article gets: its own and those of the paths it came from.
+
+        ``origins`` maps an article path to the older paths it was renamed from (any number of
+        versions back); paths it leaves out only have their own tags. Each tag names the path it
+        was set on, so a tag set on two of them is there twice.
+        """
+        reached = {path: {ManualTag(t, path) for t in tags} for path, tags in by_path.items()}
+        for path, olds in origins.items():
+            for old in olds:
+                found = reached.setdefault(path, set())
+                found.update(ManualTag(t, old) for t in by_path.get(old, ()))
+        return {path: tuple(sorted(tags)) for path, tags in reached.items() if tags}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -354,6 +418,9 @@ class ManifestRename:
             raise InvalidSimilarityError(self.similarity)
 
 
+MAX_LIBRARY_RULES = 20
+MAX_LIBRARY_RULE_CHARS = 500
+"""A library's rules: at most this many, each one line of at most this many characters."""
 MAX_SIMILARITY = 100
 MAX_RENAMES = 10_000
 IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"})

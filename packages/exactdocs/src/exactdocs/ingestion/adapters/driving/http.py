@@ -21,6 +21,7 @@ from exactdocs.ingestion.dtos import (
     LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    ManualTagsIn,
     PreviewRepositoryCommand,
     RemovalResult,
     RemoveLibraryCommand,
@@ -29,6 +30,8 @@ from exactdocs.ingestion.dtos import (
     RepositoryRefs,
     SyncedLibrary,
     SyncLibraryCommand,
+    TagArticleCommand,
+    TaggedArticle,
 )
 from exactdocs.ingestion.models import SyncStatus
 from exactdocs.ingestion.ports.driving import (
@@ -44,8 +47,9 @@ from exactdocs.ingestion.ports.driving import (
     RemoveLibrary,
     RemoveVersion,
     SyncLibrary,
+    TagArticle,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH
 
 
 async def _session_for(
@@ -70,6 +74,7 @@ def build_router(
     remove_version: RemoveVersion,
     remove_library: RemoveLibrary,
     sync_library: SyncLibrary,
+    tag_article: TagArticle,
     require_session: Callable[[Request], Awaitable[object]],
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side.
@@ -79,6 +84,7 @@ def build_router(
     read and add public docs, but must not set or replace what is used to read a private repo.
     """
     router = APIRouter(tags=["ingestion"])
+    router.include_router(_manual_tags_router(tag_article))
 
     @router.post("/repositories/check")
     async def check(command: CheckRepositoryCommand, request: Request) -> CheckedRepository:
@@ -118,18 +124,41 @@ def build_router(
     async def preview(command: PreviewRepositoryCommand, request: Request) -> RepositoryPreview:
         """List the articles an import of this URL, ref and patterns would take (a dry run).
 
-        Only the commit's tree is fetched, no file content, and nothing is stored. `files` has
-        at most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths
-        are untrusted text. A `credential` needs a signed-in session, not an API token.
+        Only the commit's tree is fetched, plus the root `context7.json` alone (no other file
+        content), and nothing is stored. Without paths, the file's folders and exclusions are
+        applied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000
+        paths; `total` counts all matches and `truncated` says they were cut. Paths are
+        untrusted text. A `credential` needs a signed-in session, not an API token.
         """
         await _session_for(require_session, command.credential, request)
         return await preview_repository(command)
 
-    @router.post("/libraries", status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "/libraries",
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            status.HTTP_429_TOO_MANY_REQUESTS: {
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
+                },
+                "description": "Sent without paths while every preview slot is taken, so the "
+                "repository's `context7.json` could not be read (`preview_busy`); nothing is "
+                "stored. Try again shortly.",
+                "headers": {
+                    "Retry-After": {
+                        "description": "Seconds to wait before trying again.",
+                        "schema": {"type": "integer"},
+                    }
+                },
+            }
+        },
+    )
     async def add(command: AddLibraryCommand, request: Request, response: Response) -> AddedLibrary:
         """Create a library, pin its ref to a commit and queue the import (see the job ID).
 
-        `Location` is the new library.
+        `Location` is the new library. Without paths, those of the repository's `context7.json`
+        are taken; if every preview slot stays busy so it cannot be read, the answer is 429
+        `preview_busy` and nothing is stored.
         """
         await _session_for(require_session, command.credential, request)
         added = await add_library(command)
@@ -282,5 +311,47 @@ def _removal_router(remove_version: RemoveVersion, remove_library: RemoveLibrary
         if ref.endswith("/"):  # `/versions/v1.4.0/` is another URL, not a malformed ref
             raise HTTPException(status_code=404)
         return await remove_version(RemoveVersionCommand(library=f"/{owner}/{repo}", ref=ref))
+
+    return router
+
+
+_ArticlePath = Annotated[
+    str,
+    Query(
+        min_length=1,
+        max_length=MAX_PATH,
+        description="An article path, as in any version; the articles renamed from it follow.",
+    ),
+]
+
+
+def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
+    """Build the routes that set and remove the tags users give an article path by hand."""
+    router = APIRouter(tags=["ingestion"])
+
+    # Next to the catalog's `GET .../tags` (a version's tag counts): these write the library's.
+    @router.put("/libraries/{owner}/{repo}/tags", name="set_manual_tags")
+    async def set_path_tags(
+        owner: str, repo: str, path: _ArticlePath, body: ManualTagsIn
+    ) -> TaggedArticle:
+        """Tag an article path by hand, for every version of the library.
+
+        The tags replace the path's manual tags and combine with the imported ones (front matter,
+        path rules) of the article at `path` in every version, and of the article git saw it
+        renamed to in later versions. Listings, tag counts and search see them on return; nothing
+        is imported or chunked again.
+        """
+        return await tag_article(
+            TagArticleCommand(library=f"/{owner}/{repo}", path=path, tags=body.tags)
+        )
+
+    @router.delete(
+        "/libraries/{owner}/{repo}/tags",
+        name="remove_manual_tags",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def remove_path_tags(owner: str, repo: str, path: _ArticlePath) -> None:
+        """Remove every manual tag of an article path; the imported tags stay."""
+        await tag_article(TagArticleCommand(library=f"/{owner}/{repo}", path=path, tags=[]))
 
     return router

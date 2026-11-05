@@ -22,6 +22,8 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestRename,
     ManifestState,
+    ManualTag,
+    ManualTags,
     StoredArticle,
     StoredImage,
     TagSelection,
@@ -35,6 +37,7 @@ class InMemoryLibraryRepository:
     """Implements ``ports.driven.LibraryRepository``. For tests."""
 
     libraries: MutableMapping[LibraryId, Library] = field(default_factory=dict)
+    manual_tags: dict[LibraryId, dict[str, tuple[str, ...]]] = field(default_factory=dict)
 
     @classmethod
     def of(cls, libraries: Iterable[Library]) -> Self:
@@ -53,11 +56,27 @@ class InMemoryLibraryRepository:
         """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken."""
         if library.id in self.libraries:
             raise LibraryAlreadyExistsError(library.id.value)
-        self.libraries[library.id] = replace(library, pinned_version=None)  # pinned only later
+        # pinned and given rules only later
+        self.libraries[library.id] = replace(library, pinned_version=None, rules=())
 
     async def delete(self, library_id: LibraryId) -> None:
         """Remove the library, if present."""
         self.libraries.pop(library_id, None)
+        self.manual_tags.pop(library_id, None)
+
+    async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
+        """Return the library's manual tags by path."""
+        return dict(self.manual_tags.get(library_id, {}))
+
+    async def set_manual_tags(self, library_id: LibraryId, tags: ManualTags) -> None:
+        """Replace one path's manual tags; none forgets the path."""
+        if library_id not in self.libraries:
+            return
+        by_path = self.manual_tags.setdefault(library_id, {})
+        if tags.tags:
+            by_path[tags.path] = tags.tags
+        else:
+            by_path.pop(tags.path, None)
 
     async def save(self, library: Library) -> None:
         """Store the library; versions it already has are kept as they are, new ones are added."""
@@ -68,6 +87,7 @@ class InMemoryLibraryRepository:
             library,
             versions=frozenset(merged.values()),
             pinned_version=stored.pinned_version if stored else None,
+            rules=stored.rules if stored else (),
         )
 
     async def set_text(
@@ -91,14 +111,17 @@ class InMemoryLibraryRepository:
         self.libraries[library_id] = replace(stored, pinned_version=ref)
         return True
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        """Set the fields no user edited."""
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        """Set the fields no user edited, and the rules."""
         if (stored := self.libraries.get(library_id)) is None:
             return
         self.libraries[library_id] = replace(
             stored,
             title=stored.title if stored.title_edited else title,
             description=stored.description if stored.description_edited else description,
+            rules=tuple(rules),
         )
 
 
@@ -168,10 +191,35 @@ class InMemoryManifestRepository:
             e
             for e in entries
             if (not prefix or e.path == prefix or e.path.startswith(f"{prefix}/"))
-            and tags.keeps(e.tags)
+            and tags.keeps(e.all_tags)
         )
         later = sorted((e for e in inside if after is None or e.path > after), key=lambda e: e.path)
         return tuple(later[:limit])
+
+    async def list_live(self, library_id: LibraryId) -> Sequence[Manifest]:
+        """Return the library's pending and active manifests, without entries."""
+        live = {ManifestState.PENDING, ManifestState.ACTIVE}
+        return tuple(
+            _light(m)
+            for m in self.manifests.values()
+            if m.library == library_id and m.state in live
+        )
+
+    async def set_manual_tags(
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Set each entry's manual tags; report the entries that have or had some."""
+        found = self.manifests.get(manifest_id)
+        if found is None:
+            return {}
+        entries = tuple(replace(e, manual_tags=tags.get(e.path, ())) for e in found.entries)
+        touched = {
+            new.path: new.all_tags
+            for old, new in zip(found.entries, entries, strict=True)
+            if old.manual_tags or new.manual_tags
+        }
+        self.manifests[manifest_id] = replace(found, entries=entries)
+        return touched
 
     async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
         """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
@@ -199,7 +247,7 @@ class InMemoryManifestRepository:
     async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
         """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
         found = self.manifests.get(manifest_id)
-        counts = Counter(tag for e in found.entries for tag in set(e.tags)) if found else Counter()
+        counts = Counter(tag for e in found.entries for tag in e.all_tags) if found else Counter()
         return tuple(sorted(counts.items(), key=lambda item: (-item[1], item[0])))[:limit]
 
     async def get_article(
@@ -327,6 +375,7 @@ class InMemoryManifestRepository:
         for doomed_id in doomed:
             del self.manifests[doomed_id]
         del self.libraries.libraries[library_id]
+        self.libraries.manual_tags.pop(library_id, None)
         return doomed
 
     def _active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:

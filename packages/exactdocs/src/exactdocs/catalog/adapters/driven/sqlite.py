@@ -2,7 +2,7 @@ import json
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from pydantic import TypeAdapter
@@ -55,6 +55,8 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestRename,
     ManifestState,
+    ManualTag,
+    ManualTags,
     RefKind,
     StoredArticle,
     StoredImage,
@@ -80,6 +82,8 @@ libraries = Table(
     Column("settings", Text, nullable=False),
     Column("title_edited", Boolean, nullable=False, server_default="0"),
     Column("description_edited", Boolean, nullable=False, server_default="0"),
+    # LIB-06: a JSON list, written only by `follow_readme`, never by `save`
+    Column("rules", Text, nullable=False, server_default="[]"),
 )
 library_versions = Table(
     "catalog_library_versions",
@@ -127,9 +131,12 @@ manifest_entries = Table(
     Column("blob_sha", Text, nullable=False),
     Column("content_version", Integer, nullable=False),
     Column("title", Text, nullable=False),
-    Column("tags", Text, nullable=False),  # JSON list
+    Column("tags", Text, nullable=False),  # JSON list: every tag (`ManifestEntry.all_tags`)
     Column("front_matter", Text, nullable=False),  # JSON object
     Column("size", Integer, nullable=False),
+    # JSON list of {"tag", "path"}: path is where the tag was set (this one or an older name)
+    Column("manual_tags", Text, nullable=False, server_default="[]"),
+    Column("imported_tags", Text),  # JSON list; NULL without manual tags (then it is `tags`)
     ForeignKeyConstraint(
         ["blob_sha", "content_version"],
         ["catalog_article_contents.blob_sha", "catalog_article_contents.content_version"],
@@ -149,6 +156,15 @@ manifest_renames = Table(
     Column("from_ref", Text, nullable=False),
     Column("new_path", Text, nullable=False),
     Column("similarity", Integer, nullable=False),
+)
+manual_tags = Table(
+    "catalog_manual_tags",
+    metadata,
+    Column(
+        "library_id", Text, ForeignKey("catalog_libraries.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column("path", Text, primary_key=True),
+    Column("tags", Text, nullable=False),  # JSON list, never empty
 )
 image_blobs = Table(
     "catalog_image_blobs",
@@ -182,6 +198,7 @@ _LIBRARY_COLUMNS = (
     libraries.c.title_edited,
     libraries.c.description_edited,
     libraries.c.pinned_version,
+    libraries.c.rules,
 )
 
 
@@ -265,8 +282,10 @@ class SqliteLibraryRepository:
             )
         return done.rowcount > 0
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        """One UPDATE that keeps every field whose edited flag is set."""
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        """One UPDATE that keeps every field whose edited flag is set, and sets the rules."""
         async with self.engine.begin() as connection:
             await connection.execute(
                 update(libraries)
@@ -277,6 +296,35 @@ class SqliteLibraryRepository:
                         (libraries.c.description_edited, libraries.c.description),
                         else_=description,
                     ),
+                    rules=json.dumps(list(rules)),
+                )
+            )
+
+    async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
+        """Return the library's manual tags by path."""
+        query = select(manual_tags.c.path, manual_tags.c.tags).where(
+            manual_tags.c.library_id == library_id.value
+        )
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(query)
+            return {row.path: tuple(json.loads(row.tags)) for row in rows}
+
+    async def set_manual_tags(self, library_id: LibraryId, tags: ManualTags) -> None:
+        """Upsert the path's row, or delete it for no tags; the library's row must exist."""
+        where = (manual_tags.c.library_id == library_id.value, manual_tags.c.path == tags.path)
+        async with self.engine.begin() as connection:
+            if not tags.tags:
+                await connection.execute(delete(manual_tags).where(*where))
+                return
+            known = select(libraries.c.id).where(libraries.c.id == library_id.value)
+            if (await connection.execute(known)).first() is None:
+                return
+            values = {"tags": json.dumps(tags.tags)}
+            await connection.execute(
+                sqlite_insert(manual_tags)
+                .values(library_id=library_id.value, path=tags.path, **values)
+                .on_conflict_do_update(
+                    index_elements=[manual_tags.c.library_id, manual_tags.c.path], set_=values
                 )
             )
 
@@ -312,6 +360,7 @@ class SqliteLibraryRepository:
                 title_edited=row.title_edited,
                 description_edited=row.description_edited,
                 pinned_version=VersionRef(row.pinned_version) if row.pinned_version else None,
+                rules=tuple(json.loads(row.rules)),
             )
             for row in rows
         )
@@ -323,15 +372,26 @@ def _iso(moment: datetime) -> str:
 
 
 def _entry(row: Row) -> ManifestEntry:
+    imported = row.tags if row.imported_tags is None else row.imported_tags
     return ManifestEntry(
         path=row.path,
         blob_sha=row.blob_sha,
         content_version=row.content_version,
         title=row.title,
-        tags=tuple(json.loads(row.tags)),
+        tags=tuple(json.loads(imported)),
         front_matter=json.loads(row.front_matter),
         size=row.size,
+        manual_tags=tuple(ManualTag(t["tag"], t["path"]) for t in json.loads(row.manual_tags)),
     )
+
+
+def _tag_columns(entry: ManifestEntry) -> dict[str, str | None]:
+    """Return the three tag columns of an entry row (see the table)."""
+    return {
+        "tags": json.dumps(entry.all_tags),
+        "manual_tags": json.dumps([{"tag": t.tag, "path": t.path} for t in entry.manual_tags]),
+        "imported_tags": json.dumps(entry.tags) if entry.manual_tags else None,
+    }
 
 
 # ponytail: a correlated json_each per row of the manifest, so a sparse tag on a huge manifest
@@ -419,10 +479,10 @@ class SqliteManifestRepository:
                             "blob_sha": e.blob_sha,
                             "content_version": e.content_version,
                             "title": e.title,
-                            "tags": json.dumps(e.tags),
                             "front_matter": json.dumps(e.front_matter),
                             "size": e.size,
                         }
+                        | _tag_columns(e)
                         for e in manifest.entries
                     ],
                 )
@@ -507,6 +567,42 @@ class SqliteManifestRepository:
             manifests.c.ref == ref.value,
             manifests.c.state == ManifestState.ACTIVE.value,
         )
+
+    async def list_live(self, library_id: LibraryId) -> Sequence[Manifest]:
+        """Return the library's pending and active manifests, without entries."""
+        query = select(manifests).where(
+            manifests.c.library_id == library_id.value,
+            manifests.c.state.in_([ManifestState.PENDING.value, ManifestState.ACTIVE.value]),
+        )
+        async with self.engine.connect() as connection:
+            return tuple(_manifest(row) for row in await connection.execute(query))
+
+    async def set_manual_tags(
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Read the entries that have or get manual tags, write those that change; one transaction.
+
+        Entries without manual tags before or after are not read: on a large version only the
+        few tagged ones cost anything.
+        """
+        entries = manifest_entries.c
+        query = select(manifest_entries).where(
+            entries.manifest_id == manifest_id,
+            or_(entries.manual_tags != "[]", entries.path.in_(list(tags))),
+        )
+        touched: dict[str, tuple[str, ...]] = {}
+        async with self._write() as connection:
+            for row in (await connection.execute(query)).all():
+                before = _entry(row)
+                after = replace(before, manual_tags=tags.get(before.path, ()))
+                touched[after.path] = after.all_tags
+                if after != before:
+                    await connection.execute(
+                        update(manifest_entries)
+                        .where(entries.manifest_id == manifest_id, entries.path == after.path)
+                        .values(**_tag_columns(after))
+                    )
+        return touched
 
     async def get_active_many(
         self, versions: Sequence[tuple[LibraryId, VersionRef]]

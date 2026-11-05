@@ -16,6 +16,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySources,
+    CatalogManualTags,
     CatalogNewLibraries,
     CatalogRemovals,
     CatalogRenamedPaths,
@@ -44,7 +45,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteSessionRepository,
     SqliteTokenRepository,
 )
-from exactdocs.ingestion import IngestionModule, collect_job, import_job
+from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
     QUEUE,
     STEPS_VERSION,
@@ -207,7 +208,9 @@ class Container:
             retrieval.get_chunk_sets,
             retrieval.discard_pending_chunks,
             retrieval.remove_chunks,
+            retrieval.retag_articles,
         )
+        tag_locks = TagLocks()  # per library: tagging and an import's activation take turns
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=MarkdownChunker(),
@@ -217,6 +220,7 @@ class Container:
                 catalog.activate_manifest,
                 catalog.discard_pending_manifests,
                 catalog.apply_readme,
+                catalog.apply_manual_tags,
             ),
             index=index,
             vault=vault,
@@ -227,6 +231,7 @@ class Container:
             max_images_bytes=settings.max_images_bytes,
             checkpoints=DbosCheckpoints(),
             batch_files=settings.import_batch_files,
+            tag_locks=tag_locks,
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),
@@ -250,16 +255,9 @@ class Container:
                 ),
             },
             recovery_hooks=recovery_hooks,
+            manual_tags=CatalogManualTags(catalog.set_manual_tags),
+            tag_locks=tag_locks,
             runner=DbosJobQueue(),
-        )
-        job_worker = DbosJobWorker(
-            run_job=ingestion.run_job,
-            recover_jobs=ingestion.recover_jobs,
-            database=settings.data_dir / JOBS_FILE,
-            queue=QUEUE,
-            workflow=WORKFLOW,
-            version=STEPS_VERSION,
-            engine_options={"poolclass": NullPool},
         )
         return cls(
             settings=settings,
@@ -275,7 +273,15 @@ class Container:
             ),
             ingestion=ingestion,
             retrieval=retrieval,
-            job_worker=job_worker,
+            job_worker=DbosJobWorker(
+                run_job=ingestion.run_job,
+                recover_jobs=ingestion.recover_jobs,
+                database=settings.data_dir / JOBS_FILE,
+                queue=QUEUE,
+                workflow=WORKFLOW,
+                version=STEPS_VERSION,
+                engine_options={"poolclass": NullPool},
+            ),
         )
 
     @asynccontextmanager

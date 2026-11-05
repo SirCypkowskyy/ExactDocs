@@ -27,6 +27,8 @@ from exactdocs.ingestion.dtos import (
     RepositoryRefs,
     SyncedLibrary,
     SyncLibraryCommand,
+    TagArticleCommand,
+    TaggedArticle,
 )
 
 
@@ -199,5 +201,22 @@ class SyncLibrary(Protocol):
     """
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
+        """Run the use case."""
+        ...
+
+
+class TagArticle(Protocol):
+    """Tag an article path by hand, for every version of its library (TAG-01).
+
+    The tags replace the path's earlier manual tags (none removes them) and combine with the
+    imported ones of the article at that path in each version, and of the article git saw it
+    renamed to in later versions; later imports get them too. Listings, tag counts and search
+    see them when this returns: the chunks' tag copies are refreshed, nothing is chunked again.
+
+    Raises a not-found error for an unknown library and a validation error for a malformed path
+    or a value that cannot be a tag.
+    """
+
+    async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
         """Run the use case."""
         ...

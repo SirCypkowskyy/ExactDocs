@@ -120,6 +120,7 @@ class World:
             c.catalog.activate_manifest,
             c.catalog.discard_pending_manifests,
             c.catalog.apply_readme,
+            c.catalog.apply_manual_tags,
         )
         return ImportVersionUseCase(
             gateway=git_cli,
@@ -131,6 +132,7 @@ class World:
                 c.retrieval.get_chunk_sets,
                 c.retrieval.discard_pending_chunks,
                 c.retrieval.remove_chunks,
+                c.retrieval.retag_articles,
             ),
             refresh=refresh,
             vault=InMemoryCredentialVault(),

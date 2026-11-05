@@ -155,6 +155,14 @@ class ChunkRepository(Protocol):
         """Delete these manifests' rows, then every chunk set no manifest points at."""
         ...
 
+    async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
+        """Replace the tags copied onto the chunk rows of these article paths of the manifest.
+
+        Chunks and the search index stay as they are. Paths without rows are ignored; returns
+        how many rows were changed.
+        """
+        ...
+
 
 class SearchIndex(Protocol):
     """Full-text (BM25) search over stored chunk sets; SQLite FTS5 now, ParadeDB later.

@@ -98,3 +98,17 @@ def test_serve_without_git_fails_fast_with_a_clear_message(
         cli.app(["serve"], exit_on_error=False, result_action="return_value")
 
     assert "git is not installed" in str(raised.value.code)
+
+
+def test_serve_runs_one_process_even_when_web_concurrency_asks_for_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Jobs, their recovery and the tag lock assume one process (docs/architecture.md)."""
+    started: dict[str, object] = {}
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    monkeypatch.setattr(cli, "_check_startup", lambda _settings: None)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *_args, **kwargs: started.update(kwargs))
+
+    cli.app(["serve"], exit_on_error=False, result_action="return_value")
+
+    assert started["workers"] == 1

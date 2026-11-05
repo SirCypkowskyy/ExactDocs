@@ -21,11 +21,13 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     REFRESH_JOB,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedRef,
     ImportSource,
     Job,
     JobKind,
+    TaggedPath,
 )
 from exactdocs.ingestion.ports.driven import (
     Checkpoints,
@@ -40,6 +42,7 @@ from exactdocs.ingestion.ports.driven import (
     JobRunner,
     LibraryIds,
     LibrarySources,
+    ManualTagStore,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -64,6 +67,7 @@ from exactdocs.ingestion.ports.driving import (
     RunJob,
     RunNextJob,
     SyncLibrary,
+    TagArticle,
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
@@ -85,6 +89,8 @@ from exactdocs.ingestion.use_cases import (
     RunJobUseCase,
     RunNextJobUseCase,
     SyncLibraryUseCase,
+    TagArticleUseCase,
+    TagLocks,
 )
 from exactdocs_kernel import Clock, NotFoundError
 
@@ -105,6 +111,15 @@ class _NoLibrarySources:
         return []
 
 
+class _NoManualTags:
+    """The default ``manual_tags`` of ``build``: no library is known, so none can be tagged."""
+
+    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
+        del path, tags
+        message = f"library {library!r} not found"
+        raise NotFoundError(message)
+
+
 class _NoTree:
     """The default ``tree`` of ``build``: no git to list a commit with.
 
@@ -113,6 +128,12 @@ class _NoTree:
 
     async def list_files(self, repository: object, commit_sha: str, **_: object) -> list[str]:
         del repository, commit_sha
+        raise GitNotInstalledError
+
+    async def read_file(
+        self, repository: object, commit_sha: str, path: str, **_: object
+    ) -> FetchedFile:
+        del repository, commit_sha, path
         raise GitNotInstalledError
 
 
@@ -160,6 +181,7 @@ class IngestionModule:
     run_job: RunJob
     run_next_job: RunNextJob
     sync_library: SyncLibrary
+    tag_article: TagArticle
 
     @classmethod
     def build(
@@ -178,19 +200,27 @@ class IngestionModule:
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
         runner: JobRunner | None = None,
+        manual_tags: ManualTagStore | None = None,
+        tag_locks: TagLocks | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         ``handlers`` maps each job kind to what runs it; ``recovery_hooks`` maps a kind to its
-        clean-up after an interrupted run (a kind without one needs none). ``runner`` is told
-        about every queued job; without one, jobs wait for ``run_next_job``.
+        clean-up after an interrupted run (a kind without one needs none). With ``manual_tags``
+        pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
+        activation take turns. ``tree`` also reads a repository's ``context7.json`` when a
+        library is added; without it there is none. ``runner`` is told about every queued job;
+        without one, jobs wait for ``run_next_job``.
         """
+        if manual_tags is not None and tag_locks is None:
+            message = "manual_tags needs the tag_locks given to import_job"
+            raise TypeError(message)
         runner = runner or _NoRunner()
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers, runner)
         none = _NoLibrarySources()
         return cls(
             add_library=AddLibraryUseCase(
-                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials()
+                remote, library_ids, libraries, enqueue_job, vault or _NoCredentials(), tree
             ),
             add_version=AddVersionUseCase(
                 remote, sources or _NoLibrarySources(), jobs, enqueue_job, vault or _NoCredentials()
@@ -213,6 +243,9 @@ class IngestionModule:
             sync_library=SyncLibraryUseCase(
                 remote, sources or none, jobs, clock, enqueue_job, vault or _NoCredentials()
             ),
+            tag_article=TagArticleUseCase(
+                manual_tags or _NoManualTags(), index, tag_locks or TagLocks()
+            ),
         )
 
 
@@ -229,11 +262,13 @@ def import_job(
     renames: RenameSource | None = None,
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
+    tag_locks: TagLocks,
     checkpoints: Checkpoints | None = None,
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
+    Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
     chunked); without it an interrupted import starts over.
     """
@@ -250,6 +285,7 @@ def import_job(
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
         batch_files=batch_files,
+        tag_locks=tag_locks,
     )
     if checkpoints is not None:
         importer = replace(importer, checkpoints=checkpoints)

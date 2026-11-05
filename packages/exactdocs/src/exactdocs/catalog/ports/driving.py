@@ -6,6 +6,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyManualTagsCommand,
     ApplyReadmeCommand,
     Article,
     ArticleList,
@@ -29,6 +30,7 @@ from exactdocs.catalog.dtos import (
     ListRenamesQuery,
     ListTagsQuery,
     ManifestStates,
+    ManualTagsOut,
     PinDefaultVersionCommand,
     Removal,
     RemoveLibraryCommand,
@@ -38,6 +40,8 @@ from exactdocs.catalog.dtos import (
     ResolvedVersion,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
+    RetaggedManifest,
+    SetManualTagsCommand,
     StoredManifest,
     StoreManifestCommand,
     TagList,
@@ -283,6 +287,35 @@ class RemoveLibrary(Protocol):
     """
 
     async def __call__(self, command: RemoveLibraryCommand) -> Removal:
+        """Run the use case."""
+        ...
+
+
+class SetManualTags(Protocol):
+    """Set the tags a user gives an article path by hand, for every version of the library.
+
+    They replace the path's earlier manual tags (none forgets them) and combine with the imported
+    tags of every article at that path, and of every article a rename map traces back to it, in
+    the versions imported so far. Listings and tag counts see them at once; the answer names
+    the articles whose tags changed, for the copies other domains keep.
+
+    Raises ``LibraryNotFoundError``, and a validation error for a malformed path or a value that
+    cannot be a tag.
+    """
+
+    async def __call__(self, command: SetManualTagsCommand) -> ManualTagsOut:
+        """Run the use case."""
+        ...
+
+
+class ApplyManualTags(Protocol):
+    """Give a manifest the manual tags its library has now (before it is activated).
+
+    Returns the articles that carry manual tags, or carried some, with their tags now. Raises
+    ``ManifestNotFoundError``.
+    """
+
+    async def __call__(self, command: ApplyManualTagsCommand) -> RetaggedManifest:
         """Run the use case."""
         ...
 

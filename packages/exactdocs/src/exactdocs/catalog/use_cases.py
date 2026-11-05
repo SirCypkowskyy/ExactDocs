@@ -1,6 +1,7 @@
 """Catalog use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid4
@@ -9,6 +10,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyManualTagsCommand,
     ApplyReadmeCommand,
     Article,
     ArticleInfo,
@@ -35,6 +37,7 @@ from exactdocs.catalog.dtos import (
     ListRenamesQuery,
     ListTagsQuery,
     ManifestStates,
+    ManualTagsOut,
     PinDefaultVersionCommand,
     Removal,
     RemoveLibraryCommand,
@@ -45,6 +48,8 @@ from exactdocs.catalog.dtos import (
     ResolvedVersion,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
+    RetaggedManifest,
+    SetManualTagsCommand,
     StoredManifest,
     StoreManifestCommand,
     TagCount,
@@ -73,6 +78,7 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestImage,
     ManifestRename,
+    ManualTags,
     ParsedId,
     StoredImage,
     TagRule,
@@ -194,14 +200,15 @@ class ApplyReadmeUseCase:
     repository: LibraryRepository
 
     async def __call__(self, command: ApplyReadmeCommand) -> None:
-        """Follow the default version's README for every field a user has not edited.
+        """Follow the default version's text for every field a user has not edited, and its rules.
 
-        The README of any other version is ignored. No heading means the repository name as
-        title, no paragraph means no description, so a field never keeps text a README dropped.
+        The text of any other version is ignored. No title means the repository name, no
+        description means none, so a field never keeps text a version dropped; the same goes
+        for the rules (there is no user edit of them).
 
-        Only the two text columns are written, in one statement that keeps edited fields, so a
-        concurrent user edit survives. The caller does not retry: if this fails the library keeps
-        its old text until the default version is imported again.
+        Only the two text columns and the rules are written, in one statement that keeps edited
+        fields, so a concurrent user edit survives. The caller does not retry: if this fails the
+        library keeps its old text and rules until the default version is imported again.
         """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
@@ -213,6 +220,7 @@ class ApplyReadmeUseCase:
             library.id,
             title=command.title or library.id.value.rsplit("/", 1)[-1],
             description=command.description or "",
+            rules=tuple(command.rules),
         )
 
 
@@ -340,6 +348,106 @@ class StoreManifestUseCase:
             if images.setdefault(i.blob_sha, stored) != stored:
                 raise ConflictingImageError(i.blob_sha)
         return manifest, contents, images
+
+
+@dataclass(frozen=True, slots=True)
+class ManualTagger:
+    """Brings a manifest's manual tags in line with the ones users set for its library."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def apply(
+        self, manifest: Manifest, by_path: Mapping[str, tuple[str, ...]]
+    ) -> RetaggedManifest:
+        """Give the manifest's entries the manual tags that reach them (see ``ManualTags``)."""
+        origins = await self._origins(manifest) if by_path else {}
+        wanted = ManualTags.reaching(origins, by_path)
+        touched = await self.manifests.set_manual_tags(manifest.id, wanted)
+        return RetaggedManifest.of(manifest.id, touched)
+
+    async def _origins(self, manifest: Manifest) -> dict[str, set[str]]:
+        """Map each path git saw renamed into ``manifest`` to every older path it came from.
+
+        A rename names the version it came from; that version's own rename map is followed in
+        turn, so a path is traced back across several versions (each step at most once).
+        """
+        into: dict[ManifestId, dict[str, list[ManifestRename]]] = {}
+        previous: dict[VersionRef, Manifest | None] = {}
+
+        async def renamed_into(m: Manifest) -> dict[str, list[ManifestRename]]:
+            if m.id not in into:
+                by_new: dict[str, list[ManifestRename]] = {}
+                for r in await self.manifests.list_renames(m.id, limit=MAX_RENAMES):
+                    by_new.setdefault(r.new_path, []).append(r)
+                into[m.id] = by_new
+            return into[m.id]
+
+        found: dict[str, set[str]] = {}
+        for new, renames in (await renamed_into(manifest)).items():
+            olds: set[str] = set()
+            todo = [(manifest, r) for r in renames]
+            seen: set[tuple[VersionRef, str]] = set()
+            while todo:
+                at, rename = todo.pop()
+                olds.add(rename.old_path)
+                step = (rename.from_ref, rename.old_path)
+                # A branch's map is already chained over its syncs: it names the branch itself.
+                if rename.from_ref == at.ref or step in seen:
+                    continue
+                seen.add(step)
+                if rename.from_ref not in previous:
+                    previous[rename.from_ref] = await self.manifests.get_active(
+                        manifest.library, rename.from_ref
+                    )
+                if (before := previous[rename.from_ref]) is not None:
+                    earlier = (await renamed_into(before)).get(rename.old_path, [])
+                    todo += [(before, r) for r in earlier]
+            found[new] = olds
+        return found
+
+
+@dataclass(frozen=True, slots=True)
+class SetManualTagsUseCase:
+    """Implements ``ports.driving.SetManualTags``."""
+
+    repository: LibraryRepository
+    tagger: ManualTagger
+
+    async def __call__(self, command: SetManualTagsCommand) -> ManualTagsOut:
+        """Store the path's tags, then re-tag every pending and active manifest of the library."""
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        tags = ManualTags.of(command.path, command.tags)
+        await self.repository.set_manual_tags(library.id, tags)
+        by_path = await self.repository.get_manual_tags(library.id)
+        retagged = [
+            await self.tagger.apply(manifest, by_path)
+            for manifest in await self.tagger.manifests.list_live(library.id)
+        ]
+        return ManualTagsOut(
+            library=str(library.id),
+            path=tags.path,
+            tags=list(tags.tags),
+            retagged=[r for r in retagged if r.articles],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyManualTagsUseCase:
+    """Implements ``ports.driving.ApplyManualTags``."""
+
+    manifests: ManifestRepository
+    tagger: ManualTagger
+
+    async def __call__(self, command: ApplyManualTagsCommand) -> RetaggedManifest:
+        """Re-tag the manifest from its library's manual tags as they are now."""
+        manifest = await self.manifests.get(ManifestId(command.manifest_id))
+        if manifest is None:
+            raise ManifestNotFoundError(command.manifest_id)
+        by_path = await self.tagger.repository.get_manual_tags(manifest.library)
+        return await self.tagger.apply(manifest, by_path)
 
 
 @dataclass(frozen=True, slots=True)

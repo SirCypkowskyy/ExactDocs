@@ -171,7 +171,10 @@ function renderPage(lib = library) {
   return queryClient;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("settings model", () => {
   it("validates the title and the description", () => {
@@ -348,6 +351,74 @@ describe("adding a version", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add version" }));
     expect(await screen.findByText(text)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Version to import")).toHaveFocus());
+  });
+
+  /**
+   * Holds animation frames until `run()`, so a focus request made a frame late can never land
+   * before the test has checked focus and moved it elsewhere.
+   */
+  function holdFrames() {
+    const held: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => held.push(cb));
+    return {
+      run: () => {
+        for (const cb of held.splice(0)) cb(performance.now());
+      },
+    };
+  }
+
+  it("does not pull focus away once the refusal is on screen", async () => {
+    const frames = holdFrames();
+    serve({ addVersion: () => failure(422, "unknown_ref") });
+    renderPage();
+    await userEvent.selectOptions(await open(), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/no branch, tag or commit/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("does not pull focus away once the missing choice is on screen", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/Choose a branch or tag from the list/);
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("focuses the typed ref as it appears and leaves focus alone after", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await userEvent.selectOptions(await open(), "other");
+    expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("returns focus to the add button on cancel, and leaves it alone after", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add a version" })).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Re-sync now" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
   });
 
   it("keeps a typed ref when the list of branches cannot load", async () => {

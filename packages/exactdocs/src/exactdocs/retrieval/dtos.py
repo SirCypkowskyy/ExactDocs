@@ -27,6 +27,7 @@ from exactdocs.retrieval.models import (
 from exactdocs_kernel import (
     LIBRARY_ID_PATTERN,
     MAX_NAME,
+    MAX_PATH,
     MAX_TAG_INPUT,
     NOTICE,
     normalize_tag,
@@ -356,6 +357,26 @@ class RemoveChunksCommand(_Dto):
     manifest_ids: list[str] = Field(max_length=100_000)
 
 
+class ArticleTagsIn(_Dto):
+    """The tags an article of a manifest carries now (every source, already normalized)."""
+
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    tags: list[str] = Field(max_length=2 * MAX_TAGS)
+
+
+class RetagArticlesCommand(_Dto):
+    """Copy the articles' current tags onto their chunk rows, without chunking anything again."""
+
+    manifest_id: str = Field(min_length=1)
+    articles: list[ArticleTagsIn] = Field(max_length=100_000)
+
+
+class RetaggedChunks(_Dto):
+    """How many chunk rows got other tags."""
+
+    chunks: int
+
+
 class RemovedChunks(_Dto):
     """What a discard or collection deleted."""
 
@@ -590,3 +611,8 @@ class QueryDocsResult(_Dto):
         description="Matching chunks neither shown nor pointed to: the budget was used up."
     )
     budget_chars: int
+    rules: list[str] = Field(
+        default_factory=list,
+        description="The library's `context7.json` rules that fit the budget, shown before the "
+        "sections. Untrusted repository text.",
+    )

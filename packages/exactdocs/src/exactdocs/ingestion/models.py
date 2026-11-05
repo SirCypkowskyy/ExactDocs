@@ -10,7 +10,7 @@ import ipaddress
 import json
 import math
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -29,6 +29,7 @@ from exactdocs.ingestion.errors import (
     AmbiguousRefError,
     CredentialProblem,
     InvalidChunkingConfigError,
+    InvalidContext7Error,
     InvalidCredentialError,
     InvalidPathPatternError,
     InvalidProgressError,
@@ -406,11 +407,13 @@ class ProblemCode(StrEnum):
     """An article references an image that the repository does not have at this commit."""
     TRUNCATED = "truncated"
     """The marker that says more files were skipped than ``MAX_JOB_PROBLEMS``."""
+    CONTEXT7 = "context7"
+    """The root ``context7.json`` cannot be used and was ignored; the import went on without it."""
 
     @property
     def is_skip(self) -> bool:
         """Whether the file was left out of the version (as opposed to imported with a note)."""
-        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED}
+        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED, ProblemCode.CONTEXT7}
 
 
 class SyncErrorCode(StrEnum):
@@ -856,6 +859,7 @@ def branch_name(raw: str) -> str | None:
         and all(p and not p.startswith(".") and not p.endswith(".lock") for p in parts)
         and ".." not in raw
         and "@{" not in raw
+        and raw != "@"  # git refuses the single character @
         and not raw.startswith("-")
         and not raw.endswith((".", "/"))
         and raw.isprintable()
@@ -1177,6 +1181,228 @@ def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -
     return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
 
 
+CONTEXT7_FILE = "context7.json"
+"""The root file context7 reads a repository's docs settings from (LIB-06)."""
+CONTEXT7_MAX_BYTES = 64 * 2**10
+"""A bigger ``context7.json`` is ignored with a warning, unread."""
+MAX_CONTEXT7_RULES = 20
+MAX_CONTEXT7_RULE_CHARS = 500
+MAX_PREVIOUS_VERSIONS = 50
+MAX_PREVIOUS_VERSION_CHARS = 255
+_GLOB_CHARS = frozenset("*?{[")
+
+
+@dataclass(frozen=True, slots=True)
+class PreviousVersion:
+    """An older tag a ``context7.json`` offers for import, with its optional display title."""
+
+    tag: str
+    title: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Context7Config:
+    """What a repository's ``context7.json`` says, validated and ready to apply.
+
+    ``selection`` is ``folders`` / ``excludeFolders`` / ``excludeFiles`` as ``PathSelection``
+    patterns (see ``context7_selection``), or ``None`` when the file names none of them. All
+    text is untrusted repository text: title and description are flattened and cut like a
+    README's, every rule is one printable line.
+    """
+
+    project_title: str | None = None
+    description: str | None = None
+    folders: tuple[str, ...] = ()
+    exclude_folders: tuple[str, ...] = ()
+    exclude_files: tuple[str, ...] = ()
+    rules: tuple[str, ...] = ()
+    previous_versions: tuple[PreviousVersion, ...] = ()
+    selection: PathSelection | None = None
+    notes: tuple[str, ...] = ()
+    """What was left out of an otherwise usable file (``previousVersions`` entries), and why."""
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedFile:
+    """One file of a commit read on its own: its bytes, nothing (absent), or why it was not read."""
+
+    data: bytes | None = None
+    problem: str | None = None
+
+
+def parse_context7(data: bytes) -> Context7Config:
+    """Validate the bytes of a ``context7.json``; ``InvalidContext7Error`` says why it is unusable.
+
+    Only the keys ExactDocs uses are read (``projectTitle``, ``description``, ``folders``,
+    ``excludeFolders``, ``excludeFiles``, ``rules``, ``previousVersions``); any other key
+    (``$schema``, ``url``, ...) is ignored. A known key of the wrong type, too many rules or
+    versions, or a path ExactDocs would refuse makes the whole file unusable: half-applying a
+    file would import something nobody asked for. A ``previousVersions`` entry that cannot be
+    imported (no tag, or one git would not take as a ref name) only offers nothing: it is left
+    out and named in ``notes``.
+    """
+    if len(data) > CONTEXT7_MAX_BYTES:
+        reason = f"it is larger than {CONTEXT7_MAX_BYTES} bytes"
+        raise InvalidContext7Error(reason)
+    try:
+        document = json.loads(data.decode("utf-8-sig"))
+    except UnicodeDecodeError:
+        reason = "it is not UTF-8"
+        raise InvalidContext7Error(reason) from None
+    except ValueError, RecursionError:
+        reason = "it is not valid JSON"
+        raise InvalidContext7Error(reason) from None
+    if not isinstance(document, dict):
+        reason = "it is not a JSON object"
+        raise InvalidContext7Error(reason)
+    folders = _c7_strings(document, "folders")
+    exclude_folders = _c7_strings(document, "excludeFolders")
+    exclude_files = _c7_strings(document, "excludeFiles")
+    lines = (_c7_line(r, "rules") for r in _c7_strings(document, "rules"))
+    rules = tuple(dict.fromkeys(r for r in lines if r))  # the limit counts distinct rules
+    if len(rules) > MAX_CONTEXT7_RULES or any(len(r) > MAX_CONTEXT7_RULE_CHARS for r in rules):
+        message = (
+            f"rules: at most {MAX_CONTEXT7_RULES} of at most {MAX_CONTEXT7_RULE_CHARS} characters"
+        )
+        raise InvalidContext7Error(message)
+    try:
+        selection = context7_selection(folders, exclude_folders, exclude_files)
+    except InvalidPathPatternError as error:
+        reason = f"folders or excludes: {error}"
+        raise InvalidContext7Error(reason) from None
+    title = _c7_text(document, "projectTitle")
+    description = _c7_text(document, "description")
+    versions, notes = _c7_previous_versions(document.get("previousVersions"))
+    return Context7Config(
+        project_title=title[:README_TITLE_MAX].rstrip() if title else None,
+        description=description[:README_DESCRIPTION_MAX].rstrip() if description else None,
+        folders=folders,
+        exclude_folders=exclude_folders,
+        exclude_files=exclude_files,
+        rules=rules,
+        previous_versions=versions,
+        selection=selection,
+        notes=notes,
+    )
+
+
+def context7_selection(
+    folders: Sequence[str], exclude_folders: Sequence[str], exclude_files: Sequence[str]
+) -> PathSelection | None:
+    """Translate context7's folder and file lists into a ``PathSelection``; ``None`` if all empty.
+
+    As context7 reads them: a folder is a repository path and everything below it (``.`` is the
+    whole repository). An excluded folder or file given by its bare name (``archive``,
+    ``CHANGELOG.md``) is excluded wherever it is; one with a ``/`` (``./docs/internal``) only at
+    that path. Entries with glob characters are taken as ``PathSelection`` patterns.
+    """
+    if not (folders or exclude_folders or exclude_files):
+        return None
+    include = [] if any(_c7_root(f) for f in folders) else [_c7_folder(f) for f in folders]
+    exclude = [_c7_exclude(f, folder=True) for f in exclude_folders] + [
+        _c7_exclude(f, folder=False) for f in exclude_files
+    ]
+    return PathSelection.of(include, exclude)
+
+
+def _c7_path(entry: str) -> tuple[str, bool]:
+    """Strip ``./`` and ``/`` at the start (both mean the repository root) and ``/`` at the end.
+
+    Also tell whether the entry is anchored at a path (it started at the root or has a ``/``).
+    """
+    stripped = entry.strip()
+    cleaned = stripped.removeprefix("./").lstrip("/").rstrip("/")
+    return cleaned, stripped.startswith(("./", "/")) or "/" in cleaned
+
+
+def _c7_root(folder: str) -> bool:
+    return _c7_path(folder)[0] in {"", "."}
+
+
+def _c7_folder(folder: str) -> str:
+    cleaned, _ = _c7_path(folder)
+    return cleaned if _GLOB_CHARS & set(cleaned) else f"{cleaned}/"
+
+
+def _c7_exclude(entry: str, *, folder: bool) -> str:
+    cleaned, anchored = _c7_path(entry)
+    if _GLOB_CHARS & set(cleaned):
+        return cleaned
+    suffix = "/" if folder else ""
+    return f"{cleaned}{suffix}" if anchored else f"**/{cleaned}{suffix}"
+
+
+def _c7_strings(document: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = document.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        reason = f"{key} must be a list of strings"
+        raise InvalidContext7Error(reason)
+    return tuple(value)
+
+
+def _c7_text(document: dict[str, Any], key: str) -> str | None:
+    value = document.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        reason = f"{key} must be a string"
+        raise InvalidContext7Error(reason)
+    return _c7_line(value, key) or None
+
+
+def _c7_line(value: str, key: str) -> str:
+    """Flatten to one line; a control or invisible formatting character makes the file unusable."""
+    line = " ".join(value.split())
+    if not line.isprintable():
+        reason = f"{key} has control or invisible characters"
+        raise InvalidContext7Error(reason)
+    return line
+
+
+def _c7_previous_versions(value: object) -> tuple[tuple[PreviousVersion, ...], tuple[str, ...]]:
+    """Return the importable entries and a note for each one that is left out."""
+    if value is None:
+        return (), ()
+    if not isinstance(value, list) or len(value) > MAX_PREVIOUS_VERSIONS:
+        reason = (
+            'previousVersions must be a list of {"tag": ..., "title": ...} objects, '
+            f"at most {MAX_PREVIOUS_VERSIONS}"
+        )
+        raise InvalidContext7Error(reason)
+    found: dict[str, PreviousVersion] = {}
+    notes: list[str] = []
+    for entry in value:
+        version = _c7_previous_version(entry)
+        if isinstance(version, str):
+            notes.append(f"previousVersions: an entry is left out: {version}")
+        else:
+            found.setdefault(version.tag, version)
+    return tuple(found.values()), tuple(notes)
+
+
+def _c7_previous_version(entry: object) -> PreviousVersion | str:
+    """Validate one entry; a string says why it cannot be offered (never echoes control text)."""
+    if not isinstance(entry, dict):
+        return 'it is not a {"tag": ..., "title": ...} object'
+    tag, title = entry.get("tag"), entry.get("title", "")
+    if not isinstance(tag, str) or not isinstance(title, str):
+        return "its tag and title must be strings"
+    shown = " ".join(tag.split())[:MAX_PREVIOUS_VERSION_CHARS]
+    if not shown.isprintable():
+        return "its tag has control or invisible characters"
+    title = " ".join(title.split())
+    if (
+        len(tag) > MAX_PREVIOUS_VERSION_CHARS
+        or branch_name(tag) is None
+        or len(title) > MAX_PREVIOUS_VERSION_CHARS
+        or not title.isprintable()
+    ):
+        return f"{shown!r} is not a tag name git accepts, or its title is too long"
+    return PreviousVersion(tag=tag, title=title)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewLibrary:
     """What a library is created from: its repository, default branch and doc selection."""
@@ -1337,6 +1563,20 @@ class Removed:
     ref: str | None
     manifest_ids: tuple[str, ...]
     default_ref: str | None
+
+
+type ArticleTags = Mapping[str, tuple[str, ...]]
+"""Article path -> every tag the article carries now."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaggedPath:
+    """Manual tags the catalog stored for a path, and the manifests whose articles they touched."""
+
+    library: str
+    path: str
+    tags: tuple[str, ...]
+    retagged: Mapping[str, ArticleTags]  # manifest ID -> its touched articles
 
 
 @dataclass(frozen=True, slots=True)

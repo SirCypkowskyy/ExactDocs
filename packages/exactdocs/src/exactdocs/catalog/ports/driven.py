@@ -13,6 +13,8 @@ from exactdocs.catalog.models import (
     ManifestEntry,
     ManifestId,
     ManifestRename,
+    ManualTag,
+    ManualTags,
     StoredArticle,
     StoredImage,
     TagSelection,
@@ -68,11 +70,25 @@ class LibraryRepository(Protocol):
         """
         ...
 
-    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
-        """Set title and description, except a field a user edited, in one atomic step.
+    async def follow_readme(
+        self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
+    ) -> None:
+        """Set title and description, except a field a user edited, and the rules, atomically.
 
         The edited flags are read by the write itself, so a user's edit that lands in between
-        is never overwritten. Absent IDs are ignored.
+        is never overwritten. Absent IDs are ignored. Rules are written only here (``add`` and
+        ``save`` leave them alone), so a stale ``save`` cannot undo them.
+        """
+        ...
+
+    async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
+        """Return the library's manual tags by article path; empty for an unknown library."""
+        ...
+
+    async def set_manual_tags(self, library_id: LibraryId, tags: ManualTags) -> None:
+        """Replace the manual tags of one path; no tags forgets the path. Absent IDs are ignored.
+
+        They go when the library goes.
         """
         ...
 
@@ -151,6 +167,20 @@ class ManifestRepository(Protocol):
 
     async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
         """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        ...
+
+    async def list_live(self, library_id: LibraryId) -> Sequence[Manifest]:
+        """Return the library's pending and active manifests, without entries."""
+        ...
+
+    async def set_manual_tags(
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Give every entry of the manifest the manual tags ``tags`` names for its path (or none).
+
+        Imported tags are kept. Returns the ``all_tags`` of each entry that has manual tags now or
+        had some before, so the copies kept elsewhere can be brought in line with it.
+        """
         ...
 
     async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:

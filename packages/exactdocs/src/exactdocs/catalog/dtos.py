@@ -1,6 +1,7 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
 import unicodedata
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
@@ -15,6 +16,8 @@ from pydantic import (
 )
 
 from exactdocs.catalog.models import (
+    MAX_LIBRARY_RULE_CHARS,
+    MAX_LIBRARY_RULES,
     GarbageCollected,
     HostKind,
     Library,
@@ -34,7 +37,9 @@ from exactdocs_kernel import (
     MAX_LIMIT,
     MAX_NAME,
     MAX_PATH,
+    MAX_TAG_INPUT,
     MAX_TAG_LENGTH,
+    MAX_TAGS,
     NOTICE,
     Page,
 )
@@ -177,6 +182,11 @@ class LibraryDetail(_Dto):
     versions: list[VersionOut]
     default_version: str | None
     default_pinned: bool = Field(description=_PINNED)
+    rules: list[str] = Field(
+        default_factory=list,
+        description="The rules of the default version's `context7.json`, shown to agents with "
+        "every `query-docs` answer. Untrusted repository text.",
+    )
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -196,6 +206,7 @@ class LibraryDetail(_Dto):
             ],
             default_version=str(default.ref) if default else None,
             default_pinned=library.default_is_pinned(),
+            rules=list(library.rules),
         )
 
 
@@ -442,7 +453,7 @@ class ArticleSummary(_Dto):
     @classmethod
     def from_model(cls, entry: ManifestEntry) -> Self:
         """Map a manifest entry."""
-        return cls(path=entry.path, title=entry.title, tags=list(entry.tags), size=entry.size)
+        return cls(path=entry.path, title=entry.title, tags=list(entry.all_tags), size=entry.size)
 
 
 class ArticleList(_Dto):
@@ -586,6 +597,18 @@ class RenameList(_Dto):
     renames: list[RenamedPath]
 
 
+class ManualTagInfo(_Dto):
+    """A tag set by hand, and the article path it was set on."""
+
+    tag: str
+    path: str = Field(
+        description=(
+            "Where the tag was set: this article's path, or an older one it was renamed from. "
+            "Change or remove the tag on this path."
+        )
+    )
+
+
 class ArticleInfo(_Dto):
     """Where an article comes from and its metadata: everything but the text."""
 
@@ -600,7 +623,13 @@ class ArticleInfo(_Dto):
     manifest_id: str
     path: str
     title: str
-    tags: list[str]
+    tags: list[str] = Field(description="Every tag: from front matter, path rules and by hand.")
+    manual_tags: list[ManualTagInfo] = Field(
+        description=(
+            "The tags among `tags` set by hand, each with the path it was set on: this one or "
+            "one it was renamed from. A tag set on both is listed for each."
+        )
+    )
     size: int
     front_matter: dict[str, Any]
     source_url: str | None = Field(
@@ -620,7 +649,8 @@ class ArticleInfo(_Dto):
             manifest_id=stored.manifest_id,
             path=entry.path,
             title=entry.title,
-            tags=list(entry.tags),
+            tags=list(entry.all_tags),
+            manual_tags=[ManualTagInfo(tag=t.tag, path=t.path) for t in entry.manual_tags],
             size=entry.size,
             front_matter=entry.front_matter,
             source_url=source_url,
@@ -636,6 +666,64 @@ class Article(ArticleInfo):
     def with_content(cls, info: ArticleInfo, content: str) -> Self:
         """Add the text to an article's metadata."""
         return cls(**dict(info), content=content)
+
+
+class ManualTagsIn(_Dto):
+    """The tags to set by hand on an article path; they replace its earlier manual tags."""
+
+    tags: list[Annotated[str, StringConstraints(max_length=MAX_TAG_INPUT)]] = Field(
+        max_length=MAX_TAGS,
+        description="Normalized like every tag (lower-case, trimmed, deduplicated). Empty: none.",
+    )
+
+
+class SetManualTagsCommand(ManualTagsIn):
+    """Set the manual tags of `path` for every version of `library`."""
+
+    library: str = Field(min_length=1)
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+
+
+class ArticleTags(_Dto):
+    """Every tag an article carries now (`ManifestEntry.all_tags`)."""
+
+    path: str
+    tags: list[str]
+
+
+class RetaggedManifest(_Dto):
+    """The articles of a manifest that have manual tags, or had some before: their tags now.
+
+    Other domains keep copies of article tags (search filters by them) and refresh these.
+    """
+
+    manifest_id: str
+    articles: list[ArticleTags]
+
+    @classmethod
+    def of(cls, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> Self:
+        """Map what the repository reports."""
+        return cls(
+            manifest_id=manifest_id,
+            articles=[ArticleTags(path=p, tags=list(t)) for p, t in sorted(tags.items())],
+        )
+
+
+class ManualTagsOut(_Dto):
+    """The manual tags of a path, as stored: every version's article at that path gets them."""
+
+    library: str
+    path: str
+    tags: list[str]
+    retagged: list[RetaggedManifest] = Field(
+        description="The pending and active manifests whose articles' tags are touched."
+    )
+
+
+class ApplyManualTagsCommand(_Dto):
+    """Give a (pending) manifest the manual tags its library has now."""
+
+    manifest_id: str = Field(min_length=1)
 
 
 class GetAssetQuery(_Dto):
@@ -737,6 +825,7 @@ MAX_TITLE = 200
 MAX_DESCRIPTION = 1000
 _Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
 _Description = Annotated[str, Field(max_length=MAX_DESCRIPTION)]
+_Rule = Annotated[str, Field(min_length=1, max_length=MAX_LIBRARY_RULE_CHARS)]
 
 
 def _clean(text: str) -> str:
@@ -808,16 +897,18 @@ class PinDefaultVersionCommand(_Dto):
 
 
 class ApplyReadmeCommand(_Dto):
-    """What the root README of an imported version says; used only if it is the default version.
+    """What an imported version says about its library; used only if it is the default version.
 
-    A missing value (the README has no heading or no paragraph) means: the repository name as
-    title, no description.
+    Title and description come from its ``context7.json``, else its root README. A missing value
+    means: the repository name as title, no description. ``rules`` replace the library's rules
+    (empty: the version has none).
     """
 
     library: str = Field(min_length=1)
     ref: str = Field(min_length=1)
     title: _Title | None = None
     description: _Description | None = None
+    rules: list[_Rule] = Field(default_factory=list, max_length=MAX_LIBRARY_RULES)
 
 
 class DiscardLibraryCommand(_Dto):

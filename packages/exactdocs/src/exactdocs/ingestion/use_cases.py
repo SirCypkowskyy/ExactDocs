@@ -7,6 +7,7 @@ import os
 import stat
 import time
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager, suppress
 from dataclasses import dataclass, field, replace
@@ -22,6 +23,7 @@ from exactdocs.ingestion.dtos import (
     AddVersionCommand,
     CheckedRepository,
     CheckRepositoryCommand,
+    Context7Out,
     CredentialIn,
     EnqueueJobCommand,
     GetJobQuery,
@@ -43,6 +45,8 @@ from exactdocs.ingestion.dtos import (
     SyncedLibrary,
     SyncedVersion,
     SyncLibraryCommand,
+    TagArticleCommand,
+    TaggedArticle,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
@@ -51,10 +55,12 @@ from exactdocs.ingestion.errors import (
     ImportInProgressError,
     ImportNotPinnedError,
     ImportTooLargeError,
+    InvalidContext7Error,
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
+    PreviewBusyError,
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
     SyncFailedError,
@@ -66,6 +72,8 @@ from exactdocs.ingestion.errors import (
 from exactdocs.ingestion.models import (
     ACTIVE_JOB_STATES,
     COLLECT_JOB,
+    CONTEXT7_FILE,
+    CONTEXT7_MAX_BYTES,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_IMPORT_BATCH_FILES,
     DEFAULT_MAX_ARTICLE_BYTES,
@@ -78,7 +86,9 @@ from exactdocs.ingestion.models import (
     REFRESH_JOB,
     UNEXPECTED_ERROR,
     ArticleChunk,
+    Context7Config,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedArticle,
     ImportedImage,
@@ -108,6 +118,7 @@ from exactdocs.ingestion.models import (
     git_blob_sha,
     is_unordered,
     parse_article,
+    parse_context7,
     previous_version,
     readme_summary,
     ref_tips,
@@ -128,6 +139,7 @@ from exactdocs.ingestion.ports.driven import (
     JobRunner,
     LibraryIds,
     LibrarySources,
+    ManualTagStore,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -516,7 +528,10 @@ class PreviewRepositoryUseCase:
         """Validate, pin the ref, list the commit's tree and apply the selection to it.
 
         The same ``PathSelection.selects`` the import uses decides, so the preview and the
-        import agree (except for files the import then skips as unreadable or too big).
+        import agree (except for files the import then skips as unreadable or too big). The
+        root ``context7.json`` is read too (that one blob, under a preview slot like the
+        listing): without paths its selection is the one applied, as adding the library would,
+        and the file is returned for the form.
         """
         repository = RepositoryUrl.parse(command.url)
         credential = _credential(command.credential, repository)
@@ -529,6 +544,8 @@ class PreviewRepositoryUseCase:
             refs=_full_refs(resolved.kind, resolved.name),
             credential=credential,
         )
+        context7 = await _fetch_context7(self.tree, repository, resolved, credential)
+        selection = _prefilled(selection, context7)
         matching = sorted(path for path in paths if selection.selects(path))
         return RepositoryPreview(
             ref=resolved.name,
@@ -537,7 +554,22 @@ class PreviewRepositoryUseCase:
             files=matching[:MAX_PREVIEW_FILES],
             total=len(matching),
             truncated=len(matching) > MAX_PREVIEW_FILES,
+            include_paths=list(selection.include),
+            exclude_paths=list(selection.exclude),
+            context7=_context7_out(context7),
+            context7_warning=context7.warning,
         )
+
+
+def _prefilled(selection: PathSelection, context7: _Context7Read) -> PathSelection:
+    """Keep the paths a user sent; without any, take those of ``context7.json`` (LIB-06)."""
+    if selection.include or selection.exclude or context7.config is None:
+        return selection
+    return context7.config.selection or selection
+
+
+def _context7_out(context7: _Context7Read) -> Context7Out | None:
+    return None if context7.config is None else Context7Out.from_model(context7.config)
 
 
 @dataclass(frozen=True, slots=True)
@@ -549,10 +581,17 @@ class AddLibraryUseCase:
     libraries: NewLibraries
     enqueue_job: EnqueueJob
     vault: CredentialVault
+    tree: RepositoryTree | None = None
 
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
         """Check everything that can be checked first, then store the library and queue its import.
 
+        Sent without paths, the library takes those of the root ``context7.json`` at the pinned
+        commit (LIB-06); paths a user sends win. Without paths, ``PreviewBusyError`` (429) when
+        the file cannot be read because every preview slot stays busy, before anything is
+        stored: the paths are fixed at creation, so guessing "every file" would be for good. The
+        file's title, description and rules are applied by the import, which reads it again with
+        the README.
         The credential, if any, is stored (encrypted) before the import is queued, because the
         import reads it. If that or queueing fails, the new library and its credential are
         removed again, so a retry is not met with a 409.
@@ -566,6 +605,15 @@ class AddLibraryUseCase:
             raise LibraryIdTakenError(library_id)
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
+        # Without paths the file decides them for good: a busy slot is a 429, not "every file".
+        context7 = await _fetch_context7(
+            self.tree,
+            repository,
+            resolved,
+            credential,
+            busy_raises=not (selection.include or selection.exclude),
+        )
+        selection = _prefilled(selection, context7)
         created = await self.libraries.add(
             NewLibrary(
                 library_id=library_id,
@@ -593,7 +641,14 @@ class AddLibraryUseCase:
                         "could not remove library %s after its import failed to queue", created
                     )
             raise
-        return AddedLibrary.of(created, resolved, job)
+        return AddedLibrary.of(created, resolved, job).model_copy(
+            update={
+                "include_paths": list(selection.include),
+                "exclude_paths": list(selection.exclude),
+                "context7": _context7_out(context7),
+                "context7_warning": context7.warning,
+            }
+        )
 
 
 async def _enqueue_import(
@@ -856,6 +911,27 @@ class _NoCheckpoints:
 
 
 @dataclass(frozen=True, slots=True)
+class TagLocks:
+    """One ``asyncio.Lock`` per library, for re-tagging (see ``TagArticleUseCase``).
+
+    Create one and give the same object to the importer and to tagging. Libraries do not wait on
+    each other; a lock nobody holds or waits for is dropped.
+    """
+
+    _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = field(
+        default_factory=weakref.WeakValueDictionary
+    )
+
+    def of(self, library: str) -> asyncio.Lock:
+        """Return the lock of ``library`` (`/owner/repo`, any letter case)."""
+        key = library.lower()
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = self._locks[key] = asyncio.Lock()
+        return lock
+
+
+@dataclass(frozen=True, slots=True)
 class ImportVersionUseCase:
     """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
 
@@ -899,6 +975,8 @@ class ImportVersionUseCase:
     """Makes the steps durable: a resumed import skips the files it had parsed and chunked."""
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES
     """Files parsed and chunked per durable step."""
+    tag_locks: TagLocks = field(default_factory=TagLocks)
+    """Shared with ``TagArticleUseCase``: see there."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -918,7 +996,6 @@ class ImportVersionUseCase:
         # A job queued without a kind is imported as a bare commit: the SHA is what is fetched.
         kind = job.ref_kind or RefKind.COMMIT
         refs = _full_refs(kind, job.version)
-        config_hash = self.chunker.config_hash
         step = self.checkpoints.step
         try:
             async with AsyncExitStack() as stack:
@@ -933,16 +1010,17 @@ class ImportVersionUseCase:
                     stack,
                 )
                 paths = await step("list the selected files", lambda: _list(checkout, source))
-                articles, wanted = await self._articles(
-                    checkout, paths, source, config_hash, progress
-                )
-                readme, taken = await step(
-                    "read the README and the images", lambda: self._assets(checkout, wanted)
+                articles, wanted = await self._articles(checkout, paths, source, progress)
+                readme, context7, taken = await step(
+                    "read the README, context7.json and the images",
+                    lambda: self._assets(checkout, wanted),
                 )
         except RepositoryAuthRequiredError as error:
             raise _anonymous(error, credential) from error
         if not articles:
             raise NoArticlesError
+        for note in context7.notes():
+            await progress.problem(CONTEXT7_FILE, ProblemCode.CONTEXT7, note)
         # After the fetch above has given its slot back: a second slot held while waiting for one
         # could deadlock two imports.
         taken = await step(
@@ -961,7 +1039,7 @@ class ImportVersionUseCase:
             ref=job.version,
             kind=kind,
             commit_sha=job.commit_sha,
-            config_hash=config_hash,
+            config_hash=self.chunker.config_hash,
             articles=tuple(articles),
             images=tuple(taken.images),
             refresh=self.refresh,
@@ -969,16 +1047,38 @@ class ImportVersionUseCase:
             renames=renames,
         )
         await step("publish", lambda: self._publish(version))
-        # The version is live now: a catalog that cannot take the README's text must not fail it.
+        await self._describe(job.library, job.version, readme, context7)
+
+    async def _describe(
+        self, library: str, ref: str, readme: ReadmeSummary, context7: _Context7Read
+    ) -> None:
+        """Offer the version's text and rules; ``context7.json`` wins over the README (LIB-07).
+
+        The version is live now: a catalog that cannot take them must not fail it. The catalog
+        keeps a user's edits over both.
+        """
+        config = context7.config or Context7Config()
         try:
             await self.versions.describe(
-                library=job.library,
-                ref=job.version,
-                title=readme.title,
-                description=readme.description,
+                library=library,
+                ref=ref,
+                title=config.project_title or readme.title,
+                description=config.description or readme.description,
+                rules=config.rules,
             )
         except Exception:
-            log.exception("could not apply the README of %s %s", job.library, job.version)
+            log.exception("could not apply the README of %s %s", library, ref)
+
+    async def _activate(self, library: str, manifest_id: str) -> None:
+        """Give the manifest its library's manual tags, chunks included, then activate it.
+
+        Last, so a tag set while the version was stored and indexed counts too.
+        """
+        async with self.tag_locks.of(library):
+            tagged = await self.versions.apply_manual_tags(manifest_id)
+            if tagged:
+                await self.index.retag(manifest_id, tagged)
+            await self.versions.activate(manifest_id)
 
     async def _publish(self, version: ImportedVersion) -> None:
         """Store the version as a pending manifest, index its chunks, then activate it.
@@ -990,7 +1090,7 @@ class ImportVersionUseCase:
         try:
             manifest_id = await self.versions.store(version)
             await self.index.index(manifest_id, version)
-            await self.versions.activate(manifest_id)
+            await self._activate(version.library, manifest_id)
         except BaseException:
             # Run as a task of its own and shielded, so that the cancellation that got us here
             # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
@@ -1002,13 +1102,13 @@ class ImportVersionUseCase:
 
     async def _assets(
         self, checkout: _Checkout, wanted: Sequence[str]
-    ) -> tuple[ReadmeSummary, _ImageBudget]:
-        """Summarize the README and read the wanted images the checkout holds."""
+    ) -> tuple[ReadmeSummary, _Context7Read, _ImageBudget]:
+        """Read the root README and ``context7.json``, and the wanted images the checkout holds."""
         folder = await checkout.folder()
-        readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
+        readme, context7 = await asyncio.to_thread(_root_files, folder, self.max_article_bytes)
         taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
         taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
-        return readme, taken
+        return readme, context7, taken
 
     async def _renames(
         self,
@@ -1100,7 +1200,6 @@ class ImportVersionUseCase:
         checkout: _Checkout,
         paths: Sequence[str],
         source: ImportSource,
-        config_hash: str,
         progress: JobProgress,
     ) -> tuple[list[ImportedArticle], list[str]]:
         """Return the articles and the image paths they reference (first-seen order).
@@ -1108,7 +1207,7 @@ class ImportVersionUseCase:
         One durable step per ``batch_files`` files. What a step returns is all that later steps
         and the progress depend on, so a replayed step leaves the job as the first run did.
         """
-        total = len(paths)
+        total, config_hash = len(paths), self.chunker.config_hash
         await progress.report(done=0, total=total)
         articles: list[_Article] = []
         chunks: dict[str, tuple[ArticleChunk, ...]] = {}
@@ -1425,6 +1524,95 @@ def _readme(folder: Path, limit: int) -> ReadmeSummary:
     return ReadmeSummary()
 
 
+def _root_files(folder: Path, limit: int) -> tuple[ReadmeSummary, _Context7Read]:
+    """Read the root README and ``context7.json`` of a checkout; never raises."""
+    return _readme(folder, limit), _context7(folder)
+
+
+@dataclass(frozen=True, slots=True)
+class _Context7Read:
+    """The root ``context7.json`` of a checkout: parsed, or why it is ignored, or neither."""
+
+    config: Context7Config | None = None
+    warning: str | None = None
+
+    def notes(self) -> tuple[str, ...]:
+        """Why the file is ignored, or what was left out of it."""
+        return (self.warning,) if self.warning else (self.config.notes if self.config else ())
+
+
+def _context7(folder: Path) -> _Context7Read:
+    """Read and parse the root ``context7.json``; nothing if there is none. Never raises.
+
+    Like the README it is read whatever the selection says and is untrusted. A file that is
+    not a plain file, too big or not a valid ``context7.json`` gives a warning and is ignored.
+    """
+    try:
+        data = _read(folder / CONTEXT7_FILE, CONTEXT7_MAX_BYTES)
+        if isinstance(data, Skip):
+            return _Context7Read(warning=str(InvalidContext7Error(data.reason)))
+        return _Context7Read(config=parse_context7(data))
+    except FileNotFoundError:
+        return _Context7Read()
+    except InvalidContext7Error as error:
+        return _Context7Read(warning=str(error))
+    except Exception:
+        log.exception("could not read the context7.json of a checkout")
+        return _Context7Read(warning=str(InvalidContext7Error("it could not be read")))
+
+
+async def _fetch_context7(
+    tree: RepositoryTree | None,
+    repository: RepositoryUrl,
+    resolved: ResolvedRef,
+    credential: Credential | None,
+    *,
+    busy_raises: bool = False,
+) -> _Context7Read:
+    """Read only the root ``context7.json`` of the pinned commit; raises only when told to.
+
+    The file is a pre-fill: whatever goes wrong (the remote, every preview slot busy for longer
+    than a preview waits, the disk) is a warning and adding or previewing goes on without it,
+    except that ``busy_raises`` lets ``PreviewBusyError`` through. Without a tree (a module
+    built with no git) there is no file.
+    """
+    if tree is None:
+        return _Context7Read()
+    try:
+        found = await tree.read_file(
+            repository,
+            resolved.commit_sha,
+            CONTEXT7_FILE,
+            max_bytes=CONTEXT7_MAX_BYTES,
+            refs=_full_refs(resolved.kind, resolved.name),
+            credential=credential,
+        )
+    except PreviewBusyError:
+        if busy_raises:
+            raise
+        reason = "it was not read, every preview slot is busy; try again shortly"
+    except DomainError as error:
+        log.warning("could not fetch context7.json: %s", type(error).__name__)
+        reason = f"it could not be fetched: {error}"
+    except Exception:
+        log.exception("could not read context7.json")
+        reason = "it could not be read"
+    else:
+        return _context7_of(found)
+    return _Context7Read(warning=str(InvalidContext7Error(reason)))
+
+
+def _context7_of(found: FetchedFile) -> _Context7Read:
+    if found.problem is not None:
+        return _Context7Read(warning=str(InvalidContext7Error(found.problem)))
+    if found.data is None:
+        return _Context7Read()
+    try:
+        return _Context7Read(config=parse_context7(found.data))
+    except InvalidContext7Error as error:
+        return _Context7Read(warning=str(error))
+
+
 @dataclass(frozen=True, slots=True)
 class Skip:
     """Why a file is left out of the version (never echoes its content)."""
@@ -1579,6 +1767,30 @@ async def _forget_chunks(index: ChunkIndex, removed: Removed) -> None:
         await index.remove(removed.manifest_ids)
     except Exception:
         log.exception("could not remove the chunks of %s", removed.library)
+
+
+@dataclass(frozen=True, slots=True)
+class TagArticleUseCase:
+    """Implements ``ports.driving.TagArticle``.
+
+    The catalog re-tags its manifests, then the chunk index gets the same tags. The library's
+    lock (``locks``, shared with the importer) keeps that pair whole against an import that
+    re-tags the manifest it is about to activate: otherwise the older of two writes could land
+    last in the chunk index. One process runs the jobs and serves the API (``serve`` pins one
+    worker), so a process lock is enough.
+    """
+
+    tags: ManualTagStore
+    index: ChunkIndex
+    locks: TagLocks
+
+    async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
+        """Store the tags, then copy every touched article's tags onto its chunks."""
+        async with self.locks.of(command.library):
+            tagged = await self.tags.set_tags(command.library, command.path, command.tags)
+            for manifest_id, articles in tagged.retagged.items():
+                await self.index.retag(manifest_id, articles)
+        return TaggedArticle(library=tagged.library, path=tagged.path, tags=list(tagged.tags))
 
 
 @dataclass(frozen=True, slots=True)

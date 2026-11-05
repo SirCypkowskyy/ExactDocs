@@ -8,8 +8,10 @@ from typing import Protocol
 
 from exactdocs.ingestion.models import (
     ArticleChunk,
+    ArticleTags,
     Collected,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -24,6 +26,7 @@ from exactdocs.ingestion.models import (
     RemoteRefs,
     Removed,
     RepositoryUrl,
+    TaggedPath,
 )
 
 
@@ -234,7 +237,11 @@ class RenameSource(Protocol):
 
 
 class RepositoryTree(Protocol):
-    """List the files of one commit without downloading any file content."""
+    """Look at one commit's tree, and at most one small file of it, without a checkout.
+
+    Both methods run apart from imports (preview slots, never ``GitGateway`` fetch slots), so a
+    preview or an add never waits for a long import, and wait a bounded time for a slot.
+    """
 
     async def list_files(
         self,
@@ -251,6 +258,25 @@ class RepositoryTree(Protocol):
         (lossy-decoded, any characters). ``refs`` and ``credential`` are as in ``GitGateway.fetch``.
         Raises what ``GitGateway.fetch`` raises, ``TreeTooLargeError`` for a listing over the
         output cap and ``PreviewBusyError`` when no preview slot frees up in time.
+        """
+        ...
+
+    async def read_file(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        path: str,
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> FetchedFile:
+        """Read one file at the root of the commit (``path`` is a plain name) by itself.
+
+        The trees are fetched as by ``list_files``, then only that file's blob. A missing file
+        is an empty ``FetchedFile``; one that is not a regular file (a link, a folder) or is
+        larger than ``max_bytes`` has a ``problem`` and no data (a larger one is cut off while
+        it downloads). Raises what ``list_files`` raises.
         """
         ...
 
@@ -325,14 +351,30 @@ class VersionPublisher(Protocol):
         """Make the pending manifest what its version serves, all at once."""
         ...
 
-    async def describe(
-        self, *, library: str, ref: str, title: str | None, description: str | None
-    ) -> None:
-        """Offer the root README's heading and first paragraph of an activated version.
+    async def apply_manual_tags(self, manifest_id: str) -> ArticleTags:
+        """Give the pending manifest the manual tags its library has now (renames followed).
 
-        The catalog decides what to do with them: it only takes the default version's README
-        and never replaces a title or description a user edited. ``None`` means the README
-        had none.
+        Returns the articles that carry manual tags, with every tag they carry: the chunk index
+        must get the same.
+        """
+        ...
+
+    async def describe(
+        self,
+        *,
+        library: str,
+        ref: str,
+        title: str | None,
+        description: str | None,
+        rules: Sequence[str],
+    ) -> None:
+        """Offer the title, description and rules found in an activated version.
+
+        Title and description come from its ``context7.json``, else from the root README's
+        heading and first paragraph; ``None`` means neither had one. ``rules`` are the
+        ``context7.json`` rules (empty without a usable file). The catalog decides what to do
+        with them: it only takes the default version's, and never replaces a title or
+        description a user edited.
         """
         ...
 
@@ -352,6 +394,10 @@ class ChunkIndex(Protocol):
 
     async def index(self, manifest_id: str, version: ImportedVersion) -> None:
         """Store and index the version's chunks of a pending manifest (before it is activated)."""
+        ...
+
+    async def retag(self, manifest_id: str, tags: ArticleTags) -> None:
+        """Make the chunks of these articles of the manifest carry these tags; no re-chunking."""
         ...
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
@@ -418,4 +464,16 @@ class SecretBox(Protocol):
 
     def open(self, sealed: str) -> str:
         """Return the original text; raises ``CredentialsRequiredError`` when it cannot be read."""
+        ...
+
+
+class ManualTagStore(Protocol):
+    """Where the tags users set by hand on an article path are kept (the catalog)."""
+
+    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
+        """Replace the path's manual tags for every version; re-tag the pending and active ones.
+
+        Raises a not-found error for an unknown library and a validation error for a bad path or
+        tag.
+        """
         ...
