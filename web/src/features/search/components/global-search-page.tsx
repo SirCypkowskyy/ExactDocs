@@ -302,8 +302,9 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
   const settled = data !== undefined && !result.isPlaceholderData;
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-10">
-      {/* A phone's header holds only an icon; the box sits here, focused. */}
-      <GlobalSearchBox autoFocus className="mb-6 sm:hidden" />
+      {/* A phone's header holds only an icon; the box sits here, focused while there is no query
+          (Back from an article to its results must not bring the keyboard up again). */}
+      <GlobalSearchBox place="page" autoFocus={q === undefined} className="mb-6 sm:hidden" />
       <section
         id={GLOBAL_RESULTS_ID}
         aria-labelledby={heading}

@@ -16,6 +16,7 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
   const inLibraries = useLocation({
     select: (l) => l.pathname === "/" || l.pathname.startsWith("/libraries"),
   });
+  const onSearch = useLocation({ select: (l) => l.pathname === "/search" });
 
   return (
     <div className="min-h-dvh">
@@ -41,6 +42,8 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
             {/* A phone gets a 44px door to /search (its box sits at the top of that page); from sm up the box lives here. */}
             <Link
               to="/search"
+              // On /search itself the door keeps the query instead of wiping it.
+              search={onSearch ? true : {}}
               aria-label="Search all libraries"
               className="ml-auto inline-flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-[color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] sm:hidden [@media(hover:hover)]:hover:text-foreground"
             >

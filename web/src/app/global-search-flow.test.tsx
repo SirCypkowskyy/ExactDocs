@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppRouter } from "./router";
@@ -29,12 +29,34 @@ const facets = [
   { library: "/fixture/docs-repo", version: "v2.0.0", commit_sha: SHA, matches: 1 },
 ];
 
+const library = {
+  id: "/acme/payments",
+  title: "Acme Payments",
+  description: "",
+  source_url: "https://github.com/acme/payments.git",
+  host: "github",
+  default_branch: "main",
+  settings: {},
+  versions: [
+    {
+      ref: "v2.0.0",
+      kind: "tag",
+      commit_sha: SHA,
+      imported_at: "2026-11-01T10:00:00Z",
+      is_default: true,
+    },
+  ],
+  default_version: "v2.0.0",
+};
+
 interface Options {
   status?: number;
   omitted?: number;
   complete?: boolean;
   empty?: boolean;
 }
+
+const versionBox = () => screen.findByRole("searchbox", { name: /^Search v/ });
 
 const headerBox = async () =>
   (await screen.findAllByRole("searchbox", { name: "Search all libraries" }))[0] as HTMLElement;
@@ -52,6 +74,26 @@ function mount(path: string, options: Options = {}) {
           account: { id: "1", username: "ada", role: "admin" },
         });
       }
+      if (url.pathname.endsWith("/libraries/acme/payments/search")) {
+        const results = [
+          { ...hit("/acme/payments", 1), heading_path: ["Retries"], anchor: "retries" },
+        ];
+        return Response.json({
+          notice: "",
+          library: "/acme/payments",
+          version: url.searchParams.get("ref"),
+          commit_sha: SHA,
+          retrieval_mode: "lexical",
+          reranked: false,
+          coverage: { candidates: 1, reranked: 0, complete: true },
+          fallback_reason: null,
+          results,
+        });
+      }
+      if (url.pathname.endsWith("/articles"))
+        return Response.json({ articles: [], next_cursor: null });
+      if (url.pathname.endsWith("/tags")) return Response.json({ tags: [], truncated: false });
+      if (url.pathname.endsWith("/libraries/acme/payments")) return Response.json(library);
       if (url.pathname.endsWith("/v1/search")) {
         if (options.status) {
           return Response.json({ error: "x", detail: "x", fields: [] }, { status: options.status });
@@ -84,7 +126,6 @@ function mount(path: string, options: Options = {}) {
   );
   return {
     router,
-    history: () => window.history.length,
     searches: () => calls.filter((u) => u.pathname.endsWith("/v1/search")),
   };
 }
@@ -150,11 +191,50 @@ describe("searching all libraries", () => {
     await waitFor(() => expect(box).toHaveValue("token"));
   });
 
-  it("gives `/` to the header box, and to the version box on a library page", async () => {
+  it("gives `/` to the header box on a page without its own box", async () => {
     mount("/account");
     const box = await headerBox();
     await userEvent.keyboard("/");
     expect(box).toHaveFocus();
+  });
+
+  it("gives `/` to the version box on a library page, not the header box", async () => {
+    mount("/libraries/acme/payments?version=v2.0.0");
+    const header = await headerBox();
+    const version = await versionBox();
+    const headerFocused = vi.fn();
+    header.addEventListener("focus", headerFocused);
+    await userEvent.keyboard("/");
+    expect(version).toHaveFocus();
+    expect(headerFocused).not.toHaveBeenCalled();
+  });
+
+  it("ArrowDown in the header box on a library page stays out of the version's hits", async () => {
+    mount("/libraries/acme/payments?version=v2.0.0&q=retry");
+    const header = await headerBox();
+    const results = await waitFor(() => {
+      const el = document.getElementById("search-results");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    await within(results).findByRole("link", { name: /Retries/ });
+    header.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(header).toHaveFocus();
+    expect(document.activeElement?.closest("#search-results")).toBeNull();
+  });
+
+  it("replaces history while typing on /search, and Enter pushes one entry", async () => {
+    const { router } = mount("/search?q=token");
+    const box = await headerBox();
+    await screen.findAllByRole("link", { name: /Tokens/ });
+    const before = router.history.length;
+    await userEvent.type(box, "s");
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "tokens" }));
+    expect(router.history.length).toBe(before);
+    await userEvent.type(box, "x{Enter}");
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "tokensx" }));
+    expect(router.history.length).toBe(before + 1);
   });
 
   it("explains an omitted library and an incomplete list, and drops the facet hint when narrowed", async () => {
@@ -189,6 +269,32 @@ describe("searching all libraries", () => {
     mount("/search?q=zzz", { empty: true });
     expect(await screen.findByRole("heading", { name: "No results" })).toBeVisible();
     expect(screen.getByText(/open the library and use its search box/)).toBeVisible();
+    expect(
+      within(screen.getByRole("main")).queryByRole("link", { name: "Search all libraries" }),
+    ).toBeNull();
+    cleanup();
+    mount("/search?q=zzz&library=/acme/payments", { empty: true });
+    expect(
+      await screen.findByRole("heading", { name: "No results in /acme/payments" }),
+    ).toBeVisible();
+    const all = within(screen.getByRole("main")).getByRole("link", {
+      name: "Search all libraries",
+    });
+    expect(all).toHaveAttribute("href", "/search?q=zzz");
+  });
+
+  it("keeps the query behind the phone's search door on /search, and focuses the page box only without one", async () => {
+    mount("/search?q=token");
+    const door = within(await screen.findByRole("banner")).getByRole("link", {
+      name: "Search all libraries",
+    });
+    await waitFor(() => expect(door).toHaveAttribute("href", "/search?q=token"));
+    const [, page] = await screen.findAllByRole("searchbox", { name: "Search all libraries" });
+    expect(page).not.toHaveFocus();
+    cleanup();
+    mount("/search");
+    const [, empty] = await screen.findAllByRole("searchbox", { name: "Search all libraries" });
+    await waitFor(() => expect(empty).toHaveFocus());
   });
 
   it("treats a 404 for an unknown library as an empty state, not a failure", async () => {

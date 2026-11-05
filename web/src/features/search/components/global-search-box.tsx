@@ -14,7 +14,9 @@ const isTyping = (target: EventTarget | null) =>
   (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
 interface Props {
-  /** Focus the box on mount (the phone's `/search` page). */
+  /** Where the box sits: the header, or the top of the phone's `/search` page. */
+  place?: "header" | "page";
+  /** Focus the box on mount. */
   autoFocus?: boolean;
   className?: string;
 }
@@ -24,7 +26,7 @@ interface Props {
  * `?q=` after a pause. `/` focuses it unless the page has its own per-version box, Escape clears
  * it, ArrowDown moves into the results.
  */
-export function GlobalSearchBox({ autoFocus = false, className }: Props) {
+export function GlobalSearchBox({ place = "header", autoFocus = false, className }: Props) {
   const navigate = useNavigate();
   const onSearch = useLocation({ select: (l) => l.pathname === "/search" });
   const urlQ = useLocation({
@@ -95,7 +97,7 @@ export function GlobalSearchBox({ autoFocus = false, className }: Props) {
           go(draft, false);
         }}
       >
-        <label htmlFor={`${GLOBAL_INPUT_ID}-${autoFocus ? "page" : "header"}`} className="sr-only">
+        <label htmlFor={`${GLOBAL_INPUT_ID}-${place}`} className="sr-only">
           Search all libraries
         </label>
         <div className="relative">
@@ -105,7 +107,7 @@ export function GlobalSearchBox({ autoFocus = false, className }: Props) {
           />
           <input
             ref={input}
-            id={`${GLOBAL_INPUT_ID}-${autoFocus ? "page" : "header"}`}
+            id={`${GLOBAL_INPUT_ID}-${place}`}
             data-global-search=""
             // biome-ignore lint/a11y/noAutofocus: the phone's search page exists to type into this box
             autoFocus={autoFocus}
