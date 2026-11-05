@@ -7,6 +7,9 @@ export type Article = components["schemas"]["Article"];
 export type ArticleSummary = components["schemas"]["ArticleSummary"];
 export type ArticleList = components["schemas"]["ArticleList"];
 export type LibraryAccess = components["schemas"]["LibraryAccess"];
+export type RenameAnswer = components["schemas"]["RenameAnswer"];
+export type RenamedPath = components["schemas"]["RenamedPath"];
+export type RenameDirection = components["schemas"]["RenameDirection"];
 
 /** What the browse page keeps in the URL: refs and paths are never path segments. */
 export interface BrowseSearch {
@@ -192,6 +195,40 @@ export function resolveVersion(library: LibraryDetail, requested: string | undef
     library.versions.find((v) => v.is_default) ??
     orderVersions(library.versions)[0];
   return { version: fallback, missing: requested };
+}
+
+/**
+ * One hop across the rename map git saw when `ref` was imported: `forward` takes a path of the
+ * version imported before `ref` to its path in `ref`, `back` the other way. Null: not moved.
+ */
+export type RenameLookup = (
+  ref: string,
+  path: string,
+  direction: RenameDirection,
+) => Promise<RenamedPath | null>;
+
+/**
+ * Where the article at `path` of version `from` is in version `to`. The rename map is asked
+ * first: `to` may have renamed it from `from` (switching to the next version), or `from` may have
+ * renamed it from `to` (switching back). A lookup that fails, or a map from another version, is
+ * no answer, and the path is kept (the article pane then offers the root when it is not there).
+ */
+export async function pathInVersion(
+  lookup: RenameLookup,
+  from: string,
+  to: string,
+  path: string,
+): Promise<string> {
+  if (from === to) return path;
+  const [forward, back] = await Promise.allSettled([
+    lookup(to, path, "forward"),
+    lookup(from, path, "back"),
+  ]);
+  if (forward.status === "fulfilled" && forward.value?.from_ref === from) {
+    return forward.value.new_path;
+  }
+  if (back.status === "fulfilled" && back.value?.from_ref === to) return back.value.old_path;
+  return path;
 }
 
 const COMMIT_PATH: Record<string, string> = {

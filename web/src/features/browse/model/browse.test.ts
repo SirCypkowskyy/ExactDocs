@@ -6,6 +6,9 @@ import {
   commitUrl,
   type LibraryDetail,
   orderVersions,
+  pathInVersion,
+  type RenamedPath,
+  type RenameLookup,
   repoWebUrl,
   resolveVersion,
   safeHref,
@@ -199,5 +202,59 @@ describe("showFileName", () => {
     expect(showFileName("Webhook retries", "webhook-retries.md")).toBe(false);
     expect(showFileName("Acme Payments", "README.md")).toBe(true);
     expect(showFileName("SDK quickstart", "getting-started.md")).toBe(true);
+  });
+});
+
+describe("pathInVersion", () => {
+  // `guide/setup.md` of v1.3.0 became `guide/install.md` in v1.4.0 (v1.4.0 was imported after v1.3.0).
+  const setupToInstall: RenamedPath = {
+    library: "/a/b",
+    ref: "v1.4.0",
+    from_ref: "v1.3.0",
+    old_path: "guide/setup.md",
+    new_path: "guide/install.md",
+    similarity: 92,
+  };
+  const map: RenameLookup = async (ref, path, direction) => {
+    if (ref !== "v1.4.0") return null;
+    if (direction === "forward") return path === "guide/setup.md" ? setupToInstall : null;
+    return path === "guide/install.md" ? setupToInstall : null;
+  };
+
+  it("asks the rename map of the newer version when switching forward", async () => {
+    expect(await pathInVersion(map, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe("guide/install.md");
+  });
+
+  it("follows the rename back when switching to the older version", async () => {
+    expect(await pathInVersion(map, "v1.4.0", "v1.3.0", "guide/install.md")).toBe("guide/setup.md");
+  });
+
+  it("keeps a path the map has not moved", async () => {
+    expect(await pathInVersion(map, "v1.3.0", "v1.4.0", "guide/auth.md")).toBe("guide/auth.md");
+  });
+
+  it("ignores a rename from a version other than the one switched from", async () => {
+    // v1.4.0's map is from v1.3.0: from v1.2.0, `guide/setup.md` may be another file.
+    expect(await pathInVersion(map, "v1.2.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
+    expect(await pathInVersion(map, "v1.4.0", "v1.2.0", "guide/install.md")).toBe(
+      "guide/install.md",
+    );
+  });
+
+  it("keeps the path when the map cannot be asked", async () => {
+    const down: RenameLookup = () => Promise.reject(new Error("offline"));
+    expect(await pathInVersion(down, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
+  });
+
+  it("asks nothing for the same version", async () => {
+    let asked = 0;
+    const counting: RenameLookup = async () => {
+      asked++;
+      return null;
+    };
+    expect(await pathInVersion(counting, "v1.4.0", "v1.4.0", "guide/setup.md")).toBe(
+      "guide/setup.md",
+    );
+    expect(asked).toBe(0);
   });
 });

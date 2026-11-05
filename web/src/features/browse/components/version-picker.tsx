@@ -1,9 +1,18 @@
-import { Link } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { Popover } from "radix-ui";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
-import { type BrowseSearch, orderVersions, shortSha, type Version } from "../model/browse";
+import { renamedPathQueryOptions } from "../api/browse-queries";
+import {
+  type BrowseSearch,
+  orderVersions,
+  pathInVersion,
+  type RenameLookup,
+  shortSha,
+  type Version,
+} from "../model/browse";
 
 interface VersionPickerProps {
   owner: string;
@@ -16,10 +25,21 @@ interface VersionPickerProps {
 
 const FILTER_FROM = 8;
 
-/** Switches the version and keeps the article path, so the same page can be compared across versions. */
+/** A click the browser should handle itself (new tab, new window, download). */
+const handledByBrowser = (event: MouseEvent) =>
+  event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+
+/**
+ * Switches the version and keeps the article, so the same page can be compared across versions.
+ * An article renamed between the two versions is followed through the rename map; one that is
+ * not there either way keeps its path (the article pane then offers the version's root).
+ */
 export function VersionPicker({ owner, repo, versions, current, keep }: VersionPickerProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const client = useQueryClient();
+  const navigate = useNavigate();
   const list = useRef<HTMLUListElement>(null);
   const ordered = orderVersions(versions);
   const shown = ordered.filter((v) => v.ref.toLowerCase().includes(filter.trim().toLowerCase()));
@@ -35,6 +55,25 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
     event.preventDefault();
   }
 
+  async function switchTo(target: Version, path: string) {
+    const shaOf = (ref: string) => versions.find((v) => v.ref === ref)?.commit_sha ?? "";
+    const lookup: RenameLookup = (ref, from, direction) =>
+      client.fetchQuery(
+        renamedPathQueryOptions({ owner, repo, ref, sha: shaOf(ref) }, from, direction),
+      );
+    setSwitching(true);
+    try {
+      const moved = await pathInVersion(lookup, current.ref, target.ref, path);
+      await navigate({
+        to: "/libraries/$owner/$repo",
+        params: { owner, repo },
+        search: { version: target.ref, ...keep, path: moved },
+      });
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   return (
     <Popover.Root
       open={open}
@@ -45,6 +84,7 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
     >
       <Popover.Trigger
         aria-label={`Version: ${current.ref}. Change version`}
+        aria-busy={switching || undefined}
         className="flex h-11 w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md bg-secondary px-3 text-sm outline-none ring-1 ring-inset ring-border transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[state=open]:ring-ring [@media(hover:hover)]:hover:bg-accent"
       >
         <span className="flex min-w-0 items-baseline gap-2">
@@ -94,7 +134,12 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
                     params={{ owner, repo }}
                     search={{ version: v.ref, ...keep }}
                     aria-current={isCurrent ? "true" : undefined}
-                    onClick={() => setOpen(false)}
+                    onClick={(event) => {
+                      setOpen(false);
+                      if (isCurrent || !keep.path || handledByBrowser(event)) return;
+                      event.preventDefault();
+                      void switchTo(v, keep.path);
+                    }}
                     className={cn(
                       "flex min-h-11 items-center gap-2 rounded-md px-2.5 py-1 text-sm lg:min-h-9 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       isCurrent ? "bg-mark/[0.16]" : "[@media(hover:hover)]:hover:bg-accent",
