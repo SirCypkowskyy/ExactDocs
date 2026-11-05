@@ -94,6 +94,21 @@ uvx exactdocs token list
 uvx exactdocs token revoke 0198f2c1
 ```
 
+See what an agent would get, with the commands and flags of `ctx7` (`library <name> [query]`,
+`docs <libraryId> <query> [--language L] [--json]`):
+
+```bash
+uvx exactdocs library acme "retry policy"
+uvx exactdocs docs /acme/docs "retry policy"
+uvx exactdocs docs /acme/docs@v1.4.0 "retry policy" --language go --json
+```
+
+Differences from `ctx7`: the output starts with the untrusted-content notice (with `--json` of
+`library` the notice goes to stderr so stdout stays the plain list); control characters are
+stripped; failures go to stderr with the exit codes below (ctx7: stdout, always 1); the query may
+be given as several words; a library lists its default version, articles and chunks (no stars or
+trust score); there is no `ctx7 search` yet (it needs a search-all REST route).
+
 Exit codes: 0 done, 1 other failure, 2 usage or rejected input (also: `remove` without a terminal
 and without `--yes`), 3 not found, 4 conflict (an import is running, the ID is taken), 5 not signed
 in or refused, 6 an import or a sync failed (or `--wait` lost track of it), 130 interrupted.
@@ -109,6 +124,26 @@ API token. REST only lets a signed-in session do that, so that a leaked token ca
 successor or replace a repository credential; the CLI signs in for the one command and signs out
 (`--username`, `--password-stdin`); `--token` is ignored for such a command. The CLI's own `--token` is the API token, which is why the
 repository token is `--git-token-file`.
+
+### Connect an MCP client
+
+```bash
+uvx exactdocs config --client claude            # claude, claude-desktop, cursor, vscode, codex
+uvx exactdocs config --client codex --stdio     # local, read-only, no token
+uvx exactdocs skill                             # prints the agent usage skill; redirect it to a SKILL.md
+                                                # (also the MCP resource skill://exactdocs/SKILL.md)
+```
+
+`config` prints a snippet to paste into the client's config file. It never contains your token:
+it refers to `EXACTDOCS_TOKEN` (or, for VS Code, asks for it) unless you pass `--show-token`.
+Claude Desktop reaches HTTP servers through `mcp-remote` (pinned to `0.16.0`); replace the
+`<your-exactdocs-token>` placeholder there with your token. Desktop apps often lack `~/.local/bin`
+on their PATH: put the absolute paths from `which uvx` / `which npx` in `command`. With
+`--show-token` the snippet holds your real token, so never commit the file it goes into (the
+command warns on stderr). Prefer `--new-token`: it creates a token just for this client (asks for
+your password, like `token create`), so revoking it breaks nothing else. It is named
+`mcp-<client>` (`--name` changes that) and expires after 90 days (`--expires-in`); the command
+prints its id on stderr, for `exactdocs token revoke <id>`.
 
 ### From `docker run` to a searchable library
 
@@ -138,13 +173,28 @@ curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/search" -d ref=0.28.1 -d q=tim
 
 `admin create` opens the database directly (so it works before the server is up, and against the
 same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
-Passwords are stored as argon2id hashes.
+Passwords are stored as argon2id hashes, and at most 4 are checked at once.
+
+Failed sign-ins are throttled, on the web UI's sign-in and `exactdocs login` alike. Every
+attempt counts against its client address (IPv6: its /64) and its username at once, before the
+password is checked, so a burst of concurrent guesses gets no more tries than guesses sent one
+by one. After 5 attempts that did not succeed, each further one must wait (5 seconds, doubling up
+to 15 minutes) and is answered 429 `rate_limited` with a `Retry-After` header meanwhile. A right
+password takes its own attempt back (without restarting the address's wait) and clears its
+username's count. An address that has signed
+into a username in the last 30 days is held to its own count only, not to the username's, so
+others failing for the admin's username cannot lock the admin out of a machine they already
+use; a new address still waits. Behind a reverse proxy, list it in
+`EXACTDOCS_FORWARDED_ALLOW_IPS`, so the throttle counts the client's address rather than the
+proxy's. The counts are kept in the server's memory: restarting the server clears them, and
+nothing else does (`admin reset-password` runs in another process and cannot).
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
 `admin create`): it sets a new password, signs the admin out everywhere and revokes
-the API tokens.
+the API tokens. If sign-ins are throttled meanwhile (429), restart the server to clear the
+throttle.
 
 Then add your first library in the UI (**Add library**: URL, ref, paths) or over REST, as in the
 walkthrough above. The import runs as a background job whose progress, skipped files and problems
@@ -312,7 +362,7 @@ Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
-| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
+| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -402,6 +452,26 @@ services:
     volumes: ["exactdocs-data:/data"]
 volumes:
   exactdocs-data:
+```
+
+Behind a reverse proxy in another container, add that proxy's own address to
+`EXACTDOCS_FORWARDED_ALLOW_IPS`. Otherwise every client looks like the proxy, and 5 failed
+sign-ins from anyone throttle everyone. Whatever this setting lists can choose the client
+address the server sees (through `X-Forwarded-For`), so list only the proxy: not a range such as
+`172.16.0.0/12`, which covers every container on every Docker network of the host. To pin the
+proxy's address, give it a fixed one on a network of its own:
+
+```yaml
+services:
+  proxy:
+    networks: { edge: { ipv4_address: 172.30.0.2 } }
+  exactdocs:
+    environment:
+      EXACTDOCS_FORWARDED_ALLOW_IPS: "172.30.0.2"
+    networks: [edge]
+networks:
+  edge:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
 ```
 
 ## How it works

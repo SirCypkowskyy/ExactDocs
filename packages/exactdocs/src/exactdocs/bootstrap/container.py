@@ -17,6 +17,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibrarySources,
     CatalogNewLibraries,
     CatalogRemovals,
+    CatalogRenamedPaths,
     CatalogSearchableVersions,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
@@ -36,6 +37,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
 )
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
+from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
@@ -79,6 +81,7 @@ def _build_read_side(
         manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
         chunks=SqliteChunkRepository(engine),
         search=SqliteSearchIndex(engine),
+        renames=CatalogRenamedPaths(catalog.resolve_renamed_path),
         query_docs_token_budget=settings.query_docs_token_budget,
     )
     return catalog, retrieval
@@ -237,6 +240,7 @@ class Container:
                 sessions=SqliteSessionRepository(engine),
                 tokens=SqliteTokenRepository(engine),
                 hasher=Argon2idPasswordHasher(),
+                failures=InMemoryFailedSignInLog(),
                 clock=SystemClock(),
             ),
             ingestion=ingestion,

@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
+    InMemoryFailedSignInLog,
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
@@ -64,6 +65,7 @@ async def world() -> World:
         sessions=InMemorySessionRepository(),
         tokens=tokens,
         hasher=FakeHasher(),
+        failures=InMemoryFailedSignInLog(),
         clock=clock,
     )
     ada = await identity.create_first_admin(
@@ -210,6 +212,7 @@ async def test_a_failing_last_used_write_does_not_fail_the_authentication(
         sessions=InMemorySessionRepository(),
         tokens=LockedTokens(),
         hasher=FakeHasher(),
+        failures=InMemoryFailedSignInLog(),
         clock=MovableClock(),
     )
     ada = await identity.create_first_admin(

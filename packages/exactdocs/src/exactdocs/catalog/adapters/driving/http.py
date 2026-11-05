@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from exactdocs.catalog.dtos import (
     Article,
     ArticleList,
+    DefaultVersionPin,
     GetArticleQuery,
     GetAssetQuery,
     GetLibraryQuery,
@@ -17,6 +18,7 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListTagsQuery,
+    PinDefaultVersionCommand,
     RenameAnswer,
     RenameDirection,
     ResolvedVersion,
@@ -34,6 +36,7 @@ from exactdocs.catalog.ports.driving import (
     ListArticles,
     ListLibraries,
     ListTags,
+    PinDefaultVersion,
     ResolveRenamedPath,
     ResolveVersion,
     UpdateLibrary,
@@ -68,10 +71,12 @@ def build_router(
     resolve_renamed_path: ResolveRenamedPath,
     get_asset: GetAsset,
     update_library: UpdateLibrary,
+    pin_default_version: PinDefaultVersion,
 ) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``."""
     router = APIRouter(prefix="/libraries", tags=["catalog"])
     router.include_router(_asset_router(get_asset))
+    router.include_router(_default_router(pin_default_version))
 
     @router.get("")
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
@@ -186,6 +191,28 @@ def build_router(
             )
         )
         return RenameAnswer(renamed=found)
+
+    return router
+
+
+def _default_router(pin_default_version: PinDefaultVersion) -> APIRouter:
+    """Build the routes that pin and unpin a library's default version (LIB-10)."""
+    router = APIRouter(tags=["catalog"])
+
+    @router.put("/{owner}/{repo}/default-version")
+    async def pin_default(owner: str, repo: str, pin: DefaultVersionPin) -> LibraryDetail:
+        """Pin the default version: `/owner/repo` keeps meaning `ref` when higher tags arrive.
+
+        `ref` must be an imported version (404 otherwise). Removing that version unpins.
+        """
+        return await pin_default_version(
+            PinDefaultVersionCommand(library=f"/{owner}/{repo}", ref=pin.ref)
+        )
+
+    @router.delete("/{owner}/{repo}/default-version")
+    async def unpin_default(owner: str, repo: str) -> LibraryDetail:
+        """Unpin the default version: it follows the default-version rule again."""
+        return await pin_default_version(PinDefaultVersionCommand(library=f"/{owner}/{repo}"))
 
     return router
 

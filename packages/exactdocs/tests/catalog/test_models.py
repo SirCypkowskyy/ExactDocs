@@ -1,6 +1,7 @@
 """IDs, refs, the default-version rule and short-SHA lookup: pure model tests."""
 
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -330,3 +331,24 @@ def test_a_manifest_renames_a_path_once() -> None:
             created_at=NOW,
             renames=(move(), move(new="c.md")),
         )
+
+
+def test_a_pinned_version_is_the_default_even_with_a_higher_stable_tag() -> None:
+    found = replace(
+        library(version("v1.3.0"), version("v1.5.0"), version("main", RefKind.BRANCH)),
+        pinned_version=VersionRef("v1.3.0"),
+    )
+
+    assert found.default_version() == version("v1.3.0")
+    assert found.default_is_pinned()
+
+
+@pytest.mark.parametrize("pinned", [None, "v1.4.0"])  # unpinned, or a pin no version answers to
+def test_without_a_usable_pin_the_default_follows_the_rule(pinned: str | None) -> None:
+    found = replace(
+        library(version("v1.3.0"), version("v1.5.0")),
+        pinned_version=None if pinned is None else VersionRef(pinned),
+    )
+
+    assert found.default_version() == version("v1.5.0")
+    assert not found.default_is_pinned()

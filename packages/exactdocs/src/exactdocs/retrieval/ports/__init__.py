@@ -3,6 +3,7 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     DefaultVersions,
     Libraries,
+    RenamedPaths,
     SearchableVersions,
     SearchIndex,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "QueryDocs",
     "ReadChunk",
     "RemoveChunks",
+    "RenamedPaths",
     "ResolveLibraryId",
     "SearchAllLibraries",
     "SearchDocs",

@@ -121,12 +121,8 @@ class ClientConfig:
         A token from the config file is only used for the server it was issued by: pairing it
         with a different URL (a flag or the environment) would hand it to the wrong host.
         """
+        chosen_url = resolve_url(url=url, env=env)
         stored = read_stored(config_path(env))
-        chosen_url = url or env.get(URL_VARIABLE) or stored.get("url")
-        if not chosen_url:
-            message = "no server configured; run `exactdocs login <url>` or set EXACTDOCS_URL"
-            raise ClientError(message)
-        chosen_url = normalize_url(chosen_url)
         chosen_token = token or env.get(TOKEN_VARIABLE)
         if not chosen_token and stored.get("url") and normalize_url(stored["url"]) == chosen_url:
             chosen_token = stored.get("token")
@@ -204,6 +200,8 @@ FRIENDLY: dict[str, str] = {
     "revoke one in the web UI or log in with --token",
     "not_found": "the server has no such endpoint; is that URL an ExactDocs instance "
     "of a compatible version?",
+    "rate_limited": "too many failed sign-ins from here or for this username; "
+    "wait a little and try again",
 }
 
 
@@ -212,14 +210,29 @@ def printable(text: str) -> str:
     return "".join(c for c in text if c.isprintable())
 
 
+def printable_text(text: str) -> str:
+    """Like ``printable`` for a multi-line text: newlines and tabs stay (docs are read as text)."""
+    return "".join(c for c in text if c in "\n\t" or c.isprintable())
+
+
 class ApiError(ClientError):
     """The server answered with its error shape; ``code`` is the stable machine code."""
 
-    def __init__(self, status: int, code: str, detail: str, fields: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        detail: str,
+        fields: tuple[str, ...] = (),
+        retry_after: int | None = None,
+    ) -> None:
         self.status = status
         self.code = code
         self.detail = printable(detail)
+        self.retry_after = retry_after
         text = FRIENDLY.get(code) or self.detail or f"the server answered HTTP {status}"
+        if retry_after is not None:
+            text += f" (in {retry_after} seconds)"
         if fields:
             text += f" (invalid: {printable(', '.join(fields))})"
         super().__init__(text)
@@ -259,8 +272,7 @@ class ApiClient:
     async def __aexit__(self, *_: object) -> None:
         await self._http.aclose()
 
-    async def request(self, method: str, path: str, **kwargs: Any) -> Any:  # ruff: ignore[any-type]
-        """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204)."""
+    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx2.Response:  # ruff: ignore[any-type]
         try:
             response = await self._http.request(method, f"/api/v1{path}", **kwargs)
         except httpx2.TimeoutException:
@@ -272,6 +284,29 @@ class ApiClient:
         if response.is_redirect:
             message = f"{self.url} redirected the request; use the URL it redirects to"
             raise ClientError(message)
+        return response
+
+    def _error(self, response: httpx2.Response, body: object) -> ClientError:
+        if isinstance(body, dict) and isinstance(body.get("error"), str):
+            fields = tuple(
+                ".".join(str(part) for part in item["loc"][1:] or item["loc"])
+                for item in body.get("fields", [])
+                if isinstance(item, dict) and isinstance(item.get("loc"), list)
+            )
+            retry_after = response.headers.get("retry-after", "")
+            return ApiError(
+                response.status_code,
+                body["error"],
+                str(body.get("detail", "")),
+                fields,
+                int(retry_after) if retry_after.isdecimal() else None,
+            )
+        message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
+        return ClientError(message)
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> Any:  # ruff: ignore[any-type]
+        """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204)."""
+        response = await self._send(method, path, **kwargs)
         if response.status_code == httpx2.codes.NO_CONTENT:
             return None
         try:
@@ -280,15 +315,22 @@ class ApiClient:
             body = None
         if response.is_success and body is not None:
             return body
-        if isinstance(body, dict) and isinstance(body.get("error"), str):
-            fields = tuple(
-                ".".join(str(part) for part in item["loc"][1:] or item["loc"])
-                for item in body.get("fields", [])
-                if isinstance(item, dict) and isinstance(item.get("loc"), list)
-            )
-            raise ApiError(response.status_code, body["error"], str(body.get("detail", "")), fields)
-        message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
-        raise ClientError(message)
+        raise self._error(response, body)
+
+    async def request_text(self, method: str, path: str, **kwargs: Any) -> str:  # ruff: ignore[any-type]
+        """Call ``/api/v1<path>``; return a ``text/*`` success body (errors are JSON as usual)."""
+        response = await self._send(method, path, **kwargs)
+        content_type = response.headers.get("content-type", "")
+        if response.is_success and content_type.startswith("text/"):
+            return response.text
+        if response.is_success:
+            message = f"{self.url} answered HTTP {response.status_code}; expected a text body"
+            raise ClientError(message + " (is it an older ExactDocs server?)")
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        raise self._error(response, body)
 
     async def login(
         self, username: str, password: str, name: str, expires_at: datetime | None = None

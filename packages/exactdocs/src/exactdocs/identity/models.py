@@ -1,6 +1,7 @@
 """Identity entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import hashlib
+import ipaddress
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -17,6 +18,22 @@ VALUE_PREFIX = "exd_"  # recognizable, so secret scanners and humans can spot a 
 PREFIX_SHOWN = len(VALUE_PREFIX) + 4  # the part of a token kept readable, to tell tokens apart
 IDLE_TIMEOUT = timedelta(days=7)  # a session unused for this long ends
 ABSOLUTE_TIMEOUT = timedelta(days=30)  # and none lives longer than this, however busy
+# Sign-in throttle, counted apart per client address and per username: this many failures are
+# free, then each one more doubles the wait before the next attempt, from FIRST_WAIT up to
+# LONGEST_WAIT. Failures are forgotten once none came for FORGET_FAILURES_AFTER.
+FREE_FAILURES = 5
+FIRST_WAIT = timedelta(seconds=5)
+LONGEST_WAIT = timedelta(minutes=15)
+FORGET_FAILURES_AFTER = timedelta(hours=1)
+# An address that signed into a username is remembered this long after its last success: from
+# there, that username's own count does not apply (its address count still does), so failures
+# others cause for the username cannot lock its owner out of a machine they already use.
+REMEMBER_SIGN_INS_FOR = timedelta(days=30)
+_IPV6_NETWORK_BITS = 64  # one IPv6 client usually holds a whole /64
+# NAT64 (RFC 6052 well-known prefix) puts the IPv4 client in the last 32 bits, so every IPv4
+# client reached through it would share one /64.
+_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
+_MAX_DOUBLINGS = 8  # FIRST_WAIT * 2**8 is past LONGEST_WAIT; also keeps the arithmetic small
 
 
 class Role(StrEnum):
@@ -110,3 +127,71 @@ class ApiToken:
     def is_expired(self, now: datetime) -> bool:
         """Whether the token no longer works at ``now``."""
         return self.expires_at is not None and now >= self.expires_at
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FailedSignIns:
+    """The recent failed sign-ins of one client address or of one username.
+
+    ``previous_at`` is the ``last_at`` before the latest attempt (``None`` when that attempt
+    started the count), so the attempt can be taken back without moving the wait.
+    """
+
+    count: int
+    last_at: datetime
+    previous_at: datetime | None = None
+
+    def is_forgotten(self, now: datetime) -> bool:
+        """Whether no failure came for long enough that the count starts over."""
+        return now - self.last_at >= FORGET_FAILURES_AFTER
+
+    def plus_one(self, now: datetime) -> FailedSignIns:
+        """Return the record after one more failure at ``now``."""
+        if self.is_forgotten(now):
+            return FailedSignIns(count=1, last_at=now)
+        return FailedSignIns(count=self.count + 1, last_at=now, previous_at=self.last_at)
+
+    def wait(self, now: datetime) -> timedelta:
+        """How long the next attempt must wait from ``now`` (zero when it may go ahead)."""
+        if self.count < FREE_FAILURES or self.is_forgotten(now):
+            return timedelta(0)
+        doublings = min(self.count - FREE_FAILURES, _MAX_DOUBLINGS)
+        until = self.last_at + min(FIRST_WAIT * 2**doublings, LONGEST_WAIT)
+        return max(until - now, timedelta(0))
+
+    def refunded(self, charged_at: datetime) -> FailedSignIns | None:
+        """Return the record with the attempt charged at ``charged_at`` taken back.
+
+        When that attempt is still the latest, the record goes back to how it was before it
+        (``None`` when it started the count), so a right password does not restart the wait.
+        When a later attempt came since, only the count goes down.
+        """
+        if self.last_at == charged_at:
+            if self.previous_at is None or self.count <= 1:
+                return None
+            return FailedSignIns(count=self.count - 1, last_at=self.previous_at)
+        if self.count <= 1:
+            return None
+        return FailedSignIns(
+            count=self.count - 1, last_at=self.last_at, previous_at=self.previous_at
+        )
+
+
+def address_key(client: str) -> str:
+    """Return the throttle key of a client address.
+
+    IPv4 counts per address, IPv6 per /64 (one client usually holds a whole /64, so counting per
+    address would give it endless fresh counts). IPv4-mapped and NAT64 addresses count as the
+    IPv4 client they carry. Anything else is used as it is.
+    """
+    try:
+        ip = ipaddress.ip_address(client)
+    except ValueError:
+        return f"address:{client}"
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d is the IPv4 client a.b.c.d
+            return f"address:{ip.ipv4_mapped}"
+        if ip in _NAT64:  # 64:ff9b::a.b.c.d is the IPv4 client a.b.c.d
+            return f"address:{ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)}"
+        return f"address:{ipaddress.ip_network((ip, _IPV6_NETWORK_BITS), strict=False)}"
+    return f"address:{ip}"

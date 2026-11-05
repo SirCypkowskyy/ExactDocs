@@ -6,6 +6,7 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     DefaultVersions,
     Libraries,
+    RenamedPaths,
     SearchableVersions,
     SearchIndex,
 )
@@ -62,6 +63,7 @@ class RetrievalModule:
         manifests: ActiveManifests,
         chunks: ChunkRepository,
         search: SearchIndex,
+        renames: RenamedPaths | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     ) -> Self:
@@ -72,7 +74,7 @@ class RetrievalModule:
             search_all_libraries=SearchAllLibrariesUseCase(defaults, searchable, search, chunks),
             index_manifest=IndexManifestUseCase(chunks, search, clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks),
-            read_chunk=ReadChunkUseCase(searchable, manifests, chunks),
+            read_chunk=ReadChunkUseCase(searchable, manifests, chunks, renames),
             resolve_library_id=ResolveLibraryIdUseCase(libraries, searchable, search, chunks),
             query_docs=QueryDocsUseCase(searchable, search, chunks, query_docs_token_budget),
             discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),

@@ -270,3 +270,16 @@ export function showFileName(title: string, name: string): boolean {
   const words = squash(title);
   return stem !== "" && !words.startsWith(stem);
 }
+
+/** What the picker offers about the default: pin the shown version, and/or drop the pin. */
+export interface PinChoices {
+  /** Pin `current`: it stays the default when a higher release is imported. */
+  pin: boolean;
+  /** Drop the pin: the default follows the default-version rule again. */
+  unpin: boolean;
+}
+
+/** Pinning the version that already is the pinned default is no choice; anything else is. */
+export function pinChoices(current: Version, pinned: boolean): PinChoices {
+  return { pin: !(pinned && current.is_default), unpin: pinned };
+}

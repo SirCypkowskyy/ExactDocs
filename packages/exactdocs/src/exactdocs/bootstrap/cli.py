@@ -32,6 +32,7 @@ from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_stdio_mcp
+from exactdocs.bootstrap.mcp_config import CLIENTS, SKILL_PATH, Client, render
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import (
     MAX_PASSWORD_LENGTH,
@@ -359,6 +360,59 @@ def libraries(
     _call(work())
 
 
+@app.command(usage="Usage: exactdocs library [OPTIONS] NAME [QUERY...]")
+def library(
+    name: Annotated[str, Parameter(help="Library name to look for, e.g. react.")],
+    /,
+    *query: Annotated[
+        str, Parameter(name="QUERY", help="What to look up; ranks the matches (default: the name).")
+    ],
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Find the ID of a library by name (like `ctx7 library`); QUERY ranks the matches."""
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.find_library(api, name, " ".join(query) or None, as_json=json_output)
+
+    _call(work())
+
+
+@app.command(usage="Usage: exactdocs docs [OPTIONS] LIBRARY-ID QUERY...")
+def docs(
+    library_id: Annotated[
+        str,
+        Parameter(
+            name="LIBRARY-ID",
+            help="Library ID from 'exactdocs library', e.g. /owner/repo or /owner/repo@v1.",
+        ),
+    ],
+    /,
+    *query: Annotated[str, Parameter(name="QUERY", help="The question; several words are joined.")],
+    language: Annotated[
+        str | None,
+        Parameter(help="Language you write in; chunks with code in it come first (no filter)."),
+    ] = None,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Show what an agent gets for a question about a library (like `ctx7 docs`)."""
+    if not query:
+        sys.stderr.write("exactdocs: docs needs a question after the library ID\n")
+        raise SystemExit(lib.EXIT_USAGE)
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.query_docs(
+                api, library_id, " ".join(query), language=language, as_json=json_output
+            )
+
+    _call(work())
+
+
 version = App(name="version", help="Versions of a library.")
 app.command(version)
 
@@ -522,6 +576,121 @@ def token_revoke(
             await lib.token_revoke(api, token_id)
 
     _call(work())
+
+
+def _config_conflict(
+    *,
+    stdio: bool,
+    show_token: bool,
+    new_token: bool,
+    token: str | None,
+    needs_new_token: dict[str, bool],
+) -> str | None:
+    """Return the first flag combination `config` refuses, as a message, or ``None``."""
+    if stdio and (show_token or new_token):
+        return "--stdio needs no token"
+    if show_token and new_token:
+        return "--show-token and --new-token exclude each other"
+    if new_token and token is not None:
+        return "--token is not used with --new-token"
+    if not new_token:
+        for flag, given in needs_new_token.items():
+            if given:
+                return f"{flag} needs --new-token"
+    return None
+
+
+@app.command
+def config(
+    *,
+    client: Annotated[Client, Parameter(help=f"MCP client: {', '.join(CLIENTS)}.")],
+    stdio: Annotated[
+        bool, Parameter(help="Local read-only `serve --stdio` instead of HTTP with a token.")
+    ] = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+    show_token: Annotated[
+        bool,
+        Parameter(
+            help="Write your real API token (EXACTDOCS_TOKEN, --token or the login) into the "
+            "snippet. Without it the snippet refers to EXACTDOCS_TOKEN or asks for the token."
+        ),
+    ] = False,
+    new_token: Annotated[
+        bool,
+        Parameter(
+            help="Create a token for this client (asks for your password) and write it into the "
+            "snippet; revoking it later affects only this client."
+        ),
+    ] = False,
+    name: Annotated[
+        str | None, Parameter(help="With --new-token: its name (default: mcp-<client>).")
+    ] = None,
+    expires_in: Annotated[
+        int | None,
+        Parameter(
+            help=f"With --new-token: days until it expires (default {DEFAULT_TOKEN_DAYS}; "
+            "for a token that never expires use `token create --no-expiry`).",
+            validator=Number(gte=1),
+        ),
+    ] = None,
+    username: Annotated[
+        str | None, Parameter(help="With --new-token: who signs in (asked for when omitted).")
+    ] = None,
+    password_stdin: Annotated[
+        bool, Parameter(help="With --new-token: read the password from one line of stdin.")
+    ] = False,
+) -> None:
+    """Print a ready-to-paste MCP config for a client, never containing the token unless asked."""
+    conflict = _config_conflict(
+        stdio=stdio,
+        show_token=show_token,
+        new_token=new_token,
+        token=token,
+        needs_new_token={
+            "--name": name is not None,
+            "--expires-in": expires_in is not None,
+            "--username": username is not None,
+            "--password-stdin": password_stdin,
+        },
+    )
+    if conflict:
+        sys.stderr.write(f"exactdocs: {conflict}\n")
+        raise SystemExit(lib.EXIT_USAGE)
+
+    async def work() -> tuple[str, str | None]:
+        if stdio:
+            return "", None  # no URL involved
+        if new_token:
+            async with _session(url, username, password_stdin=password_stdin) as api:
+                grant = await lib.create_token(
+                    api, name or f"mcp-{client}", expires_in or DEFAULT_TOKEN_DAYS
+                )
+                sys.stderr.write(
+                    lib.printable(
+                        f"exactdocs: created token {grant['name']!r} ({grant['id']}); "
+                        f'revoke it with "exactdocs token revoke {grant["id"]}"'
+                    )
+                    + "\n"
+                )
+                return api.url, grant["token"]
+        if show_token:
+            resolved = ClientConfig.resolve(url=url, token=token)
+            return resolved.url, resolved.token
+        return resolve_url(url=url), None
+
+    server, secret = _call(work())
+    if secret:
+        sys.stderr.write(
+            "exactdocs: this snippet contains your API token; do not commit the file it goes into\n"
+        )
+    sys.stdout.write(render(client, mcp_url=f"{server}/mcp", token=secret, stdio=stdio))
+
+
+@app.command
+def skill() -> None:
+    """Print the agent usage skill (SKILL.md) to save as `exactdocs/SKILL.md` in a skills folder."""
+    sys.stdout.write(SKILL_PATH.read_text(encoding="utf-8"))
 
 
 @admin.command
