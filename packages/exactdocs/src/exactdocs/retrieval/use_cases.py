@@ -397,6 +397,10 @@ def _pick(current: Sequence[SectionRef], was: Chunk, position: int) -> SectionRe
     anywhere. Several equal candidates go to the nearest position, and a tie names no section:
     an ambiguous answer is better than a wrong ID. The occurrence alone is not trusted with the
     text unchecked, since an inserted duplicate heading shifts it onto another section.
+
+    Known limit: if a duplicate heading is inserted above *and* the old section's text is
+    edited too, the occurrence step lands on the inserted section. The match is then marked
+    ``text_changed``, so the agent is told to re-check it.
     """
     same_headings = [s for s in current if s.heading_path == was.heading_path]
     same_text = [s for s in current if s.content_hash == was.content_hash]

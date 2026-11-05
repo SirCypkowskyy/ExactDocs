@@ -560,6 +560,16 @@ def test_a_huge_requested_chunk_id_is_capped_in_the_message() -> None:
     assert len(str(error)) < 600
 
 
+def test_a_preamble_section_leaves_out_its_empty_headings_and_anchor() -> None:
+    moved = MovedSection(article_path="g.md", chunk_id="c" * 32, heading_path=(), anchor="")
+
+    message = str(StaleChunkError("a" * 32, "/a/b", "main", moved))
+
+    assert "headings" not in message
+    assert "anchor" not in message
+    assert f"article 'g.md', chunk {'c' * 32!r}" in message
+
+
 async def test_a_stale_chunk_whose_heading_is_gone_names_only_the_article(world: World) -> None:
     old = await world.index_sections("m1", "main", _OLD, status=ManifestStatus.SUPERSEDED)
     await world.index_sections(

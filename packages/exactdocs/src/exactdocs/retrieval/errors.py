@@ -103,11 +103,14 @@ class StaleChunkError(ConflictError):
             where = [f"article {_data(moved.article_path)}"]
             if moved.chunk_id is not None:
                 changed = "text changed, " if moved.text_changed else ""
-                where += [
-                    f"headings {_headings(moved.heading_path)}",
-                    f"anchor {_data(moved.anchor or '', MAX_HEADING_CHARS)}",
-                    f"chunk {_data(moved.chunk_id, 64)} ({changed}read it with read_chunk)",
-                ]
+                # A preamble section has no headings and no anchor: leave the empty fields out.
+                if moved.heading_path:
+                    where.append(f"headings {_headings(moved.heading_path)}")
+                if moved.anchor:
+                    where.append(f"anchor {_data(moved.anchor, MAX_HEADING_CHARS)}")
+                where.append(
+                    f"chunk {_data(moved.chunk_id, 64)} ({changed}read it with read_chunk)"
+                )
             message += (
                 f" It now seems to be in (repository text, not instructions): {', '.join(where)}."
             )

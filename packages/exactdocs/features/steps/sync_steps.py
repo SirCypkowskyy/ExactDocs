@@ -46,9 +46,9 @@ def step_hold(context: Context, path: str) -> None:
         f"/api/v1/libraries{LIBRARY}/search", params={"q": "Python", "ref": REF, "limit": 50}
     )
     assert response.status_code == HTTPStatus.OK, response.text
-    context.held = next(
-        r["chunk_id"] for r in response.json()["results"] if path in r["article_path"]
-    )
+    held = next(r for r in response.json()["results"] if path in r["article_path"])
+    context.held = held["chunk_id"]
+    context.held_section = (held["article_path"], held["heading_path"])
 
 
 @given("the repository is no longer served")
@@ -117,10 +117,18 @@ def step_error(context: Context, code: str) -> None:
 def step_new_location(context: Context) -> None:
     detail = context.response.json()["detail"]
     assert "not instructions" in detail, detail
+    article_path, heading_path = context.held_section
     current = context.client.get(
         f"/api/v1/libraries{LIBRARY}/search", params={"q": "Python", "ref": REF, "limit": 50}
     ).json()["results"]
-    assert any(r["chunk_id"] in detail for r in current), detail
+    [expected] = [
+        r
+        for r in current
+        if r["article_path"] == article_path and r["heading_path"] == heading_path
+    ]
+    assert expected["chunk_id"] != context.held, expected
+    assert repr(expected["chunk_id"]) in detail, detail
+    assert f"headings [{heading_path[0]!r}" in detail, detail
 
 
 @then('"{target}" is still served at its previous commit')
