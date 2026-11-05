@@ -362,6 +362,59 @@ def libraries(
     _call(work())
 
 
+@app.command(usage="Usage: exactdocs library [OPTIONS] NAME [QUERY...]")
+def library(
+    name: Annotated[str, Parameter(help="Library name to look for, e.g. react.")],
+    /,
+    *query: Annotated[
+        str, Parameter(name="QUERY", help="What to look up; ranks the matches (default: the name).")
+    ],
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Find the ID of a library by name (like `ctx7 library`); QUERY ranks the matches."""
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.find_library(api, name, " ".join(query) or None, as_json=json_output)
+
+    _call(work())
+
+
+@app.command(usage="Usage: exactdocs docs [OPTIONS] LIBRARY-ID QUERY...")
+def docs(
+    library_id: Annotated[
+        str,
+        Parameter(
+            name="LIBRARY-ID",
+            help="Library ID from 'exactdocs library', e.g. /owner/repo or /owner/repo@v1.",
+        ),
+    ],
+    /,
+    *query: Annotated[str, Parameter(name="QUERY", help="The question; several words are joined.")],
+    language: Annotated[
+        str | None,
+        Parameter(help="Language you write in; chunks with code in it come first (no filter)."),
+    ] = None,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Show what an agent gets for a question about a library (like `ctx7 docs`)."""
+    if not query:
+        sys.stderr.write("exactdocs: docs needs a question after the library ID\n")
+        raise SystemExit(lib.EXIT_USAGE)
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.query_docs(
+                api, library_id, " ".join(query), language=language, as_json=json_output
+            )
+
+    _call(work())
+
+
 version = App(name="version", help="Versions of a library.")
 app.command(version)
 
