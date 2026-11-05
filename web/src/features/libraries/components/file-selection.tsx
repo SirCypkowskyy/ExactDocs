@@ -1,4 +1,5 @@
 import { ChevronRight, Plus, X } from "lucide-react";
+import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { badPathBox, MAX_TAG_RULES, type TagRuleDraft, validateRule } from "../model/add-library";
@@ -94,6 +95,7 @@ function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
   const set = (key: number, patch: Partial<TagRuleDraft>) =>
     onChange(rules.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   const full = rules.length >= MAX_TAG_RULES;
+  const focusAfterRender = useFocusAfterRender();
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="mb-1.5 text-sm font-medium">Tags by path</legend>
@@ -199,7 +201,7 @@ function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
             if (full) return;
             const key = rules.reduce((n, r) => Math.max(n, r.key + 1), 0);
             onChange([...rules, { key, pattern: "", tag: "" }]);
-            requestAnimationFrame(() => document.getElementById(`rule-path-${key}`)?.focus());
+            focusAfterRender(() => document.getElementById(`rule-path-${key}`));
           }}
         >
           <Plus aria-hidden="true" className="size-4" />

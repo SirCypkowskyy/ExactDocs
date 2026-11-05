@@ -16,6 +16,8 @@ import {
 } from "./model/add-library";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+/** How often the import screen polls its job (`importJobQueryOptions`). */
+const POLL_MS = 1500;
 const URL_ = "https://github.com/acme/payments";
 const err = (status: number, code: string, detail = "x") => ({
   status,
@@ -388,7 +390,8 @@ describe("add library flow", () => {
         { path: "", code: "truncated", reason: "more", is_skip: false },
       ],
     });
-    await screen.findByRole("heading", { name: /^Imported \// }, { timeout: 4000 });
+    // The finished state shows on the next poll, up to one interval away.
+    await screen.findByRole("heading", { name: /^Imported \// }, { timeout: POLL_MS + 3000 });
     expect(live).toHaveTextContent("Import finished. 4 files imported, 2+ skipped.");
     expect(screen.getByRole("heading", { name: /Skipped files \(2\+\)/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Binary files/ })).toBeInTheDocument();
@@ -396,7 +399,7 @@ describe("add library flow", () => {
     expect(screen.getByText(/Showing the first 2 skipped files/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Imported with a note/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to libraries" })).toHaveAttribute("href", "/");
-  }, 10_000);
+  });
 
   it("shows a failed import with its reason and no skipped section", async () => {
     serve({
@@ -441,26 +444,23 @@ describe("add library flow, review fixes", () => {
     const { create } = serve({ refs: () => err(500, "boom") });
     renderAdd();
     await checkRepo();
-    const typed = await screen.findByLabelText("Branch, tag or commit", {}, { timeout: 6000 });
+    const typed = await screen.findByLabelText("Branch, tag or commit");
     await userEvent.type(typed, "v1.2.0");
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
     await waitFor(() => expect(create.mock.calls[0]?.[0]).toMatchObject({ ref: "v1.2.0" }));
-  }, 10_000);
+  });
 
   it("focuses the typed ref when the server refuses it", async () => {
     serve({ refs: () => err(500, "boom"), create: () => err(422, "unknown_ref") });
     renderAdd();
     await checkRepo();
-    await userEvent.type(
-      await screen.findByLabelText("Branch, tag or commit", {}, { timeout: 6000 }),
-      "nope",
-    );
+    await userEvent.type(await screen.findByLabelText("Branch, tag or commit"), "nope");
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
     await waitFor(() => expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus());
     expect(screen.getByLabelText("Branch, tag or commit")).toHaveAccessibleDescription(
       /no branch, tag or commit/,
     );
-  }, 10_000);
+  });
 
   it("names the typed-ref input and moves focus to it", async () => {
     serve();
@@ -556,6 +556,19 @@ describe("add library flow, review fixes", () => {
     expect(screen.queryByText(/already used/)).not.toBeInTheDocument();
   });
 
+  it("does not pull focus away once the refusal is on screen", async () => {
+    serve({ create: () => err(409, "library_id_taken") });
+    renderAdd();
+    await addDefault();
+    await screen.findByText(/already used/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Library ID")).toHaveFocus();
+    const address = screen.getByLabelText("Repository address");
+    address.focus();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(address).toHaveFocus();
+  });
+
   it("rejects an address over 2048 characters before asking", async () => {
     const { fetchMock } = serve();
     renderAdd();
@@ -639,7 +652,7 @@ describe("add library flow, review fixes", () => {
     const seen = calls();
     await new Promise((r) => setTimeout(r, 1800));
     expect(calls()).toBe(seen);
-  }, 10_000);
+  });
 
   it("keeps polling through a network failure and says contact was lost", async () => {
     const { fetchMock } = serve();
@@ -650,10 +663,8 @@ describe("add library flow, review fixes", () => {
     });
     renderAdd();
     await addDefault();
-    expect(
-      await screen.findByText("Lost contact, retrying…", {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
-  }, 10_000);
+    expect(await screen.findByText("Lost contact, retrying…")).toBeInTheDocument();
+  });
 
   it("stops polling once the import has finished", async () => {
     const { fetchMock } = serve();
@@ -665,7 +676,7 @@ describe("add library flow, review fixes", () => {
     const seen = calls();
     await new Promise((r) => setTimeout(r, 1800));
     expect(calls()).toBe(seen);
-  }, 10_000);
+  });
 
   it("shows an unknown skip code with the server's own sentence", async () => {
     serve({
