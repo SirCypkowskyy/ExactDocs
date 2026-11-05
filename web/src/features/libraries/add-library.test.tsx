@@ -128,8 +128,11 @@ describe("add library model", () => {
     expect(validatePatterns("docs/\n/etc/passwd")).toMatch(/starts with/);
     expect(validatePatterns("docs/../x")).toMatch(/\.\./);
     expect(validatePatterns("docs/\n**/*.mdx")).toBeUndefined();
-    expect(validateRule({ key: 0, pattern: "docs/**", tag: "API" }).tag).toBeDefined();
-    expect(validateRule({ key: 0, pattern: "docs/**", tag: "api" })).toEqual({});
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "#api" }).tag).toBeDefined();
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "x".repeat(41) }).tag).toBeDefined();
+    // The server normalizes a tag, so the form takes what it would store.
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "API" })).toEqual({});
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "Getting Started" })).toEqual({});
   });
 
   it("maps every failure to words and a place", () => {
@@ -356,10 +359,10 @@ describe("add library flow", () => {
     await userEvent.click(screen.getByText("Choose files and tags"));
     await userEvent.click(screen.getByRole("button", { name: "Add a tag rule" }));
     await userEvent.type(screen.getByLabelText("Path for tag rule 1"), "docs/**");
-    await userEvent.type(screen.getByLabelText("Tag for rule 1"), "Bad Tag");
-    expect(screen.queryByText(/lower-case letters/)).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Tag for rule 1"), "#bad");
+    expect(screen.queryByText(/Start with a letter or digit/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
-    expect(await screen.findByText(/lower-case letters/)).toBeInTheDocument();
+    expect(await screen.findByText(/Start with a letter or digit/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Tag for rule 1")).toHaveFocus());
   });
 

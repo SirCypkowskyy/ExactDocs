@@ -9,7 +9,8 @@ The URL comes from a user, so git is treated as a process that must not surprise
   (ssh is told to use no authentication at all), no askpass, no terminal prompt, a throw-away
   working directory;
 - the process has no stdin, its own session, a timeout and capped output; its whole process
-  group is killed whenever the call ends, so no helper outlives it;
+  group is killed whenever the call ends, so no helper outlives it, and its pipes are read to
+  EOF before the call returns, so no file descriptor outlives it either;
 - at most ``MAX_PROCESSES`` git processes run at once;
 - git's stderr is only classified, never passed on: it may contain the URL.
 
@@ -109,6 +110,8 @@ RENAME_TIMEOUT_SECONDS = 60.0
 RENAME_LIMIT = 400
 _MAX_STEP_OUTPUT = 1024 * 1024
 _MAX_BRACE_EXPANSIONS = 64
+_DRAIN_SECONDS = 2.0  # for a killed process's pipes to reach EOF and its exit to be seen
+_KEYGEN_SECONDS = 5.0
 _PREFIX = "fetch-"
 _ROOT_README = ("/README.md", "/README.mdx")
 _ROOT_CONTEXT7 = f"/{CONTEXT7_FILE}"  # last: no exclusion can drop it
@@ -294,10 +297,19 @@ class GitCli:
                 keygen, "-l", "-F", name, "-f", str(self.known_hosts),
                 stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL,
             )  # fmt: skip
-            async with asyncio.timeout(5):
-                out, _ = await process.communicate()
-        except OSError, TimeoutError:
+        except OSError:
             return None
+        try:
+            async with asyncio.timeout(_KEYGEN_SECONDS):
+                out, _ = await process.communicate()
+        except TimeoutError:
+            return None
+        finally:
+            # Also on cancellation: ssh-keygen must not outlive the call, nor its pipe.
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await _settle(process)
         found = [
             line.split()
             for line in out.decode(errors="replace").splitlines()
@@ -704,7 +716,7 @@ class GitCli:
             if guard:
                 guard.cancel()
             _kill_group(process)
-            await process.wait()
+            await _settle(process)
         if tripped:
             raise RepositoryTooLargeError(max_bytes)
         if len(out) > cap:
@@ -1072,6 +1084,25 @@ async def _read(process: Process, stream: asyncio.StreamReader | None, cap: int 
         if cap is not None and len(kept) > cap:
             _kill_group(process)
     return kept
+
+
+async def _settle(process: Process) -> None:
+    """Read a killed process's pipes to EOF, then wait for it, for at most ``_DRAIN_SECONDS``.
+
+    After a timeout or a cancellation the process is killed while its output is still unread.
+    Its transport (and the pipe file descriptors) only closes once every pipe has reached EOF
+    and the exit has been seen, so without this they stay open until the event loop happens
+    to run again. ``wait()`` itself only returns once the pipes are closed if the process was
+    still running when it was called, so it sits inside the bound too: a helper that left the
+    process group could keep a pipe open for as long as it lives. The child is reaped either
+    way; only its transport then closes later, when that helper exits.
+    """
+    with suppress(TimeoutError):
+        async with asyncio.timeout(_DRAIN_SECONDS):
+            for stream in (process.stdout, process.stderr):
+                while stream and await stream.read(65536):
+                    pass
+            await process.wait()
 
 
 def _kill_group(process: Process) -> None:

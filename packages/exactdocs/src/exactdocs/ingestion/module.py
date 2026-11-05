@@ -62,6 +62,7 @@ from exactdocs.ingestion.ports.driving import (
     ListRepositoryRefs,
     PreviewRepository,
     RecoverJobs,
+    ReimportVersion,
     RemoveLibrary,
     RemoveVersion,
     RunJob,
@@ -84,6 +85,7 @@ from exactdocs.ingestion.use_cases import (
     ListRepositoryRefsUseCase,
     PreviewRepositoryUseCase,
     RecoverJobsUseCase,
+    ReimportVersionUseCase,
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
     RunJobUseCase,
@@ -176,6 +178,7 @@ class IngestionModule:
     list_repository_refs: ListRepositoryRefs
     preview_repository: PreviewRepository
     recover_jobs: RecoverJobs
+    reimport_version: ReimportVersion
     remove_library: RemoveLibrary
     remove_version: RemoveVersion
     run_job: RunJob
@@ -234,6 +237,9 @@ class IngestionModule:
             list_repository_refs=ListRepositoryRefsUseCase(remote),
             preview_repository=PreviewRepositoryUseCase(remote, tree or _NoTree()),
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks, runner),
+            reimport_version=ReimportVersionUseCase(
+                remote, sources or none, jobs, enqueue_job, vault or _NoCredentials()
+            ),
             remove_library=RemoveLibraryUseCase(
                 jobs, removals, index, enqueue_job, vault or _NoCredentials()
             ),

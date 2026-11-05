@@ -492,18 +492,37 @@ def version_add(
 def sync(
     library: str,
     *,
+    confirm: Annotated[
+        bool,
+        Parameter(
+            help="Confirm every tag of the library that moved upstream: re-import each at the "
+            "commit it names now (old and new commit are printed)."
+        ),
+    ] = False,
+    confirm_tag: Annotated[
+        list[str] | None,
+        Parameter(help="Confirm only this moved tag; repeatable. Other moved tags stay reported."),
+    ] = None,
     wait: WaitOption = False,
     wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Re-sync the branch versions of a library; tags are checked and reported, never moved."""
+    """Re-sync the branch versions of a library; moved tags are re-imported only on --confirm."""
+    if confirm and confirm_tag:  # "every moved tag" and "only these" cannot both be meant
+        sys.stderr.write("exactdocs: use --confirm or --confirm-tag, not both\n")
+        raise SystemExit(lib.EXIT_USAGE)
 
     async def work() -> None:
         async with _api(url, token) as api:
             await lib.sync_library(
-                api, library, wait=wait, as_json=json_output, give_up_after=wait_timeout
+                api,
+                library,
+                confirm=confirm or confirm_tag or False,
+                wait=wait,
+                as_json=json_output,
+                give_up_after=wait_timeout,
             )
 
     _call(work())

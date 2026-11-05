@@ -3,6 +3,7 @@ import { sendJson } from "@/shared/lib/http";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import type {
   AddedVersion,
+  ReimportedVersion,
   RemovalResult,
   SettingsLibrary,
   SyncedLibrary,
@@ -21,6 +22,10 @@ export const saveDetails = (
 
 export const addVersion = (owner: string, repo: string, ref: string) =>
   sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, { ref });
+
+/** The ref goes in the body: a ref may hold slashes, so nothing could follow it in the path. */
+export const reimportVersion = (owner: string, repo: string, ref: string) =>
+  sendJson<ReimportedVersion>("POST", `${lib(owner, repo)}/versions/reimport`, { ref });
 
 export const syncLibrary = (owner: string, repo: string) =>
   sendJson<SyncedLibrary>("POST", `${lib(owner, repo)}/sync`);

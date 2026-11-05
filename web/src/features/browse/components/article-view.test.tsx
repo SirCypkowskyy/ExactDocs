@@ -26,6 +26,8 @@ const article = {
   path: "docs/start.md",
   title: "Start",
   tags: [],
+  manual_tags: [],
+  front_matter: {},
   source_url: null,
   content:
     "# Start\n\n## Install\n\n[same](#install) [other](./start.md#install) ![Shot](./shot.png)\n\n> [!NOTE]\n> Mind the gap.\n\n<script>alert(1)</script>\n",
