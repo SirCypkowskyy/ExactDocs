@@ -317,7 +317,11 @@ class SqliteSearchIndex:
             ):
                 await connection.exec_driver_sql(statement)
             await connection.execute(
-                text("UPDATE retrieval_search_format SET format = :format"), {"format": FORMAT}
+                text(
+                    "INSERT INTO retrieval_search_format (id, format) VALUES (1, :format) "
+                    "ON CONFLICT (id) DO UPDATE SET format = excluded.format"
+                ),
+                {"format": FORMAT},
             )
             entries = await connection.scalar(text("SELECT count(*) FROM retrieval_search"))
         return RebuiltIndex(format=FORMAT, entries=entries or 0)

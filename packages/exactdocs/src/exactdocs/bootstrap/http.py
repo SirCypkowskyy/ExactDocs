@@ -41,9 +41,12 @@ class Health(BaseModel):
     status: str
     version: str
     schema_revision: str | None
-    search_index_format: int = Field(description="Format the stored search index was built in.")
+    search_index_format: int | None = Field(
+        description="Format the stored search index was built in; null when none is recorded."
+    )
     reindex_required: bool = Field(
-        description="The index is in an older format: run `exactdocs reindex` (it keeps serving)."
+        description="The index is in an older or unrecorded format: run `exactdocs reindex` "
+        "(it keeps serving)."
     )
 
 

@@ -371,7 +371,7 @@ class RemovedChunks(_Dto):
 class SearchIndexStateOut(_Dto):
     """The stored search index's format, and whether a rebuild would change it."""
 
-    stored_format: int
+    stored_format: int | None
     current_format: int
     needs_rebuild: bool
 

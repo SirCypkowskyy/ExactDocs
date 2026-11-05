@@ -252,16 +252,18 @@ class SearchIndexState:
     """The format the stored search index was built in, against the one this build writes.
 
     A format names how entries are made from chunks (columns, tokenizer, ``identifier_tokens``).
-    An index in an older format still answers, built the old way, until it is rebuilt.
+    An index in an older format still answers, built the old way, until it is rebuilt. One in a
+    newer format (written by a later release, before a downgrade) is left as it is.
+    ``stored_format`` is ``None`` when no format is recorded; a rebuild records it.
     """
 
-    stored_format: int
+    stored_format: int | None
     current_format: int
 
     @property
     def needs_rebuild(self) -> bool:
-        """Whether ``exactdocs reindex`` would change how chunks are found."""
-        return self.stored_format != self.current_format
+        """Whether the index is older than this build writes, or its format is unknown."""
+        return self.stored_format is None or self.stored_format < self.current_format
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

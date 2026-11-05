@@ -59,6 +59,25 @@ async def test_health_reports_the_schema_revision(client: httpx.AsyncClient) -> 
     assert response.json()["schema_revision"] == alembic_head()
 
 
+async def test_health_reports_the_search_index_format(client: httpx.AsyncClient) -> None:
+    body = (await client.get("/api/health")).json()
+
+    assert (body["search_index_format"], body["reindex_required"]) == (2, False)
+
+
+async def test_health_stays_up_without_a_recorded_index_format(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    async with container.engine.begin() as connection:
+        await connection.exec_driver_sql("DELETE FROM retrieval_search_format")
+
+    response = await client.get("/api/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["search_index_format"], body["reindex_required"]) == (None, True)
+
+
 async def test_lists_demo_libraries(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/libraries")
 

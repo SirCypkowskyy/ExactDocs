@@ -434,6 +434,7 @@ async def test_an_index_in_an_older_format_needs_a_rebuild_until_rebuilt(world: 
 
     aged = await world.retrieval.get_search_index_state()
     assert aged.needs_rebuild
+    assert aged.stored_format is not None
     assert aged.stored_format < aged.current_format
     assert len(await world.find("m14", "retry_policy")) == 2  # the old index still answers
 

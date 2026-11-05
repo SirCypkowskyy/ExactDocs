@@ -1,17 +1,23 @@
 """Upgrade test: a data directory written by the previous release, served by this build.
 
-    python3 deploy/upgrade_check.py [--wheels DIR] [--previous X.Y.Z]
+    python3 deploy/upgrade_check.py [--wheels DIR] [--previous X.Y.Z] [--head REVISION]
+    python3 deploy/upgrade_check.py --print-head   # the Alembic head of this checkout
 
 1. The previous release (``uvx --from exactdocs==X.Y.Z``, from PyPI; default: the newest stable
-   one) starts on an empty data directory; an admin, a token and the fixture docs repository at
-   two tags are added over its REST API, and what it serves is recorded.
-2. It stops, and this build starts on the same directory: it must migrate the schema to its head
-   and serve the same libraries, articles and search results, to the same token.
+   one below this build's version) starts on an empty data directory; an admin, a token and the
+   fixture docs repository at two tags are added over its REST API, and what it serves is
+   recorded.
+2. It stops, and this build starts on the same directory: it must migrate the schema to the head
+   of this checkout's Alembic revisions (not the head the build reports about itself) and serve
+   the same libraries, articles and search results, to the same token.
 3. ``exactdocs reindex`` runs while that server keeps answering searches, then swaps the index.
 
 With --wheels (the exactdocs and exactdocs-kernel wheels) this build runs the way uvx runs it;
-without, ``uv run exactdocs`` from the checkout. Everything it starts is gone when it exits.
-Only the fields both releases return are compared: a release may add fields, not change them.
+without, ``uv run exactdocs`` from the checkout. Give each build a unique version (CI: a local
+version with the commit) or a fresh ``UV_CACHE_DIR``: uv reuses a cached wheel of the same file
+name, so another build of ``0.0.0.dev0`` would run instead of this one. Everything it starts is
+gone when it exits. Only the fields both releases return are compared: a release may add fields,
+not change them.
 """
 
 import argparse
@@ -46,11 +52,35 @@ def step(message: str) -> None:
     print(f"--- {message}", flush=True)
 
 
-def newest_stable_release() -> str:
+def release_key(version: str) -> tuple[int, ...] | None:
+    """Return ``X.Y.Z`` as a sortable tuple; ``None`` for anything else (pre-, dev-, local)."""
+    parts = version.removeprefix("v").split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+
+def this_version(wheels: Path | None) -> tuple[int, ...] | None:
+    """Return this build's release version: the wheel's, else a ``vX.Y.Z`` tag on HEAD."""
+    if wheels and (key := release_key(wheel_version(wheels))):
+        return key
+    tags = subprocess.run(
+        ["git", "-C", str(ROOT), "tag", "--points-at", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    return max(filter(None, map(release_key, tags)), default=None)
+
+
+def previous_release(below: tuple[int, ...] | None) -> str | None:
+    """Return the newest stable release on PyPI older than ``below`` (any when it is ``None``)."""
     with urllib.request.urlopen("https://pypi.org/pypi/exactdocs/json", timeout=30) as response:
         releases = json.load(response)["releases"]
-    stable = [v for v, files in releases.items() if files and v.replace(".", "").isdigit()]
-    return max(stable, key=lambda v: tuple(int(p) for p in v.split(".")))
+    stable = {
+        key: v
+        for v, files in releases.items()
+        if files and (key := release_key(v)) and (below is None or key < below)
+    }
+    return stable[max(stable)] if stable else None
 
 
 def free_port() -> int:
@@ -179,22 +209,38 @@ def wait_job(api: Api, job: str) -> None:
         sys.exit(f"import job ended as {state['state']!r}: {state}")
 
 
-def commands(wheels: Path | None, previous: str) -> tuple[list[str], list[str], list[str]]:
-    """Return the previous release's command, this build's environment runner and command."""
+def wheel_version(wheels: Path) -> str:
+    [wheel] = wheels.glob("exactdocs-[0-9]*.whl")
+    return wheel.name.split("-")[1]
+
+
+def commands(wheels: Path | None, previous: str) -> tuple[list[str], list[str]]:
+    """Return the previous release's command and this build's."""
     old = ["uvx", "--from", f"exactdocs=={previous}", "exactdocs"]
-    runner = ["uv", "run", "--project", str(ROOT)]
-    if wheels:
-        [wheel] = wheels.glob("exactdocs-[0-9]*.whl")
-        version = wheel.name.split("-")[1]
-        runner = [
-            "uvx",
-            "--prerelease=allow",
-            "--find-links",
-            str(wheels.resolve()),
-            "--from",
-            f"exactdocs=={version}",
-        ]
-    return old, runner, [*runner, "exactdocs"]
+    if not wheels:
+        return old, ["uv", "run", "--project", str(ROOT), "exactdocs"]
+    return old, [
+        "uvx",
+        "--prerelease=allow",
+        "--find-links",
+        str(wheels.resolve()),
+        "--from",
+        f"exactdocs=={wheel_version(wheels)}",
+        "exactdocs",
+    ]
+
+
+def checkout_head() -> str:
+    """Return the Alembic head of this checkout, not of the build under test.
+
+    A stale build would agree with its own head, so the migration check could not fail.
+    """
+    return subprocess.run(
+        ["uv", "run", "--project", str(ROOT), "python", "-c", HEAD],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
 
 
 def check_reindex(api: Api, cmd: list[str], env: dict[str, str]) -> None:
@@ -218,13 +264,21 @@ def main() -> int:
     """Run the check; exit non-zero with the reason at the first difference."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheels", type=Path)
-    parser.add_argument("--previous", help="release to upgrade from (default: newest on PyPI)")
+    parser.add_argument(
+        "--previous", help="release to upgrade from (default: newest on PyPI below this build)"
+    )
+    parser.add_argument("--head", help="Alembic head to expect (default: this checkout's)")
+    parser.add_argument("--print-head", action="store_true", help="print this checkout's head")
     args = parser.parse_args()
-    previous = args.previous or newest_stable_release()
-    old_cmd, runner, new_cmd = commands(args.wheels, previous)
-    head = subprocess.run(
-        [*runner, "python", "-c", HEAD], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    if args.print_head:
+        print(checkout_head())
+        return 0
+    previous = args.previous or previous_release(this_version(args.wheels))
+    if previous is None:
+        print("no stable release older than this build on PyPI: nothing to upgrade from, skipped")
+        return 0
+    old_cmd, new_cmd = commands(args.wheels, previous)
+    head = args.head or checkout_head()
     api = Api(f"http://127.0.0.1:{free_port()}")
     with (
         tempfile.TemporaryDirectory(prefix="exactdocs-upgrade-") as tmp,
@@ -241,8 +295,10 @@ def main() -> int:
 
         step(f"this build on the same data directory (schema {old_revision} -> {head})")
         with running(new_cmd, env, api) as health:
-            if health["schema_revision"] != head:
-                sys.exit(f"not migrated: {health}")
+            if health.get("schema_revision") != head:
+                sys.exit(f"not migrated to this checkout's head {head}: {health}")
+            if "search_index_format" not in health:
+                sys.exit(f"the server is not this build (no search_index_format): {health}")
             if changed := differences(before, served(api)):
                 sys.exit("served differently after the upgrade:\n  " + "\n  ".join(changed))
             print(f"served unchanged: {len(before)} answers compared")

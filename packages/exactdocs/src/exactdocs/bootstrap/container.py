@@ -248,7 +248,7 @@ class Container:
                 logger.warning(
                     "The search index is in format %s; this version writes format %s. It keeps "
                     "answering as it was built; `exactdocs reindex` rebuilds it while serving.",
-                    index.stored_format,
+                    "unrecorded" if index.stored_format is None else index.stored_format,
                     index.current_format,
                 )
             if jobs:

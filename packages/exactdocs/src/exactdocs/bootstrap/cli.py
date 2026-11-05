@@ -620,17 +620,20 @@ def reindex() -> None:
 
     Local: opens the database in the data directory (EXACTDOCS_DATA_DIR), so run it where the
     server runs (in Docker: `docker exec <container> exactdocs reindex`). Nothing is imported
-    again. Needed after a release whose notes say "requires reindex"; harmless otherwise.
+    again. Needed after a release whose notes say "requires reindex"; harmless otherwise. Run one
+    at a time: a second run started meanwhile drops the first one's new table, which then fails
+    (the index that answers is not affected).
     """
     settings = Settings()
     started = time.monotonic()
     state, rebuilt = _run(_reindex(settings))
     seconds = time.monotonic() - started
-    was = (
-        f"was format {state.stored_format}"
-        if state.needs_rebuild
-        else "was already current; rebuilt anyway"
-    )
+    if state.stored_format is None:
+        was = "no format was recorded"
+    elif state.needs_rebuild:
+        was = f"was format {state.stored_format}"
+    else:
+        was = f"was format {state.stored_format}, not older; rebuilt anyway"
     sys.stdout.write(
         f"Search index rebuilt in format {rebuilt.format} ({was}): "
         f"{rebuilt.entries} chunks in {seconds:.1f} s.\n"

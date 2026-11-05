@@ -141,7 +141,10 @@ def step_reindex(context: Context) -> None:
     context.searched_during = []
     deadline = time.monotonic() + 120
     while process.poll() is None and time.monotonic() < deadline:
-        context.searched_during.append(_search(context))  # the server answers meanwhile
+        # The server answers meanwhile. Most of these run while the subprocess is still starting:
+        # this is the end-to-end view. Searches during the build itself are covered by
+        # test_searches_keep_answering_while_the_new_index_is_built (test_search_rebuild.py).
+        context.searched_during.append(_search(context))
     context.reindex_out, context.reindex_err = process.communicate(timeout=60)
     context.reindex_code = process.returncode
 
