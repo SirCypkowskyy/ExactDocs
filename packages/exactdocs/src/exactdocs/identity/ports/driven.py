@@ -1,9 +1,17 @@
 """Driven (secondary) ports: what identity needs from infrastructure."""
 
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import datetime, timedelta
 from typing import Protocol
 
-from exactdocs.identity.models import Account, AccountId, ApiToken, Session, Username
+from exactdocs.identity.models import (
+    Account,
+    AccountId,
+    ApiToken,
+    FailedSignIns,
+    Session,
+    Username,
+)
 
 
 class AccountRepository(Protocol):
@@ -90,6 +98,48 @@ class TokenRepository(Protocol):
 
     async def delete_expired(self, now: datetime) -> None:
         """Remove the tokens whose expiry is at or before ``now``."""
+        ...
+
+
+class FailedSignInLog(Protocol):
+    """The sign-in throttle's state: attempt counts, and which address signed into which username.
+
+    Counts are keyed by client address (``address:...``) or ``username:...``. The log may forget
+    a record at any time (e.g. to stay within a memory bound): that only makes the throttle more
+    lenient, never refuses anyone.
+    """
+
+    async def charge(self, keys: Sequence[str], now: datetime) -> timedelta:
+        """Count one attempt against every key, unless one of them must still wait.
+
+        The check and the count are one atomic step, so attempts made at the same time cannot
+        all pass the check before any is counted. Returns the longest wait; when it is above zero
+        nothing was counted.
+        """
+        ...
+
+    async def refund(self, key: str, charged_at: datetime) -> None:
+        """Take back the attempt charged under ``key`` at ``charged_at`` (a right password).
+
+        If no later attempt was charged since, the record goes back to how it was before that
+        attempt, so the wait is not restarted; otherwise only the count goes down.
+        """
+        ...
+
+    async def get(self, key: str) -> FailedSignIns | None:
+        """Return the record under ``key``, or ``None``."""
+        ...
+
+    async def forget(self, key: str) -> None:
+        """Drop the record under ``key`` (nothing happens when there is none)."""
+        ...
+
+    async def remember_sign_in(self, key: str, now: datetime) -> None:
+        """Note that the sign-in ``key`` (a username at an address) just succeeded."""
+        ...
+
+    async def signed_in_before(self, key: str, now: datetime) -> bool:
+        """Whether ``key`` succeeded within ``REMEMBER_SIGN_INS_FOR`` of ``now``."""
         ...
 
 

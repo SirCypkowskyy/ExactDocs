@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "exactdocs": {
+      "type": "http",
+      "url": "https://docs.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer exd_secret_value"
+      }
+    }
+  }
+}

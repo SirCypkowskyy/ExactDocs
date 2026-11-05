@@ -2223,6 +2223,17 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-delete_session": {
@@ -2367,6 +2378,17 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {

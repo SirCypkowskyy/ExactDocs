@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "exactdocs": {
+      "type": "http",
+      "url": "https://docs.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:exactdocs-token}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "exactdocs-token",
+      "description": "ExactDocs API token",
+      "password": true
+    }
+  ]
+}

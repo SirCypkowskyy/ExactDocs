@@ -46,7 +46,7 @@ RUN pnpm build
 # TARGETARCH): Python 3.14 crashes under QEMU user-mode emulation, and native is much faster.
 # The venv's interpreter symlink points at /usr/local/bin/python3, present in the runtime image.
 FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv
-FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS base
+FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e7c1f156936ed2dc5a112 AS base
 COPY --from=uv /uv /uvx /usr/local/bin/
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \
@@ -95,7 +95,7 @@ RUN mkdir /data
 # --- Debian package indexes for the runtime. The trixie apt verifies them with sqv, which fails
 # under QEMU ("No good signature"), so this native stage runs `apt-get update` (adding the target
 # architecture) and the runtime stage installs from these lists without updating.
-FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS apt-lists
+FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e7c1f156936ed2dc5a112 AS apt-lists
 ARG TARGETARCH
 # A cached layer keeps the package set of the first build; the release passes a new value (the
 # date) so that it installs the current Debian security updates.
@@ -107,7 +107,7 @@ RUN : "$DEBIAN_REFRESH" \
 # --- runtime. apt needs RUN, so on the other architecture this stage runs under QEMU (binfmt
 # is installed on the runners, see deploy/runners/create-vms.sh); only apt-get, dpkg, rm and find run
 # there, never Python (which crashes under QEMU).
-FROM python:3.14-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS runtime-tools
+FROM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e7c1f156936ed2dc5a112 AS runtime-tools
 # Debian package versions are not pinned (hadolint DL3008): security fixes arrive with each build.
 # git and openssh-client are for the importer, tini is PID 1 (reaps git children, forwards signals).
 # git depends on the full Perl (50 MB) only for scripts the importer never runs (git svn, send-email,

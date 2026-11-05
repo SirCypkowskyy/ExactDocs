@@ -552,7 +552,7 @@ Scenario: A session cookie never authenticates MCP
 - [ ] behave `login.feature`; unit tests for expiry with the kernel clock
 
 **Notes.** Decisions *Web UI auth*, *Host and origin checks*. Login rate limiting is out of scope
-(follow-up if needed).
+(done in #182: a shared sign-in throttle per address and username).
 
 ### E2-03 · feat: API tokens give agents, the CLI and REST clients access
 
@@ -1593,9 +1593,9 @@ Scenario: A working snippet for Claude Code
   And an MCP client configured with it can list libraries
 ```
 
-- [ ] clients `claude`, `cursor`, `vscode`; token created via REST (AUTH-02)
-- [ ] a short "how to use ExactDocs" skill offered over MCP for clients that load skills
-- [ ] snippet validity test per client
+- [x] clients `claude`, `cursor`, `vscode` (also `claude-desktop`, `codex`); the token is a placeholder, `--show-token` uses the login token; `--new-token` creates a dedicated token via REST (AUTH-02, asks for the password)
+- [x] a short "how to use ExactDocs" skill offered over MCP for clients that load skills
+- [x] snippet validity test per client
 
 ---
 
