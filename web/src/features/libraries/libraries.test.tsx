@@ -159,6 +159,117 @@ describe("libraries slice", () => {
     expect(screen.queryByText("docs/odd.md")).not.toBeInTheDocument();
   });
 
+  describe("a moved tag", () => {
+    const moved = job({
+      id: "f1",
+      kind: "refresh",
+      state: "failed",
+      error_code: "tag_moved",
+      error: "the tag 'v1.4.0' now points at commit b",
+    });
+
+    /** `serve`, plus the re-import answer; `jobs` changes once the re-import was asked. */
+    function serveMoved(answer: { status: number; body: unknown }, { stale = false } = {}) {
+      let asked = false;
+      const latest = serve([library()], () =>
+        asked && answer.status === 202 && !stale
+          ? [job({ id: "r1", kind: "refresh", state: "queued" })]
+          : [moved],
+      );
+      const calls: { url: string; init?: RequestInit }[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (init?.method === "POST") {
+            calls.push({ url, init });
+            asked = true;
+            return Response.json(answer.body, { status: answer.status });
+          }
+          return latest(url);
+        }),
+      );
+      return calls;
+    }
+
+    it("is re-imported at its new commit right from its error", async () => {
+      const calls = serveMoved({
+        status: 202,
+        body: {
+          library_id: "/acme/payments",
+          ref: "v1.4.0",
+          ref_kind: "tag",
+          previous_commit_sha: SHA,
+          commit_sha: "f".repeat(40),
+          job_id: "r1",
+        },
+      });
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      expect(
+        screen.getByRole("link", { name: "Review the moved tag in settings" }),
+      ).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toBe("/api/v1/libraries/acme/payments/versions/reimport");
+      expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ ref: "v1.4.0" });
+      // The queued re-import is the version's newest job: the error gives way to it.
+      expect(await screen.findByText("Queued")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Sync failed/ })).not.toBeInTheDocument();
+    });
+
+    it("says it is queued while the list still shows the old error", async () => {
+      const calls = serveMoved(
+        {
+          status: 202,
+          body: {
+            library_id: "/acme/payments",
+            ref: "v1.4.0",
+            ref_kind: "tag",
+            previous_commit_sha: SHA,
+            commit_sha: "f".repeat(40),
+            job_id: "r1",
+          },
+        },
+        { stale: true }, // the refetch has not caught up yet
+      );
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+      );
+      expect(
+        await screen.findByText("Queued: the new commit of v1.4.0 is being imported."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
+      expect(calls).toHaveLength(1);
+    });
+
+    it("says why when the tag moved back, and offers no retry", async () => {
+      serveMoved({
+        status: 409,
+        body: { error: "tag_not_moved", detail: "x", fields: [], close_matches: [] },
+      });
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+      );
+      expect(await screen.findByText(/nothing to re-import/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
+    });
+
+    it("is not offered for other failures", async () => {
+      serve([library()], [job({ state: "failed", error_code: "ref_deleted", error: "gone" })]);
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Open settings to sync again" })).toBeInTheDocument();
+    });
+  });
+
   it("keeps a failed version visible when another version synced", async () => {
     serve(
       [library()],

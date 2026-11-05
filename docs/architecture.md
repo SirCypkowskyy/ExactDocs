@@ -393,7 +393,7 @@ request. A `Job` has a kind, a library (and optionally a version), a state (`que
 `succeeded`, `failed`), `done`/`total` files, per-file problems (path, reason), an error and
 timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jobs` read them.
 
-- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
+- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, or the confirmed re-import of a moved tag, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
   maps a kind to the `JobHandler` that runs it and, optionally, a `RecoveryHook`. Handlers report
   through a `JobProgress` port; every report is stored at once. Raising fails the job: a domain
   error's message is shown to users, anything else only as `unexpected <ErrorType>` (details go
