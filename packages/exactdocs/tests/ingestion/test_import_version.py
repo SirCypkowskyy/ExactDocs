@@ -1038,6 +1038,8 @@ async def test_a_resync_of_a_tag_gives_the_same_map_as_its_first_import(tmp_path
         ("main", [V13], RefKind.BRANCH),  # a branch has no place in a version order
         ("v1.4.0", [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=SHA)], RefKind.TAG),
         ("main", [], RefKind.BRANCH),  # a branch never imported has no earlier commit
+        # A tag without an order, re-imported after it moved, is never its own past (#82).
+        ("stable", [ImportedRef(ref="stable", kind=RefKind.TAG, commit_sha=OLD)], RefKind.TAG),
     ],
 )
 async def test_without_a_previous_version_git_is_not_asked(

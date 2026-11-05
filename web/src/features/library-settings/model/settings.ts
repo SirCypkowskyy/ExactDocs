@@ -7,6 +7,7 @@ export type SettingsVersion = components["schemas"]["VersionOut"];
 export type AddedVersion = components["schemas"]["AddedVersion"];
 export type SyncedLibrary = components["schemas"]["SyncedLibrary"];
 export type SyncedVersion = components["schemas"]["SyncedVersion"];
+export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
 export type RemovalResult = components["schemas"]["RemovalResult"];
 
 const MAX_TITLE = 200;
@@ -174,6 +175,56 @@ export function explainSync(error: unknown): Problem {
   return generic(error);
 }
 
+/** Why confirming a moved tag did not queue its re-import. */
+export function explainReimport(error: unknown): Problem {
+  if (!(error instanceof HttpError)) return OFFLINE;
+  const gone = session(error);
+  if (gone) return gone;
+  switch (error.code) {
+    case "not_found":
+      return {
+        message: "This version no longer exists. It may have been removed in another window.",
+      };
+    case "tag_not_moved":
+      return {
+        tone: "info",
+        message:
+          "The tag points at the commit this version serves again, so there is nothing to re-import.",
+      };
+    case "version_importing":
+      return { tone: "info", message: "This version is being imported right now." };
+    case "ref_deleted":
+      return {
+        message: "The tag is gone from the repository now. The version keeps serving what it had.",
+      };
+    case "credentials_required":
+    case "auth_failed":
+    case "repository_auth_required":
+      return {
+        message:
+          "The stored credentials were refused or can't be read, so nothing changed. The version keeps serving what it had.",
+      };
+    default:
+      return error.status === 422
+        ? {
+            message:
+              "The repository couldn't be read, so nothing changed. The version keeps serving what it had.",
+          }
+        : generic(error);
+  }
+}
+
+/** The row a confirmed re-import turns a `tag_moved` failure into: its import is queued. */
+export const reimportedRow = (v: SyncedVersion, r: ReimportedVersion): SyncedVersion => ({
+  ...v,
+  status: "queued",
+  previous_commit_sha: r.previous_commit_sha,
+  commit_sha: r.commit_sha,
+  job_id: r.job_id,
+  error_code: null,
+  error: null,
+});
+
 /** `what` is “version v1.3.0” or “this library”. */
 export function explainRemove(error: unknown, what: string): Problem {
   if (!(error instanceof HttpError)) return OFFLINE;
@@ -206,7 +257,7 @@ export function failureWords(v: SyncedVersion): string {
     case "ref_deleted":
       return `The ${v.ref_kind === "tag" ? "tag" : "branch"} is gone from the repository. ${kept}`;
     case "tag_moved":
-      return `The tag now points at another commit. It is never re-imported: remove this version and add it again to take the new commit. ${kept}`;
+      return `The tag now points at another commit. It is not re-imported unless you confirm it. ${kept}`;
     case "unexpected":
       return `Its import could not be queued. ${kept}`;
     default:

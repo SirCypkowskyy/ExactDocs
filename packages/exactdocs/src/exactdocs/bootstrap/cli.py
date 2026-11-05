@@ -489,18 +489,27 @@ def version_add(
 def sync(
     library: str,
     *,
+    confirm: Annotated[
+        bool,
+        Parameter(help="Re-import each tag that moved upstream at the commit it names now."),
+    ] = False,
     wait: WaitOption = False,
     wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Re-sync the branch versions of a library; tags are checked and reported, never moved."""
+    """Re-sync the branch versions of a library; moved tags are re-imported only on --confirm."""
 
     async def work() -> None:
         async with _api(url, token) as api:
             await lib.sync_library(
-                api, library, wait=wait, as_json=json_output, give_up_after=wait_timeout
+                api,
+                library,
+                confirm=confirm,
+                wait=wait,
+                as_json=json_output,
+                give_up_after=wait_timeout,
             )
 
     _call(work())

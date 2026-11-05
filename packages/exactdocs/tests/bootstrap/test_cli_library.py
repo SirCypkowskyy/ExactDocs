@@ -158,6 +158,75 @@ async def test_a_sync_names_each_version_that_failed_and_why(
     assert "tag_moved" not in capsys.readouterr().out  # the table, then the reason on stderr
 
 
+def _moved_tag_sync(reimport: httpx2.Response) -> tuple[httpx2.MockTransport, list[str]]:
+    """A sync that reports ``v1`` as moved, and ``reimport`` as the answer to re-importing it."""
+    asked: list[str] = []
+    sha = "a" * 40
+    body = {
+        "library_id": "/acme/docs",
+        "versions": [
+            {"ref": "main", "ref_kind": "branch", "status": "up_to_date", "commit_sha": sha},
+            {
+                "ref": "v1",
+                "ref_kind": "tag",
+                "status": "failed",
+                "commit_sha": sha,
+                "error_code": "tag_moved",
+                "error": "the tag 'v1' now points at commit b",
+            },
+        ],
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        asked.append(f"{request.method} {request.url.path} {request.content.decode()}".strip())
+        if request.url.path.endswith("/sync"):
+            return httpx2.Response(200, json=body)
+        return reimport
+
+    return httpx2.MockTransport(handler), asked
+
+
+async def test_confirm_re_imports_each_moved_tag_and_succeeds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    reimported = {"ref": "v1", "commit_sha": "b" * 40, "job_id": "j9"}
+    transport, asked = _moved_tag_sync(httpx2.Response(202, json=reimported))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        await sync_library(api, "/acme/docs", confirm=True, as_json=True)
+
+    assert asked == [
+        "POST /api/v1/libraries/acme/docs/sync",
+        'POST /api/v1/libraries/acme/docs/versions/reimport {"ref":"v1"}',
+    ]
+    by_ref = {v["ref"]: v for v in json.loads(capsys.readouterr().out)["versions"]}
+    assert (by_ref["v1"]["status"], by_ref["v1"]["commit_sha"], by_ref["v1"]["job_id"]) == (
+        "queued",
+        "b" * 40,
+        "j9",
+    )
+
+
+async def test_a_refused_confirmation_leaves_the_tag_failed_with_the_refusal() -> None:
+    refused = {"error": "tag_not_moved", "detail": "the tag 'v1' still points at commit a"}
+    transport, _ = _moved_tag_sync(httpx2.Response(409, json=refused))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs", confirm=True)
+
+    assert "sync of v1 failed [tag_not_moved]: the tag 'v1' still points" in str(raised.value)
+    assert exit_code(raised.value) == EXIT_IMPORT
+
+
+async def test_without_confirm_a_moved_tag_is_not_re_imported_and_the_way_is_named() -> None:
+    transport, asked = _moved_tag_sync(httpx2.Response(500))
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs")
+
+    assert asked == ["POST /api/v1/libraries/acme/docs/sync"]
+    assert "exactdocs sync /acme/docs --confirm" in str(raised.value)
+
+
 async def test_progress_is_reported_once_per_change() -> None:
     states = iter(
         [

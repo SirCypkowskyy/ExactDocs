@@ -33,6 +33,7 @@ from exactdocs.bootstrap.client import (
 EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT = 1, 2, 3, 4, 5, 6
 POLL_SECONDS = 1.0
 SYNC_FAILED_STATUS = 422  # the remote could not be read: repo_unreachable, auth_failed, ...
+TAG_MOVED = "tag_moved"  # a sync's code for a tag that names another commit now
 PAGE = 200  # the largest page the API serves
 MAX_REFS_SHOWN = 5
 WAIT_SECONDS = 600.0  # how long --wait follows a job before it leaves it to the server
@@ -420,10 +421,35 @@ async def _follow(
     return jobs, failure
 
 
+async def _reimport_moved_tags(api: ApiClient, library: str, synced: dict[str, Any]) -> None:
+    """Re-import, in place in ``synced``, each tag the sync reported as ``tag_moved``.
+
+    A tag whose re-import is refused (it moved back, an import of it started meanwhile...)
+    stays ``failed``, with the refusal as its code and reason.
+    """
+    path = f"{_library_path(library)}/versions/reimport"
+    for version in synced["versions"]:
+        if version["status"] != "failed" or version.get("error_code") != TAG_MOVED:
+            continue
+        try:
+            reimported = await api.request("POST", path, json={"ref": version["ref"]})
+        except ApiError as exc:
+            version.update(error_code=exc.code, error=exc.detail)
+            continue
+        version.update(
+            status="queued",
+            commit_sha=reimported["commit_sha"],
+            job_id=reimported["job_id"],
+            error_code=None,
+            error=None,
+        )
+
+
 async def sync_library(
     api: ApiClient,
     library: str,
     *,
+    confirm: bool = False,
     wait: bool = False,
     as_json: bool = False,
     interval: float = POLL_SECONDS,
@@ -431,8 +457,10 @@ async def sync_library(
 ) -> None:
     """``POST /libraries/{owner}/{repo}/sync``; ``--wait`` follows every queued import.
 
-    Any version that could not be synced (the remote could not be read, a branch or tag is gone,
-    a tag moved, a queued import failed) raises ``ImportFailedError`` naming each reason and code.
+    With ``confirm``, each tag the sync reports as moved is re-imported at its new commit
+    (``POST .../versions/reimport``) and followed like a queued branch. Any version that could not
+    be synced (the remote could not be read, a branch or tag is gone, a tag moved and was not
+    confirmed, a queued import failed) raises ``ImportFailedError`` naming each reason and code.
     """
     try:
         synced = await api.request("POST", f"{_library_path(library)}/sync")
@@ -441,6 +469,8 @@ async def sync_library(
             raise
         message = f"sync of {printable(library)} failed [{printable(exc.code)}]: {exc.detail}"
         raise ImportFailedError(message) from None
+    if confirm:
+        await _reimport_moved_tags(api, library, synced)
     versions = synced["versions"]
     jobs: dict[str, Any] = {}
     failure = None
@@ -460,6 +490,11 @@ async def sync_library(
     if failure or failed:
         parts = [str(failure)] if failure else []
         parts += [_sync_failure(v) for v in failed]
+        if any(v.get("error_code") == TAG_MOVED for v in failed):
+            parts.append(
+                f"re-import moved tags at their new commit with "
+                f"`exactdocs sync {printable(library)} --confirm`"
+            )
         raise ImportFailedError("; ".join(parts))
 
 

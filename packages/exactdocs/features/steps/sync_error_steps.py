@@ -167,3 +167,40 @@ def step_newest_succeeded(context: Context) -> None:
     assert {ref: j["state"] for ref, j in newest.items()} == dict.fromkeys(VERSIONS, "succeeded"), (
         newest
     )
+
+
+@given('tag "{tag}" was reported as moved')
+def step_reported_moved(context: Context, tag: str) -> None:
+    step_tag_moved(context, tag)
+    step_sync(context)
+    step_reported(context, tag, "tag_moved")
+
+
+@when('the user confirms the re-import of "{ref}"')
+def step_confirm(context: Context, ref: str) -> None:
+    context.response = context.client.post(
+        f"/api/v1/libraries{LIBRARY}/versions/reimport", json={"ref": ref}
+    )
+
+
+@then('"{ref}" is re-imported at its new commit and the error clears')
+def step_reimported(context: Context, ref: str) -> None:
+    assert context.response.status_code == HTTPStatus.ACCEPTED, context.response.text
+    body = context.response.json()
+    moved_to = _git(context, "rev-parse", f"{ref}^{{commit}}").strip()
+    assert (body["previous_commit_sha"], body["commit_sha"]) == (context.commits[ref], moved_to)
+    assert wait_for_job(context, body["job_id"])["state"] == "succeeded", context.job
+    assert version_commit(context, ref) == moved_to
+    assert articles_of(context, ref), ref
+    latest = context.client.get("/api/v1/jobs/latest").json()["jobs"]
+    mine = {j["version"]: j for j in latest if j["library"] == LIBRARY}
+    assert (mine[ref]["state"], mine[ref]["error_code"]) == ("succeeded", None), mine[ref]
+    synced = context.client.post(f"/api/v1/libraries{LIBRARY}/sync").json()
+    assert {v["ref"]: v["status"] for v in synced["versions"]}[ref] == "pinned", synced
+
+
+@then('the re-import is refused with "{code}"')
+def step_refused(context: Context, code: str) -> None:
+    assert context.response.json()["error"] == code, context.response.text
+    assert context.response.status_code in {HTTPStatus.CONFLICT, 422}, context.response.text
+    assert len(_jobs(context)) == context.jobs_before, _jobs(context)

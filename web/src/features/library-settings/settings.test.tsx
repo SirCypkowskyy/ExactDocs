@@ -66,6 +66,7 @@ interface Routes {
   patch?: (body: Record<string, unknown>) => Reply;
   addVersion?: (body: Record<string, unknown>) => Reply;
   sync?: () => Reply;
+  reimport?: (body: Record<string, unknown>) => Reply;
   removeVersion?: (ref: string) => Reply;
   removeLibrary?: () => Reply;
   /** Held until released: lets a test act while a DELETE is in flight. */
@@ -95,6 +96,21 @@ function serve(routes: Routes = {}) {
               ref_kind: "tag",
               commit_sha: SHA,
               job_id: "j9",
+            },
+          },
+        );
+      }
+      if (method === "POST" && url.endsWith("/versions/reimport")) {
+        return reply(
+          routes.reimport?.(body) ?? {
+            status: 202,
+            body: {
+              library_id: "/acme/payments",
+              ref: body.ref,
+              ref_kind: "tag",
+              previous_commit_sha: SHA,
+              commit_sha: SHA2,
+              job_id: "j11",
             },
           },
         );
@@ -226,6 +242,7 @@ describe("settings model", () => {
     const v = (error_code: string | null) =>
       ({ ref: "main", ref_kind: "branch", status: "failed", error_code }) as never;
     expect(failureWords(v("ref_deleted"))).toMatch(/branch is gone/);
+    expect(failureWords(v("tag_moved"))).toMatch(/unless you confirm it/);
     expect(failureWords(v(null))).toMatch(/^It could not be synced\./);
     expect(failureWords(v("something_new"))).not.toMatch(/queued/);
   });
@@ -413,14 +430,65 @@ describe("re-sync", () => {
     expect(await screen.findByText(/branch is gone from the repository/)).toBeInTheDocument();
   });
 
-  it("explains a tag that moved, and that it is not re-imported", async () => {
-    const moved = { ref: "v1.4.0", ref_kind: "tag", status: "failed", error_code: "tag_moved" };
-    serve({ sync: () => synced([v(moved)], 200) });
+  const moved = {
+    ref: "v1.4.0",
+    ref_kind: "tag",
+    status: "failed",
+    commit_sha: SHA,
+    job_id: "f1",
+    error_code: "tag_moved",
+  };
+
+  it("explains a tag that moved, and that it is re-imported only when confirmed", async () => {
+    const calls = serve({ sync: () => synced([v(moved)], 200) });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/tag now points at another commit/)).toBeInTheDocument();
-    expect(screen.getByText(/never re-imported: remove this version/)).toBeInTheDocument();
+    expect(screen.getByText(/not re-imported unless you confirm it/)).toBeInTheDocument();
     expect(screen.getByText("v1.4.0")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+    ).toBeInTheDocument();
+    expect(calls.some((c) => c.url.endsWith("/reimport"))).toBe(false);
+  });
+
+  it("re-imports a moved tag on confirmation and follows its job", async () => {
+    const calls = serve({ sync: () => synced([v(moved), v({ status: "up_to_date" })], 200) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+    );
+    expect(await screen.findByText("job j11 for v1.4.0")).toBeInTheDocument();
+    const sent = calls.find((c) => c.url.endsWith("/versions/reimport"));
+    expect(sent).toMatchObject({
+      method: "POST",
+      url: "/api/v1/libraries/acme/payments/versions/reimport",
+      body: { ref: "v1.4.0" },
+    });
+    // The error is over: the row is an update now, with the commits it moves between.
+    expect(screen.queryByText(/tag now points at another commit/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
+    expect(screen.getByText("1 version is updating.")).toBeInTheDocument();
+    const commits = (_: string, el: Element | null) =>
+      el?.tagName === "P" &&
+      el.textContent === `${SHA.slice(0, 7)}${SHA2.slice(0, 7)} (previous commit to new commit)`;
+    expect(screen.getByText(commits)).toBeInTheDocument();
+  });
+
+  it("explains a confirmation the server refuses, and keeps the row", async () => {
+    serve({
+      sync: () => synced([v(moved)], 200),
+      reimport: () => failure(409, "tag_not_moved"),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+    );
+    const said = await screen.findByText(/nothing to re-import/);
+    expect(said.closest("p")).toHaveClass("bg-accent"); // not a mistake: neutral
+    expect(screen.getByText(/tag now points at another commit/)).toBeInTheDocument();
   });
 
   it("explains 409 and 422", async () => {

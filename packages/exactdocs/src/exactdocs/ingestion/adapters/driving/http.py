@@ -22,6 +22,9 @@ from exactdocs.ingestion.dtos import (
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PreviewRepositoryCommand,
+    ReimportedVersion,
+    ReimportVersionBody,
+    ReimportVersionCommand,
     RemovalResult,
     RemoveLibraryCommand,
     RemoveVersionCommand,
@@ -41,6 +44,7 @@ from exactdocs.ingestion.ports.driving import (
     ListLibraryJobs,
     ListRepositoryRefs,
     PreviewRepository,
+    ReimportVersion,
     RemoveLibrary,
     RemoveVersion,
     SyncLibrary,
@@ -70,6 +74,7 @@ def build_router(
     remove_version: RemoveVersion,
     remove_library: RemoveLibrary,
     sync_library: SyncLibrary,
+    reimport_version: ReimportVersion,
     require_session: Callable[[Request], Awaitable[object]],
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side.
@@ -166,6 +171,40 @@ def build_router(
         response.headers["Location"] = request.url_for("get_job", job_id=added.job_id).path
         return added
 
+    # Not `/versions/{ref}/reimport`: a ref may hold slashes, so nothing can follow it in a path.
+    @router.post(
+        "/libraries/{owner}/{repo}/versions/reimport",
+        status_code=status.HTTP_202_ACCEPTED,
+        responses={
+            status.HTTP_202_ACCEPTED: {
+                "headers": {
+                    "Location": {
+                        "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                        "schema": {"type": "string"},
+                    }
+                }
+            }
+        },
+    )
+    async def reimport(
+        owner: str, repo: str, body: ReimportVersionBody, request: Request, response: Response
+    ) -> ReimportedVersion:
+        """Re-import a tag version that moved upstream, at the commit the tag names now.
+
+        This is the confirmation a sync's `tag_moved` asks for: the tag is checked again and its
+        import queued (`Location` is the job); the version keeps serving the old commit until the
+        import has finished, and its error clears with it. 404 for an unknown library or version,
+        422 `not_a_tag` for a branch (a sync follows it) or a commit, 409 `tag_not_moved` when the
+        tag still names the commit the version serves, 422 `ref_deleted` when the tag is gone
+        upstream, 409 `version_importing` when an import of it is queued or running, and the 422
+        codes of reading a repository (`repository_unreachable`, `credentials_required`, ...).
+        """
+        reimported = await reimport_version(
+            ReimportVersionCommand(library=f"/{owner}/{repo}".lower(), ref=body.ref)
+        )
+        response.headers["Location"] = request.url_for("get_job", job_id=reimported.job_id).path
+        return reimported
+
     router.include_router(_removal_router(remove_version, remove_library))
 
     @router.post(
@@ -194,11 +233,12 @@ def build_router(
         status, for what happened to it: `up_to_date`, `queued`, `importing` (an import of it is
         already queued or running), `failed` with an `error_code`: `ref_deleted` (the branch or
         tag is gone upstream), `tag_moved` (the tag names another commit now; it is reported,
-        never re-imported) or `unexpected` (its import could not be queued). Every version keeps
-        what it served. Queued imports answer 202, anything else 200. 409 `version_importing`
-        when a running import left nothing queued. 422 when the remote cannot be read, mostly
-        `repo_unreachable` (deleted, private, moved or down; also a login prompt for a library
-        without a credential) or `auth_failed` (the credential was refused or cannot be read).
+        and re-imported only when confirmed with `versions/reimport`) or `unexpected` (its
+        import could not be queued). Every version keeps what it served. Queued imports answer
+        202, anything else 200. 409 `version_importing` when a running import left nothing
+        queued. 422 when the remote cannot be read, mostly `repo_unreachable` (deleted, private,
+        moved or down; also a login prompt for a library without a credential) or `auth_failed`
+        (the credential was refused or cannot be read).
         Other codes are possible: `host_key_changed` (the SSH host key changed, possibly a man
         in the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed
         jobs recorded for it are named in the message.

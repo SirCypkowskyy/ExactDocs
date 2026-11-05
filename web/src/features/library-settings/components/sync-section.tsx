@@ -4,14 +4,17 @@ import { useState } from "react";
 import { relativeTime } from "@/shared/lib/time";
 import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
-import { refreshLibraries, syncLibrary } from "../api/settings";
+import { refreshLibraries, reimportVersion, syncLibrary } from "../api/settings";
 import { useNow } from "../hooks/use-now";
 import {
   type Activity,
+  explainReimport,
   explainSync,
   failureWords,
   type JobViews,
   type Problem,
+  type ReimportedVersion,
+  reimportedRow,
   type SyncedLibrary,
   type SyncedVersion,
   shortSha,
@@ -28,7 +31,64 @@ interface Props {
   onStart: () => void;
 }
 
-function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
+/** The confirmation a moved tag waits for: re-import it at the commit it names now. */
+function Reimport({
+  owner,
+  repo,
+  v,
+  onReimported,
+}: {
+  owner: string;
+  repo: string;
+  v: SyncedVersion;
+  onReimported: (r: ReimportedVersion) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [problem, setProblem] = useState<Problem>();
+  const reimport = useMutation({
+    mutationFn: () => reimportVersion(owner, repo, v.ref),
+    onSuccess: (data) => {
+      setProblem(undefined);
+      onReimported(data);
+      refreshLibraries(queryClient);
+    },
+    onError: (error) => setProblem(explainReimport(error)),
+  });
+  return (
+    <div className="mt-2">
+      <Button
+        type="button"
+        aria-disabled={reimport.isPending}
+        aria-busy={reimport.isPending}
+        onClick={() => {
+          if (!reimport.isPending) reimport.mutate();
+        }}
+        className={`${secondary} min-w-32`}
+      >
+        {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
+        <span className="sr-only">of {v.ref}</span>
+      </Button>
+      <div className={problem ? "mt-3" : undefined}>
+        <FormAlert
+          id={`reimport-alert-${v.ref}`}
+          message={problem?.message}
+          link={problem?.link}
+          tone={problem?.tone}
+        />
+      </div>
+    </div>
+  );
+}
+
+interface RowProps {
+  owner: string;
+  repo: string;
+  v: SyncedVersion;
+  Line: JobViews["Line"];
+  onReimported: (r: ReimportedVersion) => void;
+}
+
+function Row({ owner, repo, v, Line, onReimported }: RowProps) {
   const live = (v.status === "queued" || v.status === "importing") && v.job_id;
   const failed = v.status === "failed";
   return (
@@ -59,6 +119,9 @@ function Row({ v, Line }: { v: SyncedVersion; Line: JobViews["Line"] }) {
         </p>
       )}
       {failed && <p className="mt-0.5 text-sm text-muted-foreground">{failureWords(v)}</p>}
+      {failed && v.error_code === "tag_moved" && (
+        <Reimport owner={owner} repo={repo} v={v} onReimported={onReimported} />
+      )}
       {live && (
         <div className="mt-2 max-w-sm">
           <Line jobId={v.job_id ?? ""} label={v.ref} />
@@ -105,7 +168,8 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
       </h2>
       <p className="mt-1.5 max-w-prose text-muted-foreground">
         Check the repository for new commits on each branch version and import only what changed.
-        Tags and commits are pinned: a tag that moved upstream is reported, never re-imported.
+        Tags and commits are pinned: a tag that moved upstream is reported, and re-imported only
+        when you confirm it.
       </p>
       <div className="mt-5">
         <Button
@@ -144,7 +208,27 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
       {rows.length > 0 && (
         <ul aria-label="Versions" className="fade-in mt-2 divide-y divide-border">
           {rows.map((v) => (
-            <Row key={v.ref} v={v} Line={Line} />
+            <Row
+              key={v.ref}
+              owner={owner}
+              repo={repo}
+              v={v}
+              Line={Line}
+              onReimported={(r) =>
+                setResult(
+                  (was) =>
+                    was && {
+                      ...was,
+                      data: {
+                        ...was.data,
+                        versions: was.data.versions.map((x) =>
+                          x.ref === r.ref ? reimportedRow(x, r) : x,
+                        ),
+                      },
+                    },
+                )
+              }
+            />
           ))}
         </ul>
       )}

@@ -19,6 +19,8 @@ from exactdocs.ingestion.dtos import (
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PreviewRepositoryCommand,
+    ReimportedVersion,
+    ReimportVersionCommand,
     RemovalResult,
     RemoveLibraryCommand,
     RemoveVersionCommand,
@@ -122,6 +124,21 @@ class AddVersion(Protocol):
         ...
 
 
+class ReimportVersion(Protocol):
+    """Re-import a tag version at the commit the tag names now: the confirmation of ``tag_moved``.
+
+    Raises ``NotFoundError`` for an unknown library or version, ``NotATagError`` for a branch or
+    commit version, ``VersionImportingError`` when an import of it is queued or running,
+    ``RefDeletedError`` when the tag is gone upstream, ``TagNotMovedError`` when it still names
+    the commit the version serves, and what ``CheckRepository`` raises when the remote cannot be
+    read. Nothing is queued unless all of it checks out; the version keeps serving until then.
+    """
+
+    async def __call__(self, command: ReimportVersionCommand) -> ReimportedVersion:
+        """Run the use case."""
+        ...
+
+
 class ListRepositoryRefs(Protocol):
     """List a repository's branches and tags; raises what ``CheckRepository`` raises."""
 
@@ -173,11 +190,11 @@ class SyncLibrary(Protocol):
 
     Commits and tags that still name their commit are reported as pinned, a branch that did not
     move as up to date, a branch whose import is queued or running as importing; a branch or tag
-    gone upstream (``ref_deleted``) or a tag that moved (``tag_moved``, never re-imported) as
-    failed, with the code on a failed job. Raises ``NotFoundError`` for an unknown library,
-    ``VersionImportingError`` when an import is running and nothing could be queued, and
-    ``SyncFailedError`` (``repo_unreachable`` or ``auth_failed``, plus the IDs of the failed jobs
-    that record it) when the remote cannot be read: the versions keep what they served.
+    gone upstream (``ref_deleted``) or a tag that moved (``tag_moved``, re-imported only through
+    ``ReimportVersion``) as failed, with the code on a failed job. Raises ``NotFoundError`` for
+    an unknown library, ``VersionImportingError`` when an import is running and nothing could be
+    queued, and ``SyncFailedError`` (``repo_unreachable`` or ``auth_failed``, plus the IDs of the
+    failed jobs that record it) when the remote cannot be read: the versions keep what they served.
     """
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
