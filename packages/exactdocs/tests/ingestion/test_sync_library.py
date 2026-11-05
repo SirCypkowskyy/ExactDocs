@@ -12,14 +12,17 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
-from exactdocs.ingestion.dtos import EnqueueJobCommand, SyncLibraryCommand
+from exactdocs.ingestion.dtos import EnqueueJobCommand, ReimportVersionCommand, SyncLibraryCommand
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     HostKeyChangedError,
     NotAGitRepositoryError,
+    NotATagError,
+    RefDeletedError,
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
     SyncFailedError,
+    TagNotMovedError,
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
@@ -30,6 +33,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportSource,
     Job,
+    JobId,
     JobState,
     PathSelection,
     ProposedId,
@@ -552,3 +556,191 @@ async def test_an_auth_demand_without_a_credential_means_the_repository_is_gone_
     )
     assert {j.error_code for j in jobs.jobs.values()} == {"repo_unreachable"}
     assert all("no git repository was found" in (j.error or "") for j in jobs.jobs.values())
+
+
+def reimport(ref: str = "v1") -> ReimportVersionCommand:
+    return ReimportVersionCommand(library=LIBRARY, ref=ref)
+
+
+async def test_a_confirmed_moved_tag_is_queued_at_its_new_commit_and_its_error_clears(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+    await module.sync_library(SYNC)  # reported as tag_moved
+
+    result = await module.reimport_version(reimport())
+
+    assert (result.ref, result.ref_kind, result.previous_commit_sha, result.commit_sha) == (
+        "v1",
+        RefKind.TAG,
+        TAG,
+        NEW,
+    )
+    job = jobs.jobs[JobId(result.job_id)]
+    assert (job.kind, job.state, job.version, job.commit_sha, job.ref_kind) == (
+        REFRESH_JOB,  # replaces the version in place, never resurrects a removed one
+        JobState.QUEUED,
+        "v1",
+        NEW,
+        RefKind.TAG,
+    )
+    (latest,) = (await module.list_latest_jobs()).jobs
+    assert (latest.id, latest.error_code) == (result.job_id, None)  # the error is not the state
+
+
+async def test_a_tag_is_re_imported_by_its_remote_tip_not_by_a_sync_record(
+    module: IngestionModule, remote: Remote, versions: list[ImportedRef]
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW  # moved, but no sync reported it yet
+
+    result = await module.reimport_version(reimport())
+
+    assert result.commit_sha == NEW
+
+
+async def test_a_tag_that_did_not_move_is_not_re_imported(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = TAG
+
+    with pytest.raises(TagNotMovedError) as raised:
+        await module.reimport_version(reimport())
+
+    assert raised.value.code == "tag_not_moved"
+    assert not jobs.jobs
+
+
+async def test_a_moved_tag_that_moved_back_is_not_re_imported(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+    await module.sync_library(SYNC)
+    remote.tags["v1"] = TAG  # the reported move is over by the time it is confirmed
+
+    with pytest.raises(TagNotMovedError):
+        await module.reimport_version(reimport())
+
+    assert [j.state for j in jobs.jobs.values()] == [JobState.FAILED]
+
+
+@pytest.mark.parametrize(("ref", "kind"), [("main", "branch"), (OLD, "commit")])
+async def test_only_a_tag_version_is_re_imported(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+    ref: str,
+    kind: str,
+) -> None:
+    versions.append(ImportedRef(ref=OLD, kind=RefKind.COMMIT, commit_sha=OLD))
+    remote.heads["main"] = NEW
+
+    with pytest.raises(NotATagError) as raised:
+        await module.reimport_version(reimport(ref))
+
+    assert raised.value.code == "not_a_tag"
+    assert kind in str(raised.value)
+    assert not jobs.jobs
+    assert remote.credentials == []  # refused before the remote is asked
+
+
+async def test_a_tag_gone_upstream_is_ref_deleted(
+    module: IngestionModule, versions: list[ImportedRef], jobs: InMemoryJobRepository
+) -> None:
+    versions[:] = [tag("v1")]
+
+    with pytest.raises(RefDeletedError) as raised:
+        await module.reimport_version(reimport())
+
+    assert raised.value.code == "ref_deleted"
+    assert not jobs.jobs
+
+
+async def test_a_tag_being_imported_is_not_queued_twice(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+    await module.reimport_version(reimport())
+
+    with pytest.raises(VersionImportingError):
+        await module.reimport_version(reimport())
+
+    assert len(jobs.jobs) == 1
+
+
+async def test_two_simultaneous_confirmations_queue_one_import(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+    remote.slow = True
+
+    results = await asyncio.gather(
+        module.reimport_version(reimport()),
+        module.reimport_version(reimport()),
+        return_exceptions=True,
+    )
+
+    assert sorted(type(r).__name__ for r in results) == [
+        "ReimportedVersion",
+        "VersionImportingError",
+    ]
+    assert len(jobs.jobs) == 1
+
+
+@pytest.mark.parametrize("ref", ["v2", "V1"])
+async def test_an_unknown_version_is_not_found(
+    module: IngestionModule, versions: list[ImportedRef], ref: str
+) -> None:
+    versions[:] = [tag("v1")]
+
+    with pytest.raises(NotFoundError):
+        await module.reimport_version(reimport(ref))
+
+
+async def test_an_unknown_library_is_not_found_for_a_re_import(module: IngestionModule) -> None:
+    with pytest.raises(NotFoundError):
+        await module.reimport_version(ReimportVersionCommand(library="/acme/nope", ref="v1"))
+
+
+async def test_a_private_tag_is_checked_with_its_stored_credential(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    token = AccessToken(token="ghp_s3cretvalue")
+    module = make_module(remote, versions, jobs, clock, InMemoryCredentialVault({LIBRARY: token}))
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+
+    await module.reimport_version(reimport())
+
+    assert remote.credentials == [token]
+
+
+async def test_a_login_prompt_without_a_credential_means_the_repository_is_gone(
+    module: IngestionModule, remote: Remote, versions: list[ImportedRef]
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(NotAGitRepositoryError):
+        await module.reimport_version(reimport())
