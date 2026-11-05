@@ -1,7 +1,16 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getJson, type QueryOf } from "@/shared/lib/http";
+import { getJson, HttpError, type QueryOf } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
-import type { Article, ArticleList, LibraryAccess, LibraryDetail } from "../model/browse";
+import {
+  type Article,
+  type ArticleList,
+  type LibraryAccess,
+  type LibraryDetail,
+  pathInVersion,
+  type RenameAnswer,
+  type RenameDirection,
+  type Version,
+} from "../model/browse";
 
 /** How many articles one request lists. The API allows 200. */
 const PAGE_SIZE = 100;
@@ -86,4 +95,96 @@ export const accessQueryOptions = (owner: string, repo: string) =>
     queryKey: [...BROWSE_KEY, owner, repo, "access"] as const,
     queryFn: ({ signal }) => getJson<LibraryAccess>(`${lib(owner, repo)}/access`, { signal }),
     staleTime: 60_000,
+  });
+
+/**
+ * How long one rename lookup may take. The answer only refines the version switch (without it the
+ * path is kept), so a slow or failing server is not waited for, and the lookup is not retried.
+ */
+export const RENAME_LOOKUP_TIMEOUT_MS = 1500;
+
+/** Where `path` moved across the renames of the version (`null`: not moved); see `RenameLookup`. */
+const renamedPathQueryOptions = (
+  { owner, repo, ref, sha }: VersionArgs,
+  path: string,
+  direction: RenameDirection,
+) =>
+  queryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, ref, sha, "renamed", direction, path] as const,
+    queryFn: async ({ signal }) => {
+      const query: QueryOf<"/api/v1/libraries/{owner}/{repo}/renamed-path"> = {
+        ref,
+        path,
+        direction,
+      };
+      const answer = await getJson<RenameAnswer>(`${lib(owner, repo)}/renamed-path`, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(RENAME_LOOKUP_TIMEOUT_MS)]),
+        query,
+      });
+      return answer.renamed;
+    },
+    retry: false,
+    staleTime: 60_000,
+  });
+
+/** Where the open article is in another version (see `pathInVersionQueryOptions`). */
+interface PathInVersion {
+  path: string;
+  /**
+   * False when a lookup failed in a way that may pass (a timeout, the network, a server error):
+   * the path is kept for now, and the answer is asked again the next time the list opens.
+   */
+  sure: boolean;
+}
+
+/** A failure that asking again will not change: the version has no rename map, or no access. */
+const lasting = (error: unknown) => error instanceof HttpError && error.status < 500;
+
+/**
+ * The path of the article at `path` of `from` in `to`, following the renames between the two (see
+ * `pathInVersion`). It never fails: without an answer the path is kept. The lookup on `from` is
+ * shared by every target, so resolving N versions asks the server N + 1 times. An answer kept
+ * after a passing failure is stale at once, so a short stall does not stick for the full minute.
+ */
+export const pathInVersionQueryOptions = (
+  owner: string,
+  repo: string,
+  from: Version,
+  to: Version,
+  path: string,
+) =>
+  queryOptions({
+    queryKey: [
+      ...BROWSE_KEY,
+      owner,
+      repo,
+      "path-in",
+      from.ref,
+      from.commit_sha,
+      to.ref,
+      to.commit_sha,
+      path,
+    ] as const,
+    queryFn: async ({ client }): Promise<PathInVersion> => {
+      let sure = true;
+      const moved = await pathInVersion(
+        async (ref, at, direction) => {
+          const sha = ref === from.ref ? from.commit_sha : to.commit_sha;
+          try {
+            return await client.fetchQuery(
+              renamedPathQueryOptions({ owner, repo, ref, sha }, at, direction),
+            );
+          } catch (error) {
+            if (!lasting(error)) sure = false;
+            throw error;
+          }
+        },
+        from.ref,
+        to.ref,
+        path,
+      );
+      return { path: moved, sure };
+    },
+    retry: false,
+    staleTime: (query) => (query.state.data?.sure === false ? 0 : 60_000),
   });
