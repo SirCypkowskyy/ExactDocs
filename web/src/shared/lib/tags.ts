@@ -1,6 +1,20 @@
 /** Longest tag and most tags the API accepts in one filter (docs/rest-api.md). */
-const MAX_TAGS = 20;
+export const MAX_TAGS = 20;
 const MAX_TAG_LENGTH = 100;
+
+const TAG = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._+-]*$/u;
+
+/**
+ * A tag in its one form, as the API stores it, or `undefined` when `raw` cannot be a tag:
+ * NFKC, lower-case, inner whitespace as `-`; it starts with a letter or digit and goes on with
+ * letters, digits, combining marks and `._+-`; 100 characters at most. The server folds case a
+ * little further (`ß` is `ss`), so its answer is the one to show.
+ */
+export function normalizeTag(raw: string): string | undefined {
+  const folded = raw.normalize("NFKC").toLowerCase().normalize("NFKC");
+  const tag = folded.trim().split(/\s+/u).join("-");
+  return tag !== "" && tag.length <= MAX_TAG_LENGTH && TAG.test(tag) ? tag : undefined;
+}
 
 /** The `tags` URL param as a list. Over-long tags and anything past 20 are dropped, as the API would refuse them. */
 export const parseTags = (tags: string | undefined): string[] =>

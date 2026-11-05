@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTags, toggleTag, visibleTags } from "./tags";
+import { normalizeTag, parseTags, toggleTag, visibleTags } from "./tags";
 
 describe("tags", () => {
   it("parses and toggles without caring about case", () => {
@@ -23,5 +23,19 @@ describe("visibleTags", () => {
     expect(shown[0]).toBe("t25");
     expect(shown.filter((t) => t === "t25")).toHaveLength(1);
     expect(visibleTags(["Gone"], ["a"], 5)).toEqual(["Gone", "a"]);
+  });
+});
+
+describe("normalizeTag", () => {
+  it("gives a tag its one form, or nothing when the value cannot be one", () => {
+    expect(normalizeTag("  Getting   Started ")).toBe("getting-started");
+    expect(normalizeTag("ｖ２")).toBe("v2");
+    expect(normalizeTag("c++")).toBe("c++");
+    expect(normalizeTag("हिन्दी")).toBe("हिन्दी");
+    expect(normalizeTag("-lead")).toBeUndefined();
+    expect(normalizeTag("a,b")).toBeUndefined();
+    expect(normalizeTag("🙂")).toBeUndefined();
+    expect(normalizeTag("x".repeat(101))).toBeUndefined();
+    expect(normalizeTag("")).toBeUndefined();
   });
 });
