@@ -83,6 +83,7 @@ scripts, `--json`; progress of `--wait` goes to stderr):
 ```bash
 uvx exactdocs add https://github.com/acme/docs --ref v1.4.0 --path docs/ --exclude docs/archive/ --wait
 uvx exactdocs add https://github.com/acme/docs --id /acme/docs --tag-rule 'docs/api/**=api'
+uvx exactdocs add https://github.com/acme/docs --ref v1.4.0 --path 'docs/**' --dry-run  # lists the files, stores nothing
 uvx exactdocs libraries --json
 uvx exactdocs version add /acme/docs v1.5.0 --wait
 uvx exactdocs sync /acme/docs --wait             # re-syncs the branch versions, checks the tags
@@ -120,6 +121,12 @@ re-imported: remove the version and add it again). The same codes are on the job
 `--wait` only watches: it follows an import for `--wait-timeout` seconds (default 600) and retries
 a poll that hiccups. When it times out, loses track or you press Ctrl-C (exit 130), it says so and
 the job keeps running on the server.
+
+`add --dry-run` sends the URL, `--ref`, `--path` and `--exclude` (and a credential) to
+`POST /repositories/preview` instead and prints the files the import would take, how many there
+are and, past 1000, `truncated`; nothing is stored. `--id` and `--wait` have no effect, and
+`--tag-rule` is only checked, so a malformed rule fails the dry run as it would fail `add`. There are no file sizes: knowing them would mean downloading every file. A server running
+as many previews as it allows answers "try again" (exit 1).
 
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
 from a file of at most 64 KB, never from the command line; group- or world-readable files get a

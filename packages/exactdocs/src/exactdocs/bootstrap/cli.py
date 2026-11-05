@@ -313,6 +313,13 @@ def add(
     wait: WaitOption = False,
     wait_timeout: WaitTimeout = 600,
     json_output: JsonOption = False,
+    dry_run: Annotated[
+        bool,
+        Parameter(
+            help="List the files the import would take (and how many) without adding anything; "
+            "--id and --wait have no effect then, --tag-rule is only checked."
+        ),
+    ] = False,
     url: UrlOption = None,
     token: CredentialTokenOption = None,
 ) -> None:
@@ -322,8 +329,24 @@ def add(
     API token: with --git-token-file or --ssh-key you are asked for your password.
     """
     credential = _credential(git_token_file, ssh_key, git_user)
+    try:  # before any request or password prompt, so a dry run catches a bad rule too
+        lib.parse_tag_rules(tag_rule or ())
+    except ClientError as exc:
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
 
     async def go(api: ApiClient) -> None:
+        if dry_run:
+            await lib.preview_import(
+                api,
+                git_url,
+                ref=ref,
+                include=path or (),
+                exclude=exclude or (),
+                credential=credential,
+                as_json=json_output,
+            )
+            return
         await lib.add_library(
             api,
             git_url,

@@ -202,6 +202,7 @@ FRIENDLY: dict[str, str] = {
     "of a compatible version?",
     "rate_limited": "too many failed sign-ins from here or for this username; "
     "wait a little and try again",
+    "preview_busy": "the server is running as many previews as it allows; try again",
 }
 
 

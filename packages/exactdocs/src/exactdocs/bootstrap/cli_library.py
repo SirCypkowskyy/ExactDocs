@@ -226,6 +226,20 @@ def _finished(job: dict[str, Any]) -> str:
     return f"imported {job['done']} files" + (f", skipped {skipped}" if skipped else "")
 
 
+def parse_tag_rules(tag_rules: Sequence[str]) -> list[dict[str, str]]:
+    """Turn ``PATTERN=TAG`` arguments into the API's tag rules; a malformed one is a usage error."""
+    rules = []
+    for rule in tag_rules:
+        pattern, _, tag = rule.rpartition("=")
+        if not pattern or not tag:
+            message = (
+                f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
+            )
+            raise UsageError(message)
+        rules.append({"pattern": pattern, "tag": tag})
+    return rules
+
+
 async def add_library(
     api: ApiClient,
     url: str,
@@ -242,15 +256,7 @@ async def add_library(
     give_up_after: float = WAIT_SECONDS,
 ) -> None:
     """``POST /libraries``, then optionally follow the import job."""
-    rules = []
-    for rule in tag_rules:
-        pattern, _, tag = rule.rpartition("=")
-        if not pattern or not tag:
-            message = (
-                f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
-            )
-            raise UsageError(message)
-        rules.append({"pattern": pattern, "tag": tag})
+    rules = parse_tag_rules(tag_rules)
     body: dict[str, Any] = {
         "url": url,
         "library_id": library_id,
@@ -264,6 +270,49 @@ async def add_library(
     await _report_added(
         api, added, wait=wait, as_json=as_json, interval=interval, give_up_after=give_up_after
     )
+
+
+async def preview_import(
+    api: ApiClient,
+    url: str,
+    *,
+    ref: str | None = None,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+    credential: dict[str, str] | None = None,
+    as_json: bool = False,
+) -> None:
+    """``add --dry-run``: ``POST /repositories/preview`` with what ``add`` would send.
+
+    Prints the files an import would take, how many there are and whether the list was cut;
+    no sizes (the server would have to download every file to know them). Nothing is stored.
+    """
+    body: dict[str, Any] = {
+        "url": url,
+        "ref": ref,
+        "include_paths": list(include),
+        "exclude_paths": list(exclude),
+        "credential": credential,
+    }
+    preview = await api.request(
+        "POST", "/repositories/preview", json={k: v for k, v in body.items() if v}
+    )
+    if as_json:
+        dump(preview)
+        return
+    files, total = preview["files"], preview["total"]
+    kind = preview["ref_kind"]
+    sha = "" if kind == "commit" else f", {preview['commit_sha'][:9]}"  # the ref is the SHA
+    where = f"{preview['ref']} ({kind}{sha})"
+    if not total:
+        say(f"Dry run of {where}: no file matches; check --path and --exclude. Nothing stored.")
+        return
+    noun = "file" if total == 1 else "files"
+    say(f"Dry run of {where}: an import would take {total} {noun}. Nothing stored.")
+    for path in files:
+        say(path)
+    if preview["truncated"]:
+        say(f"... truncated: {len(files)} of {total} files listed.")
 
 
 async def add_version(
