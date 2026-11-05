@@ -32,11 +32,13 @@ export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
       >
         {pending ? "Signing out" : "Sign out"}
       </Button>
-      {/* Hangs below the button so a failure never moves the layout. */}
+      {/* Hangs below the button so a failure never moves the layout. From sm up the button sits at
+          the header's right edge, so the message opens leftwards; on a phone it sits at the left of
+          the Account page, so it opens rightwards. */}
       <p
         id="sign-out-error"
         role="alert"
-        className="absolute top-full right-0 z-10 mt-1 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-sm font-medium text-destructive shadow-md empty:hidden"
+        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-sm font-medium text-destructive shadow-md empty:hidden"
       >
         {failed && "Couldn't sign out. Try again."}
       </p>
