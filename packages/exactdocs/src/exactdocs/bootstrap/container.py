@@ -97,6 +97,7 @@ class ReadOnlyContainer:
     engine: AsyncEngine
     catalog: CatalogModule
     retrieval: RetrievalModule
+    _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
     def build(cls, settings: Settings) -> Self:
@@ -107,12 +108,21 @@ class ReadOnlyContainer:
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
-        """Check the schema is current (no migration), serve, then release the connections."""
+        """Check the schema is current (no migration), serve, then release the connections.
+
+        Runs once at a time, like ``Container.running()``: ``RuntimeError`` otherwise.
+        """
+        if not self._run.acquire(blocking=False):
+            message = "this container is already running; run it once"
+            raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
             yield
         finally:
-            await self.engine.dispose()
+            try:
+                await self.engine.dispose()
+            finally:
+                self._run.release()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

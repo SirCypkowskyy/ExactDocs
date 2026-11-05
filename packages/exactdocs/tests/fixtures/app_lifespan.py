@@ -7,7 +7,7 @@ anyio task group must be left in the task that entered it, so the lifespan gets 
 
 import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
@@ -25,7 +25,8 @@ async def serving(app: FastAPI) -> AsyncGenerator[FastAPI]:
     async def run() -> None:
         try:
             async with app.router.lifespan_context(app):
-                started.set_result(None)
+                if not started.done():  # cancelled while starting: nobody waits for it any more
+                    started.set_result(None)
                 await stop.wait()
         except BaseException as exc:
             if started.done():
@@ -38,4 +39,11 @@ async def serving(app: FastAPI) -> AsyncGenerator[FastAPI]:
         yield app
     finally:
         stop.set()
-        await task
+        if not started.done() or started.cancelled():
+            # Interrupted while starting: stop the startup instead of waiting for it. The
+            # cancellation that got us here is already on its way out.
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        else:
+            await task
