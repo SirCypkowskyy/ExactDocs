@@ -118,6 +118,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/default-version": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Pin Default
+         * @description Pin the default version: `/owner/repo` keeps meaning `ref` when higher tags arrive.
+         *
+         *     `ref` must be an imported version (404 otherwise). Removing that version unpins.
+         */
+        readonly put: operations["catalog-pin_default"];
+        readonly post?: never;
+        /**
+         * Unpin Default
+         * @description Unpin the default version: it follows the default-version rule again.
+         */
+        readonly delete: operations["catalog-unpin_default"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries": {
         readonly parameters: {
             readonly query?: never;
@@ -1032,6 +1058,17 @@ export interface components {
             readonly expires_at?: string | null;
         };
         /**
+         * DefaultVersionPin
+         * @description The version to pin as a library's default.
+         */
+        readonly DefaultVersionPin: {
+            /**
+             * Ref
+             * @description An imported ref, exactly as listed (case-sensitive), or a unique short SHA.
+             */
+            readonly ref: string;
+        };
+        /**
          * DeployKeyIn
          * @description An SSH deploy key (private part, no passphrase). Write-only: no response repeats it.
          */
@@ -1248,6 +1285,11 @@ export interface components {
             readonly versions: readonly components["schemas"]["VersionOut"][];
             /** Default Version */
             readonly default_version: string | null;
+            /**
+             * Default Pinned
+             * @description True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import).
+             */
+            readonly default_pinned: boolean;
         };
         /**
          * LibraryFacetOut
@@ -1383,6 +1425,11 @@ export interface components {
             readonly description: string;
             /** Default Version */
             readonly default_version: string | null;
+            /**
+             * Default Pinned
+             * @description True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import).
+             */
+            readonly default_pinned: boolean;
             /** Source Url */
             readonly source_url: string;
             /**
@@ -2177,6 +2224,17 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-delete_session": {
@@ -2321,6 +2379,17 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -2590,6 +2659,164 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-pin_default": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefaultVersionPin"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryDetail"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-unpin_default": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryDetail"];
+                };
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {

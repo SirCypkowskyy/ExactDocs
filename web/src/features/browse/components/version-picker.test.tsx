@@ -3,6 +3,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { TestRouter } from "@/shared/lib/test-router";
 import { RENAME_LOOKUP_TIMEOUT_MS } from "../api/browse-queries";
 import type { RenamedPath, Version } from "../model/browse";
@@ -25,32 +26,43 @@ const rename: RenamedPath = {
   similarity: 90,
 };
 
-type Answer = { status: number; body: unknown };
+interface Served {
+  /** Status of the rename lookups. */
+  renames?: number;
+  /** Status of pinning and unpinning the default. */
+  pin?: number;
+  /** Holds the rename answers for a ref back until the gate is released. */
+  hold?: Record<string, Promise<void>>;
+}
 
 /**
- * The rename map of v1.4.0: `guide/setup.md` of v1.3.0 is `guide/install.md` there. `hold` keeps
- * the answers for one ref back until the returned release is called; `status` fails them all.
+ * The library's API: the rename map of v1.4.0 (`guide/setup.md` of v1.3.0 is `guide/install.md`
+ * there) and the default-version pin.
  */
-function serve(status = 200, hold: Record<string, Promise<void>> = {}) {
-  const answer = (url: string): Answer => {
-    const { searchParams: q } = new URL(url, "http://test");
+function serve({ renames = 200, pin = 200, hold = {} }: Served = {}) {
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
+    const { pathname, searchParams: q } = new URL(url, "http://test");
+    if (pathname.endsWith("/default-version")) {
+      return json(pin, pin === 200 ? {} : { error: "not_found", detail: "gone" });
+    }
+    await hold[q.get("ref") ?? ""];
     const forward = q.get("direction") === "forward" && q.get("path") === "guide/setup.md";
     const back = q.get("direction") === "back" && q.get("path") === "guide/install.md";
     const hit = q.get("ref") === "v1.4.0" && (forward || back);
-    return { status, body: status === 200 ? { renamed: hit ? rename : null } : {} };
-  };
-  const fetch = vi.fn(async (url: string) => {
-    const ref = new URL(url, "http://test").searchParams.get("ref") ?? "";
-    await hold[ref];
-    const { status: code, body } = answer(url);
-    return new Response(JSON.stringify(body), {
-      status: code,
-      headers: { "content-type": "application/json" },
-    });
+    return json(renames, renames === 200 ? { renamed: hit ? rename : null } : {});
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
+
+/** The calls that pinned or unpinned the default. */
+const pinCalls = (fetch: ReturnType<typeof serve>) =>
+  fetch.mock.calls.filter(([url]) => url.endsWith("/default-version"));
 
 /** A promise held open until `release` is called. */
 function gate() {
@@ -60,6 +72,9 @@ function gate() {
   });
   return { held, release };
 }
+
+/** Whether the default (v1.4.0) is pinned by an owner. */
+let pinned = false;
 
 /** The browse page reduced to the picker, with the URL's version and path printed under it. */
 function Page() {
@@ -73,6 +88,7 @@ function Page() {
         repo="docs-repo"
         versions={versions}
         current={versions.find((v) => v.ref === ref) ?? version("v1.3.0", "a")}
+        pinned={pinned}
         keep={{ path }}
       />
       <output aria-label="Showing">
@@ -82,14 +98,16 @@ function Page() {
   );
 }
 
-function view(start: string) {
+function view(start: string, options: { pinned?: boolean } = {}) {
+  pinned = options.pinned ?? false;
   // Like the app's client: failed queries are retried, so a lookup that is retried shows up as a wait.
   const client = new QueryClient({ defaultOptions: { queries: { retry: 2 } } });
-  return render(
+  render(
     <QueryClientProvider client={client}>
       <TestRouter pages={{ "/": Page, "/libraries/$owner/$repo": Page }} start={start} />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 const linkTo = (ref: string) =>
@@ -108,7 +126,7 @@ const showing = () => screen.findByRole("status", { name: "Showing" });
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("VersionPicker", () => {
+describe("VersionPicker follows renames", () => {
   it("opens the renamed article when switching to the version that renamed it", async () => {
     serve();
     view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
@@ -137,7 +155,7 @@ describe("VersionPicker", () => {
   });
 
   it("keeps the path when the rename map cannot be read", async () => {
-    serve(404);
+    serve({ renames: 404 });
     view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
     await switchTo("v1.4.0");
     expect(await screen.findByRole("status", { name: "Showing" })).toHaveTextContent(
@@ -156,7 +174,7 @@ describe("VersionPicker", () => {
   });
 
   it("keeps the path without waiting when the rename map answers with a server error", async () => {
-    serve(503);
+    serve({ renames: 503 });
     view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
     await switchTo("v1.4.0");
     // Retried with backoff, the switch would take seconds; findBy gives up after one.
@@ -235,7 +253,7 @@ describe("VersionPicker", () => {
   it("keeps the later of two quick switches when the first answer arrives last", async () => {
     const slow = gate();
     const fast = gate();
-    serve(200, { "v1.4.0": slow.held, "v1.2.0": fast.held });
+    serve({ hold: { "v1.4.0": slow.held, "v1.2.0": fast.held } });
     view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
     await switchTo("v1.4.0");
     const trigger = screen.getByRole("button", { name: /Change version/ });
@@ -253,7 +271,7 @@ describe("VersionPicker", () => {
 
   it("does not switch late when the user went elsewhere while waiting", async () => {
     const slow = gate();
-    serve(200, { "v1.4.0": slow.held });
+    serve({ hold: { "v1.4.0": slow.held } });
     view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
     await openPicker();
     // v1.2.0 has its answer: a plain link, followed at once while v1.4.0 still waits.
@@ -266,5 +284,76 @@ describe("VersionPicker", () => {
     slow.release();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(await showing()).toHaveTextContent("v1.2.0 guide/setup.md");
+  });
+});
+
+describe("VersionPicker default pin", () => {
+  const lib = "/fixture/docs-repo";
+
+  it("pins the shown version as the default and reloads what shows the default", async () => {
+    const fetch = serve();
+    const client = view(`/libraries${lib}?version=v1.3.0`);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    await openPicker();
+    expect(screen.queryByRole("button", { name: /Unpin default/ })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Pin v1.3.0 as default" }));
+
+    await waitFor(() => expect(pinCalls(fetch)).toHaveLength(1));
+    const [url, init] = pinCalls(fetch)[0] ?? [];
+    expect(url).toBe(`/api/v1/libraries${lib}/default-version`);
+    expect(init?.method).toBe("PUT");
+    expect(JSON.parse(String(init?.body))).toEqual({ ref: "v1.3.0" });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: BROWSE_KEY }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: LIBRARIES_KEY });
+  });
+
+  it("marks a pinned default and offers only to unpin it", async () => {
+    const fetch = serve();
+    view(`/libraries${lib}?version=v1.4.0`, { pinned: true });
+    await openPicker();
+
+    expect(screen.getAllByText("pinned default")).not.toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /as default/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /Unpin default/ }));
+
+    await waitFor(() => expect(pinCalls(fetch)).toHaveLength(1));
+    const [url, init] = pinCalls(fetch)[0] ?? [];
+    expect(url).toBe(`/api/v1/libraries${lib}/default-version`);
+    expect(init?.method).toBe("DELETE");
+  });
+
+  it("says so when the version or library is gone", async () => {
+    serve({ pin: 404 });
+    view(`/libraries${lib}?version=v1.3.0`);
+    await openPicker();
+    await userEvent.click(screen.getByRole("button", { name: "Pin v1.3.0 as default" }));
+
+    expect(await screen.findByText(/version or library is no longer imported/)).toBeInTheDocument();
+  });
+
+  it("pins with an article open and still follows its rename to the pinned default", async () => {
+    const fetch = serve();
+    view(`/libraries${lib}?version=v1.3.0&path=guide%2Fsetup.md`, { pinned: true });
+    await openPicker();
+    expect(linkTo("v1.4.0")).toHaveTextContent("pinned default");
+    await waitFor(() =>
+      expect(linkTo("v1.4.0")).toHaveAttribute(
+        "href",
+        expect.stringContaining("path=guide%2Finstall.md"),
+      ),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Pin v1.3.0 as default" }));
+    await waitFor(() => expect(pinCalls(fetch)).toHaveLength(1));
+    expect(pinCalls(fetch)[0]?.[1]?.method).toBe("PUT");
+    // Pinning reloads the browse queries, the rename answers among them: the link keeps its path.
+    expect(linkTo("v1.4.0")).toHaveAttribute(
+      "href",
+      expect.stringContaining("path=guide%2Finstall.md"),
+    );
+
+    await userEvent.click(linkTo("v1.4.0"));
+    expect(await showing()).toHaveTextContent("v1.4.0 guide/install.md");
   });
 });

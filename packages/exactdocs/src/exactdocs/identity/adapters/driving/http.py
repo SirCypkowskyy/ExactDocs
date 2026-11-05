@@ -62,6 +62,33 @@ _api_token = HTTPBearer(
 
 type CurrentCaller = Callable[..., Awaitable[AccountSummary]]
 
+# The sign-in throttle's answer, on the two routes that check a password. The body is the API's
+# shared error shape, referenced by name (it is defined by the app, not by this domain).
+_THROTTLED: dict[int | str, dict[str, object]] = {
+    429: {
+        "description": (
+            "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds."
+        ),
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds to wait before the next attempt.",
+                "schema": {"type": "integer"},
+            }
+        },
+    }
+}
+
+
+def client_address(request: Request) -> str | None:
+    """Return the caller's IP address, for the sign-in throttle.
+
+    Behind a reverse proxy this is already the address the proxy reports: ``exactdocs serve``
+    runs uvicorn with its proxy headers on, which takes ``X-Forwarded-For`` from the proxies
+    in ``EXACTDOCS_FORWARDED_ALLOW_IPS`` only (anyone else cannot choose their own address).
+    """
+    return request.client.host if request.client else None
+
 
 def build_session_caller(*, identify_caller: IdentifyCaller) -> CurrentCaller:
     """Return the dependency that accepts the session cookie only (401 otherwise)."""
@@ -169,17 +196,21 @@ def build_router(
         response.headers["Cache-Control"] = "no-store"
         return await get_session_state(request.cookies.get(SESSION_COOKIE))
 
-    @router.post("/tokens/login", status_code=201)
-    async def login(command: LoginForTokenCommand, response: Response) -> TokenGrant:
+    @router.post("/tokens/login", status_code=201, responses=_THROTTLED)
+    async def login(
+        command: LoginForTokenCommand, request: Request, response: Response
+    ) -> TokenGrant:
         """Exchange a username and password for a new API token (what ``exactdocs login`` does)."""
         response.headers["Cache-Control"] = "no-store"  # the one time the secret is shown
-        return await login_for_token(command)
+        return await login_for_token(command, client=client_address(request))
 
-    @router.post("/session", status_code=201)
+    @router.post("/session", status_code=201, responses=_THROTTLED)
     async def create_session(
         query: AuthenticateQuery, request: Request, response: Response
     ) -> SessionState:
-        grant = await sign_in(query, request.cookies.get(SESSION_COOKIE))
+        grant = await sign_in(
+            query, request.cookies.get(SESSION_COOKIE), client=client_address(request)
+        )
         response.set_cookie(
             SESSION_COOKIE,
             grant.token.get_secret_value(),

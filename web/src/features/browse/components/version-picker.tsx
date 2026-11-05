@@ -6,12 +6,15 @@ import { type KeyboardEvent, type MouseEvent, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import { pathInVersionQueryOptions } from "../api/browse-queries";
 import { type BrowseSearch, orderVersions, shortSha, type Version } from "../model/browse";
+import { DefaultPin } from "./default-pin";
 
 interface VersionPickerProps {
   owner: string;
   repo: string;
   versions: readonly Version[];
   current: Version;
+  /** The default version is pinned by an owner, not chosen by the default-version rule. */
+  pinned: boolean;
   /** What stays when the version changes: the open article, the tag filter and the search. */
   keep: Pick<BrowseSearch, "path" | "tags" | "q" | "match">;
 }
@@ -31,7 +34,15 @@ const handledByBrowser = (event: MouseEvent) =>
  * so a new tab or a copied link lands on the renamed article too. Only a click on a version whose
  * answer is still on its way waits for it, and a later click or navigation cancels that wait.
  */
-export function VersionPicker({ owner, repo, versions, current, keep }: VersionPickerProps) {
+export function VersionPicker({
+  owner,
+  repo,
+  versions,
+  current,
+  pinned,
+  keep,
+}: VersionPickerProps) {
+  const defaultLabel = pinned ? "pinned default" : "default";
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [switching, setSwitching] = useState<string | null>(null);
@@ -108,7 +119,9 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
           >
             {switching ?? current.ref}
           </span>
-          {current.is_default && <span className="text-xs text-mark max-sm:hidden">default</span>}
+          {current.is_default && (
+            <span className="text-xs text-mark max-sm:hidden">{defaultLabel}</span>
+          )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span className="font-mono text-xs text-muted-foreground max-lg:hidden">
@@ -184,7 +197,7 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
                     />
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
                       <span className="truncate font-mono font-medium">{v.ref}</span>
-                      {v.is_default && <span className="text-xs text-mark">default</span>}
+                      {v.is_default && <span className="text-xs text-mark">{defaultLabel}</span>}
                       {v.kind !== "tag" && (
                         <span className="text-xs text-muted-foreground">{v.kind}</span>
                       )}
@@ -202,6 +215,7 @@ export function VersionPicker({ owner, repo, versions, current, keep }: VersionP
               </li>
             )}
           </ul>
+          <DefaultPin owner={owner} repo={repo} current={current} pinned={pinned} />
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

@@ -1,4 +1,10 @@
-from exactdocs_kernel import ConflictError, NotFoundError, UnauthenticatedError, ValidationError
+from exactdocs_kernel import (
+    ConflictError,
+    NotFoundError,
+    RateLimitedError,
+    UnauthenticatedError,
+    ValidationError,
+)
 
 
 class InvalidUsernameError(ValidationError):
@@ -88,3 +94,15 @@ class UnknownTokenError(NotFoundError):
 
     def __init__(self) -> None:
         super().__init__("no such token")
+
+
+class SignInThrottledError(RateLimitedError):
+    """Too many failed sign-ins from this address or for this username; the password is unchecked.
+
+    Deliberately says neither which of the two it is nor whether the username exists.
+    """
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(
+            f"too many failed sign-ins; try again in {retry_after} seconds", retry_after
+        )

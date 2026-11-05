@@ -13,3 +13,6 @@ export function normalizeQuery(raw: string | undefined): string | undefined {
     .trim();
   return capped === "" ? undefined : capped;
 }
+
+/** The API's cap on a library id (`/owner/repo`) in the `library` filter: 256 characters. */
+export const MAX_LIBRARY_ID = 256;

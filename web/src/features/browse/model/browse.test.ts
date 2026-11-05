@@ -7,6 +7,7 @@ import {
   type LibraryDetail,
   orderVersions,
   pathInVersion,
+  pinChoices,
   type RenamedPath,
   type RenameLookup,
   repoWebUrl,
@@ -256,5 +257,14 @@ describe("pathInVersion", () => {
       "guide/setup.md",
     );
     expect(asked).toBe(0);
+  });
+});
+
+describe("pinChoices", () => {
+  it("offers to pin any version unless it already is the pinned default", () => {
+    expect(pinChoices(v("v1.3.0"), false)).toEqual({ pin: true, unpin: false });
+    expect(pinChoices(v("v1.5.0", "tag", true), false)).toEqual({ pin: true, unpin: false });
+    expect(pinChoices(v("v1.3.0", "tag", true), true)).toEqual({ pin: false, unpin: true });
+    expect(pinChoices(v("v1.5.0"), true)).toEqual({ pin: true, unpin: true });
   });
 });

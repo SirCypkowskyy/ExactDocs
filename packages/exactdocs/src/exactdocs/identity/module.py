@@ -8,6 +8,7 @@ from typing import Self
 
 from exactdocs.identity.ports.driven import (
     AccountRepository,
+    FailedSignInLog,
     PasswordHasher,
     SessionRepository,
     TokenRepository,
@@ -71,10 +72,11 @@ class IdentityModule:
         sessions: SessionRepository,
         tokens: TokenRepository,
         hasher: PasswordHasher,
+        failures: FailedSignInLog,
         clock: Clock,
     ) -> Self:
         """Assemble the use cases around the given driven adapters."""
-        authenticate = AuthenticateUseCase(repository, hasher)
+        authenticate = AuthenticateUseCase(repository, hasher, failures, clock)
         identify_caller = IdentifyCallerUseCase(sessions, repository, clock)
         create_token = CreateTokenUseCase(tokens, clock)
         return cls(

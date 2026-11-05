@@ -46,3 +46,13 @@ class UnauthenticatedError(DomainError):
     """The caller is not signed in, or the credentials they gave are wrong."""
 
     code = "unauthenticated"
+
+
+class RateLimitedError(DomainError):
+    """The caller asked too often; it may try again after ``retry_after`` seconds."""
+
+    code = "rate_limited"
+
+    def __init__(self, message: str, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = max(1, retry_after)
