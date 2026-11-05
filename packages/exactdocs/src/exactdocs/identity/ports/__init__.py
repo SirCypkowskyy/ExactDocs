@@ -1,5 +1,6 @@
 from exactdocs.identity.ports.driven import (
     AccountRepository,
+    FailedSignInLog,
     PasswordHasher,
     SessionRepository,
     TokenRepository,
@@ -24,6 +25,7 @@ __all__ = [
     "Authenticate",
     "CreateFirstAdmin",
     "CreateToken",
+    "FailedSignInLog",
     "GetSessionState",
     "GetSetupState",
     "IdentifyCaller",

@@ -1,7 +1,21 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from exactdocs.identity.models import Account, AccountId, ApiToken, Session, Username
+from exactdocs.identity.models import (
+    FREE_FAILURES,
+    REMEMBER_SIGN_INS_FOR,
+    Account,
+    AccountId,
+    ApiToken,
+    FailedSignIns,
+    Session,
+    Username,
+)
+
+# Enough for every address and username a busy instance sees in an hour, and small in memory
+# (~200 bytes a record): a flood of made-up usernames cannot grow the log without bound.
+MAX_FAILED_SIGN_IN_KEYS = 10_000
 
 
 @dataclass(slots=True)
@@ -111,3 +125,73 @@ class InMemoryTokenRepository:
     async def delete_expired(self, now: datetime) -> None:
         """Remove the tokens whose expiry is at or before ``now``."""
         self.tokens = {h: t for h, t in self.tokens.items() if not t.is_expired(now)}
+
+
+@dataclass(slots=True)
+class InMemoryFailedSignInLog:
+    """Implements ``ports.driven.FailedSignInLog`` in the process's memory. Used in production.
+
+    A restart forgets everything, and each process counts its own (TEAM-01 would share them).
+    ``charge`` never awaits, so on one event loop the check and the count cannot interleave
+    with another attempt's. At most ``max_keys`` counts and ``max_keys`` remembered sign-ins are
+    kept. Dict order is "least recently changed first", which is also oldest ``last_at`` first.
+    When full, the oldest count that does not hold anyone back (under ``FREE_FAILURES``, or
+    forgotten) is dropped, and only when every count does, the oldest of all: a flood of
+    made-up usernames then pushes out its own records, not a live throttle on a real one.
+    """
+
+    max_keys: int = MAX_FAILED_SIGN_IN_KEYS
+    records: dict[str, FailedSignIns] = field(default_factory=dict)
+    sign_ins: dict[str, datetime] = field(default_factory=dict)
+
+    async def charge(self, keys: Sequence[str], now: datetime) -> timedelta:
+        """Count one attempt against every key unless one must wait; return the longest wait."""
+        records = {key: self.records.get(key) for key in keys}
+        wait = max((r.wait(now) for r in records.values() if r), default=timedelta(0))
+        if wait > timedelta(0):
+            return wait
+        for key, record in records.items():
+            self._put(key, record.plus_one(now) if record else FailedSignIns(count=1, last_at=now))
+        return timedelta(0)
+
+    async def refund(self, key: str, charged_at: datetime) -> None:
+        """Take back the attempt charged under ``key`` at ``charged_at``; its place stays."""
+        record = self.records.get(key)
+        if record is None:
+            return
+        if (fewer := record.refunded(charged_at)) is None:
+            del self.records[key]
+        else:
+            self.records[key] = fewer
+
+    async def get(self, key: str) -> FailedSignIns | None:
+        """Return the record under ``key``, or ``None``."""
+        return self.records.get(key)
+
+    async def forget(self, key: str) -> None:
+        """Drop the record under ``key``."""
+        self.records.pop(key, None)
+
+    async def remember_sign_in(self, key: str, now: datetime) -> None:
+        """Remember the sign-in as the most recent one, dropping the oldest when full."""
+        self.sign_ins.pop(key, None)
+        while len(self.sign_ins) >= self.max_keys:
+            del self.sign_ins[next(iter(self.sign_ins))]
+        self.sign_ins[key] = now
+
+    async def signed_in_before(self, key: str, now: datetime) -> bool:
+        """Whether ``key`` succeeded within ``REMEMBER_SIGN_INS_FOR``."""
+        last = self.sign_ins.get(key)
+        return last is not None and now - last < REMEMBER_SIGN_INS_FOR
+
+    def _put(self, key: str, failures: FailedSignIns) -> None:
+        self.records.pop(key, None)  # re-inserted below as the most recent
+        if len(self.records) >= self.max_keys:
+            del self.records[self._least_needed(failures.last_at)]
+        self.records[key] = failures
+
+    def _least_needed(self, now: datetime) -> str:
+        for key, record in self.records.items():
+            if record.count < FREE_FAILURES or record.is_forgotten(now):
+                return key
+        return next(iter(self.records))

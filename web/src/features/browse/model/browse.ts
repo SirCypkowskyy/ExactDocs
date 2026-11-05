@@ -200,12 +200,15 @@ const COMMIT_PATH: Record<string, string> = {
   bitbucket: "commits",
   gitea: "commit",
 };
-export const HOST_NAMES: Record<string, string> = {
+const HOST_NAMES: Record<string, string> = {
   github: "GitHub",
   gitlab: "GitLab",
   bitbucket: "Bitbucket",
   gitea: "Gitea",
 };
+
+/** The host's display name, for labels. */
+export const hostName = (host: string): string => HOST_NAMES[host] ?? "the host";
 
 /** Only http(s) links are ever rendered from repository data. */
 export function safeHref(url: string | null | undefined): string | undefined {

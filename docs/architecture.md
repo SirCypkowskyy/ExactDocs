@@ -315,8 +315,23 @@ stateDiagram-v2
 `identity` owns accounts (`identity_accounts`: username, password hash, `role`, created time).
 Passwords are hashed by the `PasswordHasher` driven port; its adapter is **argon2id**
 (`argon2-cffi`, RFC 9106 low-memory profile: 64 MiB, 3 passes), run in a thread, with `verify`
-constant-time. The use cases take the password as a `SecretStr`, an unknown username costs one
+constant-time, and at most 4 at a time (more calls queue; a dropped request keeps its slot
+until its thread is done). The use cases take the password as a `SecretStr`, an unknown username costs one
 hash like a real check, and wrong password and unknown user raise the same error.
+
+`AuthenticateUseCase` is the one place a password is checked, so the session sign-in and the
+CLI's token login share its throttle. Attempts are counted per client address (IPv6 per /64)
+and per username in the `FailedSignInLog` driven port (`FailedSignIns` in `models.py` holds the
+free count and the doubling wait). `FailedSignInLog.charge` checks the wait and counts the
+attempt in one atomic step, before the hash, so concurrent attempts cannot all pass the check;
+an attempt that must wait raises `SignInThrottledError` (kernel `RateLimitedError`, 429 with
+`Retry-After`) without a hash and without being counted. A right password refunds its attempt
+on the address (putting back the earlier `last_at` when no later attempt came, so the wait is
+not restarted), clears the username's count and is remembered as a known (username, address)
+pair for 30 days; from a known address, the username's count does not apply. The adapter is
+in-process memory, bounded to 10,000 counts and 10,000 pairs, and evicts counts that hold no
+one back first; several processes (TEAM-01) would each count their own, and a shared adapter
+must make `charge` atomic too.
 
 `AccountRepository.add_first` stores an account only while the table is empty, in one atomic
 statement under `BEGIN IMMEDIATE`, so two concurrent setups (or `exactdocs admin create` next to
@@ -418,6 +433,15 @@ that last step, which is one transaction in the catalog.
   opened directly it is an attachment under that CSP, so a hostile SVG can neither run nor
   phone home. SVGs declaring entities are refused. Not stored: images in raw HTML, MDX
   components or front matter.
+- **Relative links and images in the UI.** A link to `.md`/`.mdx` stays in the app (same
+  version, resolved path, same `#anchor`); any other repository file opens on the host's blob page
+  at the commit; a link to an article the import left out lands on "Not in this version", which
+  offers the same file on the host. An image loads from `/asset` first (public and private
+  libraries alike); if that fails (404: a version imported before #64, or an image skipped as too
+  large), a **public** library falls back to the host's raw URL at the commit, and a private one,
+  or a failed fallback, shows the alt text. Images are `loading="lazy" decoding="async"`; their size
+  is not stored, so CSS bounds them (`max-width: 100%`) and no `width`/`height` is set. Links to
+  renamed articles (#66) are not followed yet (#191).
 - **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
   bare commit, so the import never asks the remote again; a deleted tag does not break it.
 - **Replays.** A crash right after the activation commits re-queues the job; importing the same

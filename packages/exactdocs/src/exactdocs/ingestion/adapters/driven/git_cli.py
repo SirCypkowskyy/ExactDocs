@@ -47,6 +47,7 @@ from the slots checks use). One data directory has exactly one job runner.
 
 import asyncio
 import json
+import math
 import os
 import re
 import shlex
@@ -69,9 +70,11 @@ from exactdocs.ingestion.errors import (
     HostKeyChangedError,
     InvalidRepositoryUrlError,
     NotAGitRepositoryError,
+    PreviewBusyError,
     RepositoryAuthRequiredError,
     RepositoryTooLargeError,
     RepositoryUnreachableError,
+    TreeTooLargeError,
     UrlProblem,
 )
 from exactdocs.ingestion.models import (
@@ -94,6 +97,8 @@ MAX_STDOUT = 16 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 FETCH_TIMEOUT_SECONDS = 300.0
 MAX_FETCHES = 2
+MAX_PREVIEWS = 2
+PREVIEW_WAIT_SECONDS = 5.0
 MAX_FETCH_FILES = 100_000
 WATCH_SECONDS = 1.0
 STALE_MARGIN_SECONDS = 60.0
@@ -195,6 +200,10 @@ _NOT_A_REPO = re.compile(
 )
 
 
+class _OutputTooBigError(RepositoryUnreachableError):
+    """A git step printed more than its cap."""
+
+
 @dataclass(frozen=True, slots=True)
 class _Output:
     stdout: bytes
@@ -220,6 +229,11 @@ class GitCli:
     # Fetches wait here, so long imports cannot take every slot of `slots` from the checks.
     fetch_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_FETCHES), compare=False, repr=False
+    )
+    preview_wait: float = PREVIEW_WAIT_SECONDS  # how long a preview waits for a slot
+    # Previews wait here, apart from imports: a flood of dry runs must not starve the importer.
+    preview_slots: asyncio.Semaphore = field(
+        default_factory=lambda: asyncio.Semaphore(MAX_PREVIEWS), compare=False, repr=False
     )
     # Bounds the cost of an unauthenticated endpoint: one process, its helpers and up to
     # `max_output` bytes each.
@@ -416,6 +430,63 @@ class GitCli:
         if size > self.max_fetch_bytes or count > self.max_fetch_files:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
 
+    async def list_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> list[str]:
+        """Implement ``RepositoryTree.list_files``: fetch the trees only, run ``git ls-tree``.
+
+        The same hardening, deadline (``fetch_timeout``), size watchdog and process ``slots`` as
+        ``fetch``, with ``preview_slots`` of its own. No blob is downloaded and nothing is checked
+        out. More than ``max_output`` bytes of paths is an error (``RepositoryUnreachableError``).
+        """
+        if (
+            repository.url.startswith("-")
+            or not repository.url.isprintable()
+            or not _COMMIT.fullmatch(commit_sha)
+            or not all(_valid_ref(ref) for ref in refs)
+        ):
+            raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
+        async with self._preview_slot():
+            if self.work_root is not None:
+                await asyncio.to_thread(self.work_root.mkdir, parents=True, exist_ok=True)
+            folder = Path(await asyncio.to_thread(_make_folder, self.work_root))
+            try:
+                url = repository.url
+                deadline = asyncio.get_running_loop().time() + self.fetch_timeout
+                git = self._stepper(folder, url, deadline, _Auth.of(repository, credential))
+                ssh = repository_url_is_ssh(url)
+                await _prepare(git, folder, url, "", ssh=ssh)
+                await _fetch_commit(git, commit_sha, refs, ssh=ssh)
+                try:
+                    out = await git(
+                        "ls-tree", "-r", "-z", "--full-tree", commit_sha, cap=self.max_output
+                    )
+                except _OutputTooBigError:
+                    raise TreeTooLargeError from None
+                if out.code:
+                    raise _failure(out.stderr, ssh=ssh)
+                return _tree_files(out.stdout)
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
+
+    @asynccontextmanager
+    async def _preview_slot(self) -> AsyncGenerator[None]:
+        """Hold a preview slot; ``PreviewBusyError`` when none is free within ``preview_wait``."""
+        try:
+            async with asyncio.timeout(self.preview_wait):
+                await self.preview_slots.acquire()
+        except TimeoutError:
+            raise PreviewBusyError(retry_after=math.ceil(self.preview_wait)) from None
+        try:
+            yield
+        finally:
+            self.preview_slots.release()
+
     async def renames(
         self,
         repository: RepositoryUrl,
@@ -556,7 +627,7 @@ class GitCli:
         if tripped:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
         if len(out) > cap:
-            raise RepositoryUnreachableError(_TOO_BIG)
+            raise _OutputTooBigError(_TOO_BIG)
         return _Output(out, err.decode(errors="replace").lower(), code)
 
     async def _guard(self, process: Process, folder: Path) -> None:
@@ -600,6 +671,18 @@ class MissingGit:
         """Refuse with ``GitNotInstalledError``."""
         del repository, commit_sha, selection, refs, credential
         return _no_git()
+
+    async def list_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> list[str]:
+        """Refuse with ``GitNotInstalledError``."""
+        del repository, commit_sha, refs, credential
+        raise GitNotInstalledError
 
     async def renames(
         self,
@@ -692,6 +775,20 @@ def _write_config(folder: Path, url: str, sparse: str) -> None:
     (git_dir / "info").mkdir(exist_ok=True)
     (git_dir / "info" / "sparse-checkout").write_text(sparse, "utf-8")
     (git_dir / "info" / "attributes").write_text(_ATTRIBUTES, "utf-8")
+
+
+def _tree_files(output: bytes) -> list[str]:
+    """Parse ``ls-tree -r -z`` (NUL-ended entries ``mode type sha TAB path``): blobs only."""
+    paths = []
+    for entry in output.split(b"\0"):
+        meta, _, path = entry.partition(b"\t")
+        mode, _, rest = meta.partition(b" ")
+        # Symlinks (120000) are skipped by the import, so they are not previewed either.
+        if path and mode != b"120000" and rest.startswith(b"blob "):
+            # Lossy on purpose: names are shown, never used. Two different non-UTF-8 names may
+            # read alike (the renames use surrogateescape, which they need to look files up).
+            paths.append(path.decode(errors="replace"))
+    return paths
 
 
 def _make_folder(work_root: Path | None) -> str:

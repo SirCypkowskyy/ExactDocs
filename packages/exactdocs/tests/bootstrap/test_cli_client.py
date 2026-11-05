@@ -27,6 +27,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import CreateFirstAdminCommand
+from exactdocs.identity.models import FIRST_WAIT, FREE_FAILURES
 
 HORSE = "correct horse battery staple"
 URL = "https://docs.example.com"
@@ -63,6 +64,21 @@ async def test_errors_are_mapped_to_readable_messages(transport: httpx2.ASGITran
     assert unauthenticated.value.code == "unauthenticated"
     assert wrong.value.code == "invalid_credentials"
     assert "b" not in str(invalid.value).replace("invalid", "").replace("name", "")
+
+
+async def test_a_throttled_login_says_to_wait_and_for_how_long(
+    transport: httpx2.ASGITransport,
+) -> None:
+    async with ApiClient("http://localhost", transport=transport) as api:
+        for _ in range(FREE_FAILURES):
+            with pytest.raises(ApiError, match="wrong username or password"):
+                await api.login("ada", "wrong horse battery staple", "x")
+        with pytest.raises(ApiError, match="too many failed sign-ins") as throttled:
+            await api.login("ada", HORSE, "x")
+
+    assert throttled.value.code == "rate_limited"
+    assert throttled.value.retry_after == FIRST_WAIT.total_seconds()
+    assert str(throttled.value).endswith(f"(in {throttled.value.retry_after} seconds)")
 
 
 async def test_a_server_that_is_not_there_or_not_exactdocs_is_said_so() -> None:

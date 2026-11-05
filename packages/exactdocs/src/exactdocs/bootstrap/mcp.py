@@ -11,6 +11,7 @@ from mcp.types import INVALID_PARAMS, ListResourcesResult, PaginatedRequestParam
 
 from exactdocs import __version__
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
+from exactdocs.bootstrap.mcp_config import SKILL_PATH
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driving import mcp as catalog_mcp
 from exactdocs.identity.adapters.driving.mcp import ApiTokenVerifier
@@ -137,6 +138,17 @@ def _build(
         mask_error_details=True,
         middleware=[DomainErrorsAsToolErrors()],
     )
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+
+    @mcp.resource(
+        "skill://exactdocs/SKILL.md",
+        name="exactdocs-usage-skill",
+        description="How to use ExactDocs well: which tool when, version pinning, budgets.",
+        mime_type="text/markdown",
+    )
+    def usage_skill() -> str:
+        return skill
+
     catalog_mcp.register_tools(
         mcp,
         list_libraries=catalog.list_libraries,

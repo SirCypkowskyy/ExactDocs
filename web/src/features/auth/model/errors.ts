@@ -31,6 +31,14 @@ export function explainError(error: unknown): FormProblem {
   if (error.code === "invalid_credentials") {
     return { message: "That username and password don't match." };
   }
+  if (error.code === "rate_limited") {
+    const wait = error.retryAfter;
+    const when =
+      wait === undefined
+        ? "Wait a little, then try again."
+        : `Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`;
+    return { message: `Too many failed sign-ins. ${when}` };
+  }
   if (error.code === "already_set_up") {
     return {
       message: "This server already has an admin.",
