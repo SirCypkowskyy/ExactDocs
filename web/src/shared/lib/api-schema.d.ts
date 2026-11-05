@@ -481,9 +481,12 @@ export interface paths {
          *     tag is gone upstream), `tag_moved` (the tag names another commit now; it is reported,
          *     never re-imported) or `unexpected` (its import could not be queued). Every version keeps
          *     what it served. Queued imports answer 202, anything else 200. 409 `version_importing`
-         *     when a running import left nothing queued; 422 `repo_unreachable` (deleted, private,
-         *     moved or down) or `auth_failed` (the credential was refused or cannot be read) when the
-         *     remote cannot be read: the failed jobs recorded for it are named in the message.
+         *     when a running import left nothing queued. 422 when the remote cannot be read, mostly
+         *     `repo_unreachable` (deleted, private, moved or down; also a login prompt for a library
+         *     without a credential) or `auth_failed` (the credential was refused or cannot be read).
+         *     Other codes are possible: `host_key_changed` (the SSH host key changed, possibly a man
+         *     in the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed
+         *     jobs recorded for it are named in the message.
          */
         readonly post: operations["ingestion-sync"];
         readonly delete?: never;

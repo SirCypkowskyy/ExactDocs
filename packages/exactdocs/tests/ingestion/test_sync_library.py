@@ -497,7 +497,7 @@ async def test_a_credential_stored_for_another_host_is_not_used_by_a_sync(
     [
         (NotAGitRepositoryError(), "repo_unreachable"),  # deleted, or private without a login
         (RepositoryUnreachableError("connection refused"), "repo_unreachable"),
-        (RepositoryAuthRequiredError(), "auth_failed"),  # an expired or revoked token
+        (RepositoryAuthRequiredError(), "repo_unreachable"),  # no token sent: gone or private
         (HostKeyChangedError(), "host_key_changed"),  # not a credential problem: a warning
     ],
 )
@@ -518,3 +518,37 @@ async def test_a_remote_that_cannot_be_read_says_why(
     assert raised.value.code == code
     assert sorted(j.version or "" for j in jobs.jobs.values()) == ["main", "next", "v1"]
     assert {j.error_code for j in jobs.jobs.values()} == {code}
+
+
+async def test_an_auth_demand_with_a_stored_credential_is_an_auth_failure(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    vault = InMemoryCredentialVault({LIBRARY: AccessToken(token="ghp_revoked")})
+    module = make_module(remote, versions, jobs, clock, vault)
+    remote.error = RepositoryAuthRequiredError()  # an expired or revoked token
+
+    with pytest.raises(SyncFailedError) as raised:
+        await module.sync_library(SYNC)
+
+    assert (raised.value.code, raised.value.cause_code) == (
+        "auth_failed",
+        RepositoryAuthRequiredError.code,
+    )
+    assert {j.error_code for j in jobs.jobs.values()} == {"auth_failed"}
+
+
+async def test_an_auth_demand_without_a_credential_means_the_repository_is_gone_or_private(
+    module: IngestionModule, remote: Remote, jobs: InMemoryJobRepository
+) -> None:
+    # GitHub answers a deleted repository with 401, not 404, so it does not reveal private ones.
+    remote.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(SyncFailedError) as raised:
+        await module.sync_library(SYNC)
+
+    assert (raised.value.code, raised.value.cause_code) == (
+        "repo_unreachable",
+        NotAGitRepositoryError.code,
+    )
+    assert {j.error_code for j in jobs.jobs.values()} == {"repo_unreachable"}
+    assert all("no git repository was found" in (j.error or "") for j in jobs.jobs.values())

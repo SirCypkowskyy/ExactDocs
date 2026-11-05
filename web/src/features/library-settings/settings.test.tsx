@@ -11,6 +11,7 @@ import {
   explainAddVersion,
   explainRemove,
   explainSync,
+  failureWords,
   syncHeadline,
   validateDetails,
 } from "./model/settings";
@@ -212,10 +213,21 @@ describe("settings model", () => {
     expect(explainSync(e(409, "version_importing")).tone).toBe("info");
     expect(explainSync(e(422, "repo_unreachable")).tone).toBeUndefined();
     expect(explainSync(e(422, "repo_unreachable")).message).toMatch(/couldn't be read/);
-    expect(explainSync(e(422, "auth_failed")).message).toMatch(/refused the stored credentials/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/refused or can't be read/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/send the token or key again/);
+    expect(explainSync(e(422, "host_key_changed")).message).toMatch(/SSH host key .* changed/);
+    expect(explainSync(e(422, "host_key_changed")).message).not.toMatch(/deleted/);
     expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
       /never cancels/,
     );
+  });
+
+  it("explains a failed version without guessing when its code is unknown", () => {
+    const v = (error_code: string | null) =>
+      ({ ref: "main", ref_kind: "branch", status: "failed", error_code }) as never;
+    expect(failureWords(v("ref_deleted"))).toMatch(/branch is gone/);
+    expect(failureWords(v(null))).toMatch(/^It could not be synced\./);
+    expect(failureWords(v("something_new"))).not.toMatch(/queued/);
   });
 
   it("headlines a re-sync", () => {

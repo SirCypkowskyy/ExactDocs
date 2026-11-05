@@ -380,13 +380,26 @@ def failure_code(error: Exception) -> str:
     """Return the stable code a failed job records for ``error``.
 
     A repository that cannot be read is ``repo_unreachable``, a refused or unreadable credential
-    ``auth_failed``; any other domain error keeps its own code (``no_articles``,
-    ``host_key_changed``...), anything else is ``unexpected``.
+    ``auth_failed`` (callers that sent no credential turn an auth demand into
+    ``NotAGitRepositoryError`` first, see ``_anonymous``); any other domain error keeps its own
+    code (``no_articles``, ``host_key_changed``...), anything else is ``unexpected``.
     """
     for kind, code in _UPSTREAM_CODES:
         if isinstance(error, kind):
             return code
     return error.code if isinstance(error, DomainError) else UNEXPECTED_ERROR
+
+
+def _anonymous(error: DomainError, credential: Credential | None) -> DomainError:
+    """Return what ``error`` means for a library read with ``credential``.
+
+    A server that wants a login when none was sent is hiding the repository: it was deleted or
+    made private (GitHub answers a missing repository with 401, never 404). Only when a token or
+    key was sent and refused is it a credential problem.
+    """
+    if credential is None and isinstance(error, RepositoryAuthRequiredError):
+        return NotAGitRepositoryError()
+    return error
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,18 +648,20 @@ class SyncLibraryUseCase:
                 newest.setdefault(job.version, job)
         tips: dict[tuple[RefKind, str], str] = {}
         if checked:
+            credential: Credential | None = None
             try:
                 # An unreadable or other-host credential is recorded like any failure to read.
                 credential = await self.vault.load(library, source.url.credential_scope)
                 refs = await self.remote.list_refs(source.url, credential=credential)
-            except DomainError as error:
+            except DomainError as raised:
+                error = _anonymous(raised, credential)
                 code = failure_code(error)
                 recorded = [
                     (await self._failed(library, v, _describe(error), code, newest.get(v.ref))).id
                     for v in checked
                     if v.ref not in busy
                 ]
-                raise SyncFailedError(error, recorded, code) from error
+                raise SyncFailedError(error, recorded, code) from raised
             tips = {(t.kind, t.name): t.commit_sha for t in ref_tips(refs)}
         # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
         synced = [await self._sync(library, v, tips, busy, newest) for v in versions]
@@ -825,13 +840,16 @@ class ImportVersionUseCase:
         kind = job.ref_kind or RefKind.COMMIT
         refs = _full_refs(kind, job.version)
         config_hash = self.chunker.config_hash
-        async with self.gateway.fetch(
-            source.url, job.commit_sha, source.selection, refs=refs, credential=credential
-        ) as folder:
-            articles, wanted = await self._articles(folder, source, config_hash, progress)
-            readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
-            taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
-            taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
+        try:
+            async with self.gateway.fetch(
+                source.url, job.commit_sha, source.selection, refs=refs, credential=credential
+            ) as folder:
+                articles, wanted = await self._articles(folder, source, config_hash, progress)
+                readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
+                taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
+                taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
+        except RepositoryAuthRequiredError as error:
+            raise _anonymous(error, credential) from error
         if not articles:
             raise NoArticlesError
         await self._outside_images(job, source, credential, taken, progress)

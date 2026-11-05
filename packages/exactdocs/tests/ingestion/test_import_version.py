@@ -23,6 +23,8 @@ from exactdocs.ingestion.errors import (
     ImportNotPinnedError,
     ImportTooLargeError,
     NoArticlesError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
@@ -507,6 +509,29 @@ async def test_a_fetch_that_fails_stores_nothing(world: World) -> None:
         await world.run(make_job(), world.progress)
 
     assert world.log == []
+
+
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_an_auth_demand_without_a_credential_means_the_repository_is_gone_or_private(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    # GitHub answers a deleted repository with 401, not 404, so it does not reveal private ones.
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, kind=kind)
+    world.gateway.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(NotAGitRepositoryError):
+        await world.run(make_job(), world.progress)
+
+
+async def test_an_auth_demand_with_a_stored_credential_stays_an_auth_failure(
+    tmp_path: Path,
+) -> None:
+    vault = InMemoryCredentialVault({"/a/b": AccessToken(token="ghp_revoked")})
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault)
+    world.gateway.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(RepositoryAuthRequiredError):
+        await world.run(make_job(), world.progress)
 
 
 @pytest.mark.parametrize("failing", ["store", "index m1", "activate m1"])

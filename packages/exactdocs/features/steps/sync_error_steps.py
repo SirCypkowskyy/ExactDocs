@@ -1,5 +1,6 @@
 """Steps for upstream failures during a sync, against a token-protected copy of the fixture repo."""
 
+import secrets
 import shutil
 import tempfile
 from contextlib import ExitStack
@@ -26,32 +27,43 @@ def _jobs(context: Context) -> list[dict]:
     return response.json()["jobs"]
 
 
-@given("ExactDocs imports a private copy of the fixture repository over HTTP with a token")
-def step_private_copy(context: Context) -> None:
+def _serve_copy(context: Context, *, private: bool) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     base = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-upstream-")))
     copy = base / "fixture" / "docs-repo"
     shutil.copytree(context.fixture_repo.path, copy)
     context.fixture_repo = replace(context.fixture_repo, path=copy, file_url=copy.as_uri())
-    context.server = stack.enter_context(context.fixture_serve_copy(base))
+    if private:
+        context.server = stack.enter_context(context.fixture_serve_copy(base))
+    else:
+        context.server = stack.enter_context(context.fixture_serve_copy(base, token=None))
     context.valid_token = context.server.token
     start(context, secret_key=SEALING)
 
 
-@given('"/fixture/docs-repo" is imported at "next" and "v1.4.0" with the token')
-def step_imported(context: Context) -> None:
-    """Add the library at its branch ``next`` with the token, then its tag ``v1.4.0``."""
-    credential = {"kind": "token", "token": context.server.token}
-    added = context.client.post(
-        "/api/v1/libraries",
-        json={
-            "url": context.server.url,
-            "ref": VERSIONS[0],
-            "include_paths": ["docs/"],
-            "credential": credential,
-        },
-    )
+@given("ExactDocs imports a private copy of the fixture repository over HTTP with a token")
+def step_private_copy(context: Context) -> None:
+    _serve_copy(context, private=True)
+
+
+@given("ExactDocs imports a public copy of the fixture repository over HTTP")
+def step_public_copy(context: Context) -> None:
+    _serve_copy(context, private=False)
+
+
+@given('"/fixture/docs-repo" is imported at "next" and "v1.4.0" {how}')
+def step_imported(context: Context, how: str) -> None:
+    """Add the library at its branch ``next`` (with the token or not), then its tag ``v1.4.0``."""
+    assert how in {"with the token", "without a token"}, how
+    body: dict[str, object] = {
+        "url": context.server.url,
+        "ref": VERSIONS[0],
+        "include_paths": ["docs/"],
+    }
+    if how == "with the token":
+        body["credential"] = {"kind": "token", "token": context.server.token}
+    added = context.client.post("/api/v1/libraries", json=body)
     assert added.status_code == HTTPStatus.CREATED, added.text
     assert wait_for_job(context, added.json()["job_id"])["state"] == "succeeded", context.job
     tag = context.client.post(f"/api/v1/libraries{LIBRARY}/versions", json={"ref": VERSIONS[1]})
@@ -70,6 +82,11 @@ def step_deleted(context: Context) -> None:
 @given("the credential expired")
 def step_expired(context: Context) -> None:
     context.server.token = "rotated-" + context.valid_token  # the stored one is refused now
+
+
+@given("the server now asks for a login, as GitHub does for a deleted repository")
+def step_asks_for_login(context: Context) -> None:
+    context.server.token = secrets.token_hex(16)  # one the library never had
 
 
 @when("the credential is valid again")

@@ -25,7 +25,7 @@ from exactdocs.bootstrap.client import ApiClient, ApiError, ClientError, printab
 
 EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT = 1, 2, 3, 4, 5, 6
 POLL_SECONDS = 1.0
-SYNC_FAILED_STATUS = 422  # the remote could not be read: repo_unreachable, auth_failed
+SYNC_FAILED_STATUS = 422  # the remote could not be read: repo_unreachable, auth_failed, ...
 PAGE = 200  # the largest page the API serves
 MAX_REFS_SHOWN = 5
 WAIT_SECONDS = 600.0  # how long --wait follows a job before it leaves it to the server

@@ -128,12 +128,13 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   cannot queue it twice. Errors: 404 `not_found`; 409 `version_importing` when an import is
   running and nothing could be queued; and, when the remote cannot be read, 422
   `repo_unreachable` (the repository was deleted, made private, moved, or the server cannot be
-  reached) or `auth_failed` (the stored token or key was refused, e.g. expired or revoked, or
-  cannot be read with the current secret key); an SSH host key that changed stays
-  `host_key_changed`. The versions keep what they served, and a failed job with that code is
-  recorded per branch and tag (once per distinct reason) and named in the message. A later
-  sync that finds the version fine again records a succeeded no-op job, so the error no
-  longer shows.
+  reached; a login prompt for a library stored without a credential counts too, because GitHub
+  answers a missing repository that way) or `auth_failed` (the stored token or key was refused,
+  e.g. expired or revoked, or cannot be read with the current secret key); an SSH host key that
+  changed stays `host_key_changed`, and a server without git answers `git_not_installed`. The
+  versions keep what they served, and a failed job with that code is recorded per branch and tag
+  (once per distinct reason) and named in the message. A later sync that finds the version fine
+  again records a succeeded no-op job, so the error no longer shows.
 
 ## Jobs, access and health
 
