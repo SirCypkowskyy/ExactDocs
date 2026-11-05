@@ -82,6 +82,16 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   cannot create a successor.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the root README (LIB-07).
+- **Pinning the default version**: `PUT /libraries/{owner}/{repo}/default-version` (`{"ref"}`, an
+  imported ref exactly as listed, or a unique short SHA of a commit version) makes that version
+  what `/owner/repo` without a ref means, even after a higher stable tag is imported (LIB-10).
+  `DELETE` on the same path unpins it, and the default follows the *Default version* rule again.
+  Both answer 200 with the library; a ref the library has not imported (refs are case-sensitive)
+  or an unknown library is 404 `not_found`; a missing or empty ref, a malformed library ID or ref,
+  or a short SHA that matches more than one commit version is 422. Libraries carry
+  `default_pinned` (also in the MCP `list_libraries` tool). Removing the pinned version unpins the
+  library. Changing the pin does not re-derive the title and description from the new default's
+  README (LIB-07); re-import the new default to refresh them.
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`
@@ -114,7 +124,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   job reports `chunked` (chunk sets cut: one per distinct new file content) and `reused`
   (articles whose chunk set was stored before). Files are still fetched, read and parsed again
   (#164 tracks skipping that). The new manifest is activated in place of the old one: the version
-  keeps its ID, and chunk IDs of changed sections answer `409 stale_chunk`.
+  keeps its ID, and chunk IDs of changed sections answer `409 stale_chunk`. Its `detail` names the section's
+  article and new chunk ID when they can be found: same headings and text, else same headings
+  and occurrence (marked "text changed"), else same text elsewhere in the article; a tie names
+  only the article. A renamed article is followed through the rename map, which covers one hop
+  (the version before), so an ID that is several re-syncs old may get no location.
   The body lists every version with a `status`; read it rather than the HTTP status:
   `queued` (with the `job_id`), `up_to_date`, `importing` (an import of that branch is already
   queued or running: it is left alone and the others still sync), `pinned` (commits, and tags
@@ -154,8 +168,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
   and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.
-- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version` and the database's
-  `schema_revision`.
+- **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version`, the database's
+  `schema_revision`, the `search_index_format` the search index was built in (`null` if none is
+  recorded), and `reindex_required`: `true` when that format is older than this version's or not
+  recorded, until `exactdocs reindex` has run (search keeps answering meanwhile).
 
 ## Job problems
 
@@ -187,7 +203,7 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   run) with the same body as adding a library (`library_id` is the existing library) and
   `Location: /api/v1/jobs/{job_id}`, the import job to poll. The default version is computed from
   the versions, so it moves when the import finishes (a newer stable tag takes it; a branch does
-  not take it from a release). Errors: 404 `not_found` (unknown library), 422 `unknown_ref` /
+  not take it from a release; a pinned default does not move). Errors: 404 `not_found` (unknown library), 422 `unknown_ref` /
   `ambiguous_ref` (also 422 for a malformed library ID), 409 `version_exists` (the library already
   has that ref; re-importing is a sync, not this call), 409 `version_importing` (an import of that
   ref is queued or running; enforced atomically, so two simultaneous requests queue one import), and 409

@@ -4,6 +4,7 @@ import asyncio
 import getpass
 import os
 import sys
+import time
 from collections.abc import AsyncGenerator, Coroutine
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -42,6 +43,7 @@ from exactdocs.identity.dtos import (
 )
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
+from exactdocs.retrieval.dtos import RebuiltIndexOut, SearchIndexStateOut
 from exactdocs_kernel import DomainError
 
 DEFAULT_TOKEN_DAYS = 90
@@ -356,6 +358,59 @@ def libraries(
     async def work() -> None:
         async with _api(url, token) as api:
             await lib.list_libraries(api, as_json=json_output)
+
+    _call(work())
+
+
+@app.command(usage="Usage: exactdocs library [OPTIONS] NAME [QUERY...]")
+def library(
+    name: Annotated[str, Parameter(help="Library name to look for, e.g. react.")],
+    /,
+    *query: Annotated[
+        str, Parameter(name="QUERY", help="What to look up; ranks the matches (default: the name).")
+    ],
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Find the ID of a library by name (like `ctx7 library`); QUERY ranks the matches."""
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.find_library(api, name, " ".join(query) or None, as_json=json_output)
+
+    _call(work())
+
+
+@app.command(usage="Usage: exactdocs docs [OPTIONS] LIBRARY-ID QUERY...")
+def docs(
+    library_id: Annotated[
+        str,
+        Parameter(
+            name="LIBRARY-ID",
+            help="Library ID from 'exactdocs library', e.g. /owner/repo or /owner/repo@v1.",
+        ),
+    ],
+    /,
+    *query: Annotated[str, Parameter(name="QUERY", help="The question; several words are joined.")],
+    language: Annotated[
+        str | None,
+        Parameter(help="Language you write in; chunks with code in it come first (no filter)."),
+    ] = None,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Show what an agent gets for a question about a library (like `ctx7 docs`)."""
+    if not query:
+        sys.stderr.write("exactdocs: docs needs a question after the library ID\n")
+        raise SystemExit(lib.EXIT_USAGE)
+
+    async def work() -> None:
+        async with _api(url, token) as api:
+            await lib.query_docs(
+                api, library_id, " ".join(query), language=language, as_json=json_output
+            )
 
     _call(work())
 
@@ -728,6 +783,39 @@ async def _reset_password(settings: Settings, username: str, password: str) -> N
         await container.identity.reset_password(command)
 
 
+@app.command
+def reindex() -> None:
+    """Rebuild the search index from the stored chunks; a running server keeps answering.
+
+    Local: opens the database in the data directory (EXACTDOCS_DATA_DIR), so run it where the
+    server runs (in Docker: `docker exec <container> exactdocs reindex`). Nothing is imported
+    again. Needed after a release whose notes say "requires reindex"; harmless otherwise. Run one
+    at a time: a second run started meanwhile drops the first one's new table, which then fails
+    (the index that answers is not affected).
+    """
+    settings = Settings()
+    started = time.monotonic()
+    state, rebuilt = _run(_reindex(settings))
+    seconds = time.monotonic() - started
+    if state.stored_format is None:
+        was = "no format was recorded"
+    elif state.needs_rebuild:
+        was = f"was format {state.stored_format}"
+    else:
+        was = f"was format {state.stored_format}, not older; rebuilt anyway"
+    sys.stdout.write(
+        f"Search index rebuilt in format {rebuilt.format} ({was}): "
+        f"{rebuilt.entries} chunks in {seconds:.1f} s.\n"
+    )
+
+
+async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltIndexOut]:
+    container = _build(settings)
+    async with container.running(jobs=False):  # migrates first, as `serve` would
+        state = await container.retrieval.get_search_index_state()
+        return state, await container.retrieval.rebuild_search_index()
+
+
 async def _serve_stdio(settings: Settings) -> None:
     try:
         container = ReadOnlyContainer.build(settings)
@@ -765,7 +853,7 @@ def asgi_app() -> object:
     return create_app(Container.build(Settings()))
 
 
-LOCAL_COMMANDS = frozenset({"serve", "admin create", "admin reset-password"})
+LOCAL_COMMANDS = frozenset({"serve", "reindex", "admin create", "admin reset-password"})
 
 
 def main() -> None:

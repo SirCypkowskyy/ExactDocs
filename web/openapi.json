@@ -879,6 +879,236 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/default-version": {
+      "put": {
+        "tags": [
+          "catalog",
+          "catalog"
+        ],
+        "summary": "Pin Default",
+        "description": "Pin the default version: `/owner/repo` keeps meaning `ref` when higher tags arrive.\n\n`ref` must be an imported version (404 otherwise). Removing that version unpins.",
+        "operationId": "catalog-pin_default",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefaultVersionPin"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "catalog",
+          "catalog"
+        ],
+        "summary": "Unpin Default",
+        "description": "Unpin the default version: it follows the default-version rule again.",
+        "operationId": "catalog-unpin_default",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries": {
       "get": {
         "tags": [
@@ -5002,6 +5232,24 @@
         "title": "CreateTokenCommand",
         "description": "A new API token for the caller. ``expires_at`` (timezone-aware) is optional."
       },
+      "DefaultVersionPin": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Ref",
+            "description": "An imported ref, exactly as listed (case-sensitive), or a unique short SHA."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref"
+        ],
+        "title": "DefaultVersionPin",
+        "description": "The version to pin as a library's default."
+      },
       "DeployKeyIn": {
         "properties": {
           "kind": {
@@ -5530,6 +5778,11 @@
               }
             ],
             "title": "Default Version"
+          },
+          "default_pinned": {
+            "type": "boolean",
+            "title": "Default Pinned",
+            "description": "True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import)."
           }
         },
         "additionalProperties": false,
@@ -5543,7 +5796,8 @@
           "default_branch",
           "settings",
           "versions",
-          "default_version"
+          "default_version",
+          "default_pinned"
         ],
         "title": "LibraryDetail",
         "description": "Everything known about one library."
@@ -5841,6 +6095,11 @@
             ],
             "title": "Default Version"
           },
+          "default_pinned": {
+            "type": "boolean",
+            "title": "Default Pinned",
+            "description": "True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import)."
+          },
           "source_url": {
             "type": "string",
             "title": "Source Url"
@@ -5887,6 +6146,7 @@
           "title",
           "description",
           "default_version",
+          "default_pinned",
           "source_url",
           "refs",
           "version_count",

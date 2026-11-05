@@ -13,9 +13,12 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestHit,
+    RebuiltIndex,
     Removed,
     SearchableVersion,
     SearchHit,
+    SearchIndexState,
+    SectionRef,
     StoredChunk,
     TagFilter,
     VersionCounts,
@@ -80,6 +83,27 @@ class InMemoryChunkRepository:
         }
         return {key: c for key, c in found.items() if c is not None}
 
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article of the manifest in order, without their text."""
+        rows = sorted(
+            (r for r in self.rows.get(manifest_id, {}).values() if r.article_path == article_path),
+            key=lambda r: r.position,
+        )
+        found: list[SectionRef] = []
+        for row in rows:
+            chunk = self.chunk_sets[row.chunk_set].chunks[row.position]
+            found.append(
+                SectionRef(
+                    chunk_id=row.chunk_id,
+                    position=row.position,
+                    heading_path=chunk.heading_path,
+                    occurrence_index=chunk.occurrence_index,
+                    content_hash=chunk.content_hash,
+                    anchor=chunk.anchor,
+                )
+            )
+        return found
+
     async def counts(self, manifest_id: str) -> VersionCounts:
         """Count the manifest's articles and chunks."""
         rows = self.rows.get(manifest_id, {}).values()
@@ -114,6 +138,9 @@ class InMemoryChunkRepository:
         return Removed(manifests=len(gone), chunk_sets=len(unused))
 
 
+MEMORY_FORMAT = 1
+
+
 @dataclass(slots=True)
 class InMemorySearchIndex:
     """Reference ``ports.driven.SearchIndex``: a term-count score, not BM25.
@@ -127,6 +154,7 @@ class InMemorySearchIndex:
 
     chunks: InMemoryChunkRepository
     indexed: set[ChunkSetKey] = field(default_factory=set)
+    stored_format: int = MEMORY_FORMAT  # set it lower to stand for an index from an older build
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Remember the set; the text itself is read from the repository."""
@@ -163,6 +191,17 @@ class InMemorySearchIndex:
         ]
         found.sort(key=lambda f: (-f.hit.score, f.hit.chunk_id, f.manifest_id))
         return found[:limit]
+
+    async def state(self) -> SearchIndexState:
+        """Return the format the index was "built" in and the current one."""
+        return SearchIndexState(stored_format=self.stored_format, current_format=MEMORY_FORMAT)
+
+    async def rebuild(self) -> RebuiltIndex:
+        """Index every stored chunk set again (one step: nothing can search in between)."""
+        self.indexed = set(self.chunks.chunk_sets)
+        self.stored_format = MEMORY_FORMAT
+        entries = sum(len(s.chunks) for s in self.chunks.chunk_sets.values())
+        return RebuiltIndex(format=MEMORY_FORMAT, entries=entries)
 
     async def count_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter

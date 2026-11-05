@@ -44,7 +44,10 @@ class LibraryRepository(Protocol):
         ...
 
     async def save(self, library: Library) -> None:
-        """Store the library, replacing any earlier entry with the same ID."""
+        """Store the library, replacing any earlier entry with the same ID.
+
+        The pin is left as stored (``pin_default`` owns it), so saving an older read keeps it.
+        """
         ...
 
     async def set_text(
@@ -53,6 +56,15 @@ class LibraryRepository(Protocol):
         """Set the given fields (not ``None``) and mark them as edited by a user.
 
         Touches nothing else, so it cannot undo a concurrent change. Absent IDs are ignored.
+        """
+        ...
+
+    async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
+        """Pin the default version to ``ref``, or unpin with ``None``; touches nothing else.
+
+        A ref is pinned only if the library has a version with exactly that ref, checked by the
+        write itself, so a version removed in between is never pinned. Returns whether anything
+        was written (``False``: no such library, or no such version).
         """
         ...
 
@@ -201,6 +213,7 @@ class ManifestRepository(Protocol):
 
         Returns the deleted manifest IDs. Raises ``VersionNotFoundError`` when the library has no
         such version; the manifests and the version go together, never one without the other.
+        A pin on the ref is cleared in the same transaction, so a later import does not re-pin it.
         """
         ...
 

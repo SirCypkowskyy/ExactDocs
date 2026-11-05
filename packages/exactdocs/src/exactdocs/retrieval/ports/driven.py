@@ -14,9 +14,12 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     ManifestStatus,
+    RebuiltIndex,
     Removed,
     SearchableVersion,
     SearchHit,
+    SearchIndexState,
+    SectionRef,
     StoredChunk,
     TagFilter,
     VersionCounts,
@@ -73,6 +76,17 @@ class ActiveManifests(Protocol):
         ...
 
 
+class RenamedPaths(Protocol):
+    """Renames git saw, in retrieval's terms (the catalog answers)."""
+
+    async def new_path(self, target: DocTarget, old_path: str) -> str | None:
+        """Return where ``old_path`` of the version before is in the target version, or ``None``.
+
+        ``None`` also when nothing is known (no map, no active manifest): never an error.
+        """
+        ...
+
+
 class ChunkRepository(Protocol):
     """Chunk sets (shared by content) and the per-manifest chunk rows that point at them."""
 
@@ -113,6 +127,13 @@ class ChunkRepository(Protocol):
         """Return the chunks that exist, by (manifest ID, chunk ID), for several manifests at once.
 
         One query, whatever the number of manifests; missing pairs are left out.
+        """
+        ...
+
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article of the manifest in order, without their text.
+
+        Empty if the manifest has no such article.
         """
         ...
 
@@ -177,4 +198,21 @@ class SearchIndex(Protocol):
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
     ) -> Mapping[str, int]:
         """Return how many chunks of each manifest match, uncapped; zero counts are left out."""
+        ...
+
+
+class SearchIndexMaintenance(Protocol):
+    """Rebuilds the search index from the stored chunks, without stopping search.
+
+    The new index is built beside the one that answers and replaces it in one step, so a search
+    sees either the old index or the new one, never a half-built one. Chunks indexed or removed
+    while it builds are in the new one too.
+    """
+
+    async def state(self) -> SearchIndexState:
+        """Return the stored index's format and the one this build writes."""
+        ...
+
+    async def rebuild(self) -> RebuiltIndex:
+        """Build a new index of every stored chunk in the current format, then swap it in."""
         ...

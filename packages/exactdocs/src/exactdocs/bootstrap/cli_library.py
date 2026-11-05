@@ -1,4 +1,4 @@
-"""What the library and token commands do through ``ApiClient``, and how they print it.
+"""What the library, docs and token commands do through ``ApiClient``, and how they print it.
 
 Kept apart from ``cli.py`` so the work can be tested against an in-process server. Everything a
 server (or a repository) sends is untrusted: human output goes through ``printable``, and JSON
@@ -13,6 +13,7 @@ or a sync failed.
 import asyncio
 import json
 import os
+import re
 import stat
 import sys
 import time
@@ -21,7 +22,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
-from exactdocs.bootstrap.client import ApiClient, ApiError, ClientError, printable
+from exactdocs.bootstrap.client import (
+    ApiClient,
+    ApiError,
+    ClientError,
+    printable,
+    printable_text,
+)
 
 EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT = 1, 2, 3, 4, 5, 6
 POLL_SECONDS = 1.0
@@ -470,3 +477,58 @@ async def token_revoke(api: ApiClient, token_id: str) -> None:
     """``DELETE /tokens/{id}``."""
     await api.request("DELETE", f"/tokens/{quote(token_id, safe='')}")
     say(f"Revoked token {token_id}.")
+
+
+LIBRARY_ID = re.compile(r"^/[^/]+/[^/]")  # ctx7's check: /owner/repo, optionally /ref or @ref
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+async def find_library(
+    api: ApiClient, name: str, query: str | None, *, as_json: bool = False
+) -> None:
+    """``ctx7 library``: ``GET /c7/search``; a missing query defaults to the name."""
+    found = await api.request(
+        "GET", "/c7/search", params={"libraryName": name, "query": query or name}
+    )
+    results = found["results"]
+    if as_json:  # ctx7 prints the bare list; the notice goes to stderr to keep stdout parseable
+        to_stderr(found["notice"])
+        dump(results)
+        return
+    say(found["notice"])
+    if not results:
+        say(f"No libraries found matching {name!r}")
+        return
+    for number, entry in enumerate(results, 1):
+        say("")
+        say(f"{number}. Title: {_one_line(entry['title'])}")
+        say(f"   Context7-compatible library ID: {_one_line(entry['id'])}")
+        say(f"   Description: {_one_line(entry['description'])}")
+        say(f"   Default version: {_one_line(entry['defaultVersion'])}")
+        say(f"   Articles: {entry['articles']}")
+        say(f"   Chunks: {entry['totalSnippets']}")
+        say(f"   Versions: {', '.join(_one_line(v) for v in entry['versions'])}")
+        say(f"   Source: {_one_line(entry['sourceUrl'])}")
+
+
+async def query_docs(
+    api: ApiClient, library_id: str, query: str, *, language: str | None = None, as_json: bool
+) -> None:
+    """``ctx7 docs``: ``GET /c7/docs``. The text keeps the server's notice and line breaks."""
+    if not LIBRARY_ID.match(library_id):
+        message = (
+            f"invalid library ID {printable(library_id)!r}; expected /owner/repo, "
+            "/owner/repo/version or /owner/repo@version (find it with `exactdocs library <name>`)"
+        )
+        raise UsageError(message)
+    params = {"libraryId": library_id, "query": query, "type": "json" if as_json else "txt"}
+    if language:
+        params["language"] = language
+    if as_json:
+        dump(await api.request("GET", "/c7/docs", params=params))
+        return
+    text = printable_text(await api.request_text("GET", "/c7/docs", params=params))
+    sys.stdout.write(text if text.endswith("\n") else text + "\n")

@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import os
+import shlex
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from http import HTTPStatus
@@ -22,7 +23,8 @@ JOB_SECONDS = 60
 
 def run(context: Context, line: str, *, stdin: str = "", tty: bool = False) -> None:
     """Run ``exactdocs ...`` in-process; stdout, stderr and the exit code land on the context."""
-    words = line.replace("<fixture-url>", context.fixture_repo.file_url).split()
+    context.line = line
+    words = shlex.split(line.replace("<fixture-url>", context.fixture_repo.file_url))
     assert words.pop(0) == "exactdocs", line
     output, errors = io.StringIO(), io.StringIO()
     standard_in = io.StringIO(stdin)

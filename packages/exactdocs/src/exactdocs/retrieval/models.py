@@ -181,6 +181,18 @@ class ManifestChunk:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SectionRef:
+    """A chunk of an article without its text: enough to tell sections apart."""
+
+    chunk_id: ChunkId
+    position: int
+    heading_path: tuple[str, ...]
+    occurrence_index: int
+    content_hash: str
+    anchor: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IndexedManifest:
     """A catalog manifest that has chunk rows. Its ID is held by value."""
 
@@ -245,6 +257,33 @@ class Removed:
 
     manifests: int
     chunk_sets: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SearchIndexState:
+    """The format the stored search index was built in, against the one this build writes.
+
+    A format names how entries are made from chunks (columns, tokenizer, ``identifier_tokens``).
+    An index in an older format still answers, built the old way, until it is rebuilt. One in a
+    newer format (written by a later release, before a downgrade) is left as it is.
+    ``stored_format`` is ``None`` when no format is recorded; a rebuild records it.
+    """
+
+    stored_format: int | None
+    current_format: int
+
+    @property
+    def needs_rebuild(self) -> bool:
+        """Whether the index is older than this build writes, or its format is unknown."""
+        return self.stored_format is None or self.stored_format < self.current_format
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RebuiltIndex:
+    """What a rebuild left: the format it is now in and how many chunks it holds."""
+
+    format: int
+    entries: int
 
 
 class ManifestStatus(StrEnum):

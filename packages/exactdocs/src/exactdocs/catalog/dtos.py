@@ -113,6 +113,10 @@ class ResolvedVersion(VersionOut):
 
 
 MAX_SUMMARY_REFS = 50
+_PINNED = (
+    "True when an owner pinned `default_version`; false when it follows the default-version rule "
+    "(highest stable semver tag, else the default branch, else the newest import)."
+)
 
 
 class LibrarySummary(_Dto):
@@ -122,6 +126,7 @@ class LibrarySummary(_Dto):
     title: str
     description: str
     default_version: str | None
+    default_pinned: bool = Field(description=_PINNED)
     source_url: str
     refs: list[VersionOut] = Field(
         description=(
@@ -147,6 +152,7 @@ class LibrarySummary(_Dto):
             title=library.title,
             description=library.description,
             default_version=str(default.ref) if default else None,
+            default_pinned=library.default_is_pinned(),
             source_url=library.source_url,
             refs=[
                 VersionOut.from_model(v, is_default=v == default)
@@ -170,6 +176,7 @@ class LibraryDetail(_Dto):
     settings: LibrarySettingsOut
     versions: list[VersionOut]
     default_version: str | None
+    default_pinned: bool = Field(description=_PINNED)
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -188,6 +195,7 @@ class LibraryDetail(_Dto):
                 for v in sorted(library.versions, key=lambda v: v.ref.value)
             ],
             default_version=str(default.ref) if default else None,
+            default_pinned=library.default_is_pinned(),
         )
 
 
@@ -780,6 +788,23 @@ class UpdateLibraryCommand(LibraryPatch):
     """Set the title and/or description of a library by hand; they are then kept for good."""
 
     id: str = Field(min_length=1)
+
+
+class DefaultVersionPin(_Dto):
+    """The version to pin as a library's default."""
+
+    ref: str = Field(
+        min_length=1,
+        max_length=MAX_NAME,
+        description="An imported ref, exactly as listed (case-sensitive), or a unique short SHA.",
+    )
+
+
+class PinDefaultVersionCommand(_Dto):
+    """Pin the version `ref` names as the library's default; no `ref` unpins it."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    ref: str | None = Field(default=None, min_length=1, max_length=MAX_NAME)
 
 
 class ApplyReadmeCommand(_Dto):
