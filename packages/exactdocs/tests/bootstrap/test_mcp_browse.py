@@ -566,7 +566,10 @@ async def test_the_cap_is_shared_by_every_library(container: Container) -> None:
         while pages[-1].next_cursor:
             pages.append(await mcp.list_resources_mcp(cursor=pages[-1].next_cursor))
 
-    uris = [str(r.uri) for page in pages for r in page.resources]
+    listed = [str(r.uri) for page in pages for r in page.resources]
+    # the cap counts articles; first-party resources (the `skill://` one) are listed on top
+    uris = [u for u in listed if u.startswith("exactdocs://")]
+    assert set(listed) - set(uris) == {"skill://exactdocs/SKILL.md"}
     payments = [u for u in uris if "/payments/" in u]
     assert len(uris) == MAX_LISTED_RESOURCES
     assert len(payments) == 2  # the small library is shown whole, not starved

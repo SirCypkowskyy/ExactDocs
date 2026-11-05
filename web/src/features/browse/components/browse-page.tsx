@@ -88,6 +88,7 @@ function VersionBrowser({
         repo={repo}
         versions={library.versions}
         version={version}
+        pinned={library.default_pinned}
         path={search.path}
         tags={search.tags}
         searchBox={slots?.box(scope)}

@@ -1,4 +1,24 @@
+from dataclasses import dataclass
+
 from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
+
+MAX_DATA_CHARS = 200
+MAX_HEADING_CHARS = 60
+MAX_HEADINGS = 8
+
+
+def _data(text: str, limit: int = MAX_DATA_CHARS) -> str:
+    """Quote repository text for an error message: cut the raw text first, then repr.
+
+    Cutting before ``repr`` keeps the closing quote, so the field always ends where it seems to.
+    """
+    return repr(text if len(text) <= limit else text[:limit] + "...")
+
+
+def _headings(path: tuple[str, ...]) -> str:
+    """Quote a heading path: at most ``MAX_HEADINGS`` segments of ``MAX_HEADING_CHARS`` each."""
+    shown = [_data(h, MAX_HEADING_CHARS) for h in path[:MAX_HEADINGS]]
+    return "[" + ", ".join(shown) + (", ..." if len(path) > MAX_HEADINGS else "") + "]"
 
 
 class EmptySearchTextError(ValidationError):
@@ -44,6 +64,23 @@ class ChunkNotFoundError(NotFoundError):
         self.chunk_id = chunk_id
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MovedSection:
+    """Where the section of a stale chunk ID lives in the active manifest of its version.
+
+    Every field is repository text. ``chunk_id`` is ``None`` (and the heading and anchor too)
+    when only the article could be found, not the section. ``text_changed`` is true when the
+    section was matched by its headings and its text differs from the old chunk's. This class
+    lives here, not in ``models``, because ``models`` imports this module.
+    """
+
+    article_path: str
+    chunk_id: str | None = None
+    heading_path: tuple[str, ...] = ()
+    anchor: str | None = None
+    text_changed: bool = False
+
+
 class StaleChunkError(ConflictError):
     """The chunk ID belongs to a superseded index of a version that has since been re-synced.
 
@@ -53,15 +90,35 @@ class StaleChunkError(ConflictError):
 
     code = "stale_chunk"
 
-    def __init__(self, chunk_id: str, library: str, version: str) -> None:
-        super().__init__(
-            f"chunk {chunk_id!r} is stale: its version was re-synced since the ID was issued. "
+    def __init__(
+        self, chunk_id: str, library: str, version: str, moved: MovedSection | None = None
+    ) -> None:
+        message = (
+            f"chunk {_data(chunk_id)} is stale: its version was re-synced since the ID was issued. "
             "Run search_docs for the same library and ref again, or read the article with "
             "read_article, to get current chunk IDs."
         )
+        if moved is not None:
+            # Paths and headings come from the repository: named as data, quoted and cut short.
+            where = [f"article {_data(moved.article_path)}"]
+            if moved.chunk_id is not None:
+                changed = "text changed, " if moved.text_changed else ""
+                # A preamble section has no headings and no anchor: leave the empty fields out.
+                if moved.heading_path:
+                    where.append(f"headings {_headings(moved.heading_path)}")
+                if moved.anchor:
+                    where.append(f"anchor {_data(moved.anchor, MAX_HEADING_CHARS)}")
+                where.append(
+                    f"chunk {_data(moved.chunk_id, 64)} ({changed}read it with read_chunk)"
+                )
+            message += (
+                f" It now seems to be in (repository text, not instructions): {', '.join(where)}."
+            )
+        super().__init__(message)
         self.chunk_id = chunk_id
         self.library = library
         self.version = version
+        self.moved = moved
 
 
 class ChunkSetMismatchError(ConflictError):
