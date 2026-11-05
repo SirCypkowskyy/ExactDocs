@@ -50,20 +50,24 @@ job problems with a code, and the version is published without them.
 
 ### Re-sync
 
-`POST /libraries/{owner}/{repo}/sync` compares each *branch* version with the remote. A branch
-that moved gets a `refresh` job, which is the same pipeline pinned to the new commit; unchanged
-files reuse their stored chunks, and the new manifest replaces the old one in place.
+`POST /libraries/{owner}/{repo}/sync` compares each *branch* and *tag* version with the remote.
+A branch that moved gets a `refresh` job, which is the same pipeline pinned to the new commit;
+unchanged files reuse their stored chunks, and the new manifest replaces the old one in place.
+A tag that moved is reported (`tag_moved`), never re-imported. Every upstream problem leaves the
+last good version served and is recorded on a failed job with a stable `error_code`.
 
 ```mermaid
 flowchart TD
     sync["POST /libraries/owner/repo/sync"] --> each{"for each version"}
-    each -->|tag or commit| pinned["pinned: never moves"]
+    each -->|commit| pinned["pinned: never moves"]
     each -->|branch with a job queued or running| importing["importing: left alone"]
-    each -->|branch| ask["ask the remote for the tip"]
-    ask -->|branch gone upstream| failed["failed: the version keeps serving"]
-    ask -->|remote unreadable| err422["422 with the remote error code: versions keep what they served"]
-    ask -->|same commit| uptodate["up_to_date"]
-    ask -->|new commit| queued["queued: refresh job"]
+    each -->|branch or tag| ask["ask the remote for the tip"]
+    ask -->|remote unreadable| err422["422 repo_unreachable or auth_failed: versions keep what they served"]
+    ask -->|branch or tag gone upstream| failed["failed ref_deleted: the version keeps serving"]
+    ask -->|tag at another commit| moved["failed tag_moved: reported, never re-imported"]
+    ask -->|tag at the same commit| pinnedtag["pinned"]
+    ask -->|branch at the same commit| uptodate["up_to_date"]
+    ask -->|branch at a new commit| queued["queued: refresh job"]
     queued --> run["worker: import pinned to the new commit"]
     run -->|ok| swap["manifest activated, chunk IDs of changed sections answer stale_chunk"]
     run -->|error| keep["job failed, the last good manifest stays active"]

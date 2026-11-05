@@ -29,6 +29,7 @@ from exactdocs.bootstrap.cli_library import (
     list_libraries,
     read_secret,
     split_target,
+    sync_library,
     table,
     token_create,
     token_list,
@@ -103,6 +104,58 @@ async def test_a_failed_job_ends_the_wait_with_its_reason() -> None:
         with pytest.raises(ImportFailedError, match="boom") as raised:
             await wait_for_job(api, "j1", label="/a/b@v1", interval=0)
     assert "\x1b" not in str(raised.value)
+
+
+async def test_a_failed_job_names_its_error_code() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        job = {"state": "failed", "done": 0, "total": 0, "error": "gone", "error_code": "x\x1b"}
+        return httpx2.Response(200, json=job)
+
+    async with ApiClient("http://localhost", "t", transport=httpx2.MockTransport(handler)) as api:
+        with pytest.raises(ImportFailedError, match=r"failed \[x.*\]: gone") as raised:
+            await wait_for_job(api, "j1", label="/a/b@v1", interval=0)
+    assert "\x1b" not in str(raised.value)
+
+
+def _sync_answer(status: int, body: dict) -> httpx2.MockTransport:
+    return httpx2.MockTransport(lambda _: httpx2.Response(status, json=body))
+
+
+async def test_a_sync_whose_remote_cannot_be_read_fails_with_its_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    body = {"error": "auth_failed", "detail": "the repository requires authentication"}
+    async with ApiClient("http://localhost", "t", transport=_sync_answer(422, body)) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs")
+    assert exit_code(raised.value) == EXIT_IMPORT
+    assert "[auth_failed]: the repository requires authentication" in str(raised.value)
+    assert not capsys.readouterr().out
+
+
+async def test_a_sync_names_each_version_that_failed_and_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def version(ref: str, status: str, **error: str) -> dict:
+        sha = "a" * 40
+        return {"ref": ref, "ref_kind": "tag", "status": status, "commit_sha": sha} | error
+
+    body = {
+        "library_id": "/acme/docs",
+        "versions": [
+            version("main", "up_to_date"),
+            version("v1", "failed", error_code="tag_moved", error="the tag 'v1' now points at"),
+            version("old", "failed", error_code="ref_deleted", error="the branch 'old' is gone"),
+        ],
+    }
+    async with ApiClient("http://localhost", "t", transport=_sync_answer(200, body)) as api:
+        with pytest.raises(ImportFailedError) as raised:
+            await sync_library(api, "/acme/docs")
+    message = str(raised.value)
+    assert "sync of v1 failed [tag_moved]: the tag 'v1' now points at" in message
+    assert "sync of old failed [ref_deleted]" in message
+    assert exit_code(raised.value) == EXIT_IMPORT
+    assert "tag_moved" not in capsys.readouterr().out  # the table, then the reason on stderr
 
 
 async def test_progress_is_reported_once_per_change() -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 from behave import given, then, when
 from behave.runner import Context
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
@@ -125,11 +126,15 @@ def step_running(context: Context) -> None:
     start(context)
 
 
-def start(context: Context, max_image_bytes: int | None = None) -> None:
+def start(
+    context: Context, max_image_bytes: int | None = None, secret_key: str | None = None
+) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     settings = Settings(data_dir=data_dir)
+    if secret_key is not None:
+        settings.secret_key = SecretStr(secret_key)
     if max_image_bytes is not None:
         settings.max_image_bytes = max_image_bytes
     context.settings = settings

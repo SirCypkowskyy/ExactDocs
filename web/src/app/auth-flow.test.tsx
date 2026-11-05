@@ -95,7 +95,7 @@ describe("the session guard", () => {
     );
     await screen.findByRole("heading", { name: "Account" });
     const { default: userEvent } = await import("@testing-library/user-event");
-    // the header (hidden on phones by CSS) and the page both carry one
+    // jsdom ignores CSS, so both the header button (sm and up) and the page one (phones) are present
     await userEvent.click(
       screen.getAllByRole("button", { name: "Sign out" }).at(-1) as HTMLElement,
     );

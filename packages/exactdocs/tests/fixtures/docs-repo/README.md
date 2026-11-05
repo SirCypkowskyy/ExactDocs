@@ -30,7 +30,9 @@ def test_something(docs_repo):  # pytest, session scoped: tests/conftest.py
     docs_repo.path, docs_repo.file_url, docs_repo.http_url
 ```
 
-In behave, `context.fixture_repo` has the same three attributes (`features/environment.py`).
+In behave, `context.fixture_repo` has the same three attributes (`features/environment.py`). A test that
+changes or deletes the repository serves its own copy with `serve_copy(base)` (behave:
+`context.fixture_serve_copy`), whose `token` can be changed to make the server refuse the old one.
 `file_url` is `file:///.../fixture/docs-repo`; `http_url` is
 `http://127.0.0.1:<port>/fixture/docs-repo.git`, served by `git http-backend`, with filters and
 fetching commits by SHA enabled. To build it by hand, for example for a smoke test with the repository mounted into a container:
