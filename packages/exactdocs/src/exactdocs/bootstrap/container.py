@@ -12,8 +12,10 @@ from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogCollector,
     CatalogDefaultVersions,
+    CatalogImportedTags,
     CatalogLibraries,
     CatalogLibraryIds,
+    CatalogLibrarySettings,
     CatalogLibrarySources,
     CatalogManualTags,
     CatalogNewLibraries,
@@ -33,6 +35,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteImportedTags,
     SqliteLibraryRepository,
     SqliteManifestRepository,
 )
@@ -73,7 +76,9 @@ def _build_read_side(
 ) -> tuple[CatalogModule, RetrievalModule]:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use."""
     catalog = CatalogModule.build(
-        repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
+        repository=SqliteLibraryRepository(engine),
+        manifests=SqliteManifestRepository(engine),
+        imported_tags=SqliteImportedTags(engine),
     )
     search = SqliteSearchIndex(engine)
     retrieval = RetrievalModule.build(
@@ -221,6 +226,7 @@ class Container:
             max_image_bytes=settings.max_image_bytes,
             max_images_bytes=settings.max_images_bytes,
             tag_locks=tag_locks,
+            imported_tags=CatalogImportedTags(catalog.get_version_tags, catalog.set_imported_tags),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),
@@ -246,6 +252,7 @@ class Container:
             recovery_hooks=recovery_hooks,
             manual_tags=CatalogManualTags(catalog.set_manual_tags),
             tag_locks=tag_locks,
+            settings=CatalogLibrarySettings(catalog.set_library_settings),
         )
         return cls(
             settings=settings,

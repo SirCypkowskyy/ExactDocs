@@ -178,6 +178,7 @@ def create_app(container: Container) -> FastAPI:
             remove_library=container.ingestion.remove_library,
             sync_library=container.ingestion.sync_library,
             tag_article=container.ingestion.tag_article,
+            update_library_settings=container.ingestion.update_library_settings,
         )
     )
     v1.include_router(protected)

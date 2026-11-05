@@ -17,6 +17,7 @@ from exactdocs.catalog.models import (
     GarbageCollected,
     Library,
     LibraryId,
+    LibrarySettings,
     Manifest,
     ManifestEntry,
     ManifestId,
@@ -89,6 +90,11 @@ class InMemoryLibraryRepository:
             pinned_version=stored.pinned_version if stored else None,
             rules=stored.rules if stored else (),
         )
+
+    async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
+        """Replace the library's settings."""
+        if (stored := self.libraries.get(library_id)) is not None:
+            self.libraries[library_id] = replace(stored, settings=settings)
 
     async def set_text(
         self, library_id: LibraryId, *, title: str | None, description: str | None
@@ -392,3 +398,26 @@ class InMemoryManifestRepository:
 def _light(manifest: Manifest) -> Manifest:
     """Return the manifest as ``get`` does: without entries, renames and images."""
     return replace(manifest, entries=(), renames=(), images=())
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryImportedTags:
+    """Implements ``ports.driven.ImportedTagWriter`` on an ``InMemoryManifestRepository``."""
+
+    repository: InMemoryManifestRepository
+
+    async def set_imported_tags(
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Replace the imported tags of the named entries; report the ones that changed."""
+        found = self.repository.manifests.get(manifest_id)
+        if found is None:
+            return {}
+        entries = tuple(replace(e, tags=tags.get(e.path, e.tags)) for e in found.entries)
+        touched = {
+            new.path: new.all_tags
+            for old, new in zip(found.entries, entries, strict=True)
+            if old.tags != new.tags
+        }
+        self.repository.manifests[manifest_id] = replace(found, entries=entries)
+        return touched

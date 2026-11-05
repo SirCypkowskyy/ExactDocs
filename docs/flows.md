@@ -48,6 +48,15 @@ sequenceDiagram
 Skipped files (binary, too large, undecodable...) do not fail the import: they are recorded as
 job problems with a code, and the version is published without them.
 
+### Editing a library's settings
+
+`PUT /libraries/{owner}/{repo}/settings` stores new paths and tag rules, then queues one job for
+the whole library. Changed paths: a `reprocess` job runs the `refresh` pipeline for each version
+at the commit it serves, so each version's new manifest replaces the old one at once. Only tag
+rules changed: a `retag` job re-derives each stored article's imported tags (front matter plus
+rules) and writes them per version in one transaction, then copies them onto the chunks, without
+fetching. Until a version is done it serves its previous state; one that fails keeps it.
+
 ### Re-sync
 
 `POST /libraries/{owner}/{repo}/sync` compares each *branch* and *tag* version with the remote.

@@ -9,6 +9,7 @@ from exactdocs.catalog.models import (
     GarbageCollected,
     Library,
     LibraryId,
+    LibrarySettings,
     Manifest,
     ManifestEntry,
     ManifestId,
@@ -79,6 +80,10 @@ class LibraryRepository(Protocol):
         is never overwritten. Absent IDs are ignored. Rules are written only here (``add`` and
         ``save`` leave them alone), so a stale ``save`` cannot undo them.
         """
+        ...
+
+    async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
+        """Replace the library's settings; touches nothing else. Absent IDs are ignored."""
         ...
 
     async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
@@ -251,5 +256,19 @@ class ManifestRepository(Protocol):
         """Delete the library, its versions and all its manifests, in one transaction.
 
         Returns the deleted manifest IDs. Raises ``LibraryNotFoundError``.
+        """
+        ...
+
+
+class ImportedTagWriter(Protocol):
+    """Rewrites the imported tags of manifest entries (after a library's tag rules changed)."""
+
+    async def set_imported_tags(
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Replace the imported tags of the entries at these paths, in one transaction.
+
+        Manual tags are kept; paths the manifest lacks are ignored. Returns the ``all_tags`` of
+        each entry whose tags changed, so the copies kept elsewhere can follow.
         """
         ...

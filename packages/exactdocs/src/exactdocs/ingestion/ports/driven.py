@@ -26,7 +26,9 @@ from exactdocs.ingestion.models import (
     RemoteRefs,
     Removed,
     RepositoryUrl,
+    StoredTags,
     TaggedPath,
+    TagRule,
 )
 
 
@@ -306,6 +308,38 @@ class LibrarySources(Protocol):
 
     async def renames_of(self, library: str, ref: str) -> Sequence[GitRename]:
         """Return the rename map the version serves now (empty when it has none or is unknown)."""
+        ...
+
+
+class LibrarySettingsStore(Protocol):
+    """Where a library's paths and tag rules are kept (the catalog, in ingestion's words)."""
+
+    async def save(
+        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+    ) -> None:
+        """Replace the library's paths and tag rules (other settings stay); raises if unknown.
+
+        Imports read them when they run, so every import queued or running after this uses them.
+        """
+        ...
+
+
+class ImportedTagStore(Protocol):
+    """The imported tags of what a version serves (the catalog, in ingestion's words)."""
+
+    async def stored_tags(self, library: str, ref: str) -> StoredTags | None:
+        """Return the active manifest of the version with its articles' tag sources.
+
+        ``None`` when the library or the version is unknown, or the version serves nothing.
+        """
+        ...
+
+    async def set_imported_tags(self, manifest_id: str, tags: ArticleTags) -> ArticleTags:
+        """Replace the imported tags of these articles of the manifest, in one transaction.
+
+        Manual tags are kept. Returns every tag (imported and manual) of each article whose
+        tags changed: the chunk index must get the same.
+        """
         ...
 
 

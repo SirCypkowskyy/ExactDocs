@@ -367,3 +367,24 @@ class SyncFailedError(ValidationError):
         self.code = code
         self.cause_code = cause.code
         self.job_ids = tuple(job_ids)
+
+
+class ReprocessFailedError(DomainError):
+    """Some versions could not be re-processed after a settings edit; they serve what they had.
+
+    The others were re-processed. ``code`` is the failures' code when they share one (say
+    ``repo_unreachable`` or ``no_articles``), else ``reprocess_failed``.
+    """
+
+    code = "reprocess_failed"
+
+    def __init__(self, failures: Sequence[tuple[str, str, str]]) -> None:
+        listed = "; ".join(f"{ref}: {reason}" for ref, _, reason in failures)
+        super().__init__(
+            f"{len(failures)} version(s) could not be re-processed and keep what they served: "
+            f"{listed}"
+        )
+        codes = {code for _, code, _ in failures}
+        if len(codes) == 1:
+            self.code = codes.pop()
+        self.refs = tuple(ref for ref, _, _ in failures)

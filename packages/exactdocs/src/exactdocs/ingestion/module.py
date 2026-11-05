@@ -19,13 +19,17 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     REFRESH_JOB,
+    REPROCESS_JOB,
+    RETAG_JOB,
     Credential,
     FetchedFile,
     GitRename,
     ImportedRef,
     ImportSource,
     JobKind,
+    PathSelection,
     TaggedPath,
+    TagRule,
 )
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -34,9 +38,11 @@ from exactdocs.ingestion.ports.driven import (
     CredentialVault,
     GitGateway,
     GitRemote,
+    ImportedTagStore,
     JobHandler,
     JobRepository,
     LibraryIds,
+    LibrarySettingsStore,
     LibrarySources,
     ManualTagStore,
     NewLibraries,
@@ -63,6 +69,7 @@ from exactdocs.ingestion.ports.driving import (
     RunNextJob,
     SyncLibrary,
     TagArticle,
+    UpdateLibrarySettings,
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
@@ -81,10 +88,13 @@ from exactdocs.ingestion.use_cases import (
     RecoverJobsUseCase,
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
+    ReprocessLibraryUseCase,
+    RetagLibraryUseCase,
     RunNextJobUseCase,
     SyncLibraryUseCase,
     TagArticleUseCase,
     TagLocks,
+    UpdateLibrarySettingsUseCase,
 )
 from exactdocs_kernel import Clock, NotFoundError
 
@@ -103,6 +113,17 @@ class _NoLibrarySources:
     async def renames_of(self, library: str, ref: str) -> list[GitRename]:
         del library, ref
         return []
+
+
+class _NoSettings:
+    """The default ``settings`` of ``build``: no library is known, so none can be edited."""
+
+    async def save(
+        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+    ) -> None:
+        del selection, tag_rules
+        message = f"library {library!r} not found"
+        raise NotFoundError(message)
 
 
 class _NoManualTags:
@@ -168,6 +189,7 @@ class IngestionModule:
     run_next_job: RunNextJob
     sync_library: SyncLibrary
     tag_article: TagArticle
+    update_library_settings: UpdateLibrarySettings
 
     @classmethod
     def build(
@@ -187,6 +209,7 @@ class IngestionModule:
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
         manual_tags: ManualTagStore | None = None,
         tag_locks: TagLocks | None = None,
+        settings: LibrarySettingsStore | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -194,7 +217,8 @@ class IngestionModule:
         clean-up after an interrupted run (a kind without one needs none). With ``manual_tags``
         pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
         activation take turns. ``tree`` also reads a repository's ``context7.json`` when a
-        library is added; without it there is none.
+        library is added; without it there is none. ``settings`` stores edited paths and tag
+        rules; the jobs that re-process the versions come from ``import_job``.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
@@ -228,6 +252,9 @@ class IngestionModule:
             tag_article=TagArticleUseCase(
                 manual_tags or _NoManualTags(), index, tag_locks or TagLocks()
             ),
+            update_library_settings=UpdateLibrarySettingsUseCase(
+                sources or none, settings or _NoSettings(), jobs, enqueue_job
+            ),
         )
 
 
@@ -245,10 +272,13 @@ def import_job(
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
     tag_locks: TagLocks,
+    imported_tags: ImportedTagStore | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
     Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
+    The handlers re-process a library after a settings edit too: ``reprocess`` re-imports every
+    version; ``retag`` (only with ``imported_tags``) re-tags them from what is stored.
     """
     importer = ImportVersionUseCase(
         gateway,
@@ -266,7 +296,15 @@ def import_job(
     )
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)
-    return {IMPORT_JOB: importer, REFRESH_JOB: refresher}, {IMPORT_JOB: hook, REFRESH_JOB: hook}
+    handlers: dict[JobKind, JobHandler] = {
+        IMPORT_JOB: importer,
+        REFRESH_JOB: refresher,
+        REPROCESS_JOB: ReprocessLibraryUseCase(sources, refresher),
+    }
+    if imported_tags is not None:
+        handlers[RETAG_JOB] = RetagLibraryUseCase(sources, imported_tags, index, tag_locks)
+    # A re-tag writes each version in one transaction and is idempotent: nothing to clean up.
+    return handlers, {IMPORT_JOB: hook, REFRESH_JOB: hook, REPROCESS_JOB: hook}
 
 
 def collect_job(

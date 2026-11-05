@@ -20,6 +20,7 @@ from exactdocs.catalog.dtos import (
     GetActiveManifestQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
+    GetVersionTagsQuery,
     HostKind,
     ImageIn,
     ListLibrariesQuery,
@@ -28,9 +29,14 @@ from exactdocs.catalog.dtos import (
     RemoveVersionCommand,
     RenameIn,
     ResolveRenamedPathQuery,
+    SetImportedTagsCommand,
+    SetLibrarySettingsCommand,
     SetManualTagsCommand,
     StoreManifestCommand,
     TagRuleIn,
+)
+from exactdocs.catalog.dtos import (
+    ArticleTags as CatalogArticleTags,
 )
 from exactdocs.catalog.dtos import (
     RefKind as CatalogRefKind,
@@ -50,12 +56,15 @@ from exactdocs.catalog.ports.driving import (
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
+    GetVersionTags,
     ListDefaultManifests,
     ListLibraries,
     ListRenames,
     RemoveLibrary,
     RemoveVersion,
     ResolveRenamedPath,
+    SetImportedTags,
+    SetLibrarySettings,
     SetManualTags,
     StoreManifest,
 )
@@ -73,6 +82,8 @@ from exactdocs.ingestion.models import (
     RefKind,
     Removed,
     RepositoryUrl,
+    StoredArticleTags,
+    StoredTags,
     TaggedPath,
     TagRule,
 )
@@ -452,6 +463,62 @@ class CatalogManualTags:
                 m.manifest_id: {a.path: tuple(a.tags) for a in m.articles} for m in done.retagged
             },
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogLibrarySettings:
+    """Implements ``ingestion.ports.driven.LibrarySettingsStore`` using the catalog."""
+
+    set_library_settings: SetLibrarySettings
+
+    async def save(
+        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+    ) -> None:
+        """Store the paths and tag rules on the library."""
+        await self.set_library_settings(
+            SetLibrarySettingsCommand(
+                id=library,
+                include_paths=list(selection.include),
+                exclude_paths=list(selection.exclude),
+                tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in tag_rules],
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogImportedTags:
+    """Implements ``ingestion.ports.driven.ImportedTagStore`` using the catalog."""
+
+    get_version_tags: GetVersionTags
+    set_imported_tags_of: SetImportedTags
+
+    async def stored_tags(self, library: str, ref: str) -> StoredTags | None:
+        """Read the active manifest's tag sources; ``None`` for an unknown or empty version."""
+        try:
+            found = await self.get_version_tags(GetVersionTagsQuery(library=library, ref=ref))
+        except NotFoundError:
+            return None
+        if found.manifest_id is None:
+            return None
+        return StoredTags(
+            manifest_id=found.manifest_id,
+            articles=tuple(
+                StoredArticleTags(path=a.path, front_matter=a.front_matter, tags=tuple(a.tags))
+                for a in found.articles
+            ),
+        )
+
+    async def set_imported_tags(
+        self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
+    ) -> dict[str, tuple[str, ...]]:
+        """Write the imported tags; return every tag of the articles that changed."""
+        done = await self.set_imported_tags_of(
+            SetImportedTagsCommand(
+                manifest_id=manifest_id,
+                articles=[CatalogArticleTags(path=p, tags=list(t)) for p, t in tags.items()],
+            )
+        )
+        return {a.path: tuple(a.tags) for a in done.articles}
 
 
 @dataclass(frozen=True, slots=True)

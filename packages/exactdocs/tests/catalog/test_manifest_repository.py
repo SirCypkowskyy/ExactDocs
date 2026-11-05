@@ -12,10 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteImportedTags,
     SqliteLibraryRepository,
     SqliteManifestRepository,
     article_contents,
@@ -46,7 +48,7 @@ from exactdocs.catalog.models import (
     TagSelection,
     VersionRef,
 )
-from exactdocs.catalog.ports import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports import ImportedTagWriter, LibraryRepository, ManifestRepository
 
 PAYMENTS = Library(
     id=LibraryId("/acme/payments"),
@@ -109,6 +111,7 @@ class Stores:
     libraries: LibraryRepository
     manifests: ManifestRepository
     count_contents: Callable[[], Awaitable[int]]
+    imported_tags: ImportedTagWriter
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -120,7 +123,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
         async def count() -> int:
             return len(manifests.contents)
 
-        found = Stores(libraries, manifests, count)
+        found = Stores(libraries, manifests, count, InMemoryImportedTags(manifests))
     else:
         container = Container.build(Settings())
         async with container.running():
@@ -134,6 +137,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                 SqliteLibraryRepository(container.engine),
                 SqliteManifestRepository(container.engine),
                 count,
+                SqliteImportedTags(container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -1012,6 +1016,32 @@ async def test_live_manifests_are_the_pending_and_active_ones(stores: Stores) ->
         ("m2", ManifestState.ACTIVE, ()),
         ("m3", ManifestState.PENDING, ()),
     ]
+
+
+async def test_imported_tags_are_replaced_and_manual_ones_kept(stores: Stores) -> None:
+    await store(
+        stores,
+        manifest("m1", "main", "a1", entry("a.md", "a", tags=("old",)), entry("b.md", "b")),
+    )
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.set_manual_tags(ManifestId("m1"), {"a.md": (ManualTag("x", "a.md"),)})
+    many = {f"n{i}.md": ("n",) for i in range(1200)}  # more than one batch of paths
+
+    touched = await stores.imported_tags.set_imported_tags(
+        ManifestId("m1"), {"a.md": ("api", "new"), "b.md": (), **many}
+    )
+    other = await stores.imported_tags.set_imported_tags(ManifestId("nope"), {"a.md": ("z",)})
+    listed = await stores.manifests.list_entries(
+        ManifestId("m1"), prefix="", tags=TagSelection.of(["api"]), after=None, limit=10
+    )
+    counted = await stores.manifests.count_tags(ManifestId("m1"), limit=10)
+
+    assert touched == {"a.md": ("api", "new", "x")}  # b.md had none and still has none
+    assert other == {}
+    assert [(e.path, e.tags, e.all_tags) for e in listed] == [
+        ("a.md", ("api", "new"), ("api", "new", "x"))
+    ]
+    assert dict(counted) == {"api": 1, "new": 1, "x": 1}
 
 
 async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undone(

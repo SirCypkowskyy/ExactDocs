@@ -21,6 +21,7 @@ from exactdocs.catalog.models import (
     HostKind,
     Library,
     LibraryId,
+    LibrarySettings,
     ManualTags,
     RefKind,
     Version,
@@ -155,6 +156,9 @@ class LibraryRemovedWhilePinning:
         self, library_id: LibraryId, *, title: str | None, description: str | None
     ) -> None:
         await self.inner.set_text(library_id, title=title, description=description)
+
+    async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
+        await self.inner.set_settings(library_id, settings)
 
     async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
         await self.inner.delete(library_id)

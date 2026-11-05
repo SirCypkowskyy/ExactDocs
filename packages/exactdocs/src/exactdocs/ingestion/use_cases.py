@@ -46,6 +46,9 @@ from exactdocs.ingestion.dtos import (
     SyncLibraryCommand,
     TagArticleCommand,
     TaggedArticle,
+    TagRuleIn,
+    UpdatedLibrarySettings,
+    UpdateLibrarySettingsCommand,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
@@ -62,6 +65,7 @@ from exactdocs.ingestion.errors import (
     PreviewBusyError,
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
+    ReprocessFailedError,
     SyncFailedError,
     UnknownJobKindError,
     UnknownLibraryError,
@@ -80,8 +84,11 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
     IMPORT_KINDS,
+    LIBRARY_KINDS,
     MAX_IMAGES,
     REFRESH_JOB,
+    REPROCESS_JOB,
+    RETAG_JOB,
     UNEXPECTED_ERROR,
     ArticleChunk,
     Context7Config,
@@ -107,6 +114,7 @@ from exactdocs.ingestion.models import (
     Removed,
     RepositoryUrl,
     ResolvedRef,
+    SettingsChange,
     SyncErrorCode,
     SyncStatus,
     TagRule,
@@ -130,10 +138,12 @@ from exactdocs.ingestion.ports.driven import (
     CredentialVault,
     GitGateway,
     GitRemote,
+    ImportedTagStore,
     JobHandler,
     JobProgress,
     JobRepository,
     LibraryIds,
+    LibrarySettingsStore,
     LibrarySources,
     ManualTagStore,
     NewLibraries,
@@ -530,9 +540,9 @@ class AddLibraryUseCase:
         Sent without paths, the library takes those of the root ``context7.json`` at the pinned
         commit (LIB-06); paths a user sends win. Without paths, ``PreviewBusyError`` (429) when
         the file cannot be read because every preview slot stays busy, before anything is
-        stored: the paths are fixed at creation, so guessing "every file" would be for good. The
-        file's title, description and rules are applied by the import, which reads it again with
-        the README.
+        stored: changing the paths later re-processes every version, so guessing "every file"
+        is no harmless default. The file's title, description and rules are applied by the
+        import, which reads it again with the README.
         The credential, if any, is stored (encrypted) before the import is queued, because the
         import reads it. If that or queueing fails, the new library and its credential are
         removed again, so a retry is not met with a 409.
@@ -862,6 +872,189 @@ class TagLocks:
         if lock is None:
             lock = self._locks[key] = asyncio.Lock()
         return lock
+
+
+def _settings_change(
+    current: ImportSource, selection: PathSelection, tag_rules: Sequence[TagRule]
+) -> SettingsChange | None:
+    """Say what new settings ask of the versions: re-import, re-tag, or nothing."""
+    if selection != current.selection:
+        return SettingsChange.PATHS
+    if tuple(tag_rules) != tuple(current.tag_rules):
+        return SettingsChange.TAGS
+    return None
+
+
+_CHANGE_JOBS = {SettingsChange.PATHS: REPROCESS_JOB, SettingsChange.TAGS: RETAG_JOB}
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateLibrarySettingsUseCase:
+    """Implements ``ports.driving.UpdateLibrarySettings``."""
+
+    sources: LibrarySources
+    settings: LibrarySettingsStore
+    jobs: JobRepository
+    enqueue_job: EnqueueJob
+
+    async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
+        """Validate, store, then queue the one job that re-processes every version.
+
+        The job reads the settings and the versions when it runs, and a library's jobs run one
+        at a time in queue order: an import queued or running before the edit is re-processed
+        after it, one queued after it reads the new settings itself. A job of the needed kind
+        (or a ``reprocess``, which re-tags too) still queued for the library is reused. If the
+        job cannot be queued the old settings are put back, so a retry is not "unchanged".
+        """
+        library = command.library.lower()
+        selection = PathSelection.of(command.include_paths, command.exclude_paths)
+        tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
+        current = await self.sources.get(library)
+        change = _settings_change(current, selection, tag_rules)
+        refs: list[str] = []
+        job_id: str | None = None
+        if change is not None:
+            await self.settings.save(library, selection, tag_rules)
+            try:
+                refs = [v.ref for v in await self.sources.imported_versions(library)]
+                jobs = await self.jobs.list_for_library(library)
+                if refs or _busy_refs(jobs):
+                    job_id = await self._queue(library, change, jobs)
+            except BaseException:
+                try:
+                    await self.settings.save(library, current.selection, current.tag_rules)
+                except Exception:
+                    log.exception("could not restore the settings of %s", library)
+                raise
+        return UpdatedLibrarySettings(
+            library_id=library,
+            include_paths=list(selection.include),
+            exclude_paths=list(selection.exclude),
+            tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in tag_rules],
+            reprocess=change,
+            job_id=job_id,
+            versions=refs,
+        )
+
+    async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
+        reusable = {REPROCESS_JOB, _CHANGE_JOBS[change]}
+        for job in jobs:
+            if job.kind in reusable and job.state is JobState.QUEUED:
+                return job.id
+        queued = await self.enqueue_job(
+            EnqueueJobCommand(kind=_CHANGE_JOBS[change], library=library)
+        )
+        return queued.id
+
+
+@dataclass(slots=True)
+class _VersionsProgress:
+    """Implements ``ports.driven.JobProgress`` for one import of many: adds the versions up.
+
+    Files and chunk counters run on across versions; a problem names its version.
+    """
+
+    progress: JobProgress
+    ref: str = ""
+    files: int = 0
+    total: int = 0
+    chunked: tuple[int, int] = (0, 0)
+    counted: tuple[int, int] = (0, 0)
+
+    async def report(self, *, done: int, total: int) -> None:
+        self.total = total
+        await self.progress.report(done=self.files + done, total=self.files + total)
+
+    async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        await self.progress.problem(path, code, f"{self.ref}: {reason}")
+
+    async def chunking(self, *, chunked: int, reused: int) -> None:
+        self.chunked = (chunked, reused)
+        before_chunked, before_reused = self.counted
+        await self.progress.chunking(
+            chunked=before_chunked + chunked, reused=before_reused + reused
+        )
+
+    def next_version(self, ref: str) -> None:
+        """Count the finished version in; what follows is ``ref``'s."""
+        self.files += self.total
+        self.counted = (self.counted[0] + self.chunked[0], self.counted[1] + self.chunked[1])
+        self.ref, self.total, self.chunked = ref, 0, (0, 0)
+
+
+@dataclass(frozen=True, slots=True)
+class ReprocessLibraryUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``REPROCESS_JOB``.
+
+    Re-imports each version of the library at the commit it serves, with the library's settings
+    as they are now: the refresh importer fetches the commit, reuses the chunks of every blob
+    chunked before and activates the new manifest in place of the old one, so each version
+    switches at once. A version that fails keeps what it served and the others go on; the job
+    then fails with every failure (``ReprocessFailedError``).
+    """
+
+    sources: LibrarySources
+    importer: JobHandler
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Re-import every version; raising fails the job."""
+        failures: list[tuple[str, str, str]] = []
+        tracker = _VersionsProgress(progress)
+        for current in await self.sources.imported_versions(job.library):
+            tracker.next_version(current.ref)
+            one = replace(
+                job,
+                kind=REFRESH_JOB,
+                version=current.ref,
+                commit_sha=current.commit_sha,  # where it is, never where its branch is now
+                ref_kind=current.kind,
+            )
+            try:
+                await self.importer(one, tracker)
+            except Exception as error:
+                log.warning("re-processing %s %s failed", job.library, current.ref, exc_info=True)
+                failures.append((current.ref, failure_code(error), _describe(error)))
+        if failures:
+            raise ReprocessFailedError(failures)
+
+
+@dataclass(frozen=True, slots=True)
+class RetagLibraryUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``RETAG_JOB``: nothing is fetched or chunked.
+
+    Each version's stored articles get the imported tags the library's tag rules give them now
+    (with their stored front matter), in one catalog transaction per version, then their chunks
+    the same tags. Under the library's tag lock, like manual tagging, so the two never
+    interleave. Only articles whose tags change are written.
+    """
+
+    sources: LibrarySources
+    tags: ImportedTagStore
+    index: ChunkIndex
+    tag_locks: TagLocks
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Re-tag every version; raising fails the job."""
+        rules = (await self.sources.get(job.library)).tag_rules
+        versions = await self.sources.imported_versions(job.library)
+        await progress.report(done=0, total=len(versions))
+        reused = 0
+        for done, current in enumerate(versions, 1):
+            async with self.tag_locks.of(job.library):
+                stored = await self.tags.stored_tags(job.library, current.ref)
+                if stored is not None:
+                    reused += len(stored.articles)
+                    changed = {
+                        article.path: tags
+                        for article in stored.articles
+                        if (tags := article.retagged(rules)) != article.tags
+                    }
+                    if changed:
+                        everything = await self.tags.set_imported_tags(stored.manifest_id, changed)
+                        if everything:
+                            await self.index.retag(stored.manifest_id, everything)
+            await progress.chunking(chunked=0, reused=reused)
+            await progress.report(done=done, total=len(versions))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1523,10 +1716,9 @@ async def _refuse_while_importing(jobs: JobRepository, library: str, version: st
     """
     # ponytail: loads all of the library's jobs; a "has unfinished jobs" query if that grows.
     for job in await jobs.list_for_library(library):
-        if (
-            job.kind in IMPORT_KINDS
-            and job.state in {JobState.QUEUED, JobState.RUNNING}
-            and (version is None or job.version == version)
+        if job.state in ACTIVE_JOB_STATES and (
+            job.kind in LIBRARY_KINDS  # re-processes every version, this one too
+            or (job.kind in IMPORT_KINDS and (version is None or job.version == version))
         ):
             raise ImportInProgressError(library, version)
 

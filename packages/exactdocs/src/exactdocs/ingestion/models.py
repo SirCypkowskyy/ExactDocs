@@ -179,6 +179,29 @@ def parse_article(path: str, source: str) -> ParsedArticle:
     declared = front_matter.get("title")
     if declared is not None and not isinstance(declared, str):
         problems.append("front matter title must be text")
+    declared_tags, tag_problems = front_matter_tags(front_matter)
+    problems.extend(tag_problems)
+    description = front_matter.get("description")
+    return ParsedArticle(
+        path=path,
+        title=_title(declared, body, path),
+        body=body,
+        tags=declared_tags,
+        description=description if isinstance(description, str) else None,
+        front_matter=front_matter,
+        problems=tuple(problems),
+        images=image_paths(path, body),
+    )
+
+
+def front_matter_tags(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...], list[str]]:
+    """Return the normalized tags a front matter declares, and what was wrong with them.
+
+    ``tags`` is a list or a comma-separated string; invalid items are dropped, at most
+    ``MAX_TAGS`` kept. Pure, so the tags of a stored article can be derived again from its
+    stored front matter (re-tagging without a fetch).
+    """
+    problems: list[str] = []
     tags = front_matter.get("tags")
     if isinstance(tags, str):
         tags = tags.split(",")
@@ -193,18 +216,7 @@ def parse_article(path: str, source: str) -> ParsedArticle:
     normalized = [normalize_tag(tag) for tag in named[:_MAX_RAW_TAGS]]
     if (invalid := normalized.count(None) + skipped) or len(set(normalized)) > MAX_TAGS:
         problems.append(f"front matter tags: {invalid} invalid ignored, at most {MAX_TAGS} kept")
-    declared_tags = tuple(dict.fromkeys(t for t in normalized if t))[:MAX_TAGS]
-    description = front_matter.get("description")
-    return ParsedArticle(
-        path=path,
-        title=_title(declared, body, path),
-        body=body,
-        tags=declared_tags,
-        description=description if isinstance(description, str) else None,
-        front_matter=front_matter,
-        problems=tuple(problems),
-        images=image_paths(path, body),
-    )
+    return tuple(dict.fromkeys(t for t in normalized if t))[:MAX_TAGS], problems
 
 
 MAX_IMAGES_PER_ARTICLE = 100
@@ -373,6 +385,12 @@ REFRESH_JOB = JobKind("refresh")
 """Imports a version the catalog has; fails if it was removed meanwhile (no resurrection)."""
 IMPORT_KINDS = frozenset({IMPORT_JOB, REFRESH_JOB})
 """Kinds of job that import; removal waits for them and the sync state counts them."""
+REPROCESS_JOB = JobKind("reprocess")
+"""Re-imports every version of a library at its commit after its paths changed (one job)."""
+RETAG_JOB = JobKind("retag")
+"""Re-tags every version of a library from its stored articles after its tag rules changed."""
+LIBRARY_KINDS = frozenset({REPROCESS_JOB, RETAG_JOB})
+"""Kinds of job that touch every version of the library (their ``version`` is ``None``)."""
 COLLECT_JOB = JobKind("collect")
 """The kind of job that frees what removed or replaced versions left on disk."""
 DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
@@ -1574,6 +1592,37 @@ class TaggedPath:
     path: str
     tags: tuple[str, ...]
     retagged: Mapping[str, ArticleTags]  # manifest ID -> its touched articles
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoredArticleTags:
+    """What a stored article's imported tags are derived from, and what they are now."""
+
+    path: str
+    front_matter: Mapping[str, Any]
+    tags: tuple[str, ...]
+    """Imported: path rules and front matter (manual tags are kept apart)."""
+
+    def retagged(self, rules: Sequence[TagRule]) -> tuple[str, ...]:
+        """Return the imported tags the article gets under ``rules`` (as an import would)."""
+        return article_tags(self.path, front_matter_tags(self.front_matter)[0], rules)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoredTags:
+    """The active manifest of a version, with the tag sources of its articles."""
+
+    manifest_id: str
+    articles: tuple[StoredArticleTags, ...]
+
+
+class SettingsChange(StrEnum):
+    """What an edit of a library's settings asks of its versions."""
+
+    PATHS = "paths"
+    """The selection changed: every version is fetched again at its commit and re-imported."""
+    TAGS = "tags"
+    """Only tag rules changed: every version is re-tagged from what is stored, nothing fetched."""
 
 
 @dataclass(frozen=True, slots=True)

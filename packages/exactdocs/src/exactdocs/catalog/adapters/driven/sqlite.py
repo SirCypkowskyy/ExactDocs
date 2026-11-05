@@ -248,6 +248,15 @@ class SqliteLibraryRepository:
             )
             await _insert_versions(connection, library)
 
+    async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
+        """Update only the settings column."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                update(libraries)
+                .where(libraries.c.id == library_id.value)
+                .values(settings=_SETTINGS.dump_json(settings).decode())
+            )
+
     async def set_text(
         self, library_id: LibraryId, *, title: str | None, description: str | None
     ) -> None:
@@ -944,3 +953,41 @@ async def _insert_versions(connection: AsyncConnection, library: Library) -> Non
                 for v in library.versions
             ],
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteImportedTags:
+    """Implements ``ports.driven.ImportedTagWriter`` on the catalog's SQLite tables."""
+
+    engine: AsyncEngine
+
+    async def set_imported_tags(
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
+        """Read the named entries in batches, write those whose tags change; one transaction."""
+        entries = manifest_entries.c
+        paths = list(tags)
+        touched: dict[str, tuple[str, ...]] = {}
+        # BEGIN IMMEDIATE, as in ``SqliteManifestRepository._write``: it reads, then writes.
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            for start in range(0, len(paths), _PATHS_PER_QUERY):
+                rows = await connection.execute(
+                    select(manifest_entries).where(
+                        entries.manifest_id == manifest_id,
+                        entries.path.in_(paths[start : start + _PATHS_PER_QUERY]),
+                    )
+                )
+                for row in rows.all():
+                    before = _entry(row)
+                    after = replace(before, tags=tags[before.path])
+                    if after.tags != before.tags:
+                        touched[after.path] = after.all_tags
+                        await connection.execute(
+                            update(manifest_entries)
+                            .where(entries.manifest_id == manifest_id, entries.path == after.path)
+                            .values(**_tag_columns(after))
+                        )
+        return touched
+
+
+_PATHS_PER_QUERY = 500  # bound variables per statement stay far below SQLite's limit

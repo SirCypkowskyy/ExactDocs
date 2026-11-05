@@ -96,6 +96,23 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
+- **Editing paths and tag rules** (LIB-09, TAG-02): `PUT /libraries/{owner}/{repo}/settings`
+  with `{"include_paths", "exclude_paths", "tag_rules"}` replaces the whole set (what is left out
+  is cleared; `GET /libraries/{owner}/{repo}` has the current `settings`), validated like
+  `POST /libraries` (422 `invalid_path_pattern` / `invalid_tag`, nothing stored), 404 for an
+  unknown library. Every version is then re-processed by **one** job, at the commit it serves (a
+  branch is not synced): changed paths queue a `reprocess` job that fetches each version again
+  and re-imports it (unchanged blobs reuse their chunks); only tag rules changed queue a `retag`
+  job that derives each stored article's tags again from its stored front matter and the new
+  rules, fetching and chunking nothing (manual tags stay). Each version keeps serving its old
+  state until its new one is complete and then switches at once (a new manifest activated, or the
+  version's entries re-tagged in one transaction); a version that cannot be re-processed keeps
+  what it had, the others go on, and the job fails naming it (`error_code` the failures' shared
+  code, else `reprocess_failed`). The answer is **202** with the job in `Location` and the body's
+  `job_id`, `reprocess` (`paths` or `tags`) and `versions` (the refs re-processed), or **200**
+  with `job_id: null` when nothing changed or the library has no version yet (imports to come use
+  the new settings). A job of that kind still queued for the library is reused (a queued
+  `reprocess` also stands in for a tag change). Removal waits for these jobs like for an import.
 - **`context7.json`** (LIB-06): a repository's root `context7.json` is read when a library is
   added or previewed (only that one file of the pinned commit: its tree entry, then its blob) and
   again by every import. Reading it for an add or a preview uses a preview slot, never an
@@ -111,7 +128,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   one with a `/` (`./docs/internal`) only at that path, and globs are taken as patterns. Paths a
   user sends win: to import every article and ignore the file's paths, send
   `"include_paths": ["**"]`. The library keeps the paths it was created with for every later
-  version. The default version's `projectTitle` and `description` win over its README; a
+  version, until they are edited with `PUT /libraries/{owner}/{repo}/settings`. The default version's `projectTitle` and `description` win over its README; a
   user's edit wins over both. Its `rules` (at most 20 distinct ones of at most 500 characters)
   are stored on the library (`rules` in `GET /libraries/{owner}/{repo}`) and come first in every
   `query-docs` answer, under a heading that marks them as untrusted repository text. They take
@@ -198,7 +215,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 ## Jobs, access and health
 
-- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh` or `collect`; state `queued`,
+- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `retag` or
+  `collect`; state `queued`,
   `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; problems).
   A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its
   `finished_at`. The code of an upstream problem is one of `repo_unreachable`, `auth_failed`,
