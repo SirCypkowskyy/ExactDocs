@@ -15,6 +15,7 @@ PIN = json.loads(
         encoding="utf-8"
     )
 )
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 IMPLEMENTED = [name for name, pin in PIN["commands"].items() if pin["exactdocs"] == "implemented"]
 
 
@@ -22,7 +23,8 @@ def _help(command: str) -> str:
     out = io.StringIO()
     with redirect_stdout(out):
         cli.app([command, "--help"], exit_on_error=False, result_action="return_value")
-    return out.getvalue()
+    # FORCE_COLOR (set in CI) styles the argument names; compare the plain text.
+    return ANSI.sub("", out.getvalue())
 
 
 def test_the_pin_names_the_commands_we_have() -> None:
