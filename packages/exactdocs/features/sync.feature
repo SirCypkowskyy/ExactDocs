@@ -26,6 +26,7 @@ Feature: A branch version re-syncs on demand and re-processes only what changed
     And the user syncs the library
     When the agent reads that chunk ID
     Then it gets the error "stale_chunk"
+    And the error names the section's new chunk ID
 
   Scenario: A tag is never re-synced
     Given "/fixture/docs-repo/v1.3.0" is imported
