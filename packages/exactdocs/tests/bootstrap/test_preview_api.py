@@ -141,6 +141,13 @@ async def test_an_add_without_paths_answers_429_while_every_preview_slot_is_busy
             "/api/v1/libraries",
             json={"url": docs_repo.file_url, "ref": "next", "include_paths": ["docs/guide/"]},
         )
+        # Let its import end before the app stops: a git process cut off by the shutdown
+        # leaves its pipes to the garbage collector, which warns in a later test.
+        job = f"/api/v1/jobs/{added.json()['job_id']}"
+        for _ in range(1200):
+            if (await client.get(job)).json()["state"] in {"succeeded", "failed"}:
+                break
+            await asyncio.sleep(0.05)
 
     assert refused.status_code == 429, refused.text
     assert refused.json()["error"] == "preview_busy"
