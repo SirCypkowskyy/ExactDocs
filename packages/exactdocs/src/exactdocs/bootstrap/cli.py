@@ -362,6 +362,7 @@ def libraries(
 @app.command(usage="Usage: exactdocs library [OPTIONS] NAME [QUERY...]")
 def library(
     name: Annotated[str, Parameter(help="Library name to look for, e.g. react.")],
+    /,
     *query: Annotated[
         str, Parameter(name="QUERY", help="What to look up; ranks the matches (default: the name).")
     ],
@@ -382,8 +383,12 @@ def library(
 def docs(
     library_id: Annotated[
         str,
-        Parameter(help="Library ID from `exactdocs library`, e.g. /owner/repo or /owner/repo@v1."),
+        Parameter(
+            name="LIBRARY-ID",
+            help="Library ID from 'exactdocs library', e.g. /owner/repo or /owner/repo@v1.",
+        ),
     ],
+    /,
     *query: Annotated[str, Parameter(name="QUERY", help="The question; several words are joined.")],
     language: Annotated[
         str | None,
