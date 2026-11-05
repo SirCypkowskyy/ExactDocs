@@ -33,7 +33,7 @@ def _bearer(token: str | None, placeholder: str) -> str:
 def _json(client: Client, url: str, token: str | None, *, stdio: bool) -> dict[str, object]:
     if client == "claude-desktop":  # Desktop's file only knows local commands: mcp-remote bridges
         server = (
-            {"command": "uvx", "args": ["exactdocs", "serve", "--stdio"]}
+            dict(STDIO)
             if stdio
             else {
                 "command": "npx",

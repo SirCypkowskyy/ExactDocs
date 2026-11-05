@@ -4,7 +4,7 @@ import asyncio
 import io
 import json
 import os
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from behave import given, then, when
@@ -43,15 +43,17 @@ def step_config(context: Context, options: str) -> None:
 
 @when('the user runs "exactdocs config {options}" with the admin\'s password')
 def step_config_password(context: Context, options: str) -> None:
-    output = io.StringIO()
+    output, errors = io.StringIO(), io.StringIO()
     env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
     with (
         patch.dict(os.environ, env),
         patch("sys.stdin", io.StringIO(HORSE + "\n")),
         redirect_stdout(output),
+        redirect_stderr(errors),
     ):
         cli.app(["config", *options.split()], exit_on_error=False, result_action="return_value")
     context.output = output.getvalue()
+    context.errors = errors.getvalue()
 
 
 @then("a JSON snippet with the server URL and a new token is printed")
@@ -64,6 +66,20 @@ def step_new_snippet(context: Context) -> None:
 @then("the new token is not the one the user logged in with")
 def step_other_token(context: Context) -> None:
     assert context.stored_token not in context.output
+
+
+@then('the user is told the new token "{name}" and how to revoke it')
+def step_told(context: Context, name: str) -> None:
+    secret = context.server["headers"]["Authorization"].removeprefix("Bearer ")
+    context.client.post("/api/v1/session", json={"username": "ada", "password": HORSE})
+    tokens = context.client.get("/api/v1/tokens").json()["tokens"]
+    (created,) = [t for t in tokens if t["name"] == name]
+    expected = (
+        f"exactdocs: created token {name!r} ({created['id']}); "
+        f'revoke it with "exactdocs token revoke {created["id"]}"'
+    )
+    assert expected in context.errors, context.errors
+    assert secret not in context.errors
 
 
 @then("a JSON snippet with the server URL and the token is printed")

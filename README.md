@@ -126,7 +126,9 @@ Claude Desktop reaches HTTP servers through `mcp-remote` (pinned to `0.16.0`); r
 on their PATH: put the absolute paths from `which uvx` / `which npx` in `command`. With
 `--show-token` the snippet holds your real token, so never commit the file it goes into (the
 command warns on stderr). Prefer `--new-token`: it creates a token just for this client (asks for
-your password, like `token create`), so revoking it breaks nothing else.
+your password, like `token create`), so revoking it breaks nothing else. It is named
+`mcp-<client>` (`--name` changes that) and expires after 90 days (`--expires-in`); the command
+prints its id on stderr, for `exactdocs token revoke <id>`.
 
 ### From `docker run` to a searchable library
 

@@ -45,7 +45,7 @@ from exactdocs_kernel import (
 )
 
 ARTICLE_TEMPLATE = "exactdocs://{owner}/{repo}/{path*}{?ref}"
-MAX_LISTED_RESOURCES = MAX_LIMIT  # resources/list never holds more; the template reaches the rest
+MAX_LISTED_RESOURCES = MAX_LIMIT  # articles in resources/list; the template reaches the rest
 RESOURCE_PAGE_SIZE = 50  # items per resources/list page; clients must not rely on it
 RESOURCE_LIST_TTL = 30.0  # seconds one built list is reused, so paging builds it once
 LIST_LIBRARIES_LIMIT = 20  # each library brings its versions: keep the default page small

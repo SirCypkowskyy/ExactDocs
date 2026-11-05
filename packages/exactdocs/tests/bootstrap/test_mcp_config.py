@@ -160,3 +160,32 @@ def test_show_token_warns_on_stderr_and_never_prints_the_placeholder(
 
 def test_the_remote_bridge_is_pinned() -> None:
     assert "mcp-remote@0.16.0" in render("claude-desktop", mcp_url=URL, token=None, stdio=False)
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--stdio", "--show-token"], "--stdio needs no token"),
+        (["--stdio", "--new-token"], "--stdio needs no token"),
+        (["--show-token", "--new-token"], "--show-token and --new-token exclude each other"),
+        (["--name", "foo"], "--name needs --new-token"),
+        (["--expires-in", "7"], "--expires-in needs --new-token"),
+        (["--username", "ada"], "--username needs --new-token"),
+        (["--password-stdin"], "--password-stdin needs --new-token"),
+        (["--new-token", "--token", "exd_x"], "--token is not used with --new-token"),
+    ],
+)
+def test_conflicting_flags_are_refused(
+    flags: list[str],
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    with pytest.raises(SystemExit) as exit_info:
+        run(["config", "--client", "claude", "--url", "https://docs.example.com", *flags])
+    assert exit_info.value.code == lib.EXIT_USAGE
+    captured = capsys.readouterr()
+    assert captured.err == f"exactdocs: {message}\n"
+    assert not captured.out

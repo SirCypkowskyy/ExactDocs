@@ -525,6 +525,28 @@ def token_revoke(
     _call(work())
 
 
+def _config_conflict(
+    *,
+    stdio: bool,
+    show_token: bool,
+    new_token: bool,
+    token: str | None,
+    needs_new_token: dict[str, bool],
+) -> str | None:
+    """Return the first flag combination `config` refuses, as a message, or ``None``."""
+    if stdio and (show_token or new_token):
+        return "--stdio needs no token"
+    if show_token and new_token:
+        return "--show-token and --new-token exclude each other"
+    if new_token and token is not None:
+        return "--token is not used with --new-token"
+    if not new_token:
+        for flag, given in needs_new_token.items():
+            if given:
+                return f"{flag} needs --new-token"
+    return None
+
+
 @app.command
 def config(
     *,
@@ -552,17 +574,35 @@ def config(
         str | None, Parameter(help="With --new-token: its name (default: mcp-<client>).")
     ] = None,
     expires_in: Annotated[
-        int, Parameter(help="With --new-token: days until it expires.", validator=Number(gte=1))
-    ] = DEFAULT_TOKEN_DAYS,
-    username: UsernameOption = None,
-    password_stdin: PasswordStdin = False,
+        int | None,
+        Parameter(
+            help=f"With --new-token: days until it expires (default {DEFAULT_TOKEN_DAYS}; "
+            "for a token that never expires use `token create --no-expiry`).",
+            validator=Number(gte=1),
+        ),
+    ] = None,
+    username: Annotated[
+        str | None, Parameter(help="With --new-token: who signs in (asked for when omitted).")
+    ] = None,
+    password_stdin: Annotated[
+        bool, Parameter(help="With --new-token: read the password from one line of stdin.")
+    ] = False,
 ) -> None:
     """Print a ready-to-paste MCP config for a client, never containing the token unless asked."""
-    if (stdio and (show_token or new_token)) or (show_token and new_token):
-        message = (
-            "exactdocs: --stdio needs no token; --show-token and --new-token exclude each other"
-        )
-        sys.stderr.write(message + "\n")
+    conflict = _config_conflict(
+        stdio=stdio,
+        show_token=show_token,
+        new_token=new_token,
+        token=token,
+        needs_new_token={
+            "--name": name is not None,
+            "--expires-in": expires_in is not None,
+            "--username": username is not None,
+            "--password-stdin": password_stdin,
+        },
+    )
+    if conflict:
+        sys.stderr.write(f"exactdocs: {conflict}\n")
         raise SystemExit(lib.EXIT_USAGE)
 
     async def work() -> tuple[str, str | None]:
@@ -570,13 +610,15 @@ def config(
             return "", None  # no URL involved
         if new_token:
             async with _session(url, username, password_stdin=password_stdin) as api:
-                grant = await api.request(
-                    "POST",
-                    "/tokens",
-                    json={
-                        "name": name or f"mcp-{client}",
-                        "expires_at": (datetime.now(UTC) + timedelta(days=expires_in)).isoformat(),
-                    },
+                grant = await lib.create_token(
+                    api, name or f"mcp-{client}", expires_in or DEFAULT_TOKEN_DAYS
+                )
+                sys.stderr.write(
+                    lib.printable(
+                        f"exactdocs: created token {grant['name']!r} ({grant['id']}); "
+                        f'revoke it with "exactdocs token revoke {grant["id"]}"'
+                    )
+                    + "\n"
                 )
                 return api.url, grant["token"]
         if show_token:

@@ -28,3 +28,4 @@ Feature: Ready-to-paste MCP client configuration
     Then a JSON snippet with the server URL and a new token is printed
     And an MCP client configured with it can list libraries
     And the new token is not the one the user logged in with
+    And the user is told the new token "mcp-claude" and how to revoke it
