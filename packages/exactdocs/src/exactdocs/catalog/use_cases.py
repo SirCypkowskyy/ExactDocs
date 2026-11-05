@@ -517,7 +517,7 @@ class SetImportedTagsUseCase:
     writer: ImportedTagWriter
 
     async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:
-        """Write the new imported tags; report what changed with every tag it carries."""
+        """Write the new imported tags; report every given article with every tag it carries."""
         manifest_id = ManifestId(command.manifest_id)
         if await self.manifests.get(manifest_id) is None:
             raise ManifestNotFoundError(command.manifest_id)

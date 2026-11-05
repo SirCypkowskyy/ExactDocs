@@ -105,13 +105,16 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   and re-imports it (unchanged blobs reuse their chunks); only tag rules changed queue a `retag`
   job that derives each stored article's tags again from its stored front matter and the new
   rules, fetching and chunking nothing (manual tags stay). Each version keeps serving its old
-  state until its new one is complete and then switches at once (a new manifest activated, or the
-  version's entries re-tagged in one transaction); a version that cannot be re-processed keeps
-  what it had, the others go on, and the job fails naming it (`error_code` the failures' shared
-  code, else `reprocess_failed`). The answer is **202** with the job in `Location` and the body's
-  `job_id`, `reprocess` (`paths` or `tags`) and `versions` (the refs re-processed), or **200**
-  with `job_id: null` when nothing changed or the library has no version yet (imports to come use
-  the new settings). A job of that kind still queued for the library is reused (a queued
+  state until its new one is complete and then switches at once: a new manifest activated, or,
+  for a `retag`, the version's catalog entries re-tagged in one transaction, with search's tag
+  copies following a moment later under the same lock (as for manual tags; a rerun of the job
+  always brings them in line). A version that cannot be re-processed keeps what it had, the
+  others go on, and the job fails naming it (`error_code` the failures' shared code, else
+  `reprocess_failed`); sending the same settings again then queues that job again. The answer is
+  **202** with the job in `Location` and the body's `job_id`, `reprocess` (`paths` or `tags`) and
+  `versions` (the library's refs, which the job re-processes), or **200** with `job_id: null`
+  when nothing changed and the last re-processing did not fail, or the library has no version
+  yet (imports to come use the new settings). Edits of one library take turns. A job of that kind still queued for the library is reused (a queued
   `reprocess` also stands in for a tag change). Removal waits for these jobs like for an import.
 - **`context7.json`** (LIB-06): a repository's root `context7.json` is read when a library is
   added or previewed (only that one file of the pinned commit: its tree entry, then its blob) and

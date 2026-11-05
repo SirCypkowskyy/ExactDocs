@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
@@ -59,7 +60,9 @@ def build(*versions: Version) -> CatalogModule:
         ]
     )
     return CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
 
@@ -192,7 +195,9 @@ async def test_a_library_removed_while_pinning_is_reported_as_missing() -> None:
     )
     repository = LibraryRemovedWhilePinning(inner)
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(inner)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(inner)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
     with pytest.raises(LibraryNotFoundError):

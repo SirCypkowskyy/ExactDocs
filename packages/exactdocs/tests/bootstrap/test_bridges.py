@@ -67,14 +67,20 @@ PAYMENTS = Library(
 )
 _LIBRARIES = InMemoryLibraryRepository.of([PAYMENTS])
 CATALOG = CatalogModule.build(
-    repository=_LIBRARIES, manifests=InMemoryManifestRepository(_LIBRARIES)
+    repository=_LIBRARIES,
+    manifests=(written := InMemoryManifestRepository(_LIBRARIES)),
+    imported_tags=InMemoryImportedTags(written),
 )
 ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
 
 
 _TAKEN = InMemoryLibraryRepository.of([PAYMENTS])
 LIBRARY_IDS = CatalogLibraryIds(
-    CatalogModule.build(repository=_TAKEN, manifests=InMemoryManifestRepository(_TAKEN)).get_library
+    CatalogModule.build(
+        repository=_TAKEN,
+        manifests=(written := InMemoryManifestRepository(_TAKEN)),
+        imported_tags=InMemoryImportedTags(written),
+    ).get_library
 )
 
 
@@ -176,7 +182,9 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
     ]
     repository = InMemoryLibraryRepository.of(many)
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
     found = await CatalogLibraries(catalog.list_libraries).all()
@@ -197,7 +205,9 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
     )
     repository = InMemoryLibraryRepository.of([PAYMENTS, other])
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
     stored = await catalog.store_manifest(
         StoreManifestCommand(

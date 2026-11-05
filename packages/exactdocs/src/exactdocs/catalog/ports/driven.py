@@ -261,14 +261,20 @@ class ManifestRepository(Protocol):
 
 
 class ImportedTagWriter(Protocol):
-    """Rewrites the imported tags of manifest entries (after a library's tag rules changed)."""
+    """Rewrites the imported tags of manifest entries (after a library's tag rules changed).
+
+    Split from ``ManifestRepository`` only to keep that port within ruff's public-method limit
+    (PLR0904): same tables, same transaction rules. Do not fold it back in.
+    """
 
     async def set_imported_tags(
         self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
         """Replace the imported tags of the entries at these paths, in one transaction.
 
-        Manual tags are kept; paths the manifest lacks are ignored. Returns the ``all_tags`` of
-        each entry whose tags changed, so the copies kept elsewhere can follow.
+        Only entries whose tags differ are written; manual tags are kept; paths the manifest
+        lacks are ignored. Returns the ``all_tags`` of every given entry the manifest has,
+        changed or not, so copies kept elsewhere can be brought in line (also after a crash
+        between this write and theirs).
         """
         ...

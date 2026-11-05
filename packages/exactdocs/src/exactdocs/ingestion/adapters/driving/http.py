@@ -411,7 +411,9 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
         "/libraries/{owner}/{repo}/settings",
         name="update_library_settings",
         responses={
-            status.HTTP_200_OK: {"description": "Nothing changed: nothing is re-processed."},
+            status.HTTP_200_OK: {
+                "description": "Nothing changed and nothing failed: nothing is re-processed."
+            },
             status.HTTP_202_ACCEPTED: {
                 "description": "Stored; a job re-processes every version.",
                 "headers": {
@@ -433,9 +435,11 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
         again at the commit it serves (a branch is not synced) and re-imports it; only tag rules
         changed queue a `retag` job that re-tags the stored articles, fetching nothing. Each
         version keeps serving its old state until its new one is complete, then switches at
-        once; one that fails keeps the old state and the job fails naming it. Answers 202 with
-        the job in `Location`, or 200 with no job when the settings are unchanged (or there is
-        no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing
+        once (after a `retag`, search's tag filters follow the listings a moment later); one
+        that fails keeps the old state and the job fails naming it. Sending the same settings
+        again re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no
+        job when the settings are unchanged and the last re-processing did not fail (or there
+        is no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing
         is stored), 404 for an unknown library.
         """
         updated = await update_library_settings(

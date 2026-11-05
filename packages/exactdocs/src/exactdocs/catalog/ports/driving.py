@@ -364,8 +364,9 @@ class GetVersionTags(Protocol):
 class SetImportedTags(Protocol):
     """Replace the imported tags of articles of a manifest in one transaction (manual ones stay).
 
-    Returns the articles whose tags changed, with every tag they carry now, for the copies
-    other domains keep. Raises ``ManifestNotFoundError``.
+    Returns every given article the manifest has, changed or not, with every tag it carries
+    now, so the copies other domains keep can always be brought in line. Raises
+    ``ManifestNotFoundError``.
     """
 
     async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:

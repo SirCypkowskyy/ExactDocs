@@ -3,12 +3,9 @@
 It does not pick adapters itself; the composition root (``exactdocs.bootstrap``) passes them in.
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.catalog.errors import ManifestNotFoundError
-from exactdocs.catalog.models import ManifestId
 from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
@@ -78,16 +75,6 @@ from exactdocs.catalog.use_cases import (
 from exactdocs_kernel import Clock, SystemClock
 
 
-class _NoImportedTags:
-    """The default ``imported_tags`` of ``build``: no manifest can be re-tagged without one."""
-
-    async def set_imported_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
-    ) -> Mapping[str, tuple[str, ...]]:
-        del tags
-        raise ManifestNotFoundError(manifest_id)
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogModule:
     """The catalog's driving ports, ready to be exposed by driving adapters."""
@@ -127,13 +114,12 @@ class CatalogModule:
         *,
         repository: LibraryRepository,
         manifests: ManifestRepository,
+        imported_tags: ImportedTagWriter,
         clock: Clock | None = None,
-        imported_tags: ImportedTagWriter | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
-        ``imported_tags`` rewrites the imported tags of the manifests (``manifests``' store);
-        without it ``SetImportedTags`` finds no manifest.
+        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository, manifests)
@@ -165,5 +151,5 @@ class CatalogModule:
             apply_manual_tags=ApplyManualTagsUseCase(manifests, tagger),
             set_library_settings=SetLibrarySettingsUseCase(repository),
             get_version_tags=GetVersionTagsUseCase(repository, manifests),
-            set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags or _NoImportedTags()),
+            set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags),
         )

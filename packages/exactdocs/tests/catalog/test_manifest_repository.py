@@ -1036,12 +1036,28 @@ async def test_imported_tags_are_replaced_and_manual_ones_kept(stores: Stores) -
     )
     counted = await stores.manifests.count_tags(ManifestId("m1"), limit=10)
 
-    assert touched == {"a.md": ("api", "new", "x")}  # b.md had none and still has none
+    assert touched == {"a.md": ("api", "new", "x"), "b.md": ()}  # every given entry it has
     assert other == {}
     assert [(e.path, e.tags, e.all_tags) for e in listed] == [
         ("a.md", ("api", "new"), ("api", "new", "x"))
     ]
     assert dict(counted) == {"api": 1, "new": 1, "x": 1}
+
+
+async def test_imported_tags_of_more_entries_than_one_query_takes_are_all_written(
+    stores: Stores,
+) -> None:
+    paths = [f"d/{i:04}.md" for i in range(1201)]  # three batches of paths in SQLite
+    entries = (entry(p, f"{i:04x}") for i, p in enumerate(paths))
+    await store(stores, manifest("m1", "main", "a1", *entries))
+    wanted = {p: ("t", str(i % 2)) for i, p in enumerate(paths)}
+
+    touched = await stores.imported_tags.set_imported_tags(ManifestId("m1"), wanted)
+    again = await stores.imported_tags.set_imported_tags(ManifestId("m1"), wanted)
+    counted = await stores.manifests.count_tags(ManifestId("m1"), limit=10)
+
+    assert touched == again == wanted  # unchanged entries are reported too
+    assert dict(counted) == {"t": 1201, "0": 601, "1": 600}
 
 
 async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undone(

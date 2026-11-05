@@ -221,10 +221,13 @@ class IngestionModule:
         pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
         activation take turns. ``tree`` also reads a repository's ``context7.json`` when a
         library is added; without it there is none. ``settings`` stores edited paths and tag
-        rules; the jobs that re-process the versions come from ``import_job``.
+        rules; it needs the ``reprocess`` and ``retag`` handlers of ``import_job``.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
+            raise TypeError(message)
+        if settings is not None and not {REPROCESS_JOB, RETAG_JOB} <= handlers.keys():
+            message = "settings needs the reprocess and retag handlers of import_job"
             raise TypeError(message)
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         none = _NoLibrarySources()
@@ -278,13 +281,13 @@ def import_job(
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
     tag_locks: TagLocks,
-    imported_tags: ImportedTagStore | None = None,
+    imported_tags: ImportedTagStore,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
     Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
     The handlers re-process a library after a settings edit too: ``reprocess`` re-imports every
-    version; ``retag`` (only with ``imported_tags``) re-tags them from what is stored.
+    version; ``retag`` re-tags them from what ``imported_tags`` has stored.
     """
     importer = ImportVersionUseCase(
         gateway,
@@ -306,9 +309,8 @@ def import_job(
         IMPORT_JOB: importer,
         REFRESH_JOB: refresher,
         REPROCESS_JOB: ReprocessLibraryUseCase(sources, refresher),
+        RETAG_JOB: RetagLibraryUseCase(sources, imported_tags, index, tag_locks),
     }
-    if imported_tags is not None:
-        handlers[RETAG_JOB] = RetagLibraryUseCase(sources, imported_tags, index, tag_locks)
     # A re-tag writes each version in one transaction and is idempotent: nothing to clean up.
     return handlers, {IMPORT_JOB: hook, REFRESH_JOB: hook, REPROCESS_JOB: hook}
 

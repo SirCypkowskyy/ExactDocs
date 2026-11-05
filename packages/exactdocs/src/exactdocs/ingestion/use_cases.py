@@ -923,10 +923,11 @@ class ReimportVersionUseCase:
 
 @dataclass(frozen=True, slots=True)
 class TagLocks:
-    """One ``asyncio.Lock`` per library, for re-tagging (see ``TagArticleUseCase``).
+    """One ``asyncio.Lock`` per library: re-tagging (see ``TagArticleUseCase``), settings edits.
 
-    Create one and give the same object to the importer and to tagging. Libraries do not wait on
-    each other; a lock nobody holds or waits for is dropped.
+    For re-tagging, create one and give the same object to the importer and to tagging; another
+    purpose takes another object. Libraries do not wait on each other; a lock nobody holds or
+    waits for is dropped.
     """
 
     _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = field(
@@ -964,6 +965,8 @@ class UpdateLibrarySettingsUseCase:
     settings: LibrarySettingsStore
     jobs: JobRepository
     enqueue_job: EnqueueJob
+    locks: TagLocks = field(default_factory=TagLocks)
+    """Its own per-library locks (not the tag locks): edits of one library take turns."""
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
         """Validate, store, then queue the one job that re-processes every version.
@@ -973,27 +976,16 @@ class UpdateLibrarySettingsUseCase:
         after it, one queued after it reads the new settings itself. A job of the needed kind
         (or a ``reprocess``, which re-tags too) still queued for the library is reused. If the
         job cannot be queued the old settings are put back, so a retry is not "unchanged".
+        Settings equal to the stored ones queue the library's last re-processing job again when
+        it failed (same kind), so a retry with the same body re-runs it; else nothing.
+        Edits of one library take turns (``locks``): read, compare, store, queue and roll back
+        are one step against another edit (one process serves the API).
         """
         library = command.library.lower()
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
-        current = await self.sources.get(library)
-        change = _settings_change(current, selection, tag_rules)
-        refs: list[str] = []
-        job_id: str | None = None
-        if change is not None:
-            await self.settings.save(library, selection, tag_rules)
-            try:
-                refs = [v.ref for v in await self.sources.imported_versions(library)]
-                jobs = await self.jobs.list_for_library(library)
-                if refs or _busy_refs(jobs):
-                    job_id = await self._queue(library, change, jobs)
-            except BaseException:
-                try:
-                    await self.settings.save(library, current.selection, current.tag_rules)
-                except Exception:
-                    log.exception("could not restore the settings of %s", library)
-                raise
+        async with self.locks.of(library):
+            change, refs, job_id = await self._update(library, selection, tag_rules)
         return UpdatedLibrarySettings(
             library_id=library,
             include_paths=list(selection.include),
@@ -1003,6 +995,37 @@ class UpdateLibrarySettingsUseCase:
             job_id=job_id,
             versions=refs,
         )
+
+    async def _update(
+        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+    ) -> tuple[SettingsChange | None, list[str], str | None]:
+        current = await self.sources.get(library)
+        change = _settings_change(current, selection, tag_rules)
+        if change is None:
+            return await self._retry(library)
+        await self.settings.save(library, selection, tag_rules)
+        # BaseException on purpose: a cancelled request must put the old settings back too.
+        try:
+            refs = [v.ref for v in await self.sources.imported_versions(library)]
+            jobs = await self.jobs.list_for_library(library)
+            job_id = await self._queue(library, change, jobs) if refs or _busy_refs(jobs) else None
+        except BaseException:
+            try:
+                await self.settings.save(library, current.selection, current.tag_rules)
+            except Exception:
+                log.exception("could not restore the settings of %s", library)
+            raise
+        return change, refs, job_id
+
+    async def _retry(self, library: str) -> tuple[SettingsChange | None, list[str], str | None]:
+        """Queue the library's last re-processing job again if it failed; else do nothing."""
+        jobs = await self.jobs.list_for_library(library)  # newest first
+        last = next((job for job in jobs if job.kind in LIBRARY_KINDS), None)
+        if last is None or last.state is not JobState.FAILED:
+            return None, [], None
+        change = SettingsChange.PATHS if last.kind == REPROCESS_JOB else SettingsChange.TAGS
+        refs = [v.ref for v in await self.sources.imported_versions(library)]
+        return change, refs, await self._queue(library, change, jobs)
 
     async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
         reusable = {REPROCESS_JOB, _CHANGE_JOBS[change]}
@@ -1092,8 +1115,11 @@ class RetagLibraryUseCase:
 
     Each version's stored articles get the imported tags the library's tag rules give them now
     (with their stored front matter), in one catalog transaction per version, then their chunks
-    the same tags. Under the library's tag lock, like manual tagging, so the two never
-    interleave. Only articles whose tags change are written.
+    the same tags: the catalog switches at once, search follows right after. Under the library's
+    tag lock, like manual tagging, so the two never interleave. Every article's tags are sent
+    to both every time (each side writes only what differs), so a rerun after a crash or a
+    failure between the two writes brings the chunks in line. A version that fails keeps what
+    it had and the others go on; the job then fails with every failure.
     """
 
     sources: LibrarySources
@@ -1107,22 +1133,29 @@ class RetagLibraryUseCase:
         versions = await self.sources.imported_versions(job.library)
         await progress.report(done=0, total=len(versions))
         reused = 0
+        failures: list[tuple[str, str, str]] = []
         for done, current in enumerate(versions, 1):
-            async with self.tag_locks.of(job.library):
-                stored = await self.tags.stored_tags(job.library, current.ref)
-                if stored is not None:
-                    reused += len(stored.articles)
-                    changed = {
-                        article.path: tags
-                        for article in stored.articles
-                        if (tags := article.retagged(rules)) != article.tags
-                    }
-                    if changed:
-                        everything = await self.tags.set_imported_tags(stored.manifest_id, changed)
-                        if everything:
-                            await self.index.retag(stored.manifest_id, everything)
+            try:
+                reused += await self._retag(job.library, current.ref, rules)
+            except Exception as error:
+                log.warning("re-tagging %s %s failed", job.library, current.ref, exc_info=True)
+                failures.append((current.ref, failure_code(error), _describe(error)))
             await progress.chunking(chunked=0, reused=reused)
             await progress.report(done=done, total=len(versions))
+        if failures:
+            raise ReprocessFailedError(failures)
+
+    async def _retag(self, library: str, ref: str, rules: Sequence[TagRule]) -> int:
+        """Re-tag one version; return how many stored articles it has."""
+        async with self.tag_locks.of(library):
+            stored = await self.tags.stored_tags(library, ref)
+            if stored is None or not stored.articles:
+                return 0
+            wanted = {article.path: article.retagged(rules) for article in stored.articles}
+            everything = await self.tags.set_imported_tags(stored.manifest_id, wanted)
+            if everything:
+                await self.index.retag(stored.manifest_id, everything)
+            return len(stored.articles)
 
 
 @dataclass(frozen=True, slots=True)

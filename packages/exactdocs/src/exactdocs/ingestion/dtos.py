@@ -647,15 +647,19 @@ class UpdatedLibrarySettings(_Dto):
         description=(
             "`paths`: the selection changed, every version is fetched again at its commit; "
             "`tags`: only tag rules changed, every version is re-tagged from what is stored; "
-            "null: nothing changed, nothing is re-processed."
+            "null: nothing changed and nothing is re-run, nothing is re-processed."
         )
     )
     job_id: str | None = Field(
         description=(
             "The job re-processing every version (`/jobs/{id}`); one already queued for the "
-            "library is reused. Null when nothing changed or the library has no versions yet."
+            "library is reused. Unchanged settings re-run the library's last re-processing job "
+            "when it failed. Null when nothing is to do or the library has no versions yet."
         )
     )
     versions: list[str] = Field(
-        description="The refs the job re-processes, at the commits they serve now."
+        description=(
+            "The library's refs now, at the commits they serve: what the job re-processes (it "
+            "reads the versions again when it runs). Listed also when a queued job is reused."
+        )
     )

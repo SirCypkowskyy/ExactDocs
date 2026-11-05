@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
@@ -136,7 +137,12 @@ def world() -> World:
     manifests = InMemoryManifestRepository(libraries)
     clock = FakeClock()
     return World(
-        CatalogModule.build(repository=libraries, manifests=manifests, clock=clock),
+        CatalogModule.build(
+            repository=libraries,
+            manifests=manifests,
+            clock=clock,
+            imported_tags=InMemoryImportedTags(manifests),
+        ),
         manifests,
         clock,
     )

@@ -337,8 +337,9 @@ class ImportedTagStore(Protocol):
     async def set_imported_tags(self, manifest_id: str, tags: ArticleTags) -> ArticleTags:
         """Replace the imported tags of these articles of the manifest, in one transaction.
 
-        Manual tags are kept. Returns every tag (imported and manual) of each article whose
-        tags changed: the chunk index must get the same.
+        Only what differs is written; manual tags are kept. Returns every tag (imported and
+        manual) of each given article the manifest has, changed or not: the chunk index must
+        get the same.
         """
         ...
 

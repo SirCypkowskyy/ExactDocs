@@ -409,15 +409,10 @@ class InMemoryImportedTags:
     async def set_imported_tags(
         self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
-        """Replace the imported tags of the named entries; report the ones that changed."""
+        """Replace the imported tags of the named entries; report every one of them."""
         found = self.repository.manifests.get(manifest_id)
         if found is None:
             return {}
         entries = tuple(replace(e, tags=tags.get(e.path, e.tags)) for e in found.entries)
-        touched = {
-            new.path: new.all_tags
-            for old, new in zip(found.entries, entries, strict=True)
-            if old.tags != new.tags
-        }
         self.repository.manifests[manifest_id] = replace(found, entries=entries)
-        return touched
+        return {e.path: e.all_tags for e in entries if e.path in tags}

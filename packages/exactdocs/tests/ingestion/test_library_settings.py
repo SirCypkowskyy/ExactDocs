@@ -1,5 +1,6 @@
 """Editing a library's settings: which job re-processes the versions, and what each job does."""
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
 )
 from exactdocs.ingestion.dtos import (
     EnqueueJobCommand,
+    JobSummary,
     RemoveVersionCommand,
     TagRuleIn,
     UpdateLibrarySettingsCommand,
@@ -36,6 +38,7 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
+    JobState,
     PathSelection,
     ProblemCode,
     ProposedId,
@@ -53,10 +56,12 @@ from exactdocs.ingestion.use_cases import (
     ReprocessLibraryUseCase,
     RetagLibraryUseCase,
     TagLocks,
+    UpdateLibrarySettingsUseCase,
 )
 from exactdocs_kernel import NotFoundError
 
 LIBRARY = "/acme/docs"
+LOCKED = "the database is locked"
 URL = RepositoryUrl(
     url="https://example.com/acme/docs",
     host_kind=RepositoryHost.GIT,
@@ -75,8 +80,14 @@ class Settings:
 
     sources: InMemoryLibrarySources
     saved: list[tuple[PathSelection, tuple[TagRule, ...]]] = field(default_factory=list)
+    entered: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event | None = None
+    """When set, a save waits for it: an edit stays under way."""
 
     async def save(self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]):
+        self.entered.set()
+        if self.release is not None:
+            await self.release.wait()
         self.saved.append((selection, tuple(tag_rules)))
         current = await self.sources.get(library)
         self.sources.sources[library] = replace(
@@ -257,14 +268,76 @@ async def test_a_first_import_still_running_is_re_processed_after_it(sources, jo
     assert updated.job_id is not None
 
 
-async def test_settings_are_put_back_when_the_job_cannot_be_queued(sources, jobs, clock):
-    module, settings = make_module(sources, jobs, clock, handlers={})  # no reprocess handler
+async def test_settings_are_put_back_when_the_job_cannot_be_queued(sources, jobs):
+    settings = Settings(sources)
 
-    with pytest.raises(Exception, match="reprocess"):
-        await module.update_library_settings(command(exclude=["a/"]))
+    async def cannot_queue(command: EnqueueJobCommand) -> JobSummary:
+        raise RuntimeError(command.kind)
+
+    update = UpdateLibrarySettingsUseCase(sources, settings, jobs, cannot_queue)
+
+    with pytest.raises(RuntimeError, match="reprocess"):
+        await update(command(exclude=["a/"]))
 
     assert await sources.get(LIBRARY) == SOURCE
     assert [s for s, _ in settings.saved] == [PathSelection.of(["docs/"], ["a/"]), SOURCE.selection]
+
+
+async def test_settings_need_the_re_processing_handlers(sources, jobs, clock):
+    with pytest.raises(TypeError, match="reprocess and retag"):
+        make_module(sources, jobs, clock, handlers={REPROCESS_JOB: _noop})
+
+
+@pytest.mark.parametrize(
+    ("first", "kind"),
+    [(command(exclude=["a/"]), REPROCESS_JOB), (command(rules=[("docs/**", "d")]), RETAG_JOB)],
+)
+async def test_the_same_settings_re_run_a_failed_job(sources, jobs, clock, first, kind):
+    module, settings = make_module(sources, jobs, clock)
+    failed = await module.update_library_settings(first)
+    running = await jobs.claim_next(clock.now())
+    assert running is not None
+    await jobs.save(running.failed("v1.0.0: down", clock.now(), code="repo_unreachable"))
+
+    again = await module.update_library_settings(first)
+
+    assert again.job_id not in {None, failed.job_id}
+    assert again.reprocess is failed.reprocess
+    assert again.versions == ["v1.0.0", "main"]
+    assert [(j.kind, j.state) for j in await jobs.list_for_library(LIBRARY)] == [
+        (kind, JobState.QUEUED),
+        (kind, JobState.FAILED),
+    ]
+    assert len(settings.saved) == 1  # nothing changed: nothing stored again
+
+
+async def test_the_same_settings_after_a_succeeded_job_queue_nothing(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))
+    running = await jobs.claim_next(clock.now())
+    assert running is not None
+    await jobs.save(running.succeeded(clock.now()))
+
+    again = await module.update_library_settings(command(exclude=["a/"]))
+
+    assert (again.reprocess, again.job_id) == (None, None)
+
+
+async def test_overlapping_edits_of_one_library_take_turns(sources, jobs, clock):
+    module, settings = make_module(sources, jobs, clock)
+    release = settings.release = asyncio.Event()
+    first = asyncio.create_task(module.update_library_settings(command(exclude=["a/"])))
+    await settings.entered.wait()
+    second = asyncio.create_task(
+        module.update_library_settings(command(exclude=["a/"], rules=[("docs/**", "d")]))
+    )
+    await asyncio.sleep(0.01)
+    assert not second.done()  # it waits for the first edit, so it compares against it
+    release.set()
+    paths, tags = await first, await second
+
+    assert (paths.reprocess, tags.reprocess) == (SettingsChange.PATHS, SettingsChange.TAGS)
+    assert tags.job_id == paths.job_id  # the queued reprocess re-tags too
 
 
 async def test_removal_waits_for_a_re_processing_job(sources, jobs, clock):
@@ -361,20 +434,27 @@ async def test_different_failures_share_a_generic_code(sources):
 
 @dataclass
 class Store:
-    """An ``ImportedTagStore`` over a dict of versions."""
+    """An ``ImportedTagStore`` over a dict of versions; writes change what it serves."""
 
     versions: dict[str, StoredTags]
     manual: dict[str, tuple[str, ...]] = field(default_factory=dict)
     writes: list[tuple[str, dict[str, tuple[str, ...]]]] = field(default_factory=list)
+    failing: set[str] = field(default_factory=set)
 
     async def stored_tags(self, library: str, ref: str) -> StoredTags | None:
         del library
+        if ref in self.failing:
+            raise RepositoryUnreachableError(LOCKED)
         return self.versions.get(ref)
 
     async def set_imported_tags(
         self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
     ) -> dict[str, tuple[str, ...]]:
         self.writes.append((manifest_id, dict(tags)))
+        for ref, stored in self.versions.items():
+            if stored.manifest_id == manifest_id:
+                articles = tuple(replace(a, tags=tags.get(a.path, a.tags)) for a in stored.articles)
+                self.versions[ref] = replace(stored, articles=articles)
         return {p: (*t, *self.manual.get(p, ())) for p, t in tags.items()}
 
 
@@ -383,8 +463,12 @@ class Index:
     """A ``ChunkIndex`` that only records re-tagging: a re-tag never chunks or indexes."""
 
     retagged: list[tuple[str, dict[str, tuple[str, ...]]]] = field(default_factory=list)
+    failures: int = 0
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        if self.failures:
+            self.failures -= 1
+            raise RepositoryUnreachableError(LOCKED)
         self.retagged.append((manifest_id, dict(tags)))
 
     async def known(self, config_hash: str, blob_shas: Sequence[str]) -> Mapping[str, Any]:
@@ -406,7 +490,13 @@ def article(
     return StoredArticleTags(path=path, front_matter=front_matter or {}, tags=tags)
 
 
-async def test_retag_rewrites_only_changed_articles_and_copies_every_tag_to_chunks(sources):
+def retag(sources, store: Store, index: Index, progress: Progress | None = None):
+    return RetagLibraryUseCase(sources, store, index, TagLocks())(
+        library_job(RETAG_JOB), progress or Progress()
+    )
+
+
+async def test_retag_sends_every_article_its_new_tags_and_every_tag_to_the_chunks(sources):
     sources.sources[LIBRARY] = replace(SOURCE, tag_rules=TagRule.many([("docs/api/**", "api")]))
     store = Store(
         {
@@ -424,21 +514,53 @@ async def test_retag_rewrites_only_changed_articles_and_copies_every_tag_to_chun
     index = Index()
     progress = Progress()
 
-    await RetagLibraryUseCase(sources, store, index, TagLocks())(library_job(RETAG_JOB), progress)
+    await retag(sources, store, index, progress)
 
-    assert store.writes == [("m1", {"docs/api/auth.md": ("api", "auth"), "docs/guide/a.md": ()})]
-    assert index.retagged == [
-        ("m1", {"docs/api/auth.md": ("api", "auth", "mine"), "docs/guide/a.md": ()})
-    ]
+    wanted = {
+        "docs/api/auth.md": ("api", "auth"),
+        "docs/guide/a.md": (),
+        "docs/api/same.md": ("api",),
+    }
+    assert store.writes == [("m1", wanted)]
+    assert index.retagged == [("m1", wanted | {"docs/api/auth.md": ("api", "auth", "mine")})]
     assert progress.reports == [(0, 2), (1, 2), (2, 2)]  # "main" serves nothing: skipped
     assert progress.counters[-1] == (0, 3)  # nothing chunked, every stored article reused
 
 
-async def test_retag_writes_nothing_when_no_tag_changes(sources):
+async def test_a_rerun_heals_chunks_the_catalog_was_retagged_without(sources):
+    sources.sources[LIBRARY] = replace(SOURCE, tag_rules=TagRule.many([("docs/**", "d")]))
     store = Store({"main": StoredTags(manifest_id="m", articles=(article("docs/a.md"),))})
+    index = Index(failures=1)  # the chunk copy fails after the catalog committed
+
+    with pytest.raises(ReprocessFailedError):
+        await retag(sources, store, index)
+    assert store.versions["main"].articles[0].tags == ("d",)  # the catalog has it
+    await retag(sources, store, index)  # the job queued again, as after a crash
+
+    assert index.retagged == [("m", {"docs/a.md": ("d",)})]
+
+
+async def test_a_version_that_fails_to_retag_does_not_stop_the_others(sources):
+    sources.sources[LIBRARY] = replace(SOURCE, tag_rules=TagRule.many([("docs/**", "d")]))
+    store = Store(
+        {"main": StoredTags(manifest_id="m", articles=(article("docs/a.md"),))},
+        failing={"v1.0.0"},
+    )
     index = Index()
 
-    await RetagLibraryUseCase(sources, store, index, TagLocks())(library_job(RETAG_JOB), Progress())
+    with pytest.raises(ReprocessFailedError) as raised:
+        await retag(sources, store, index)
+
+    assert raised.value.refs == ("v1.0.0",)
+    assert raised.value.code == "repo_unreachable"
+    assert index.retagged == [("m", {"docs/a.md": ("d",)})]
+
+
+async def test_a_version_without_articles_is_not_written(sources):
+    store = Store({"main": StoredTags(manifest_id="m", articles=())})
+    index = Index()
+
+    await retag(sources, store, index)
 
     assert (store.writes, index.retagged) == ([], [])
 

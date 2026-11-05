@@ -964,7 +964,10 @@ class SqliteImportedTags:
     async def set_imported_tags(
         self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
-        """Read the named entries in batches, write those whose tags change; one transaction."""
+        """Read the named entries in batches, write those whose tags change; one transaction.
+
+        Every named entry is reported, changed or not (see the port).
+        """
         entries = manifest_entries.c
         paths = list(tags)
         touched: dict[str, tuple[str, ...]] = {}
@@ -980,8 +983,8 @@ class SqliteImportedTags:
                 for row in rows.all():
                     before = _entry(row)
                     after = replace(before, tags=tags[before.path])
+                    touched[after.path] = after.all_tags
                     if after.tags != before.tags:
-                        touched[after.path] = after.all_tags
                         await connection.execute(
                             update(manifest_entries)
                             .where(entries.manifest_id == manifest_id, entries.path == after.path)

@@ -17,6 +17,7 @@ from exactdocs.ingestion.models import (
     JobId,
     JobState,
     Removed,
+    StoredTags,
 )
 from exactdocs_kernel import NotFoundError
 
@@ -146,6 +147,20 @@ class NoIndex:
         raise NotImplementedError
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        """Not expected to be called."""
+        raise NotImplementedError
+
+
+class NoStoredTags:
+    """Implements ``ports.driven.ImportedTagStore``; any call is a test bug. For tests."""
+
+    async def stored_tags(self, library: str, ref: str) -> StoredTags | None:
+        """Not expected to be called."""
+        raise NotImplementedError
+
+    async def set_imported_tags(
+        self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
+    ) -> Mapping[str, tuple[str, ...]]:
         """Not expected to be called."""
         raise NotImplementedError
 
