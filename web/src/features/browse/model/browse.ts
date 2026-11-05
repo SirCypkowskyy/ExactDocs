@@ -212,6 +212,11 @@ export type RenameLookup = (
  * first: `to` may have renamed it from `from` (switching to the next version), or `from` may have
  * renamed it from `to` (switching back). A lookup that fails, or a map from another version, is
  * no answer, and the path is kept (the article pane then offers the root when it is not there).
+ *
+ * One hop only: a switch that skips the version where the rename happened (v1.2.0 to v1.4.0 when
+ * v1.4.0 renamed it from v1.3.0) keeps the path. The client cannot chain the hops itself, because
+ * a null answer does not say which version the map came from and the display order of the
+ * versions is not their import order. Multi-hop lookup on the server: #201.
  */
 export async function pathInVersion(
   lookup: RenameLookup,
