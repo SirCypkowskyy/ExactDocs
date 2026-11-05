@@ -552,7 +552,7 @@ Scenario: A session cookie never authenticates MCP
 - [ ] behave `login.feature`; unit tests for expiry with the kernel clock
 
 **Notes.** Decisions *Web UI auth*, *Host and origin checks*. Login rate limiting is out of scope
-(follow-up if needed).
+(done in #182: a shared sign-in throttle per address and username).
 
 ### E2-03 · feat: API tokens give agents, the CLI and REST clients access
 

@@ -1941,6 +1941,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-get_session": {
@@ -2008,6 +2017,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2093,6 +2111,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-delete_session": {
@@ -2158,6 +2185,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2243,6 +2279,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-list_all": {
@@ -2310,6 +2355,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2395,6 +2449,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-revoke": {
@@ -2462,6 +2525,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2561,6 +2633,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "catalog-list_all": {
@@ -2631,6 +2712,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2716,6 +2806,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "catalog-get_one": {
@@ -2793,6 +2892,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-remove_library": {
@@ -2863,6 +2971,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2951,6 +3068,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "catalog-get_version": {
@@ -3029,6 +3155,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-remove_version": {
@@ -3100,6 +3235,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -3194,6 +3338,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "catalog-list_version_tags": {
@@ -3266,6 +3419,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -3353,6 +3515,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "catalog-get_renamed_path": {
@@ -3429,6 +3600,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -3521,6 +3701,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "retrieval-search_all": {
@@ -3604,6 +3793,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "retrieval-get_chunk": {
@@ -3673,6 +3871,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -3752,6 +3959,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -3840,6 +4056,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-check": {
@@ -3911,6 +4136,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -3994,6 +4228,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-add_another_version": {
@@ -4070,6 +4313,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -4163,6 +4415,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-list_latest_jobs": {
@@ -4230,6 +4491,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -4306,6 +4576,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -4390,6 +4669,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "ingestion-list_library_jobs": {
@@ -4463,6 +4751,15 @@ export interface operations {
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

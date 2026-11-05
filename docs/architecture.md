@@ -315,8 +315,16 @@ stateDiagram-v2
 `identity` owns accounts (`identity_accounts`: username, password hash, `role`, created time).
 Passwords are hashed by the `PasswordHasher` driven port; its adapter is **argon2id**
 (`argon2-cffi`, RFC 9106 low-memory profile: 64 MiB, 3 passes), run in a thread, with `verify`
-constant-time. The use cases take the password as a `SecretStr`, an unknown username costs one
+constant-time, and at most 4 at a time (more calls queue; a dropped request keeps its slot
+until its thread is done). The use cases take the password as a `SecretStr`, an unknown username costs one
 hash like a real check, and wrong password and unknown user raise the same error.
+
+`AuthenticateUseCase` is the one place a password is checked, so the session sign-in and the
+CLI's token login share its throttle: failures are counted per client address and per username
+in the `FailedSignInLog` driven port (`FailedSignIns` in `models.py` holds the free count and the
+doubling wait), and an attempt past them raises `SignInThrottledError` (kernel
+`RateLimitedError`, 429 with `Retry-After`) without a hash. The adapter is in-process memory,
+bounded to 10,000 records; several processes (TEAM-01) would each count their own.
 
 `AccountRepository.add_first` stores an account only while the table is empty, in one atomic
 statement under `BEGIN IMMEDIATE`, so two concurrent setups (or `exactdocs admin create` next to

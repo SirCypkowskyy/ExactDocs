@@ -1,0 +1,265 @@
+"""The sign-in throttle: per client address and per username, with a doubling wait."""
+
+import asyncio
+import threading
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from pydantic import SecretStr
+
+from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
+from exactdocs.identity.adapters.driven.memory import (
+    InMemoryAccountRepository,
+    InMemoryFailedSignInLog,
+    InMemorySessionRepository,
+    InMemoryTokenRepository,
+)
+from exactdocs.identity.dtos import (
+    AuthenticateQuery,
+    CreateFirstAdminCommand,
+    LoginForTokenCommand,
+)
+from exactdocs.identity.errors import InvalidCredentialsError, SignInThrottledError
+from exactdocs.identity.models import (
+    FIRST_WAIT,
+    FORGET_FAILURES_AFTER,
+    FREE_FAILURES,
+    LONGEST_WAIT,
+    FailedSignIns,
+)
+from exactdocs.identity.module import IdentityModule
+
+HORSE = "correct horse battery staple"
+WRONG = "wrong horse battery staple"
+START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+ATTACKER, ADMIN_HOST = "203.0.113.7", "198.51.100.2"
+
+
+@dataclass(slots=True)
+class MovableClock:
+    current: datetime = START
+
+    def now(self) -> datetime:
+        return self.current
+
+    def advance(self, by: timedelta) -> None:
+        self.current += by
+
+
+@dataclass(slots=True)
+class CountingHasher:
+    """A fast reversible stand-in for the KDF that counts the passwords it was asked about."""
+
+    checks: int = 0
+
+    async def hash(self, password: str) -> str:
+        self.checks += 1
+        return f"fake${password[::-1]}"
+
+    async def verify(self, password_hash: str, password: str) -> bool:
+        self.checks += 1
+        return password_hash == f"fake${password[::-1]}"
+
+
+@dataclass(slots=True)
+class World:
+    identity: IdentityModule
+    hasher: CountingHasher
+    clock: MovableClock
+    failures: InMemoryFailedSignInLog = field(default_factory=InMemoryFailedSignInLog)
+
+
+@pytest.fixture
+async def world() -> World:
+    clock, hasher, failures = MovableClock(), CountingHasher(), InMemoryFailedSignInLog()
+    identity = IdentityModule.build(
+        repository=InMemoryAccountRepository(),
+        sessions=InMemorySessionRepository(),
+        tokens=InMemoryTokenRepository(),
+        hasher=hasher,
+        failures=failures,
+        clock=clock,
+    )
+    await identity.create_first_admin(
+        CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+    )
+    return World(identity, hasher, clock, failures)
+
+
+def credentials(username: str = "ada", password: str = HORSE) -> AuthenticateQuery:
+    return AuthenticateQuery(username=username, password=SecretStr(password))
+
+
+async def fail(world: World, times: int, *, username: str = "root", client: str = ATTACKER) -> None:
+    for _ in range(times):
+        with pytest.raises(InvalidCredentialsError):
+            await world.identity.authenticate(credentials(username, WRONG), client=client)
+
+
+async def test_the_first_failures_are_free(world: World) -> None:
+    await fail(world, FREE_FAILURES - 1)
+
+    await fail(world, 1)  # the last free one is still checked, and still just wrong
+
+
+async def test_past_the_free_failures_the_address_must_wait(world: World) -> None:
+    await fail(world, FREE_FAILURES)
+    checks = world.hasher.checks
+
+    with pytest.raises(SignInThrottledError) as refused:
+        await world.identity.authenticate(credentials(), client=ATTACKER)  # even the right one
+
+    assert refused.value.code == "rate_limited"
+    assert refused.value.retry_after == FIRST_WAIT.total_seconds()
+    assert world.hasher.checks == checks  # the password was not even checked
+    assert "root" not in str(refused.value)
+    assert ATTACKER not in str(refused.value)
+
+
+async def test_the_wait_doubles_with_each_failure_up_to_a_ceiling(world: World) -> None:
+    waits = []
+    for _ in range(FREE_FAILURES + 12):
+        await fail(world, 1)
+        record = await world.failures.get(f"address:{ATTACKER}")
+        assert record is not None
+        waits.append(record.wait(world.clock.now()))
+        world.clock.advance(record.wait(world.clock.now()))  # wait it out, then fail again
+
+    assert waits[: FREE_FAILURES - 1] == [timedelta(0)] * (FREE_FAILURES - 1)
+    assert waits[FREE_FAILURES - 1 : FREE_FAILURES + 2] == [
+        FIRST_WAIT,
+        FIRST_WAIT * 2,
+        FIRST_WAIT * 4,
+    ]
+    assert waits[-1] == LONGEST_WAIT
+
+
+async def test_once_the_wait_is_over_the_next_attempt_is_checked(world: World) -> None:
+    await fail(world, FREE_FAILURES)
+    world.clock.advance(FIRST_WAIT)
+
+    assert (await world.identity.authenticate(credentials(), client=ATTACKER)).username == "ada"
+
+
+async def test_failures_are_forgotten_after_a_quiet_hour(world: World) -> None:
+    await fail(world, FREE_FAILURES)
+    world.clock.advance(FORGET_FAILURES_AFTER)
+
+    await fail(world, FREE_FAILURES - 1)  # a fresh count: all free again
+
+
+async def test_another_address_and_username_are_not_affected(world: World) -> None:
+    await fail(world, FREE_FAILURES, username="root")
+
+    signed_in = await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+
+    assert signed_in.username == "ada"
+
+
+async def test_a_username_is_throttled_from_every_address(world: World) -> None:
+    for n in range(FREE_FAILURES):
+        await fail(
+            world, 1, username="ADA", client=f"192.0.2.{n}"
+        )  # case-insensitive, like accounts
+
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials())  # no address known: still the username
+
+
+async def test_a_right_password_clears_the_username_but_not_the_address(world: World) -> None:
+    await fail(world, FREE_FAILURES - 1, username="ada")
+
+    await world.identity.authenticate(credentials(), client=ATTACKER)
+
+    assert await world.failures.get("username:ada") is None
+    record = await world.failures.get(f"address:{ATTACKER}")
+    assert record is not None
+    assert record.count == FREE_FAILURES - 1
+
+
+async def test_invalid_usernames_count_against_the_address(world: World) -> None:
+    await fail(world, FREE_FAILURES, username="not a valid\nname")
+
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client=ATTACKER)
+
+
+async def test_sign_in_and_token_login_share_the_throttle(world: World) -> None:
+    for _ in range(FREE_FAILURES):
+        with pytest.raises(InvalidCredentialsError):
+            await world.identity.sign_in(credentials("root", WRONG), client=ATTACKER)
+
+    command = LoginForTokenCommand(username="ada", password=SecretStr(HORSE), name="laptop")
+    with pytest.raises(SignInThrottledError):
+        await world.identity.login_for_token(command, client=ATTACKER)
+    with pytest.raises(SignInThrottledError):
+        await world.identity.sign_in(credentials(), client=ATTACKER)
+
+
+def test_a_record_never_overflows_however_many_failures() -> None:
+    record = FailedSignIns(count=10**9, last_at=START)
+
+    assert record.wait(START) == LONGEST_WAIT
+
+
+async def test_the_log_keeps_a_bounded_number_of_records() -> None:
+    log = InMemoryFailedSignInLog(max_keys=3)
+    for key in "abcd":
+        await log.put(key, FailedSignIns(count=1, last_at=START))
+    await log.put("b", FailedSignIns(count=2, last_at=START))  # b is now the most recent
+    await log.put("e", FailedSignIns(count=1, last_at=START))
+
+    assert list(log.records) == ["d", "b", "e"]
+
+
+@dataclass(slots=True)
+class SlowArgon2:
+    """Stands in for argon2-cffi: each call blocks a while, and the peak concurrency is kept."""
+
+    running: int = 0
+    peak: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def _work(self) -> None:
+        with self.lock:
+            self.running += 1
+            self.peak = max(self.peak, self.running)
+        threading.Event().wait(0.02)
+        with self.lock:
+            self.running -= 1
+
+    def hash(self, password: str) -> str:
+        self._work()
+        return f"h${password}"
+
+    def verify(self, password_hash: str, password: str) -> bool:
+        self._work()
+        return password_hash == f"h${password}"
+
+
+async def test_the_number_of_concurrent_password_checks_is_bounded() -> None:
+    slow = SlowArgon2()
+    hasher = Argon2idPasswordHasher(argon2=slow, max_concurrent=2)
+
+    results = await asyncio.gather(
+        *(hasher.verify("h$pw", "pw") for _ in range(6)), *(hasher.hash("pw") for _ in range(6))
+    )
+
+    assert slow.peak == 2
+    assert results[:6] == [True] * 6
+
+
+async def test_a_cancelled_check_keeps_its_slot_until_the_work_is_done() -> None:
+    slow = SlowArgon2()
+    hasher = Argon2idPasswordHasher(argon2=slow, max_concurrent=1)
+
+    first = asyncio.ensure_future(hasher.verify("h$pw", "pw"))
+    await asyncio.sleep(0.005)  # the first check is now running in its thread
+    first.cancel()
+    second = await hasher.verify("h$pw", "pw")
+
+    assert second is True
+    assert slow.peak == 1  # the second check did not start beside the abandoned one

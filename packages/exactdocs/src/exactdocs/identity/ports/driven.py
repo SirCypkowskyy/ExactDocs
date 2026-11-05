@@ -3,7 +3,14 @@
 from datetime import datetime
 from typing import Protocol
 
-from exactdocs.identity.models import Account, AccountId, ApiToken, Session, Username
+from exactdocs.identity.models import (
+    Account,
+    AccountId,
+    ApiToken,
+    FailedSignIns,
+    Session,
+    Username,
+)
 
 
 class AccountRepository(Protocol):
@@ -90,6 +97,26 @@ class TokenRepository(Protocol):
 
     async def delete_expired(self, now: datetime) -> None:
         """Remove the tokens whose expiry is at or before ``now``."""
+        ...
+
+
+class FailedSignInLog(Protocol):
+    """Recent failed sign-ins, keyed by client address (``address:...``) or ``username:...``.
+
+    It may forget a record at any time (e.g. to stay within a memory bound): that only makes the
+    throttle more lenient, never refuses anyone.
+    """
+
+    async def get(self, key: str) -> FailedSignIns | None:
+        """Return the record under ``key``, or ``None``."""
+        ...
+
+    async def put(self, key: str, failures: FailedSignIns) -> None:
+        """Store the record under ``key``, replacing any."""
+        ...
+
+    async def forget(self, key: str) -> None:
+        """Drop the record under ``key`` (nothing happens when there is none)."""
         ...
 
 

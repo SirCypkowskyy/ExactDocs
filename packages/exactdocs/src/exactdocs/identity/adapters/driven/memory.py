@@ -1,7 +1,18 @@
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from exactdocs.identity.models import Account, AccountId, ApiToken, Session, Username
+from exactdocs.identity.models import (
+    Account,
+    AccountId,
+    ApiToken,
+    FailedSignIns,
+    Session,
+    Username,
+)
+
+# Enough for every address and username a busy instance sees in an hour, and small in memory
+# (~200 bytes a record): a flood of made-up usernames cannot grow the log without bound.
+MAX_FAILED_SIGN_IN_KEYS = 10_000
 
 
 @dataclass(slots=True)
@@ -111,3 +122,30 @@ class InMemoryTokenRepository:
     async def delete_expired(self, now: datetime) -> None:
         """Remove the tokens whose expiry is at or before ``now``."""
         self.tokens = {h: t for h, t in self.tokens.items() if not t.is_expired(now)}
+
+
+@dataclass(slots=True)
+class InMemoryFailedSignInLog:
+    """Implements ``ports.driven.FailedSignInLog`` in the process's memory. Used in production.
+
+    A restart forgets the failures, and each process counts its own (TEAM-01 would share them).
+    At most ``max_keys`` records are kept: when full, the least recently failed one is dropped.
+    """
+
+    max_keys: int = MAX_FAILED_SIGN_IN_KEYS
+    records: dict[str, FailedSignIns] = field(default_factory=dict)
+
+    async def get(self, key: str) -> FailedSignIns | None:
+        """Return the record under ``key``, or ``None``."""
+        return self.records.get(key)
+
+    async def put(self, key: str, failures: FailedSignIns) -> None:
+        """Store the record as the most recent one, dropping the oldest when full."""
+        self.records.pop(key, None)  # re-inserted below, so dict order is "least recent first"
+        while len(self.records) >= self.max_keys:
+            del self.records[next(iter(self.records))]
+        self.records[key] = failures
+
+    async def forget(self, key: str) -> None:
+        """Drop the record under ``key``."""
+        self.records.pop(key, None)

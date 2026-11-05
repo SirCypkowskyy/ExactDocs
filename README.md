@@ -138,7 +138,15 @@ curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/search" -d ref=0.28.1 -d q=tim
 
 `admin create` opens the database directly (so it works before the server is up, and against the
 same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
-Passwords are stored as argon2id hashes.
+Passwords are stored as argon2id hashes, and at most 4 are checked at once.
+
+Failed sign-ins are throttled, on the web UI's sign-in and `exactdocs login` alike: after 5
+failures from one address, or for one username, each further attempt must wait (5 seconds,
+doubling up to 15 minutes) and is answered 429 `rate_limited` with a `Retry-After` header
+meanwhile. Behind a reverse proxy, list it in `EXACTDOCS_FORWARDED_ALLOW_IPS`, so the
+throttle counts the client's address rather than the proxy's. The counts are kept in memory:
+a restart forgets them. Failures for the admin's own username slow the admin down too, from
+anywhere, until they are an hour old or the right password is given once the wait is over.
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
@@ -312,7 +320,7 @@ Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
-| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
+| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |

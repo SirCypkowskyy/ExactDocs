@@ -17,6 +17,14 @@ VALUE_PREFIX = "exd_"  # recognizable, so secret scanners and humans can spot a 
 PREFIX_SHOWN = len(VALUE_PREFIX) + 4  # the part of a token kept readable, to tell tokens apart
 IDLE_TIMEOUT = timedelta(days=7)  # a session unused for this long ends
 ABSOLUTE_TIMEOUT = timedelta(days=30)  # and none lives longer than this, however busy
+# Sign-in throttle, counted apart per client address and per username: this many failures are
+# free, then each one more doubles the wait before the next attempt, from FIRST_WAIT up to
+# LONGEST_WAIT. Failures are forgotten once none came for FORGET_FAILURES_AFTER.
+FREE_FAILURES = 5
+FIRST_WAIT = timedelta(seconds=5)
+LONGEST_WAIT = timedelta(minutes=15)
+FORGET_FAILURES_AFTER = timedelta(hours=1)
+_MAX_DOUBLINGS = 8  # FIRST_WAIT * 2**8 is past LONGEST_WAIT; also keeps the arithmetic small
 
 
 class Role(StrEnum):
@@ -110,3 +118,28 @@ class ApiToken:
     def is_expired(self, now: datetime) -> bool:
         """Whether the token no longer works at ``now``."""
         return self.expires_at is not None and now >= self.expires_at
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FailedSignIns:
+    """The recent failed sign-ins of one client address or of one username."""
+
+    count: int
+    last_at: datetime
+
+    def is_forgotten(self, now: datetime) -> bool:
+        """Whether no failure came for long enough that the count starts over."""
+        return now - self.last_at >= FORGET_FAILURES_AFTER
+
+    def plus_one(self, now: datetime) -> FailedSignIns:
+        """Return the record after one more failure at ``now``."""
+        count = 1 if self.is_forgotten(now) else self.count + 1
+        return FailedSignIns(count=count, last_at=now)
+
+    def wait(self, now: datetime) -> timedelta:
+        """How long the next attempt must wait from ``now`` (zero when it may go ahead)."""
+        if self.count < FREE_FAILURES or self.is_forgotten(now):
+            return timedelta(0)
+        doublings = min(self.count - FREE_FAILURES, _MAX_DOUBLINGS)
+        until = self.last_at + min(FIRST_WAIT * 2**doublings, LONGEST_WAIT)
+        return max(until - now, timedelta(0))

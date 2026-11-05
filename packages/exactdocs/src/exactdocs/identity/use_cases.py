@@ -1,6 +1,7 @@
 """Identity use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
 import logging
+import math
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
@@ -29,6 +30,7 @@ from exactdocs.identity.errors import (
     InvalidTokenExpiryError,
     InvalidUsernameError,
     NotSignedInError,
+    SignInThrottledError,
     TooManyTokensError,
     UnknownAccountError,
     UnknownTokenError,
@@ -41,6 +43,7 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    FailedSignIns,
     Role,
     Session,
     Username,
@@ -48,6 +51,7 @@ from exactdocs.identity.models import (
 )
 from exactdocs.identity.ports.driven import (
     AccountRepository,
+    FailedSignInLog,
     PasswordHasher,
     SessionRepository,
     TokenRepository,
@@ -94,26 +98,63 @@ class CreateFirstAdminUseCase:
 
 @dataclass(frozen=True, slots=True)
 class AuthenticateUseCase:
-    """Implements ``ports.driving.Authenticate``."""
+    """Implements ``ports.driving.Authenticate``.
+
+    The one place a password is checked, so every way to sign in shares the throttle: failures
+    are counted per client address and per username, and once either is past
+    ``FREE_FAILURES`` the next attempt must wait (``SignInThrottledError``), doubling each time.
+    A refused attempt is not counted and its password is not checked. Attempts that run at the
+    same time all pass the check before any of them fails, so a burst gets a few more guesses
+    than the count; the hasher's concurrency bound keeps that number small.
+    """
 
     repository: AccountRepository
     hasher: PasswordHasher
+    failures: FailedSignInLog
+    clock: Clock
 
-    async def __call__(self, query: AuthenticateQuery) -> AccountSummary:
+    async def __call__(
+        self, query: AuthenticateQuery, *, client: str | None = None
+    ) -> AccountSummary:
         """Return the account when the password matches; the same error for every failure."""
         password = query.password.get_secret_value()
         try:
-            account = await self.repository.get(Username(query.username))
+            username: Username | None = Username(query.username)
         except InvalidUsernameError:
-            account = None
+            username = None
+        keys = [
+            *([f"address:{client}"] if client else []),
+            *([f"username:{username}"] if username else []),
+        ]
+        await self._refuse_if_throttled(keys)
+        account = await self.repository.get(username) if username else None
         if account is None:
             # Spend the same time as a real check, so response time does not reveal which
             # usernames exist.
             await self.hasher.hash(password)
+            await self._count_failure(keys)
             raise InvalidCredentialsError
         if not await self.hasher.verify(account.password_hash, password):
+            await self._count_failure(keys)
             raise InvalidCredentialsError
+        # The account's own count starts over; the address keeps its count until it is forgotten,
+        # so one good password does not buy an address a fresh round of guesses at others.
+        await self.failures.forget(f"username:{username}")
         return AccountSummary.from_model(account)
+
+    async def _refuse_if_throttled(self, keys: list[str]) -> None:
+        now = self.clock.now()
+        waits = [r.wait(now) for k in keys if (r := await self.failures.get(k)) is not None]
+        wait = max(waits, default=timedelta(0))
+        if wait > timedelta(0):
+            raise SignInThrottledError(math.ceil(wait.total_seconds()))
+
+    async def _count_failure(self, keys: list[str]) -> None:
+        now = self.clock.now()
+        for key in keys:
+            record = await self.failures.get(key)
+            failures = record.plus_one(now) if record else FailedSignIns(count=1, last_at=now)
+            await self.failures.put(key, failures)
 
 
 logger = logging.getLogger(__name__)
@@ -134,14 +175,19 @@ class SignInUseCase:
     clock: Clock
 
     async def __call__(
-        self, query: AuthenticateQuery, previous_token: str | None = None
+        self,
+        query: AuthenticateQuery,
+        previous_token: str | None = None,
+        *,
+        client: str | None = None,
     ) -> SessionGrant:
         """Start a session for the account the credentials belong to.
 
         The session the request arrived with (``previous_token``) is deleted, so signing in
-        again does not leave a stale row behind.
+        again does not leave a stale row behind. ``client`` is the caller's address, for the
+        sign-in throttle.
         """
-        account = await self.authenticate(query)
+        account = await self.authenticate(query, client=client)
         now = self.clock.now()
         if previous_token:
             await self.sessions.delete(hash_token(previous_token))
@@ -287,10 +333,12 @@ class LoginForTokenUseCase:
     authenticate: Authenticate
     create_token: CreateToken
 
-    async def __call__(self, command: LoginForTokenCommand) -> TokenGrant:
-        """Mint a token for the account the credentials belong to."""
+    async def __call__(
+        self, command: LoginForTokenCommand, *, client: str | None = None
+    ) -> TokenGrant:
+        """Mint a token for the account the credentials belong to (``client``: see ``SignIn``)."""
         query = AuthenticateQuery(username=command.username, password=command.password)
-        account = await self.authenticate(query)
+        account = await self.authenticate(query, client=client)
         return await self.create_token(
             account, CreateTokenCommand(name=command.name, expires_at=command.expires_at)
         )

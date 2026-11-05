@@ -96,6 +96,27 @@ describe("sign-in form", () => {
     expect(onSignedIn).not.toHaveBeenCalled();
   });
 
+  it("asks the visitor to wait after too many failed sign-ins", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json(
+          {
+            error: "rate_limited",
+            detail: "too many failed sign-ins; try again in 5 seconds",
+            fields: [],
+          },
+          429,
+        ),
+      ),
+    );
+    renderWithClient(<SignInPage onSignedIn={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText("Username"), "ada");
+    await userEvent.type(screen.getByLabelText("Password"), "correct horse");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many failed sign-ins");
+  });
+
   it("signs in and returns to the requested page", async () => {
     const fetchMock = vi.fn(async () => json({ state: "signed_in", account }, 201));
     vi.stubGlobal("fetch", fetchMock);

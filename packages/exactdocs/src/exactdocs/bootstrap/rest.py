@@ -21,6 +21,7 @@ from exactdocs_kernel import (
     ConflictError,
     DomainError,
     NotFoundError,
+    RateLimitedError,
     UnauthenticatedError,
     ValidationError,
 )
@@ -33,6 +34,7 @@ _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     NotFoundError: 404,
     ConflictError: 409,
     ValidationError: 422,
+    RateLimitedError: 429,
 }
 
 
@@ -78,6 +80,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         404: "The thing does not exist or is not visible to the caller.",
         409: "The request conflicts with the current state.",
         422: "A field is invalid (`fields` names them) or a business rule is violated.",
+        429: "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds.",
     }.items()
 }
 
@@ -119,7 +122,8 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
     close = [str(path) for path in getattr(exc, "close_matches", ())]
     body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
-    return JSONResponse(body.model_dump(), status_code=status)
+    headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, RateLimitedError) else None
+    return JSONResponse(body.model_dump(), status_code=status, headers=headers)
 
 
 async def _validation_error(_: Request, exc: Exception) -> Response:

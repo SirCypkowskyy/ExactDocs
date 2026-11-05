@@ -35,6 +35,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
 )
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
+from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
@@ -225,6 +226,7 @@ class Container:
                 sessions=SqliteSessionRepository(engine),
                 tokens=SqliteTokenRepository(engine),
                 hasher=Argon2idPasswordHasher(),
+                failures=InMemoryFailedSignInLog(),
                 clock=SystemClock(),
             ),
             ingestion=ingestion,

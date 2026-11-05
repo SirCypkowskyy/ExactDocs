@@ -8,6 +8,7 @@ from exactdocs_kernel.errors import (
     ConflictError,
     DomainError,
     NotFoundError,
+    RateLimitedError,
     UnauthenticatedError,
     ValidationError,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "InvalidCursorError",
     "NotFoundError",
     "Page",
+    "RateLimitedError",
     "SystemClock",
     "UnauthenticatedError",
     "ValidationError",
