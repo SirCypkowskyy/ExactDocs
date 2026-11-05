@@ -328,6 +328,17 @@ class VersionPublisher(Protocol):
         """
         ...
 
+    async def replace_renames(
+        self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
+    ) -> tuple[str, ArticleTags] | None:
+        """Make ``renames`` (from ``from_ref``) the rename map ``ref`` serves; re-tag it.
+
+        Renames into a path that is not an article of the version are left out. Returns the ID
+        of the manifest ``ref`` serves and its articles that carry manual tags (or carried
+        some), with their tags now, for the chunk index; ``None`` when ``ref`` serves nothing.
+        """
+        ...
+
     async def describe(
         self,
         *,

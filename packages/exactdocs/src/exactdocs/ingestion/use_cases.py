@@ -963,6 +963,7 @@ class ImportVersionUseCase:
             cleanup.add_done_callback(_cleanups.discard)
             await asyncio.shield(cleanup)
             raise
+        await self._renew_newer(job, kind, source, credential, refs)
         await self._describe(job.library, job.version, readme, context7)
 
     async def _describe(
@@ -1049,6 +1050,69 @@ class ImportVersionUseCase:
         ]
         result = compose_renames(earlier, kept, paths) if unordered else tuple(kept)
         return (before.ref, result) if result else (None, ())
+
+    async def _renew_newer(
+        self,
+        job: Job,
+        kind: RefKind,
+        source: ImportSource,
+        credential: Credential | None,
+        refs: Sequence[str],
+    ) -> None:
+        """Detect the renames of each newer version whose previous version this one now is.
+
+        A version's map is found when it is imported, against the closest older version
+        imported by then; an older one imported later is closer, so the newer map is found
+        again against it (git rename detection only, no re-chunking), and manual tags follow
+        the new map, chunks included. The version is live already: nothing here fails it, and
+        a map git cannot give leaves the newer one as it was.
+        """
+        if self.renames is None or job.version is None or job.commit_sha is None:
+            return
+        listed = await self._quietly(job, self.sources.imported_versions(job.library), [])
+        this = ImportedRef(ref=job.version, kind=kind, commit_sha=job.commit_sha)
+        imported = [*(v for v in listed if v.ref != job.version), this]
+        newer = [
+            v
+            for v in imported
+            if v.ref != job.version and previous_version(v.ref, imported) == this
+        ]
+        for version in newer:
+            found = await self._quietly(
+                job,
+                self.renames.renames(
+                    source.url,
+                    job.commit_sha,
+                    version.commit_sha,
+                    refs=[*_full_refs(version.kind, version.ref), *refs],
+                    credential=credential,
+                ),
+                None,
+            )
+            if found is None:
+                continue
+            kept = [
+                rename
+                for rename in found
+                if rename.old_path != rename.new_path
+                and rename.old_path.isprintable()
+                and source.selection.selects(rename.old_path)
+            ]
+            try:
+                await self._replace_renames(job.library, version.ref, job.version, kept)
+            except Exception:  # the newer version keeps its map; this import is done
+                log.exception("could not renew the renames of %s %s", job.library, version.ref)
+
+    async def _replace_renames(
+        self, library: str, ref: str, from_ref: str, renames: Sequence[GitRename]
+    ) -> None:
+        """Store the map with the version ``ref`` serves and copy its manual tags to its chunks."""
+        async with self.tag_locks.of(library):
+            replaced = await self.versions.replace_renames(
+                library, ref, from_ref=from_ref, renames=renames
+            )
+            if replaced is not None and replaced[1]:
+                await self.index.retag(*replaced)
 
     @staticmethod
     async def _quietly[T](job: Job, call: Awaitable[T], fallback: T) -> T:

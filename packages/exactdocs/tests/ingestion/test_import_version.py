@@ -182,6 +182,8 @@ class Side:
     broken_discard: bool = False
     manual_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reached: asyncio.Event = field(default_factory=asyncio.Event)
+    replaced: list[tuple[str, str, tuple[GitRename, ...]]] = field(default_factory=list)
+    serving: bool = True
 
     async def _step(self, step: str) -> None:
         self.log.append(f"{self.name} {step}")
@@ -202,6 +204,14 @@ class Side:
     async def apply_manual_tags(self, manifest_id: str) -> dict[str, tuple[str, ...]]:
         await self._step(f"apply_manual_tags {manifest_id}")
         return dict(self.manual_tags)
+
+    async def replace_renames(
+        self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
+    ) -> tuple[str, dict[str, tuple[str, ...]]] | None:
+        del library
+        await self._step(f"replace_renames {ref}")
+        self.replaced.append((ref, from_ref, tuple(renames)))
+        return (f"active {ref}", dict(self.manual_tags)) if self.serving else None
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
         await self._step(f"retag {manifest_id} {sorted(tags)}")
@@ -1158,7 +1168,6 @@ async def test_a_resync_of_a_tag_gives_the_same_map_as_its_first_import(tmp_path
     ("version", "imported", "kind"),
     [
         ("v1.4.0", [], RefKind.TAG),  # the first version has nothing to compare with
-        ("v1.2.0", [V13], RefKind.TAG),  # only older versions count
         ("main", [V13], RefKind.BRANCH),  # a branch has no place in a version order
         ("v1.4.0", [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=SHA)], RefKind.TAG),
         ("main", [], RefKind.BRANCH),  # a branch never imported has no earlier commit
@@ -1210,6 +1219,119 @@ async def test_cancelling_the_import_is_not_swallowed_by_rename_detection(tmp_pa
         await world.run(make_job("v1.4.0"), world.progress)
 
     assert world.catalog.stored == []
+
+
+NEW = "c" * 40
+V14 = ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=NEW)
+
+
+async def test_an_older_version_imported_later_renews_the_map_of_the_next_newer_one(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames(
+        [
+            moved("docs/setup.md", "docs/install.md", 84),
+            moved("docs/same.md", "docs/same.md"),
+            moved("other/b.md", "docs/b.md"),  # came from outside the library's paths
+        ]
+    )
+    world = build_world(
+        tmp_path, {"docs/setup.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+    world.catalog.manual_tags = {"docs/install.md": ("legacy",)}
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert (version.renamed_from, version.renames) == (None, ())  # v1.3.0 is the oldest
+    assert source.asked == [(SHA, NEW, ["refs/tags/v1.4.0", "refs/tags/v1.3.0"])]
+    assert world.catalog.replaced == [
+        ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
+    ]
+    assert world.log[-3:] == [
+        "catalog replace_renames v1.4.0",
+        "chunks retag active v1.4.0 ['docs/install.md']",
+        "catalog describe",
+    ]
+
+
+async def test_only_the_version_whose_previous_one_this_is_now_is_renewed(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    v12 = ImportedRef(ref="v1.2.0", kind=RefKind.TAG, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[v12, V14, ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=NEW)],
+    )
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert [r[:2] for r in world.catalog.replaced] == [("v1.4.0", "v1.3.0")]
+    assert [asked[:2] for asked in source.asked] == [(OLD, SHA), (SHA, NEW)]
+
+
+@pytest.mark.parametrize("kind", [RefKind.BRANCH, RefKind.COMMIT])
+async def test_a_version_out_of_the_tag_order_renews_nothing(tmp_path: Path, kind: RefKind) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+
+    await world.run(make_job("v1.3.0", kind=kind), world.progress)
+
+    assert source.asked == []
+    assert world.catalog.replaced == []
+
+
+async def test_a_newer_map_git_cannot_give_is_left_as_it_was(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=RepositoryUnreachableError("it took too long")),
+        imported=[V14],
+    )
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.catalog.replaced == []
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+
+
+@pytest.mark.parametrize("failing", ["replace_renames v1.4.0", "retag active v1.4.0"])
+async def test_a_failing_renewal_never_fails_the_import_of_the_older_version(
+    tmp_path: Path, failing: str
+) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames([moved("docs/a.md", "docs/install.md")]),
+        imported=[V14],
+    )
+    world.catalog.manual_tags = {"docs/install.md": ("legacy",)}
+    side = world.catalog if failing.startswith("replace") else world.chunks
+    side.fail_at = failing if side is world.catalog else f"{failing} ['docs/install.md']"
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.log[-1] == "catalog describe"
+    assert "catalog discard m1 /a/b" not in world.log
+
+
+async def test_a_newer_version_removed_meanwhile_is_not_retagged(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames([moved("docs/a.md", "docs/install.md")]),
+        imported=[V14],
+    )
+    world.catalog.serving = False
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.log[-2:] == ["catalog replace_renames v1.4.0", "catalog describe"]
 
 
 async def test_renames_are_not_asked_for_while_a_fetch_slot_is_held(tmp_path: Path) -> None:

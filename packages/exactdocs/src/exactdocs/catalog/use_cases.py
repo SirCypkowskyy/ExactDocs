@@ -45,6 +45,7 @@ from exactdocs.catalog.dtos import (
     RenameDirection,
     RenamedPath,
     RenameList,
+    ReplaceRenamesCommand,
     ResolvedVersion,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
@@ -451,6 +452,38 @@ class ApplyManualTagsUseCase:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplaceRenamesUseCase:
+    """Implements ``ports.driving.ReplaceRenames``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+    tagger: ManualTagger
+
+    async def __call__(self, command: ReplaceRenamesCommand) -> RetaggedManifest:
+        """Store the new map with the active manifest, then let manual tags follow it."""
+        library_id = LibraryId(command.library)
+        if await self.repository.get(library_id) is None:
+            raise LibraryNotFoundError(command.library)
+        manifest = await self.manifests.get_active(library_id, VersionRef(command.ref))
+        if manifest is None:
+            raise VersionNotFoundError(str(library_id), command.ref)
+        await self.manifests.replace_renames(
+            manifest.id,
+            [
+                ManifestRename(
+                    from_ref=VersionRef(r.from_ref),
+                    old_path=r.old_path,
+                    new_path=r.new_path,
+                    similarity=r.similarity,
+                )
+                for r in command.renames
+            ],
+        )
+        by_path = await self.repository.get_manual_tags(library_id)
+        return await self.tagger.apply(manifest, by_path)
+
+
+@dataclass(frozen=True, slots=True)
 class ActivateManifestUseCase:
     """Implements ``ports.driving.ActivateManifest``."""
 
@@ -536,12 +569,9 @@ class ResolveRenamedPathUseCase:
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
-        find = (
-            self.manifests.find_rename_to
-            if query.direction is RenameDirection.BACK
-            else self.manifests.find_rename
+        rename = await self.manifests.find_rename(
+            manifest, query.path, back=query.direction is RenameDirection.BACK
         )
-        rename = await find(manifest, query.path)
         return None if rename is None else RenamedPath.from_model(library, ref, rename)
 
 

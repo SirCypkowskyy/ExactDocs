@@ -28,6 +28,7 @@ from exactdocs.catalog.ports.driving import (
     PinDefaultVersion,
     RemoveLibrary,
     RemoveVersion,
+    ReplaceRenames,
     ResolveRenamedPath,
     ResolveVersion,
     SetManualTags,
@@ -56,6 +57,7 @@ from exactdocs.catalog.use_cases import (
     PinDefaultVersionUseCase,
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
+    ReplaceRenamesUseCase,
     ResolveRenamedPathUseCase,
     ResolveVersionUseCase,
     SetManualTagsUseCase,
@@ -94,6 +96,7 @@ class CatalogModule:
     remove_library: RemoveLibrary
     set_manual_tags: SetManualTags
     apply_manual_tags: ApplyManualTags
+    replace_renames: ReplaceRenames
 
     @classmethod
     def build(
@@ -132,4 +135,5 @@ class CatalogModule:
             remove_library=RemoveLibraryUseCase(repository, manifests),
             set_manual_tags=SetManualTagsUseCase(repository, tagger),
             apply_manual_tags=ApplyManualTagsUseCase(manifests, tagger),
+            replace_renames=ReplaceRenamesUseCase(repository, manifests, tagger),
         )

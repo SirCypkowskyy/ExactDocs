@@ -77,7 +77,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   "new_path", "similarity"} | null}`; `null` means the path was not moved (or no renames are
   known; nothing is guessed). An unknown library or version, or one without an active manifest,
   is 404 `not_found`. Across several versions, ask once per version and chain the answers; a
-  branch's map builds up over its syncs.
+  branch's map builds up over its syncs. Adding an older tag after a newer one (`v1.3.0` after
+  `v1.4.0`) also detects the newer tag's map again, against the older one, so the order versions
+  are added in does not matter.
 - **Refs containing `/`**: library IDs are `/{owner}/{repo}` in the path. A ref may only be the
   last path segment, declared `{ref:path}`; a route that needs a ref and an article path takes
   `?ref=` and `?path=`, because servers decode `%2F` before routing.

@@ -37,6 +37,7 @@ from exactdocs.catalog.dtos import (
     RemoveVersionCommand,
     RenamedPath,
     RenameList,
+    ReplaceRenamesCommand,
     ResolvedVersion,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
@@ -316,6 +317,19 @@ class ApplyManualTags(Protocol):
     """
 
     async def __call__(self, command: ApplyManualTagsCommand) -> RetaggedManifest:
+        """Run the use case."""
+        ...
+
+
+class ReplaceRenames(Protocol):
+    """Replace the rename map of a version's active manifest and re-tag it from the new map.
+
+    Returns the articles that carry manual tags, or carried some, with their tags now. Raises
+    ``LibraryNotFoundError`` and ``VersionNotFoundError`` (also when the version has no active
+    manifest).
+    """
+
+    async def __call__(self, command: ReplaceRenamesCommand) -> RetaggedManifest:
         """Run the use case."""
         ...
 

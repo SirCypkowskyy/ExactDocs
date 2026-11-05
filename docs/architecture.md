@@ -154,6 +154,12 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   (`compose_renames`): earlier renames are kept, chained (A to B, then B to C gives A to C, the
   lower similarity) and dropped when their target is no longer an article. Pre-releases and other
   names have no order and get none. Old paths are filtered by the library's current selection.
+  The previous version is the closest one imported *so far*, so an older tag imported later (add
+  `v1.4.0`, then `v1.3.0`) is closer to the newer tags than what they were compared with: after
+  its activation the import detects the map of each version whose previous version it now is
+  again (git only, no re-chunking), replaces it (`ReplaceRenames`, which also re-tags the manifest
+  from the new map) and copies the tags to the chunk rows, under the library's `TagLocks`. A map
+  git cannot give leaves the newer version as it was; this never fails the older import.
   The map (`from_ref`, old path, new path, similarity) is stored with the new version's manifest
   (`catalog_manifest_renames`, indexed both ways), so it is replaced, collected and removed with
   it. It is read through the `ResolveRenamedPath` port (forward: old to new; back: new to old),

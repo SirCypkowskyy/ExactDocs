@@ -27,6 +27,7 @@ from exactdocs.catalog.dtos import (
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RenameIn,
+    ReplaceRenamesCommand,
     ResolveRenamedPathQuery,
     SetManualTagsCommand,
     StoreManifestCommand,
@@ -55,6 +56,7 @@ from exactdocs.catalog.ports.driving import (
     ListRenames,
     RemoveLibrary,
     RemoveVersion,
+    ReplaceRenames,
     ResolveRenamedPath,
     SetManualTags,
     StoreManifest,
@@ -332,6 +334,7 @@ class CatalogVersionPublisher:
     discard_pending_manifests: DiscardPendingManifests
     apply_readme: ApplyReadme
     apply_manual_tags_to: ApplyManualTags
+    replace_renames_of: ReplaceRenames
 
     async def store(self, version: ImportedVersion) -> str:
         """Store the articles as a pending manifest."""
@@ -347,6 +350,30 @@ class CatalogVersionPublisher:
         """Give the pending manifest its library's manual tags."""
         found = await self.apply_manual_tags_to(ApplyManualTagsCommand(manifest_id=manifest_id))
         return {a.path: tuple(a.tags) for a in found.articles}
+
+    async def replace_renames(
+        self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
+    ) -> tuple[str, dict[str, tuple[str, ...]]] | None:
+        """Give the version's active manifest the new map; ``None`` when it serves none."""
+        try:
+            found = await self.replace_renames_of(
+                ReplaceRenamesCommand(
+                    library=library,
+                    ref=ref,
+                    renames=[
+                        RenameIn(
+                            from_ref=from_ref,
+                            old_path=r.old_path,
+                            new_path=r.new_path,
+                            similarity=r.similarity,
+                        )
+                        for r in renames
+                    ],
+                )
+            )
+        except NotFoundError:
+            return None
+        return found.manifest_id, {a.path: tuple(a.tags) for a in found.articles}
 
     async def describe(
         self,

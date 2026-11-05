@@ -726,6 +726,19 @@ class ApplyManualTagsCommand(_Dto):
     manifest_id: str = Field(min_length=1)
 
 
+class ReplaceRenamesCommand(_Dto):
+    """Give the active manifest of `ref` a new rename map, then its library's manual tags again.
+
+    For a newer version whose previous version was imported after it: its renames are then
+    detected against that one. Renames into a path that is not an article of the manifest are
+    left out.
+    """
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    ref: str = Field(min_length=1)
+    renames: list[RenameIn]
+
+
 class GetAssetQuery(_Dto):
     """Read the image at repository path `path` of a version; no `ref` means the default version."""
 
