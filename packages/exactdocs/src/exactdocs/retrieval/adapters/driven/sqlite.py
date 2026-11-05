@@ -17,6 +17,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    bindparam,
     delete,
     distinct,
     exists,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     insert,
     select,
     tuple_,
+    update,
 )
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -366,6 +368,29 @@ class SqliteChunkRepository:
                 )
             )
         return Removed(manifests=gone, chunk_sets=unused.rowcount)
+
+    async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
+        """One UPDATE per article: its rows are found by the (manifest, path) index."""
+        if not tags:
+            return 0
+        statement = (
+            update(manifest_chunks)
+            .where(
+                manifest_chunks.c.manifest_id == bindparam("manifest"),
+                manifest_chunks.c.article_path == bindparam("path"),
+                manifest_chunks.c.tags != bindparam("new_tags"),
+            )
+            .values(tags=bindparam("new_tags"))
+        )
+        async with self._write() as connection:
+            changed = 0
+            for path, article_tags in tags.items():
+                result = await connection.execute(
+                    statement,
+                    {"manifest": manifest_id, "path": path, "new_tags": json.dumps(article_tags)},
+                )
+                changed += result.rowcount
+        return changed
 
 
 def _stored_chunks() -> Select[Any]:

@@ -57,6 +57,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
   carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.
+- **Manual tags**: `PUT /libraries/{owner}/{repo}/tags?path=` with `{"tags": [...]}` (at most 20,
+  normalized like every tag) sets the tags of an article path by hand, for every version of the
+  library, replacing the path's earlier manual tags; it answers `{"library", "path", "tags"}`.
+  `DELETE` on the same URL removes them (204); imported tags stay. They combine with the imported
+  tags (front matter, path rules) of the article at `path` in every version, and of the article git
+  saw it renamed to in a later version (rename maps are followed back across versions, never from a
+  new name to an old one), and later imports get them too. Articles show every tag in `tags` and the
+  manual ones again in `manual_tags` as `[{"tag", "path"}]`, where `path` is the path the tag was
+  set on: the article's own, or an older one it was renamed from. `PUT` and `DELETE` act on the path
+  that was tagged, never on its successors: to remove a tag that came with a rename, remove it on
+  the `path` it names (which removes it from every version). Listings, tag counts and search see them at once (the tag
+  copies on chunks are refreshed, nothing is chunked again). A path no version has is accepted and
+  waits for one. An unknown library is 404; a value that cannot be a tag is 422 `invalid_tags`.
 - **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&path=&direction=` follows `path` one
   hop across the renames git saw when `ref` was imported (default version without `ref`).
   `direction=forward` (default): `path` is from the version imported before `ref`; `back`: `path`

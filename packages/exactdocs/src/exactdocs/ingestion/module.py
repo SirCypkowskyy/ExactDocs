@@ -24,6 +24,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportSource,
     JobKind,
+    TaggedPath,
 )
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -36,6 +37,7 @@ from exactdocs.ingestion.ports.driven import (
     JobRepository,
     LibraryIds,
     LibrarySources,
+    ManualTagStore,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -60,6 +62,7 @@ from exactdocs.ingestion.ports.driving import (
     RemoveVersion,
     RunNextJob,
     SyncLibrary,
+    TagArticle,
 )
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
@@ -81,6 +84,8 @@ from exactdocs.ingestion.use_cases import (
     RemoveVersionUseCase,
     RunNextJobUseCase,
     SyncLibraryUseCase,
+    TagArticleUseCase,
+    TagLocks,
 )
 from exactdocs_kernel import Clock, NotFoundError
 
@@ -99,6 +104,15 @@ class _NoLibrarySources:
     async def renames_of(self, library: str, ref: str) -> list[GitRename]:
         del library, ref
         return []
+
+
+class _NoManualTags:
+    """The default ``manual_tags`` of ``build``: no library is known, so none can be tagged."""
+
+    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
+        del path, tags
+        message = f"library {library!r} not found"
+        raise NotFoundError(message)
 
 
 class _NoTree:
@@ -149,6 +163,7 @@ class IngestionModule:
     remove_version: RemoveVersion
     run_next_job: RunNextJob
     sync_library: SyncLibrary
+    tag_article: TagArticle
 
     @classmethod
     def build(
@@ -166,12 +181,19 @@ class IngestionModule:
         vault: CredentialVault | None = None,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
+        manual_tags: ManualTagStore | None = None,
+        tag_locks: TagLocks | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         ``handlers`` maps each job kind to what runs it; ``recovery_hooks`` maps a kind to its
-        clean-up after an interrupted run (a kind without one needs none).
+        clean-up after an interrupted run (a kind without one needs none). With ``manual_tags``
+        pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
+        activation take turns.
         """
+        if manual_tags is not None and tag_locks is None:
+            message = "manual_tags needs the tag_locks given to import_job"
+            raise TypeError(message)
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         none = _NoLibrarySources()
         return cls(
@@ -201,6 +223,9 @@ class IngestionModule:
             sync_library=SyncLibraryUseCase(
                 remote, sources or none, jobs, clock, enqueue_job, vault or _NoCredentials()
             ),
+            tag_article=TagArticleUseCase(
+                manual_tags or _NoManualTags(), index, tag_locks or TagLocks()
+            ),
         )
 
 
@@ -217,8 +242,12 @@ def import_job(
     renames: RenameSource | None = None,
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
+    tag_locks: TagLocks,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
-    """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions."""
+    """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
+
+    Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
+    """
     importer = ImportVersionUseCase(
         gateway,
         chunker,
@@ -231,6 +260,7 @@ def import_job(
         renames=renames,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
+        tag_locks=tag_locks,
     )
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)

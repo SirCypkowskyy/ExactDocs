@@ -2220,6 +2220,253 @@
             }
           }
         }
+      },
+      "put": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Set Manual Tags",
+        "description": "Tag an article path by hand, for every version of the library.\n\nThe tags replace the path's manual tags and combine with the imported ones (front matter,\npath rules) of the article at `path` in every version, and of the article git saw it\nrenamed to in later versions. Listings, tag counts and search see them on return; nothing\nis imported or chunked again.",
+        "operationId": "ingestion-set_manual_tags",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "An article path, as in any version; the articles renamed from it follow.",
+              "title": "Path"
+            },
+            "description": "An article path, as in any version; the articles renamed from it follow."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualTagsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaggedArticle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Remove Manual Tags",
+        "description": "Remove every manual tag of an article path; the imported tags stay.",
+        "operationId": "ingestion-remove_manual_tags",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "An article path, as in any version; the articles renamed from it follow.",
+              "title": "Path"
+            },
+            "description": "An article path, as in any version; the articles renamed from it follow."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/libraries/{owner}/{repo}/article": {
@@ -4683,7 +4930,16 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Tags"
+            "title": "Tags",
+            "description": "Every tag: from front matter, path rules and by hand."
+          },
+          "manual_tags": {
+            "items": {
+              "$ref": "#/components/schemas/ManualTagInfo"
+            },
+            "type": "array",
+            "title": "Manual Tags",
+            "description": "The tags among `tags` set by hand, each with the path it was set on: this one or one it was renamed from. A tag set on both is listed for each."
           },
           "size": {
             "type": "integer",
@@ -4722,6 +4978,7 @@
           "path",
           "title",
           "tags",
+          "manual_tags",
           "size",
           "front_matter",
           "source_url",
@@ -6326,6 +6583,48 @@
         "title": "LoginForTokenCommand",
         "description": "Credentials exchanged for an API token (the CLI's login); ``name`` labels the token."
       },
+      "ManualTagInfo": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Where the tag was set: this article's path, or an older one it was renamed from. Change or remove the tag on this path."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "path"
+        ],
+        "title": "ManualTagInfo",
+        "description": "A tag set by hand, and the article path it was set on."
+      },
+      "ManualTagsIn": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Tags",
+            "description": "Normalized like every tag (lower-case, trimmed, deduplicated). Empty removes them."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tags"
+        ],
+        "title": "ManualTagsIn",
+        "description": "The tags to set by hand on an article path; they replace its earlier manual tags."
+      },
       "PreviewRepositoryCommand": {
         "properties": {
           "url": {
@@ -7281,6 +7580,34 @@
         ],
         "title": "TagRuleOut",
         "description": "Articles whose path matches `pattern` get `tag`."
+      },
+      "TaggedArticle": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "path",
+          "tags"
+        ],
+        "title": "TaggedArticle",
+        "description": "The manual tags of a path as stored: every version's article at that path carries them.\n\nSo does, in a later version, the article git saw it renamed to."
       },
       "TokenGrant": {
         "properties": {

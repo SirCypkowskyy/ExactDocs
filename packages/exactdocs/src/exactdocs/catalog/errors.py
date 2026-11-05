@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
+from exactdocs_kernel import MAX_TAGS, ConflictError, NotFoundError, ValidationError
 
 
 class InvalidLibraryIdError(ValidationError):
@@ -52,6 +52,15 @@ class InvalidTagFilterError(ValidationError):
     """A tag filter holds a value that cannot be a tag, or too many values."""
 
     code = "invalid_tag_filter"
+
+
+class InvalidManualTagsError(ValidationError):
+    """Tags typed by hand hold a value that cannot be a tag, or too many values."""
+
+    code = "invalid_tags"
+
+    def __init__(self) -> None:
+        super().__init__(f"tags must be valid tags, at most {MAX_TAGS} of them")
 
 
 class AmbiguousCommitError(ValidationError):
