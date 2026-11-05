@@ -219,6 +219,15 @@ def step_dry_run_listed(context: Context) -> None:
     assert "bytes" not in context.output.lower(), context.output  # the preview has no sizes
 
 
+@then("the instance holds no library and no job")
+def step_nothing_stored_at_all(context: Context) -> None:
+    _admin_rest(context)
+    listing = context.client.get("/api/v1/libraries")
+    assert listing.status_code == HTTPStatus.OK, listing.text
+    assert listing.json()["libraries"] == [], listing.json()
+    assert context.client.get("/api/v1/jobs/latest").json()["jobs"] == []
+
+
 @then("stdout is JSON with the files, their total and whether the list was cut")
 def step_dry_run_json(context: Context) -> None:
     body = json.loads(context.output)  # stdout holds nothing but the JSON

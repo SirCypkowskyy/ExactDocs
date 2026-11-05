@@ -224,6 +224,20 @@ def _finished(job: dict[str, Any]) -> str:
     return f"imported {job['done']} files" + (f", skipped {skipped}" if skipped else "")
 
 
+def parse_tag_rules(tag_rules: Sequence[str]) -> list[dict[str, str]]:
+    """Turn ``PATTERN=TAG`` arguments into the API's tag rules; a malformed one is a usage error."""
+    rules = []
+    for rule in tag_rules:
+        pattern, _, tag = rule.rpartition("=")
+        if not pattern or not tag:
+            message = (
+                f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
+            )
+            raise UsageError(message)
+        rules.append({"pattern": pattern, "tag": tag})
+    return rules
+
+
 async def add_library(
     api: ApiClient,
     url: str,
@@ -240,15 +254,7 @@ async def add_library(
     give_up_after: float = WAIT_SECONDS,
 ) -> None:
     """``POST /libraries``, then optionally follow the import job."""
-    rules = []
-    for rule in tag_rules:
-        pattern, _, tag = rule.rpartition("=")
-        if not pattern or not tag:
-            message = (
-                f"{printable(rule)!r} is not a tag rule; use PATTERN=TAG, e.g. 'docs/api/**=api'"
-            )
-            raise UsageError(message)
-        rules.append({"pattern": pattern, "tag": tag})
+    rules = parse_tag_rules(tag_rules)
     body: dict[str, Any] = {
         "url": url,
         "library_id": library_id,
@@ -293,7 +299,9 @@ async def preview_import(
         dump(preview)
         return
     files, total = preview["files"], preview["total"]
-    where = f"{preview['ref']} ({preview['ref_kind']}, {preview['commit_sha'][:9]})"
+    kind = preview["ref_kind"]
+    sha = "" if kind == "commit" else f", {preview['commit_sha'][:9]}"  # the ref is the SHA
+    where = f"{preview['ref']} ({kind}{sha})"
     if not total:
         say(f"Dry run of {where}: no file matches; check --path and --exclude. Nothing stored.")
         return

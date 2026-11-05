@@ -315,7 +315,7 @@ def add(
         bool,
         Parameter(
             help="List the files the import would take (and how many) without adding anything; "
-            "--id, --tag-rule and --wait have no effect then."
+            "--id and --wait have no effect then, --tag-rule is only checked."
         ),
     ] = False,
     url: UrlOption = None,
@@ -327,6 +327,11 @@ def add(
     API token: with --git-token-file or --ssh-key you are asked for your password.
     """
     credential = _credential(git_token_file, ssh_key, git_user)
+    try:  # before any request or password prompt, so a dry run catches a bad rule too
+        lib.parse_tag_rules(tag_rule or ())
+    except ClientError as exc:
+        sys.stderr.write(f"exactdocs: {exc}\n")
+        raise SystemExit(exit_code(exc)) from None
 
     async def go(api: ApiClient) -> None:
         if dry_run:

@@ -25,7 +25,7 @@ Feature: Libraries and tokens from the command line
     When the user runs the command "exactdocs add <fixture-url> --ref v1.4.0 --path 'docs/**' --dry-run"
     Then the command succeeds
     And the output lists the files the preview matches, with their count
-    And no library, version or job exists afterwards
+    And the instance holds no library and no job
 
   Scenario: A dry run gives scripts the preview as JSON
     When the user runs the command "exactdocs add <fixture-url> --ref v1.4.0 --path 'docs/**' --dry-run --json"

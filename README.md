@@ -120,8 +120,8 @@ the job keeps running on the server.
 
 `add --dry-run` sends the URL, `--ref`, `--path` and `--exclude` (and a credential) to
 `POST /repositories/preview` instead and prints the files the import would take, how many there
-are and, past 1000, `truncated`; nothing is stored, and `--id`, `--tag-rule` and `--wait` have no
-effect. There are no file sizes: knowing them would mean downloading every file. A server running
+are and, past 1000, `truncated`; nothing is stored. `--id` and `--wait` have no effect, and
+`--tag-rule` is only checked, so a malformed rule fails the dry run as it would fail `add`. There are no file sizes: knowing them would mean downloading every file. A server running
 as many previews as it allows answers "try again" (exit 1).
 
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read

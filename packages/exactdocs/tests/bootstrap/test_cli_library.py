@@ -589,3 +589,24 @@ def test_a_dry_run_of_a_private_repository_goes_through_a_session(
     assert server.calls[1] == "POST /api/v1/repositories/preview"
     assert all("authorization" not in r.headers for r in server.requests)
     assert json.loads(server.requests[1].content)["credential"] == {"kind": "token", "token": "tok"}
+
+
+def test_a_malformed_tag_rule_fails_the_dry_run_before_any_request(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=PREVIEW)]}
+    assert _exit(["add", *ADD_ARGS, "--tag-rule", "bogus", "--dry-run"]) == EXIT_USAGE
+    assert "'bogus' is not a tag rule" in capsys.readouterr().err
+    assert server.calls == []
+    assert _exit(["add", *ADD_ARGS, "--tag-rule", "docs/api/**=api", "--dry-run"]) == 0
+
+
+def test_a_commit_ref_is_not_followed_by_its_own_short_sha(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    pinned = PREVIEW | {"ref": sha, "ref_kind": "commit", "commit_sha": sha}
+    server.routes = {("POST", "/api/v1/repositories/preview"): [httpx2.Response(200, json=pinned)]}
+    assert _exit(["add", "https://x.io/a/b", "--ref", sha, "--dry-run"]) == 0
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first.startswith(f"Dry run of {sha} (commit): ")
