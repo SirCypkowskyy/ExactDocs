@@ -35,6 +35,7 @@ from exactdocs.catalog.dtos import (
     ListRenamesQuery,
     ListTagsQuery,
     ManifestStates,
+    PinDefaultVersionCommand,
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
@@ -155,6 +156,34 @@ class UpdateLibraryUseCase:
         updated = await self.repository.get(library.id)
         if updated is None:  # deleted in between
             raise LibraryNotFoundError(command.id)
+        return LibraryDetail.from_model(updated)
+
+
+@dataclass(frozen=True, slots=True)
+class PinDefaultVersionUseCase:
+    """Implements ``ports.driving.PinDefaultVersion``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: PinDefaultVersionCommand) -> LibraryDetail:
+        """Pin the version the ref names (stored by its exact ref), or unpin without a ref."""
+        library_id = LibraryId(command.library)
+        library = await self.repository.get(library_id)
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        ref = None
+        if command.ref is not None:
+            version = library.find_version(VersionRef(command.ref))
+            if version is None:
+                raise VersionNotFoundError(str(library.id), command.ref)
+            ref = version.ref
+        if not await self.repository.pin_default(library.id, ref):  # removed in between
+            if ref is None:
+                raise LibraryNotFoundError(command.library)
+            raise VersionNotFoundError(str(library.id), command.ref)
+        updated = await self.repository.get(library.id)
+        if updated is None:  # deleted in between
+            raise LibraryNotFoundError(command.library)
         return LibraryDetail.from_model(updated)
 
 

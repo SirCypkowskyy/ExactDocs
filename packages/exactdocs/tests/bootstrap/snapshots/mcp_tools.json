@@ -204,6 +204,10 @@
             "additionalProperties": false,
             "description": "A library and its imported versions.",
             "properties": {
+              "default_pinned": {
+                "description": "True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import).",
+                "type": "boolean"
+              },
               "default_version": {
                 "anyOf": [
                   {
@@ -296,6 +300,7 @@
               "title",
               "description",
               "default_version",
+              "default_pinned",
               "source_url",
               "refs",
               "version_count",

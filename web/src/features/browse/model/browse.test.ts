@@ -6,6 +6,7 @@ import {
   commitUrl,
   type LibraryDetail,
   orderVersions,
+  pinChoices,
   repoWebUrl,
   resolveVersion,
   safeHref,
@@ -199,5 +200,14 @@ describe("showFileName", () => {
     expect(showFileName("Webhook retries", "webhook-retries.md")).toBe(false);
     expect(showFileName("Acme Payments", "README.md")).toBe(true);
     expect(showFileName("SDK quickstart", "getting-started.md")).toBe(true);
+  });
+});
+
+describe("pinChoices", () => {
+  it("offers to pin any version unless it already is the pinned default", () => {
+    expect(pinChoices(v("v1.3.0"), false)).toEqual({ pin: true, unpin: false });
+    expect(pinChoices(v("v1.5.0", "tag", true), false)).toEqual({ pin: true, unpin: false });
+    expect(pinChoices(v("v1.3.0", "tag", true), true)).toEqual({ pin: false, unpin: true });
+    expect(pinChoices(v("v1.5.0"), true)).toEqual({ pin: true, unpin: true });
   });
 });
