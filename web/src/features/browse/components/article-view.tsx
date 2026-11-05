@@ -15,6 +15,7 @@ import {
 } from "../model/browse";
 import { CopyButton } from "../render/copy-button";
 import { assetUrl, blobUrl, rawUrl } from "../render/urls";
+import { TagEditor } from "./tag-editor";
 
 // The renderer (Markdown parser and all) is its own chunk: the tree and the overview do not wait for it.
 const loadMarkdown = () =>
@@ -404,17 +405,7 @@ function Body({
       <h2 className="mt-1 font-serif text-2xl font-semibold tracking-tight text-balance [overflow-wrap:anywhere] sm:text-3xl">
         {article.title}
       </h2>
-      {article.tags.length > 0 && (
-        // Plain text, not chips: chips are the filter's controls and these do nothing.
-        <ul
-          aria-label="Tags"
-          className="mt-2 flex flex-wrap gap-x-3 text-[13px] text-muted-foreground"
-        >
-          {article.tags.map((t) => (
-            <li key={t}>{t}</li>
-          ))}
-        </ul>
-      )}
+      <TagEditor owner={owner} repo={repo} article={article} />
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <CommitLinks library={library} version={version} fileUrl={article.source_url} />
         <ViewToggle view={view} onChange={setView} />

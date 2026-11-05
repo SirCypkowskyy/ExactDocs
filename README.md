@@ -366,8 +366,10 @@ the mode is chosen.
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
 never splitting code blocks or tables (Chonkie was dropped: its Markdown recipe needs the Hugging
 Face Hub and the network, which a model-free, offline-capable image cannot have). Articles are
-tagged from front matter and path rules, and listings and search filter by tag.
-Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
+tagged from front matter and path rules, and by hand: the article page of the web UI shows each
+tag under where it comes from and adds or removes manual tags, which hold for every version
+(`PUT`/`DELETE /api/v1/libraries/{owner}/{repo}/tags?path=`). Listings and search filter by tag.
+Per-library split level and chunk sizes are planned (MVP-2).
 
 ## Configuration
 

@@ -1,7 +1,9 @@
 import asyncio
 import http.server
 import os
+import signal
 import socket
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -9,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.adapters.driven import git_cli
+from exactdocs.ingestion.adapters.driven.git_cli import _DRAIN_SECONDS, GitCli
 from exactdocs.ingestion.errors import (
     GitNotInstalledError,
     InvalidRepositoryUrlError,
@@ -183,6 +186,94 @@ async def test_a_helper_that_outlives_git_is_killed_too(tmp_path: Path) -> None:
         await GitCli(git=git, timeout=1).list_refs(repository("https://git.example.com/a/b"))
 
     assert await gone(marker), processes_mentioning(marker)
+
+
+def open_files() -> int:
+    """File descriptors this process has open."""
+    return len(list(Path("/proc/self/fd").iterdir()))
+
+
+async def test_a_timed_out_call_leaves_no_pipe_open(tmp_path: Path) -> None:
+    # The same helper holding git's stdout: once the call has raised, git's pipes are closed
+    # already, not left for the event loop (or the garbage collector) to find later.
+    marker = f"holder-{tmp_path.name}"
+    git = fake_git(tmp_path, f"sh -c 'sleep 77; :' {marker} &\nexit 0\n")
+    before = open_files()
+
+    with pytest.raises(RepositoryUnreachableError, match="no answer"):
+        await GitCli(git=git, timeout=1).list_refs(repository("https://git.example.com/a/b"))
+
+    assert open_files() == before
+    assert await gone(marker), processes_mentioning(marker)
+
+
+async def closed_again(count: int) -> bool:
+    """Wait briefly for the open file descriptors to drop back to ``count``."""
+    for _ in range(50):
+        if open_files() == count:
+            return True
+        await asyncio.sleep(0.1)
+    return False
+
+
+async def test_a_helper_outside_the_group_does_not_hold_up_a_timed_out_call(
+    tmp_path: Path,
+) -> None:
+    # git is still running at the timeout, and a helper in a session of its own keeps git's
+    # stdout open: the group kill cannot reach it, so the call waits for it only briefly.
+    marker = f"escaped-{tmp_path.name}"
+    helper = f"setsid {sys.executable} -c 'import time; time.sleep(20)' {marker}"
+    git = fake_git(tmp_path, f"{helper} &\nsleep 30\n")
+    before = open_files()
+    started = time.monotonic()
+    try:
+        with pytest.raises(RepositoryUnreachableError, match="no answer"):
+            await GitCli(git=git, timeout=1).list_refs(repository("https://git.example.com/a/b"))
+
+        assert time.monotonic() - started < 1 + _DRAIN_SECONDS + 1.5
+    finally:
+        for pid in processes_mentioning(marker):
+            os.kill(pid, signal.SIGKILL)
+    assert await gone(marker), processes_mentioning(marker)
+    assert await closed_again(before)  # once the helper is gone, its pipes close too
+
+
+def fake_keygen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitCli:
+    """A ``ssh-keygen`` on ``PATH`` that hangs, and a ``GitCli`` that will run it."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    keygen = bin_dir / "ssh-keygen"
+    keygen.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(77)\n")
+    keygen.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return GitCli(git=GIT.git, known_hosts=tmp_path / "known_hosts")
+
+
+async def test_a_hanging_ssh_keygen_is_killed_and_leaves_no_pipe_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = fake_keygen(tmp_path, monkeypatch)
+    monkeypatch.setattr(git_cli, "_KEYGEN_SECONDS", 0.5)
+    before = open_files()
+
+    assert await cli.host_key_fingerprint(repository("ssh://git@git.example.com/a/b")) is None
+
+    assert open_files() == before
+    assert await gone(str(tmp_path / "bin")), processes_mentioning(str(tmp_path / "bin"))
+
+
+async def test_a_cancelled_fingerprint_lookup_kills_ssh_keygen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = fake_keygen(tmp_path, monkeypatch)
+    before = open_files()
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.5):
+            await cli.host_key_fingerprint(repository("git@git.example.com:a/b.git"))
+
+    assert open_files() == before
+    assert await gone(str(tmp_path / "bin")), processes_mentioning(str(tmp_path / "bin"))
 
 
 async def test_a_flood_of_refs_is_cut_off_at_once_and_reported(tmp_path: Path) -> None:
