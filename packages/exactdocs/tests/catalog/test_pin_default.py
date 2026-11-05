@@ -1,5 +1,6 @@
 """Pinning the default version (LIB-10): a pin wins until it is removed, then the rule applies."""
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -119,3 +120,58 @@ async def test_removing_the_pinned_version_unpins_the_library() -> None:
     assert removal.default_ref == "v1.5.0"
     found = await catalog.get_library(GetLibraryQuery(id=LIBRARY))
     assert (found.default_version, found.default_pinned) == ("v1.5.0", False)
+
+
+class LibraryRemovedWhilePinning:
+    """A repository where the library is deleted just before the pin is written."""
+
+    def __init__(self, inner: InMemoryLibraryRepository) -> None:
+        self.inner = inner
+
+    async def list_all(self) -> Sequence[Library]:
+        return await self.inner.list_all()
+
+    async def get(self, library_id: LibraryId) -> Library | None:
+        return await self.inner.get(library_id)
+
+    async def add(self, library: Library) -> None:
+        await self.inner.add(library)
+
+    async def delete(self, library_id: LibraryId) -> None:
+        await self.inner.delete(library_id)
+
+    async def save(self, library: Library) -> None:
+        await self.inner.save(library)
+
+    async def set_text(
+        self, library_id: LibraryId, *, title: str | None, description: str | None
+    ) -> None:
+        await self.inner.set_text(library_id, title=title, description=description)
+
+    async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
+        await self.inner.delete(library_id)
+        return await self.inner.pin_default(library_id, ref)
+
+    async def follow_readme(self, library_id: LibraryId, *, title: str, description: str) -> None:
+        await self.inner.follow_readme(library_id, title=title, description=description)
+
+
+async def test_a_library_removed_while_pinning_is_reported_as_missing() -> None:
+    inner = InMemoryLibraryRepository.of(
+        [
+            Library(
+                id=LibraryId(LIBRARY),
+                title="payments",
+                source_url="https://github.com/acme/payments",
+                host=HostKind.GITHUB,
+                versions=frozenset({V13}),
+            )
+        ]
+    )
+    repository = LibraryRemovedWhilePinning(inner)
+    catalog = CatalogModule.build(
+        repository=repository, manifests=InMemoryManifestRepository(inner)
+    )
+
+    with pytest.raises(LibraryNotFoundError):
+        await catalog.pin_default_version(PinDefaultVersionCommand(library=LIBRARY, ref="v1.3.0"))

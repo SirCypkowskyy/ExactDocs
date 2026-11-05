@@ -83,12 +83,12 @@ describe("VersionPicker default pin", () => {
     expect(init?.method).toBe("DELETE");
   });
 
-  it("says so when the version is gone", async () => {
+  it("says so when the version or library is gone", async () => {
     serve(404);
     view(v("v1.3.0"), false);
     await userEvent.click(await screen.findByRole("button", { name: /Change version/ }));
     await userEvent.click(screen.getByRole("button", { name: "Pin v1.3.0 as default" }));
 
-    expect(await screen.findByText(/no longer imported/)).toBeInTheDocument();
+    expect(await screen.findByText(/version or library is no longer imported/)).toBeInTheDocument();
   });
 });

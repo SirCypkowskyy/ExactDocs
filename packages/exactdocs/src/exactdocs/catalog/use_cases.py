@@ -178,7 +178,7 @@ class PinDefaultVersionUseCase:
                 raise VersionNotFoundError(str(library.id), command.ref)
             ref = version.ref
         if not await self.repository.pin_default(library.id, ref):  # removed in between
-            if ref is None:
+            if ref is None or await self.repository.get(library.id) is None:
                 raise LibraryNotFoundError(command.library)
             raise VersionNotFoundError(str(library.id), command.ref)
         updated = await self.repository.get(library.id)

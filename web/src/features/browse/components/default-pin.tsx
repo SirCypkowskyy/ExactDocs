@@ -18,7 +18,7 @@ const ACTION =
 
 function explain(error: unknown): string {
   if (error instanceof HttpError && error.status === 404)
-    return "That version is no longer imported. Reload the page.";
+    return "That version or library is no longer imported. Reload the page.";
   if (error instanceof HttpError && error.status === 401) return "Sign in again to change this.";
   return "The default could not be changed. Try again.";
 }

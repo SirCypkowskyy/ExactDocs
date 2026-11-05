@@ -77,8 +77,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   what `/owner/repo` without a ref means, even after a higher stable tag is imported (LIB-10).
   `DELETE` on the same path unpins it, and the default follows the *Default version* rule again.
   Both answer 200 with the library; a ref the library has not imported (refs are case-sensitive)
-  or an unknown library is 404 `not_found`. Libraries carry `default_pinned` (also in the MCP
-  `list_libraries` tool). Removing the pinned version unpins the library.
+  or an unknown library is 404 `not_found`; a missing or empty ref, a malformed library ID or ref,
+  or a short SHA that matches more than one commit version is 422. Libraries carry
+  `default_pinned` (also in the MCP `list_libraries` tool). Removing the pinned version unpins the
+  library. Changing the pin does not re-derive the title and description from the new default's
+  README (LIB-07); re-import the new default to refresh them.
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`
