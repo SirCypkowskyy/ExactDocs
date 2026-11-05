@@ -424,12 +424,17 @@ async def remove(api: ApiClient, target: str, *, as_json: bool = False) -> None:
         say(f"{result['library']} now resolves to {result['default_version']}.")
 
 
-async def token_create(api: ApiClient, name: str, days: int | None, *, as_json: bool) -> None:
-    """``POST /tokens`` (a session is needed); the secret is shown this once."""
+async def create_token(api: ApiClient, name: str, days: int | None) -> dict[str, Any]:
+    """``POST /tokens`` (a session is needed) and return the grant; ``days=None`` never expires."""
     body: dict[str, Any] = {"name": name}
     if days is not None:
         body["expires_at"] = (datetime.now(UTC) + timedelta(days=days)).isoformat()
-    grant = await api.request("POST", "/tokens", json=body)
+    return await api.request("POST", "/tokens", json=body)
+
+
+async def token_create(api: ApiClient, name: str, days: int | None, *, as_json: bool) -> None:
+    """Create a token; the secret is shown this once."""
+    grant = await create_token(api, name, days)
     if as_json:
         dump(grant)
         return

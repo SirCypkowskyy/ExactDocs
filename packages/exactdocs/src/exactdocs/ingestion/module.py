@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Self
 
+from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.models import (
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
@@ -39,6 +40,7 @@ from exactdocs.ingestion.ports.driven import (
     RecoveryHook,
     Removals,
     RenameSource,
+    RepositoryTree,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -51,6 +53,7 @@ from exactdocs.ingestion.ports.driving import (
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
+    PreviewRepository,
     RecoverJobs,
     RemoveLibrary,
     RemoveVersion,
@@ -70,6 +73,7 @@ from exactdocs.ingestion.use_cases import (
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
+    PreviewRepositoryUseCase,
     RecoverJobsUseCase,
     RemoveLibraryUseCase,
     RemoveVersionUseCase,
@@ -93,6 +97,17 @@ class _NoLibrarySources:
     async def renames_of(self, library: str, ref: str) -> list[GitRename]:
         del library, ref
         return []
+
+
+class _NoTree:
+    """The default ``tree`` of ``build``: no git to list a commit with.
+
+    (Not ``MissingGit``: the core does not import adapters.)
+    """
+
+    async def list_files(self, repository: object, commit_sha: str, **_: object) -> list[str]:
+        del repository, commit_sha
+        raise GitNotInstalledError
 
 
 class _NoCredentials:
@@ -125,6 +140,7 @@ class IngestionModule:
     list_latest_jobs: ListLatestJobs
     list_library_jobs: ListLibraryJobs
     list_repository_refs: ListRepositoryRefs
+    preview_repository: PreviewRepository
     recover_jobs: RecoverJobs
     remove_library: RemoveLibrary
     remove_version: RemoveVersion
@@ -138,6 +154,7 @@ class IngestionModule:
         jobs: JobRepository,
         clock: Clock,
         remote: GitRemote,
+        tree: RepositoryTree | None = None,
         library_ids: LibraryIds,
         libraries: NewLibraries,
         sources: LibrarySources | None = None,
@@ -168,6 +185,7 @@ class IngestionModule:
             list_latest_jobs=ListLatestJobsUseCase(jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
+            preview_repository=PreviewRepositoryUseCase(remote, tree or _NoTree()),
             recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),
             remove_library=RemoveLibraryUseCase(
                 jobs, removals, index, enqueue_job, vault or _NoCredentials()

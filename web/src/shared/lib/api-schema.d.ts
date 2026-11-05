@@ -415,6 +415,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/repositories/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Preview
+         * @description List the articles an import of this URL, ref and patterns would take (a dry run).
+         *
+         *     Only the commit's tree is fetched, no file content, and nothing is stored. `files` has
+         *     at most 1000 paths; `total` counts all matches and `truncated` says they were cut. Paths
+         *     are untrusted text. A `credential` needs a signed-in session, not an API token.
+         */
+        readonly post: operations["ingestion-preview"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/versions": {
         readonly parameters: {
             readonly query?: never;
@@ -1400,6 +1424,37 @@ export interface components {
             readonly expires_at?: string | null;
         };
         /**
+         * PreviewRepositoryCommand
+         * @description Ask which files an import would take (a dry run: nothing is fetched beyond the tree).
+         */
+        readonly PreviewRepositoryCommand: {
+            /**
+             * Url
+             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             */
+            readonly url: string;
+            /**
+             * Ref
+             * @description A tag, a branch or a full or short commit SHA; omitted: the default branch.
+             */
+            readonly ref?: string | null;
+            /**
+             * Include Paths
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file.
+             */
+            readonly include_paths?: readonly string[];
+            /**
+             * Exclude Paths
+             * @description Folders, files or globs to leave out; they win.
+             */
+            readonly exclude_paths?: readonly string[];
+            /**
+             * Credential
+             * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
+             */
+            readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
+        };
+        /**
          * ProblemCode
          * @description Why a file shows up in a job's problems; stable, clients may branch on it.
          * @enum {string}
@@ -1478,6 +1533,35 @@ export interface components {
          * @enum {string}
          */
         readonly RepositoryHost: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
+        /**
+         * RepositoryPreview
+         * @description The articles an import would take: the first ones, and how many there are in all.
+         */
+        readonly RepositoryPreview: {
+            /**
+             * Ref
+             * @description The tag or branch name, or the full SHA of a commit.
+             */
+            readonly ref: string;
+            readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
+            /** Commit Sha */
+            readonly commit_sha: string;
+            /**
+             * Files
+             * @description Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as markup or a link target.
+             */
+            readonly files: readonly string[];
+            /**
+             * Total
+             * @description How many files match, also those not listed.
+             */
+            readonly total: number;
+            /**
+             * Truncated
+             * @description True when `files` is cut (`total` is more than listed).
+             */
+            readonly truncated: boolean;
+        };
         /**
          * RepositoryRefs
          * @description What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most.
@@ -2093,6 +2177,17 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly "identity-delete_session": {
@@ -2237,6 +2332,17 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -3988,6 +4094,95 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PreviewRepositoryCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RepositoryPreview"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Every preview slot is taken (`preview_busy`); try again shortly. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before trying again. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {

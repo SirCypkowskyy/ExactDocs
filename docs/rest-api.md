@@ -17,7 +17,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   Unknown routes and wrong methods are `not_found` / `method_not_allowed`; an unexpected failure
   is 500 `internal_error` (no internals in `detail`).
   `error` is the stable `DomainError.code` (`not_found` is 404, `conflict` 409, `validation_error`
-  and every `ValidationError` 422, anything else 400). Request validation failures are 422 with
+  and every `ValidationError` 422, `rate_limited` 429 with a `Retry-After` header in seconds,
+  anything else 400). Request validation failures are 422 with
   `error: "validation_error"` and one `fields` entry (`loc`, `msg`, `type`) per invalid field.
 - **First run**: until the first admin account exists, every `/api/v1` request except
   `POST /api/v1/setup`, `GET /api/v1/session` and the OpenAPI document is refused with 403
@@ -31,7 +32,16 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
-  `invalid_credentials`. `GET /session` returns `{"state": "setup_required" | "signed_out" |
+  `invalid_credentials`. Both credential endpoints, `POST /session` and `POST /tokens/login`,
+  share one sign-in throttle. Each attempt counts against its client address (IPv6: its /64) and
+  its username before the password is checked; after 5 that did not succeed, the next attempt
+  waits 5 s, then 10 s, doubling up to 15 min, and is refused meanwhile with 429 `rate_limited`
+  and `Retry-After` (its password is not checked, and it is not counted). Concurrent attempts
+  get no more tries than sequential ones. The address is the one uvicorn reports, so behind a
+  proxy listed in `EXACTDOCS_FORWARDED_ALLOW_IPS` it is the forwarded client. Counts are
+  forgotten after an hour without an attempt; a right password takes its attempt back (without restarting the wait), clears
+  its username's count, and lets that address skip the username's count for 30 days. The counts
+  live in the server's memory (a restart clears them). Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
   "signed_in", "account": ...}` and never fails; `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
@@ -85,7 +95,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   exclusion always wins. The library has no versions until its import has run; the job records the
   pinned ref and commit. `GET /repositories/refs?url=` lists `default_branch`, `branches` and `tags`
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
-  Like `/repositories/check`, both accept `file://`, localhost and private addresses (see
+  `POST /repositories/preview` (`url`, optional `ref`, `include_paths`, `exclude_paths`, `credential`)
+  is a dry run: it fetches the commit and its trees only (`--filter=blob:none`, depth 1, no
+  checkout; git's process limits, and the fetch deadline and size watchdog, apply) and answers
+  `ref`, `ref_kind`, `commit_sha`, `files` (sorted, 1000 at most), `total` and `truncated`. The
+  same selection rules as the import decide, so nothing is stored. Sizes are not included: they
+  would need the blobs. Paths are untrusted text; render them as text. Errors are those of
+  adding a library, plus 422 `commit_unavailable`, and 422 `repository_too_large` when the
+  fetch or the tree listing is too large. A `credential` needs a signed-in session, as for
+  `/repositories/check`. It does a real fetch of the commit's trees, so it is slower than
+  `/repositories/check`; at most two run at once, and a third waits a few seconds, then gets 429
+  `preview_busy` with a `Retry-After` header (seconds).
+  Like `/repositories/check`, all of them accept `file://`, localhost and private addresses (see
   SECURITY.md).
 - **Re-syncing**: `POST /libraries/{owner}/{repo}/sync` (no body) asks the remote where each
   *branch* version of the library is now and queues an import pinned to the new commit for each
@@ -117,7 +138,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
   library's jobs, newest first.
 - **Private repositories**: a `credential` (`{"kind": "token", ...}` or `{"kind": "ssh_key", ...}`)
-  is accepted by `POST /repositories/check`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
+  is accepted by `POST /repositories/check`, `POST /repositories/preview`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
   and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.

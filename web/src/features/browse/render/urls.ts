@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "@/shared/config/env";
 import { repoWebUrl } from "../model/browse";
 
 /** Resolve `href` against the article's folder; a repository path, or undefined when it leaves the repository. */
@@ -9,7 +10,7 @@ export function repoPath(articlePath: string, href: string): string | undefined 
   } catch {
     return undefined;
   }
-  if (!decoded) return undefined;
+  if (!decoded || /[\0\\]/.test(decoded)) return undefined;
   const parts = decoded.startsWith("/") ? [] : articlePath.split("/").slice(0, -1);
   for (const part of decoded.split("/")) {
     if (part === "..") {
@@ -21,6 +22,16 @@ export function repoPath(articlePath: string, href: string): string | undefined 
   }
   return parts.length ? parts.join("/") : undefined;
 }
+
+/** ExactDocs's own copy of an imported image (private libraries too: same origin, same session). */
+export function assetUrl(owner: string, repo: string, ref: string, path: string): string {
+  const query = new URLSearchParams({ ref, path });
+  return `${API_BASE_URL}/v1/libraries/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/asset?${query}`;
+}
+
+/** A path that stays inside the repository: no `.`/`..`/empty segment, no NUL or backslash. */
+const clean = (path: string) =>
+  !/[\0\\]/.test(path) && path.split("/").every((p) => p !== "" && p !== "." && p !== "..");
 
 const encode = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
@@ -49,7 +60,7 @@ export function rawUrl(
   path: string,
 ): string | undefined {
   const base = repoWebUrl(sourceUrl);
-  if (!base || !known(host) || !/^[0-9a-f]{7,64}$/i.test(sha)) return undefined;
+  if (!base || !known(host) || !/^[0-9a-f]{7,64}$/i.test(sha) || !clean(path)) return undefined;
   if (host === "github" && base.startsWith("https://github.com/")) {
     return `https://raw.githubusercontent.com/${base.slice("https://github.com/".length)}/${sha}/${encode(path)}`;
   }
@@ -64,7 +75,7 @@ export function blobUrl(
   path: string,
 ): string | undefined {
   const base = repoWebUrl(sourceUrl);
-  if (!base || !known(host) || !/^[0-9a-f]{7,64}$/i.test(sha)) return undefined;
+  if (!base || !known(host) || !/^[0-9a-f]{7,64}$/i.test(sha) || !clean(path)) return undefined;
   return `${base}/${BLOB[host]}/${sha}/${encode(path)}`;
 }
 

@@ -18,9 +18,11 @@ from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs_kernel import (
+    BusyError,
     ConflictError,
     DomainError,
     NotFoundError,
+    RateLimitedError,
     UnauthenticatedError,
     ValidationError,
 )
@@ -32,7 +34,9 @@ _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     UnauthenticatedError: 401,
     NotFoundError: 404,
     ConflictError: 409,
+    BusyError: 429,
     ValidationError: 422,
+    RateLimitedError: 429,
 }
 
 
@@ -68,7 +72,8 @@ class ErrorResponse(BaseModel):
     )
 
 
-# Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`).
+# Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`). 429 is
+# not here: only the credential routes answer it, and they document it themselves.
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in {
@@ -119,7 +124,9 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
     close = [str(path) for path in getattr(exc, "close_matches", ())]
     body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
-    return JSONResponse(body.model_dump(), status_code=status)
+    retry = isinstance(exc, (BusyError, RateLimitedError))
+    headers = {"Retry-After": str(exc.retry_after)} if retry else None
+    return JSONResponse(body.model_dump(), status_code=status, headers=headers)
 
 
 async def _validation_error(_: Request, exc: Exception) -> Response:

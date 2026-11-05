@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "exactdocs": {
+      "url": "https://docs.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:EXACTDOCS_TOKEN}"
+      }
+    }
+  }
+}

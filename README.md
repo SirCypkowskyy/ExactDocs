@@ -125,6 +125,26 @@ successor or replace a repository credential; the CLI signs in for the one comma
 (`--username`, `--password-stdin`); `--token` is ignored for such a command. The CLI's own `--token` is the API token, which is why the
 repository token is `--git-token-file`.
 
+### Connect an MCP client
+
+```bash
+uvx exactdocs config --client claude            # claude, claude-desktop, cursor, vscode, codex
+uvx exactdocs config --client codex --stdio     # local, read-only, no token
+uvx exactdocs skill                             # prints the agent usage skill; redirect it to a SKILL.md
+                                                # (also the MCP resource skill://exactdocs/SKILL.md)
+```
+
+`config` prints a snippet to paste into the client's config file. It never contains your token:
+it refers to `EXACTDOCS_TOKEN` (or, for VS Code, asks for it) unless you pass `--show-token`.
+Claude Desktop reaches HTTP servers through `mcp-remote` (pinned to `0.16.0`); replace the
+`<your-exactdocs-token>` placeholder there with your token. Desktop apps often lack `~/.local/bin`
+on their PATH: put the absolute paths from `which uvx` / `which npx` in `command`. With
+`--show-token` the snippet holds your real token, so never commit the file it goes into (the
+command warns on stderr). Prefer `--new-token`: it creates a token just for this client (asks for
+your password, like `token create`), so revoking it breaks nothing else. It is named
+`mcp-<client>` (`--name` changes that) and expires after 90 days (`--expires-in`); the command
+prints its id on stderr, for `exactdocs token revoke <id>`.
+
 ### From `docker run` to a searchable library
 
 The same flow CI runs on every change ([`deploy/smoke.sh`](deploy/smoke.sh), `sh` and `curl`
@@ -153,13 +173,28 @@ curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/search" -d ref=0.28.1 -d q=tim
 
 `admin create` opens the database directly (so it works before the server is up, and against the
 same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
-Passwords are stored as argon2id hashes.
+Passwords are stored as argon2id hashes, and at most 4 are checked at once.
+
+Failed sign-ins are throttled, on the web UI's sign-in and `exactdocs login` alike. Every
+attempt counts against its client address (IPv6: its /64) and its username at once, before the
+password is checked, so a burst of concurrent guesses gets no more tries than guesses sent one
+by one. After 5 attempts that did not succeed, each further one must wait (5 seconds, doubling up
+to 15 minutes) and is answered 429 `rate_limited` with a `Retry-After` header meanwhile. A right
+password takes its own attempt back (without restarting the address's wait) and clears its
+username's count. An address that has signed
+into a username in the last 30 days is held to its own count only, not to the username's, so
+others failing for the admin's username cannot lock the admin out of a machine they already
+use; a new address still waits. Behind a reverse proxy, list it in
+`EXACTDOCS_FORWARDED_ALLOW_IPS`, so the throttle counts the client's address rather than the
+proxy's. The counts are kept in the server's memory: restarting the server clears them, and
+nothing else does (`admin reset-password` runs in another process and cannot).
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
 `admin create`): it sets a new password, signs the admin out everywhere and revokes
-the API tokens.
+the API tokens. If sign-ins are throttled meanwhile (429), restart the server to clear the
+throttle.
 
 Then add your first library in the UI (**Add library**: URL, ref, paths) or over REST, as in the
 walkthrough above. The import runs as a background job whose progress, skipped files and problems
@@ -242,6 +277,28 @@ external data, never instructions. Planned: hosts that support MCP Apps (Claude,
 render articles and results as UI.
 All tools are read-only, and everything returned is marked as external content.
 
+### MCP resources
+
+Clients that browse resources read articles from the resource template
+`exactdocs://{owner}/{repo}/{path*}{?ref}` (no `ref`: the default version). Percent-encode `ref`:
+`/` is `%2F` and `+` is `%2B` (a bare `+` means a space and is refused, e.g. `?ref=v1.0.0%2Bbuild`).
+`{path*}` is FastMCP's multi-segment match, not RFC 6570; `guide/a.md` and `guide%2Fa.md` read the
+same article. Other aliases of one article: a mixed-case owner or repo (lowercased like library IDs),
+percent-encoded letters and `./` segments; `../` never leaves the version's article tree. A repeated
+`ref` is refused, and a missing library, version or article is JSON-RPC error `-32002`.
+
+A read returns two items: the untrusted-content notice as `text/plain`, then the article as
+`text/markdown`, byte for byte what `read_article` gives, with its ref, commit SHA and source link
+in `_meta`. MCP does not say how clients present several items, so the leading notice is best
+effort; the template description and the server instructions carry the notice too.
+
+`resources/list` is a **truncated sample**: at most 200 articles of the libraries' default
+versions, shared fairly across libraries, always with an explicit `?ref=`, sorted by URI and
+paged (currently 50 per page; clients must not assume a page size) with a stable cursor. Every
+page's `_meta` has `truncated` and `max_resources`. The list is rebuilt at most every 30 seconds.
+Use the template or `list_articles` for the rest. Resources sit behind the same bearer token as
+the tools and are served read-only over stdio.
+
 ### context7 over REST
 
 The same two operations for integrations that do not speak MCP, with context7's parameter
@@ -305,7 +362,7 @@ Per-library split level and chunk sizes, and manual tags, are planned (MVP-2).
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
-| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted |
+| `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -395,6 +452,26 @@ services:
     volumes: ["exactdocs-data:/data"]
 volumes:
   exactdocs-data:
+```
+
+Behind a reverse proxy in another container, add that proxy's own address to
+`EXACTDOCS_FORWARDED_ALLOW_IPS`. Otherwise every client looks like the proxy, and 5 failed
+sign-ins from anyone throttle everyone. Whatever this setting lists can choose the client
+address the server sees (through `X-Forwarded-For`), so list only the proxy: not a range such as
+`172.16.0.0/12`, which covers every container on every Docker network of the host. To pin the
+proxy's address, give it a fixed one on a network of its own:
+
+```yaml
+services:
+  proxy:
+    networks: { edge: { ipv4_address: 172.30.0.2 } }
+  exactdocs:
+    environment:
+      EXACTDOCS_FORWARDED_ALLOW_IPS: "172.30.0.2"
+    networks: [edge]
+networks:
+  edge:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
 ```
 
 ## How it works
