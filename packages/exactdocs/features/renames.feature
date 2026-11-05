@@ -29,6 +29,12 @@ Feature: Renames between versions are detected from git
     Given "/fixture/docs-repo/v1.4.0" is imported
     Then the rename map of "v1.4.0" has nothing for "docs/guide/setup.md"
 
+  Scenario: An older version imported later gives the newer one its renames
+    Given "/fixture/docs-repo/v1.4.0" is imported
+    When the user adds the version "v1.3.0"
+    Then the rename map of "v1.4.0" maps "docs/guide/setup.md" to "docs/guide/install.md"
+    And "docs/guide/install.md" of "v1.4.0" came from "docs/guide/setup.md"
+
   Scenario: A version whose renames cannot be detected is still imported
     Given "/fixture/docs-repo/v1.3.0" is imported
     And git cannot compare two commits

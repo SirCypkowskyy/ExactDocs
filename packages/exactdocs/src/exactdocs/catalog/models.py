@@ -292,6 +292,15 @@ def _stable_semver(tag: str) -> tuple[int, int, int] | None:
 ManifestId = NewType("ManifestId", str)
 
 
+class RenameDirection(StrEnum):
+    """Which way a path is followed across the rename map of a version."""
+
+    FORWARD = "forward"
+    """`path` is from the version imported before `ref`; the answer is its path in `ref`."""
+    BACK = "back"
+    """`path` is an article of `ref`; the answer is its path in the version before."""
+
+
 class ManifestState(StrEnum):
     """Where a manifest is in its life: stored, serving readers, or replaced by a newer one."""
 

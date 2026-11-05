@@ -15,6 +15,7 @@ from exactdocs.catalog.models import (
     ManifestRename,
     ManualTag,
     ManualTags,
+    RenameDirection,
     StoredArticle,
     StoredImage,
     TagSelection,
@@ -183,18 +184,33 @@ class ManifestRepository(Protocol):
         """
         ...
 
-    async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
-        """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
-        ...
+    async def find_rename(
+        self,
+        manifest_id: ManifestId,
+        path: str,
+        direction: RenameDirection = RenameDirection.FORWARD,
+    ) -> ManifestRename | None:
+        """Return the rename stored with the manifest that ``path`` is on, or ``None``.
 
-    async def find_rename_to(self, manifest_id: ManifestId, new_path: str) -> ManifestRename | None:
-        """Return the rename that made ``new_path`` (reverse of ``find_rename``), or ``None``."""
+        ``FORWARD``: ``path`` is an old path. ``BACK``: a new path, and the rename that made it
+        is returned (the first by old path).
+        """
         ...
 
     async def list_renames(
         self, manifest_id: ManifestId, *, limit: int
     ) -> Sequence[ManifestRename]:
         """Return up to ``limit`` renames of the manifest, sorted by old path."""
+        ...
+
+    async def replace_renames(
+        self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
+    ) -> None:
+        """Make ``renames`` the manifest's whole rename map, in one transaction.
+
+        Renames whose new path is not an entry of the manifest are left out; so is a second
+        rename of an old path (the first one counts). An unknown manifest is left alone.
+        """
         ...
 
     async def get_article(

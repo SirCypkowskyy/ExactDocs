@@ -3,7 +3,6 @@
 import unicodedata
 from collections.abc import Mapping
 from datetime import datetime
-from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -27,6 +26,7 @@ from exactdocs.catalog.models import (
     ManifestRename,
     ManifestState,
     RefKind,
+    RenameDirection,
     StoredArticle,
     TagMatch,
     TagSelection,
@@ -523,15 +523,6 @@ class GetArticleQuery(_Dto):
         return None if isinstance(value, str) and not value.strip() else value
 
 
-class RenameDirection(StrEnum):
-    """Which way a path is followed across the rename map of a version."""
-
-    FORWARD = "forward"
-    """`path` is from the version imported before `ref`; the answer is its path in `ref`."""
-    BACK = "back"
-    """`path` is an article of `ref`; the answer is its path in the version before."""
-
-
 class ResolveRenamedPathQuery(_Dto):
     """Follow `path` across the renames of `ref` (default version without one) by `direction`.
 
@@ -724,6 +715,28 @@ class ApplyManualTagsCommand(_Dto):
     """Give a (pending) manifest the manual tags its library has now."""
 
     manifest_id: str = Field(min_length=1)
+
+
+class ReplaceRenamesCommand(_Dto):
+    """Give the active manifest of `ref` a new rename map, then its library's manual tags again.
+
+    For a newer version whose previous version was imported after it: its renames are then
+    detected against that one. Renames into a path that is not an article of the manifest are
+    left out.
+    """
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    ref: str = Field(min_length=1)
+    renames: list[RenameIn]
+
+
+class RenamesReplaced(_Dto):
+    """The manifest whose renames were replaced, and every manifest whose tags that touched."""
+
+    manifest_id: str
+    retagged: list[RetaggedManifest] = Field(
+        description="The pending and active manifests whose articles carry or carried manual tags."
+    )
 
 
 class GetAssetQuery(_Dto):
