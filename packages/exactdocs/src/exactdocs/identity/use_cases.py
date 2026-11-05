@@ -43,10 +43,10 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
-    FailedSignIns,
     Role,
     Session,
     Username,
+    address_key,
     hash_token,
 )
 from exactdocs.identity.ports.driven import (
@@ -100,12 +100,17 @@ class CreateFirstAdminUseCase:
 class AuthenticateUseCase:
     """Implements ``ports.driving.Authenticate``.
 
-    The one place a password is checked, so every way to sign in shares the throttle: failures
+    The one place a password is checked, so every way to sign in shares the throttle: attempts
     are counted per client address and per username, and once either is past
     ``FREE_FAILURES`` the next attempt must wait (``SignInThrottledError``), doubling each time.
-    A refused attempt is not counted and its password is not checked. Attempts that run at the
-    same time all pass the check before any of them fails, so a burst gets a few more guesses
-    than the count; the hasher's concurrency bound keeps that number small.
+    Each attempt is counted before its password is checked, in the same atomic step as the
+    check (``FailedSignInLog.charge``), so attempts made at the same time get no more guesses
+    than attempts made one by one. A refused attempt is not counted and its password is not
+    checked; a right password takes its own attempt back.
+
+    An address that has signed into a username before (``REMEMBER_SIGN_INS_FOR``) is not held
+    to that username's count, only to its own: others' failures for the username cannot lock
+    its owner out of a machine they already use.
     """
 
     repository: AccountRepository
@@ -122,39 +127,33 @@ class AuthenticateUseCase:
             username: Username | None = Username(query.username)
         except InvalidUsernameError:
             username = None
+        address = address_key(client) if client else None
+        known = f"{username}@{address}"
+        trusted = bool(username and address) and await self.failures.signed_in_before(
+            known, self.clock.now()
+        )
         keys = [
-            *([f"address:{client}"] if client else []),
-            *([f"username:{username}"] if username else []),
+            *([address] if address else []),
+            *([f"username:{username}"] if username and not trusted else []),
         ]
-        await self._refuse_if_throttled(keys)
+        wait = await self.failures.charge(keys, self.clock.now())
+        if wait > timedelta(0):
+            raise SignInThrottledError(math.ceil(wait.total_seconds()))
         account = await self.repository.get(username) if username else None
         if account is None:
             # Spend the same time as a real check, so response time does not reveal which
             # usernames exist.
             await self.hasher.hash(password)
-            await self._count_failure(keys)
             raise InvalidCredentialsError
         if not await self.hasher.verify(account.password_hash, password):
-            await self._count_failure(keys)
             raise InvalidCredentialsError
-        # The account's own count starts over; the address keeps its count until it is forgotten,
-        # so one good password does not buy an address a fresh round of guesses at others.
+        # The account's own count starts over; the address only gets this attempt back, so one
+        # good password does not buy an address a fresh round of guesses at others.
         await self.failures.forget(f"username:{username}")
+        if address:
+            await self.failures.refund(address)
+            await self.failures.remember_sign_in(known, self.clock.now())
         return AccountSummary.from_model(account)
-
-    async def _refuse_if_throttled(self, keys: list[str]) -> None:
-        now = self.clock.now()
-        waits = [r.wait(now) for k in keys if (r := await self.failures.get(k)) is not None]
-        wait = max(waits, default=timedelta(0))
-        if wait > timedelta(0):
-            raise SignInThrottledError(math.ceil(wait.total_seconds()))
-
-    async def _count_failure(self, keys: list[str]) -> None:
-        now = self.clock.now()
-        for key in keys:
-            record = await self.failures.get(key)
-            failures = record.plus_one(now) if record else FailedSignIns(count=1, last_at=now)
-            await self.failures.put(key, failures)
 
 
 logger = logging.getLogger(__name__)

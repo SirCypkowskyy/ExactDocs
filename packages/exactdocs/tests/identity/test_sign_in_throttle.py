@@ -26,7 +26,9 @@ from exactdocs.identity.models import (
     FORGET_FAILURES_AFTER,
     FREE_FAILURES,
     LONGEST_WAIT,
+    REMEMBER_SIGN_INS_FOR,
     FailedSignIns,
+    address_key,
 )
 from exactdocs.identity.module import IdentityModule
 
@@ -208,11 +210,93 @@ def test_a_record_never_overflows_however_many_failures() -> None:
 async def test_the_log_keeps_a_bounded_number_of_records() -> None:
     log = InMemoryFailedSignInLog(max_keys=3)
     for key in "abcd":
-        await log.put(key, FailedSignIns(count=1, last_at=START))
-    await log.put("b", FailedSignIns(count=2, last_at=START))  # b is now the most recent
-    await log.put("e", FailedSignIns(count=1, last_at=START))
+        await log.charge([key], START)
+    await log.charge(["b"], START)  # b is now the most recent
+    await log.charge(["e"], START)
 
     assert list(log.records) == ["d", "b", "e"]
+
+
+async def test_a_full_log_drops_records_that_hold_no_one_back_first() -> None:
+    log = InMemoryFailedSignInLog(max_keys=3)
+    for _ in range(FREE_FAILURES):
+        await log.charge(["username:ada"], START)  # the oldest record, and a live throttle
+    await log.charge(["junk-1"], START)
+    await log.charge(["junk-2"], START)
+
+    for n in range(3, 10):  # a flood of made-up usernames
+        await log.charge([f"junk-{n}"], START)
+
+    assert "username:ada" in log.records
+    assert len(log.records) == 3
+
+
+async def test_a_refused_charge_counts_nothing() -> None:
+    log = InMemoryFailedSignInLog()
+    for _ in range(FREE_FAILURES):
+        assert await log.charge(["address:a"], START) == timedelta(0)
+
+    assert await log.charge(["address:a", "username:b"], START) == FIRST_WAIT
+    assert await log.get("username:b") is None
+    record = await log.get("address:a")
+    assert record is not None
+    assert record.count == FREE_FAILURES
+
+
+async def test_the_owner_still_signs_in_from_a_known_address_when_others_hammer_the_username(
+    world: World,
+) -> None:
+    await world.identity.authenticate(credentials(), client=ADMIN_HOST)  # the owner, once
+    for n in range(FREE_FAILURES):
+        await fail(world, 1, username="ada", client=f"192.0.2.{n}")  # others, from elsewhere
+
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client="192.0.2.99")  # a new address
+    signed_in = await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+
+    assert signed_in.username == "ada"
+
+
+async def test_a_known_address_is_still_held_to_its_own_count(world: World) -> None:
+    await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    await fail(world, FREE_FAILURES, username="ada", client=ADMIN_HOST)
+
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+
+
+async def test_a_known_address_is_forgotten_after_a_while(world: World) -> None:
+    await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    world.clock.advance(REMEMBER_SIGN_INS_FOR)
+    for n in range(FREE_FAILURES):
+        await fail(world, 1, username="ada", client=f"192.0.2.{n}")
+
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+
+
+async def test_ipv6_clients_are_counted_per_64(world: World) -> None:
+    for n in range(FREE_FAILURES):
+        await fail(world, 1, username=f"user{n}", client=f"2001:db8:1:2::{n:x}")
+
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client="2001:db8:1:2:ffff::1")
+    signed_in = await world.identity.authenticate(credentials(), client="2001:db8:1:3::1")
+
+    assert signed_in.username == "ada"
+
+
+@pytest.mark.parametrize(
+    ("client", "key"),
+    [
+        ("203.0.113.7", "address:203.0.113.7"),
+        ("::ffff:203.0.113.7", "address:203.0.113.7"),
+        ("2001:db8:1:2:3:4:5:6", "address:2001:db8:1:2::/64"),
+        ("testclient", "address:testclient"),
+    ],
+)
+def test_the_address_key(client: str, key: str) -> None:
+    assert address_key(client) == key
 
 
 @dataclass(slots=True)
@@ -221,10 +305,12 @@ class SlowArgon2:
 
     running: int = 0
     peak: int = 0
+    calls: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def _work(self) -> None:
         with self.lock:
+            self.calls += 1
             self.running += 1
             self.peak = max(self.peak, self.running)
         threading.Event().wait(0.02)
@@ -263,3 +349,38 @@ async def test_a_cancelled_check_keeps_its_slot_until_the_work_is_done() -> None
 
     assert second is True
     assert slow.peak == 1  # the second check did not start beside the abandoned one
+
+
+async def test_a_concurrent_burst_gets_no_more_guesses_than_the_free_ones() -> None:
+    slow = SlowArgon2()
+    identity = IdentityModule.build(
+        repository=InMemoryAccountRepository(),
+        sessions=InMemorySessionRepository(),
+        tokens=InMemoryTokenRepository(),
+        hasher=Argon2idPasswordHasher(argon2=slow),  # the real adapter, its KDF stubbed
+        failures=InMemoryFailedSignInLog(),
+        clock=MovableClock(),
+    )
+    await identity.create_first_admin(
+        CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+    )
+    slow.calls = 0
+
+    outcomes = await asyncio.gather(
+        *(identity.authenticate(credentials("ada", WRONG), client=ATTACKER) for _ in range(50)),
+        return_exceptions=True,
+    )
+
+    assert slow.calls == FREE_FAILURES  # the rest were refused before the password was checked
+    assert sum(isinstance(o, InvalidCredentialsError) for o in outcomes) == FREE_FAILURES
+    assert sum(isinstance(o, SignInThrottledError) for o in outcomes) == 50 - FREE_FAILURES
+
+
+def test_one_hasher_serves_several_event_loops_under_contention() -> None:
+    hasher = Argon2idPasswordHasher(argon2=SlowArgon2(), max_concurrent=1)
+
+    async def contend() -> list[bool]:
+        return await asyncio.gather(*(hasher.verify("h$pw", "pw") for _ in range(3)))
+
+    assert asyncio.run(contend()) == [True] * 3
+    assert asyncio.run(contend()) == [True] * 3  # a second loop gets its own slots

@@ -96,8 +96,18 @@ async def test_429_is_part_of_the_typed_error_shape(container: Container) -> Non
     async with client_at(create_app(container), "127.0.0.1") as client:
         document = (await client.get("/api/v1/openapi.json")).json()
 
-    responses = document["paths"]["/api/v1/session"]["post"]["responses"]
-    assert responses["429"]["content"]["application/json"]["schema"] == {
-        "$ref": "#/components/schemas/ErrorResponse"
+    paths = document["paths"]
+    for path in (SESSION, TOKEN_LOGIN):
+        responses = paths[path]["post"]["responses"]
+        assert responses["429"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorResponse"
+        }
+        assert "rate_limited" in responses["429"]["description"]
+        assert responses["429"]["headers"]["Retry-After"]["schema"] == {"type": "integer"}
+    throttled = {
+        (path, method)
+        for path, operations in paths.items()
+        for method, operation in operations.items()
+        if "429" in operation.get("responses", {})
     }
-    assert "rate_limited" in responses["429"]["description"]
+    assert throttled == {(SESSION, "post"), (TOKEN_LOGIN, "post")}

@@ -1,6 +1,7 @@
 """Identity entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import hashlib
+import ipaddress
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -24,6 +25,11 @@ FREE_FAILURES = 5
 FIRST_WAIT = timedelta(seconds=5)
 LONGEST_WAIT = timedelta(minutes=15)
 FORGET_FAILURES_AFTER = timedelta(hours=1)
+# An address that signed into a username is remembered this long after its last success: from
+# there, that username's own count does not apply (its address count still does), so failures
+# others cause for the username cannot lock its owner out of a machine they already use.
+REMEMBER_SIGN_INS_FOR = timedelta(days=30)
+_IPV6_NETWORK_BITS = 64  # one IPv6 client usually holds a whole /64
 _MAX_DOUBLINGS = 8  # FIRST_WAIT * 2**8 is past LONGEST_WAIT; also keeps the arithmetic small
 
 
@@ -143,3 +149,24 @@ class FailedSignIns:
         doublings = min(self.count - FREE_FAILURES, _MAX_DOUBLINGS)
         until = self.last_at + min(FIRST_WAIT * 2**doublings, LONGEST_WAIT)
         return max(until - now, timedelta(0))
+
+    def minus_one(self) -> FailedSignIns | None:
+        """Return the record with one attempt taken back, or ``None`` when none is left."""
+        return FailedSignIns(count=self.count - 1, last_at=self.last_at) if self.count > 1 else None
+
+
+def address_key(client: str) -> str:
+    """Return the throttle key of a client address.
+
+    IPv4 counts per address, IPv6 per /64 (one client usually holds a whole /64, so counting per
+    address would give it endless fresh counts). Anything else is used as it is.
+    """
+    try:
+        ip = ipaddress.ip_address(client)
+    except ValueError:
+        return f"address:{client}"
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d is the IPv4 client a.b.c.d
+            return f"address:{ip.ipv4_mapped}"
+        return f"address:{ipaddress.ip_network((ip, _IPV6_NETWORK_BITS), strict=False)}"
+    return f"address:{ip}"

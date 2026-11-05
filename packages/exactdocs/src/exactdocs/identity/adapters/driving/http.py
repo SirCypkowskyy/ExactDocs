@@ -62,6 +62,23 @@ _api_token = HTTPBearer(
 
 type CurrentCaller = Callable[..., Awaitable[AccountSummary]]
 
+# The sign-in throttle's answer, on the two routes that check a password. The body is the API's
+# shared error shape, referenced by name (it is defined by the app, not by this domain).
+_THROTTLED: dict[int | str, dict[str, object]] = {
+    429: {
+        "description": (
+            "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds."
+        ),
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds to wait before the next attempt.",
+                "schema": {"type": "integer"},
+            }
+        },
+    }
+}
+
 
 def client_address(request: Request) -> str | None:
     """Return the caller's IP address, for the sign-in throttle.
@@ -179,7 +196,7 @@ def build_router(
         response.headers["Cache-Control"] = "no-store"
         return await get_session_state(request.cookies.get(SESSION_COOKIE))
 
-    @router.post("/tokens/login", status_code=201)
+    @router.post("/tokens/login", status_code=201, responses=_THROTTLED)
     async def login(
         command: LoginForTokenCommand, request: Request, response: Response
     ) -> TokenGrant:
@@ -187,7 +204,7 @@ def build_router(
         response.headers["Cache-Control"] = "no-store"  # the one time the secret is shown
         return await login_for_token(command, client=client_address(request))
 
-    @router.post("/session", status_code=201)
+    @router.post("/session", status_code=201, responses=_THROTTLED)
     async def create_session(
         query: AuthenticateQuery, request: Request, response: Response
     ) -> SessionState:

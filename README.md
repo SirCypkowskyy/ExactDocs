@@ -140,19 +140,25 @@ curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/search" -d ref=0.28.1 -d q=tim
 same data directory) and, for scripts, reads the password from stdin with `--password-stdin`.
 Passwords are stored as argon2id hashes, and at most 4 are checked at once.
 
-Failed sign-ins are throttled, on the web UI's sign-in and `exactdocs login` alike: after 5
-failures from one address, or for one username, each further attempt must wait (5 seconds,
-doubling up to 15 minutes) and is answered 429 `rate_limited` with a `Retry-After` header
-meanwhile. Behind a reverse proxy, list it in `EXACTDOCS_FORWARDED_ALLOW_IPS`, so the
-throttle counts the client's address rather than the proxy's. The counts are kept in memory:
-a restart forgets them. Failures for the admin's own username slow the admin down too, from
-anywhere, until they are an hour old or the right password is given once the wait is over.
+Failed sign-ins are throttled, on the web UI's sign-in and `exactdocs login` alike. Every
+attempt counts against its client address (IPv6: its /64) and its username at once, before the
+password is checked, so a burst of concurrent guesses gets no more tries than guesses sent one
+by one. After 5 attempts that did not succeed, each further one must wait (5 seconds, doubling up
+to 15 minutes) and is answered 429 `rate_limited` with a `Retry-After` header meanwhile. A right
+password takes its own attempt back and clears its username's count. An address that has signed
+into a username in the last 30 days is held to its own count only, not to the username's, so
+others failing for the admin's username cannot lock the admin out of a machine they already
+use; a new address still waits. Behind a reverse proxy, list it in
+`EXACTDOCS_FORWARDED_ALLOW_IPS`, so the throttle counts the client's address rather than the
+proxy's. The counts are kept in the server's memory: restarting the server clears them, and
+nothing else does (`admin reset-password` runs in another process and cannot).
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
 `admin create`): it sets a new password, signs the admin out everywhere and revokes
-the API tokens.
+the API tokens. If sign-ins are throttled meanwhile (429), restart the server to clear the
+throttle.
 
 Then add your first library in the UI (**Add library**: URL, ref, paths) or over REST, as in the
 walkthrough above. The import runs as a background job whose progress, skipped files and problems
@@ -411,6 +417,10 @@ services:
 volumes:
   exactdocs-data:
 ```
+
+Behind a reverse proxy in another container, add its address to `EXACTDOCS_FORWARDED_ALLOW_IPS`
+(e.g. `172.16.0.0/12` for a Docker network). Otherwise every client looks like the proxy, and 5
+failed sign-ins from anyone throttle everyone.
 
 ## How it works
 

@@ -70,7 +70,8 @@ class ErrorResponse(BaseModel):
     )
 
 
-# Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`).
+# Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`). 429 is
+# not here: only the credential routes answer it, and they document it themselves.
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in {
@@ -80,7 +81,6 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         404: "The thing does not exist or is not visible to the caller.",
         409: "The request conflicts with the current state.",
         422: "A field is invalid (`fields` names them) or a business rule is violated.",
-        429: "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds.",
     }.items()
 }
 

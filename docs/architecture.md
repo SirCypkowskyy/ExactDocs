@@ -320,11 +320,17 @@ until its thread is done). The use cases take the password as a `SecretStr`, an 
 hash like a real check, and wrong password and unknown user raise the same error.
 
 `AuthenticateUseCase` is the one place a password is checked, so the session sign-in and the
-CLI's token login share its throttle: failures are counted per client address and per username
-in the `FailedSignInLog` driven port (`FailedSignIns` in `models.py` holds the free count and the
-doubling wait), and an attempt past them raises `SignInThrottledError` (kernel
-`RateLimitedError`, 429 with `Retry-After`) without a hash. The adapter is in-process memory,
-bounded to 10,000 records; several processes (TEAM-01) would each count their own.
+CLI's token login share its throttle. Attempts are counted per client address (IPv6 per /64)
+and per username in the `FailedSignInLog` driven port (`FailedSignIns` in `models.py` holds the
+free count and the doubling wait). `FailedSignInLog.charge` checks the wait and counts the
+attempt in one atomic step, before the hash, so concurrent attempts cannot all pass the check;
+an attempt that must wait raises `SignInThrottledError` (kernel `RateLimitedError`, 429 with
+`Retry-After`) without a hash and without being counted. A right password refunds its attempt
+on the address, clears the username's count and is remembered as a known (username, address)
+pair for 30 days; from a known address, the username's count does not apply. The adapter is
+in-process memory, bounded to 10,000 counts and 10,000 pairs, and evicts counts that hold no
+one back first; several processes (TEAM-01) would each count their own, and a shared adapter
+must make `charge` atomic too.
 
 `AccountRepository.add_first` stores an account only while the table is empty, in one atomic
 statement under `BEGIN IMMEDIATE`, so two concurrent setups (or `exactdocs admin create` next to

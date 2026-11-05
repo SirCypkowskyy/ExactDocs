@@ -32,7 +32,12 @@ export function explainError(error: unknown): FormProblem {
     return { message: "That username and password don't match." };
   }
   if (error.code === "rate_limited") {
-    return { message: "Too many failed sign-ins. Wait a little, then try again." };
+    const wait = error.retryAfter;
+    const when =
+      wait === undefined
+        ? "Wait a little, then try again."
+        : `Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`;
+    return { message: `Too many failed sign-ins. ${when}` };
   }
   if (error.code === "already_set_up") {
     return {

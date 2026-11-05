@@ -1,4 +1,5 @@
 import asyncio
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -35,10 +36,11 @@ class Argon2idPasswordHasher:
 
     argon2: Kdf = field(default_factory=Argon2)
     max_concurrent: int = MAX_CONCURRENT_HASHES
-    _slots: asyncio.Semaphore = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_slots", asyncio.Semaphore(self.max_concurrent))
+    # One semaphore per event loop: an asyncio.Semaphore binds to the first loop it waits on, so
+    # a single one would fail when the hasher is reused across ``asyncio.run`` calls (tests, CLI).
+    _slots: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = field(
+        default_factory=weakref.WeakKeyDictionary, init=False, repr=False
+    )
 
     async def hash(self, password: str) -> str:
         """Return the encoded argon2id hash (parameters and salt included)."""
@@ -57,9 +59,13 @@ class Argon2idPasswordHasher:
         Shielded: a cancelled caller (a dropped connection) returns at once, but its slot stays
         taken until the thread is done, so the bound holds for the threads, not just the callers.
         """
+        loop = asyncio.get_running_loop()
+        slots = self._slots.get(loop)
+        if slots is None:
+            slots = self._slots[loop] = asyncio.Semaphore(self.max_concurrent)
 
         async def in_a_slot() -> T:
-            async with self._slots:
+            async with slots:
                 return await asyncio.to_thread(work, *args)
 
         return await asyncio.shield(asyncio.ensure_future(in_a_slot()))

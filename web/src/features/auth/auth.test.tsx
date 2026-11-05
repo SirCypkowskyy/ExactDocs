@@ -59,7 +59,8 @@ function renderWithClient(ui: React.ReactNode) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
+  Response.json(body, { status, headers });
 const account = { id: "1", username: "ada", role: "admin" };
 
 describe("sign-in form", () => {
@@ -107,6 +108,7 @@ describe("sign-in form", () => {
             fields: [],
           },
           429,
+          { "Retry-After": "5" },
         ),
       ),
     );
@@ -114,7 +116,9 @@ describe("sign-in form", () => {
     await userEvent.type(screen.getByLabelText("Username"), "ada");
     await userEvent.type(screen.getByLabelText("Password"), "correct horse");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Too many failed sign-ins");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Too many failed sign-ins. Try again in 5 seconds.",
+    );
   });
 
   it("signs in and returns to the requested page", async () => {

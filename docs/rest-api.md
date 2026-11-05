@@ -33,12 +33,15 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
   `invalid_credentials`. Both credential endpoints, `POST /session` and `POST /tokens/login`,
-  share one sign-in throttle: after 5 failures from one client address, or for one username
-  from any address, the next attempt waits 5 s, then 10 s, doubling up to 15 min, and is refused
-  meanwhile with 429 `rate_limited` and `Retry-After` (its password is not checked). The address
-  is the one uvicorn reports, so behind a proxy listed in `EXACTDOCS_FORWARDED_ALLOW_IPS` it is
-  the forwarded client. Failures are forgotten after an hour without one, a right password
-  clears its username's count, and the counts live in the server's memory. `GET /session` returns `{"state": "setup_required" | "signed_out" |
+  share one sign-in throttle. Each attempt counts against its client address (IPv6: its /64) and
+  its username before the password is checked; after 5 that did not succeed, the next attempt
+  waits 5 s, then 10 s, doubling up to 15 min, and is refused meanwhile with 429 `rate_limited`
+  and `Retry-After` (its password is not checked, and it is not counted). Concurrent attempts
+  get no more tries than sequential ones. The address is the one uvicorn reports, so behind a
+  proxy listed in `EXACTDOCS_FORWARDED_ALLOW_IPS` it is the forwarded client. Counts are
+  forgotten after an hour without an attempt; a right password takes its attempt back, clears
+  its username's count, and lets that address skip the username's count for 30 days. The counts
+  live in the server's memory (a restart clears them). Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
   "signed_in", "account": ...}` and never fails; `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
