@@ -83,7 +83,7 @@ describe("the session guard", () => {
     );
     expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
     await act(async () => client.setQueryData(["session"], signedOut));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
     expect(router.state.location.search).toEqual({ next: "/account" });
   });
 
@@ -99,7 +99,7 @@ describe("the session guard", () => {
     await userEvent.click(
       screen.getAllByRole("button", { name: "Sign out" }).at(-1) as HTMLElement,
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
     expect(router.state.location.search).toEqual({});
   });
 });
@@ -122,6 +122,6 @@ describe("route errors", () => {
         ? json({ error: "not_authenticated", detail: "no session", fields: [] }, 401)
         : json(signedIn),
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
   });
 });
