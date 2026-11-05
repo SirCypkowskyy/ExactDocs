@@ -15,6 +15,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 from sqlalchemy import text
 
+from app_lifespan import serving
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
@@ -30,18 +31,24 @@ def bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-async def container() -> AsyncIterator[Container]:
-    container = Container.build(Settings())
-    async with container.running():
-        await container.identity.create_first_admin(
-            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
-        )
-        yield container
+def container() -> Container:
+    return Container.build(Settings())
 
 
 @pytest.fixture
-def app(container: Container) -> FastAPI:
-    return create_app(container)
+async def app(container: Container) -> AsyncIterator[FastAPI]:
+    """The app, running: its lifespan runs the container and the MCP session manager.
+
+    The container is not also run on its own: one run at a time (#203).
+
+    Yields:
+        The running app, with its first admin.
+    """
+    async with serving(create_app(container)) as app:
+        await container.identity.create_first_admin(
+            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+        )
+        yield app
 
 
 @pytest.fixture
@@ -259,40 +266,38 @@ async def test_an_mcp_client_with_the_token_lists_the_libraries_until_it_is_revo
     app: FastAPI, admin: httpx.AsyncClient
 ) -> None:
     created = await create(admin)
-    async with app.router.lifespan_context(app):
-        async with mcp_client(app, created["token"]) as mcp:
-            result = await mcp.call_tool("list_libraries", {})
-            assert result.structured_content is not None
-            assert await mcp.list_resource_templates()  # resources sit behind the same token
+    async with mcp_client(app, created["token"]) as mcp:
+        result = await mcp.call_tool("list_libraries", {})
+        assert result.structured_content is not None
+        assert await mcp.list_resource_templates()  # resources sit behind the same token
 
-        assert (await admin.delete(f"/api/v1/tokens/{created['id']}")).status_code == 204
-        with pytest.raises(Exception, match="error response"):
-            async with mcp_client(app, created["token"]) as mcp:
-                await mcp.call_tool("list_libraries", {})
+    assert (await admin.delete(f"/api/v1/tokens/{created['id']}")).status_code == 204
+    with pytest.raises(Exception, match="error response"):
+        async with mcp_client(app, created["token"]) as mcp:
+            await mcp.call_tool("list_libraries", {})
 
 
 async def test_mcp_refuses_callers_without_a_valid_token_even_with_a_session_cookie(
-    app: FastAPI, anonymous: httpx.AsyncClient, admin: httpx.AsyncClient
+    anonymous: httpx.AsyncClient, admin: httpx.AsyncClient
 ) -> None:
     # Sent by hand: the jar would not send a cookie scoped to `/api` to `/mcp` anyway.
     cookie = {"cookie": f"exactdocs_session={admin.cookies['exactdocs_session']}"}
-    async with app.router.lifespan_context(app):
-        for extra, (method, params) in itertools.product(
-            ({}, cookie),
-            [
-                ("ping", {}),
-                ("resources/list", {}),
-                ("resources/templates/list", {}),
-                ("resources/read", {"uri": "exactdocs://acme/payments/guide/a.md"}),
-            ],
-        ):
-            for auth in ({}, bearer("exd_wrong"), bearer(""), {"authorization": "Basic abc"}):
-                response = await anonymous.post(
-                    "/mcp",
-                    json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-                    headers={"accept": "application/json, text/event-stream", **extra, **auth},
-                )
-                assert response.status_code == 401, (extra.keys(), method, auth)
+    for extra, (method, params) in itertools.product(
+        ({}, cookie),
+        [
+            ("ping", {}),
+            ("resources/list", {}),
+            ("resources/templates/list", {}),
+            ("resources/read", {"uri": "exactdocs://acme/payments/guide/a.md"}),
+        ],
+    ):
+        for auth in ({}, bearer("exd_wrong"), bearer(""), {"authorization": "Basic abc"}):
+            response = await anonymous.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                headers={"accept": "application/json, text/event-stream", **extra, **auth},
+            )
+            assert response.status_code == 401, (extra.keys(), method, auth)
 
 
 async def test_logging_in_for_a_token_needs_no_session_and_starts_none(
