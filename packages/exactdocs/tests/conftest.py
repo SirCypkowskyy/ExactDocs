@@ -82,6 +82,7 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Never touch the real data directory: every test starts on an empty one."""
     data_dir = tmp_path / "data"
     monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("EXACTDOCS_JOB_POLL_SECONDS", "0.02")  # jobs start at once in tests
     monkeypatch.delenv("EXACTDOCS_DATABASE_URL", raising=False)
     return data_dir
 

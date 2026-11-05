@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # An import parses and chunks this many files per durable step: an import interrupted by a
     # crash or a restart resumes after the last step it completed.
     import_batch_files: int = Field(default=100, ge=1)
+    # How often the job worker looks for a queued job to start; an idle server polls no more
+    # often than this. Tests lower it.
+    job_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     # Images the articles reference: one above `max_image_bytes` is skipped unread, and a version
     # keeps images until they add up to `max_images_bytes` (they are held in memory and in the
     # database, about 8 times over at the peak; later ones are skipped and listed as problems).

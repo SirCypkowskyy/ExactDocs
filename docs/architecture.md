@@ -426,6 +426,16 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   Workflows that ended, or of another `STEPS_VERSION`, are deleted at start; a job's workflow is
   deleted when it ends (its steps hold the whole text of an import). A hook that raises fails its
   job instead of blocking the start.
+- **Polling.** DBOS looks for a queued job to start every `EXACTDOCS_JOB_POLL_SECONDS` (1 s), so
+  an idle server costs next to nothing; a job starts within about that long. Every 30 s the
+  worker hands the queued jobs to DBOS again (`SubmitQueuedJobs`; queuing an ID it already has is
+  a no-op), so a job DBOS did not take when it was queued still runs without a restart. The test
+  suites lower the interval.
+- **DBOS's own environment.** DBOS reads `DBOS__CLOUD`, `DBOS__VMID` and `DBOS__APPVERSION` from
+  the environment. Leave them unset: `DBOS__CLOUD=true` turns its local recovery off (jobs would
+  no longer resume), and the other two change the executor and the version that recovery
+  matches. ExactDocs sets the version itself (`STEPS_VERSION`), opens no DBOS Conductor
+  connection (no key is configured) and keeps DBOS's logs at warnings.
 - **One process runs jobs.** Only the HTTP server starts the worker (`serve --stdio`, `reindex`
   and the account commands do not), and DBOS allows one worker per process. Two servers on one
   data directory would both resume the same workflows; that needs DBOS executor IDs per process
@@ -455,8 +465,11 @@ that last step, which is one transaction in the catalog.
   publishing left fetches nothing. Each step reads the pinned commit, and what publishing writes is
   keyed by content (contents by blob SHA and parser version, chunk sets by blob SHA and chunking
   config) or replaced as a whole (a new pending manifest), so running a step twice changes
-  nothing a reader sees. The results stay in `jobs.sqlite` only while the job runs: about the
-  version's text and chunks once more, on disk, at the peak.
+  nothing a reader sees. Each image is kept by the one step that read it. The results stay in
+  `jobs.sqlite` only while the job runs: at the peak about 3x the version's text on disk (the
+  text, its chunks, pickled and base64-encoded by DBOS), plus its images. The workflow is deleted
+  when the job ends and the file is compacted (`VACUUM`) once no workflow is left in it, so it
+  does not keep that size.
 - **Undo.** Any failure after the store (an exception or a cancellation) discards the pending
   chunks and then the pending manifest. The order matters: retrieval asks the catalog and only
   removes a manifest it is told is still pending. After a crash the recovery hook does the same

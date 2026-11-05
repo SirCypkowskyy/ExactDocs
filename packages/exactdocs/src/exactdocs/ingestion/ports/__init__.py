@@ -36,6 +36,7 @@ from exactdocs.ingestion.ports.driving import (
     RemoveVersion,
     RunJob,
     RunNextJob,
+    SubmitQueuedJobs,
     SyncLibrary,
 )
 
@@ -74,6 +75,7 @@ __all__ = [
     "RunJob",
     "RunNextJob",
     "SecretBox",
+    "SubmitQueuedJobs",
     "SyncLibrary",
     "VersionPublisher",
 ]

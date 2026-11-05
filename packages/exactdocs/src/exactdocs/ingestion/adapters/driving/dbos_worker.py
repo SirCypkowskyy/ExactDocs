@@ -9,16 +9,17 @@ one per library (the library is the queue's partition key).
 import asyncio
 import contextvars
 import logging
+import sqlite3
 import threading
 from collections.abc import AsyncGenerator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, closing, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dbos import DBOS, DBOSConfig
 
-from exactdocs.ingestion.ports.driving import RecoverJobs, RunJob
+from exactdocs.ingestion.ports.driving import RecoverJobs, RunJob, SubmitQueuedJobs
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,10 @@ log = logging.getLogger(__name__)
 # worker runs at a time per process; a second would take over the first one's workflows.
 _ONE_PER_PROCESS = threading.Lock()
 _WAIT_FOR_OTHER = 30.0  # seconds
-_THREADS = 32  # asyncio's own default at most
+_THREADS = 32  # the most asyncio's own default pool has (min(32, CPUs + 4))
+_FORGET_POLL = 0.05  # seconds between looks at a finished workflow's status, while it is recorded
+_FORGET_TRIES = 200
+_VACUUM_ABOVE = 2**20  # bytes of free pages
 _LIVE = ["ENQUEUED", "PENDING", "DELAYED"]
 _DONE = frozenset({"SUCCESS", "ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"})
 
@@ -41,6 +45,7 @@ class DbosJobWorker:
 
     run_job: RunJob
     recover_jobs: RecoverJobs
+    submit_queued_jobs: SubmitQueuedJobs
     database: Path
     """DBOS's SQLite file (its workflows and their steps)."""
     queue: str
@@ -52,7 +57,10 @@ class DbosJobWorker:
     concurrency: int = 2
     # How long a stopping worker lets a running job finish before cancelling it.
     stop_grace: float = 1.0
-    poll_interval: float = 0.05
+    poll_interval: float = 1.0
+    """How often DBOS looks for a queued job to start: an idle server only polls this often."""
+    resubmit_interval: float = 30.0
+    """How often queued jobs are handed to DBOS again, in case one was not taken when queued."""
     _running: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
 
@@ -100,9 +108,14 @@ class DbosJobWorker:
                     on_conflict="always_update",
                 )
                 await self._recover()
-                yield
+                resubmit = asyncio.create_task(self._resubmit(), context=contextvars.Context())
+                try:
+                    yield
+                finally:
+                    await self._cancel({resubmit})
             finally:
                 await self._stop()
+                await self._cancel(self._forgetting)  # the next start deletes what they had left
                 await asyncio.to_thread(DBOS.destroy, destroy_registry=True)
                 await self._cancel(self._running | self._forgetting)
                 # DBOS shut its pool down; `asyncio.to_thread` needs one after the worker stops.
@@ -128,18 +141,31 @@ class DbosJobWorker:
         forget.add_done_callback(self._forgetting.discard)
 
     async def _forget(self, job_id: str) -> None:
-        """Delete a finished workflow (its steps hold the whole text of an import)."""
+        """Delete a finished workflow (its steps hold the whole text of an import).
+
+        Once no workflow is left, the file is compacted: deleted steps only free pages.
+        """
         try:
-            for _ in range(200):
-                status = await DBOS.get_workflow_status_async(job_id)
-                if status is None:
-                    return
-                if status.status in _DONE:
-                    await DBOS.delete_workflow_async(job_id)
-                    return
-                await asyncio.sleep(self.poll_interval)
+            ended = await self._ended(job_id)
+            if ended:
+                await DBOS.delete_workflow_async(job_id)
         except Exception:  # the next start deletes it
             log.exception("could not delete the finished workflow of job %s", job_id)
+        else:
+            if ended:
+                await self._reclaim()
+
+    @staticmethod
+    async def _ended(job_id: str) -> bool:
+        """Wait until DBOS has recorded the end of the workflow; ``False`` if it never does."""
+        for _ in range(_FORGET_TRIES):
+            status = await DBOS.get_workflow_status_async(job_id)
+            if status is None:
+                return False
+            if status.status in _DONE:
+                return True
+            await asyncio.sleep(_FORGET_POLL)
+        return False
 
     async def _recover(self) -> None:
         workflows = await DBOS.list_workflows_async(load_input=False, load_output=False)
@@ -151,7 +177,26 @@ class DbosJobWorker:
         stale = [workflow.workflow_id for workflow in workflows if workflow.workflow_id not in live]
         if stale:
             await DBOS.delete_workflows_async(stale)
+        await self._reclaim()
         await self.recover_jobs(resuming=live)
+
+    async def _resubmit(self) -> None:
+        """Hand the queued jobs to DBOS again now and then (queuing an ID twice is a no-op)."""
+        while True:
+            await asyncio.sleep(self.resubmit_interval)
+            try:
+                await self.submit_queued_jobs()
+            except Exception:
+                log.exception("could not hand the queued jobs to DBOS again")
+
+    async def _reclaim(self) -> None:
+        """Give the free pages of DBOS's file back (``VACUUM``) when no workflow is left in it."""
+        try:
+            if await DBOS.list_workflows_async(load_input=False, load_output=False, limit=1):
+                return
+            await asyncio.to_thread(_vacuum, self.database)
+        except Exception:  # only space: tried again after the next job
+            log.exception("could not compact %s", self.database)
 
     async def _stop(self) -> None:
         if self._running:
@@ -164,3 +209,13 @@ class DbosJobWorker:
             task.cancel()
         with suppress(asyncio.CancelledError):
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _vacuum(database: Path) -> None:
+    """``VACUUM`` the file when at least half of it (and 1 MiB) is free pages."""
+    with closing(sqlite3.connect(database, timeout=30, isolation_level=None)) as connection:
+        free = connection.execute("PRAGMA freelist_count").fetchone()[0]
+        pages = connection.execute("PRAGMA page_count").fetchone()[0]
+        size = connection.execute("PRAGMA page_size").fetchone()[0]
+        if free * 2 >= pages and free * size >= _VACUUM_ABOVE:
+            connection.execute("VACUUM")

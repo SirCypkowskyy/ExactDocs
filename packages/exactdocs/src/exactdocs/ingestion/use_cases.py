@@ -307,9 +307,25 @@ class RecoverJobsUseCase:
                 )
             else:
                 await self.jobs.save(job.requeued())
-        for job in await self.jobs.list_queued():
-            if job.id not in resuming:
-                await self.runner.submit(job)
+        await _submit_queued(self.jobs, self.runner, resuming)
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitQueuedJobsUseCase:
+    """Implements ``ports.driving.SubmitQueuedJobs``."""
+
+    jobs: JobRepository
+    runner: JobRunner
+
+    async def __call__(self) -> None:
+        """Submit every queued job, oldest first: one the runner did not take when queued runs."""
+        await _submit_queued(self.jobs, self.runner, ())
+
+
+async def _submit_queued(jobs: JobRepository, runner: JobRunner, skip: Collection[str]) -> None:
+    for job in await jobs.list_queued():
+        if job.id not in skip:
+            await runner.submit(job)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1062,8 +1078,7 @@ class ImportVersionUseCase:
         # Unreadable or for another host: CredentialsRequiredError fails the job.
         credential = await self.vault.load(job.library, source.url.credential_scope)
         # A job queued without a kind is imported as a bare commit: the SHA is what is fetched.
-        kind = job.ref_kind or RefKind.COMMIT
-        refs = _full_refs(kind, job.version)
+        refs = _full_refs(job.ref_kind or RefKind.COMMIT, job.version)
         step = self.checkpoints.step
         try:
             async with AsyncExitStack() as stack:
@@ -1091,25 +1106,18 @@ class ImportVersionUseCase:
             await progress.problem(CONTEXT7_FILE, ProblemCode.CONTEXT7, note)
         # After the fetch above has given its slot back: a second slot held while waiting for one
         # could deadlock two imports.
-        taken = await step(
-            "fetch the images outside the selection",
-            lambda: self._outside_images(job, source, credential, taken),
-        )
-        for skip in (*taken.skipped, *(_Missing(path) for path in taken.absent)):
-            await progress.problem(
-                skip.path.encode(errors="replace").decode(), skip.code, skip.reason
-            )
+        images = await self._images(job, source, credential, taken, progress)
         renamed_from, renames = await step(
             "detect renames", lambda: self._renames(job, source, credential, refs, articles)
         )
         version = ImportedVersion(
             library=job.library,
             ref=job.version,
-            kind=kind,
+            kind=job.ref_kind or RefKind.COMMIT,
             commit_sha=job.commit_sha,
             config_hash=self.chunker.config_hash,
             articles=tuple(articles),
-            images=tuple(taken.images),
+            images=images,
             refresh=self.refresh,
             renamed_from=renamed_from,
             renames=renames,
@@ -1246,6 +1254,25 @@ class ImportVersionUseCase:
             log.exception("no renames known for %s %s", job.library, job.version)
         return fallback
 
+    async def _images(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        taken: _ImageBudget,
+        progress: JobProgress,
+    ) -> tuple[ImportedImage, ...]:
+        """Add the images outside the selection (a step) to ``taken``'s; list the ones left out."""
+        outside = await self.checkpoints.step(
+            "fetch the images outside the selection",
+            lambda: self._outside_images(job, source, credential, taken),
+        )
+        for skip in (*taken.skipped, *outside.skipped, *(_Missing(p) for p in outside.absent)):
+            await progress.problem(
+                skip.path.encode(errors="replace").decode(), skip.code, skip.reason
+            )
+        return (*taken.images, *outside.images)
+
     async def _outside_images(
         self,
         job: Job,
@@ -1253,7 +1280,13 @@ class ImportVersionUseCase:
         credential: Credential | None,
         taken: _ImageBudget,
     ) -> _ImageBudget:
-        """Fetch the images the first checkout lacked (outside the selection) into ``taken``."""
+        """Fetch the images the first checkout lacked (outside the selection).
+
+        Returns only what this step adds (its images, skips and the paths the commit lacks), on
+        what is left of ``taken``'s budget: the images of the checkout are stored once, by the
+        step that read them.
+        """
+        outside = _ImageBudget(taken.per_image, taken.total, count=taken.count, used=taken.used)
         if taken.absent and job.commit_sha and job.version:
             async with self.gateway.fetch_files(
                 source.url,
@@ -1262,9 +1295,13 @@ class ImportVersionUseCase:
                 max_bytes=self.max_images_bytes,
                 refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
                 credential=credential,
-            ) as outside:
-                taken.absent = await asyncio.to_thread(_read_images, outside, taken.absent, taken)
-        return taken
+            ) as folder:
+                outside.absent = await asyncio.to_thread(
+                    _read_images, folder, taken.absent, outside
+                )
+        else:
+            outside.absent = list(taken.absent)
+        return outside
 
     async def _articles(
         self,

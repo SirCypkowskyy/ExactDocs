@@ -1,6 +1,7 @@
 """``DbosJobWorker``: jobs run as DBOS workflows over a real DBOS SQLite file."""
 
 import asyncio
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, No
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
-from exactdocs.ingestion.ports import JobHandler, JobProgress, RecoveryHook
+from exactdocs.ingestion.ports import JobHandler, JobProgress, JobRunner, RecoveryHook
 from exactdocs_kernel import SystemClock
 
 IMPORT = JobKind("import")
@@ -40,10 +41,25 @@ class _NoLibraries:
         raise NotImplementedError
 
 
+class FlakyQueue:
+    """``DbosJobQueue``, except that it drops the first job it is handed (DBOS was busy)."""
+
+    def __init__(self) -> None:
+        self.dropped: list[str] = []
+        self.inner = DbosJobQueue()
+
+    async def submit(self, job: Job) -> None:
+        if not self.dropped:
+            self.dropped.append(job.id)
+            return
+        await self.inner.submit(job)
+
+
 def module_of(
     jobs: InMemoryJobRepository,
     handlers: Mapping[JobKind, JobHandler],
     hooks: Mapping[JobKind, RecoveryHook] | None = None,
+    runner: JobRunner | None = None,
 ) -> IngestionModule:
     return IngestionModule.build(
         jobs=jobs,
@@ -55,14 +71,17 @@ def module_of(
         index=NoIndex(),
         handlers=handlers,
         recovery_hooks=hooks or {},
-        runner=DbosJobQueue(),
+        runner=runner or DbosJobQueue(),
     )
 
 
-def worker_of(module: IngestionModule, tmp_path: Path, concurrency: int = 2) -> DbosJobWorker:
+def worker_of(
+    module: IngestionModule, tmp_path: Path, concurrency: int = 2, resubmit: float = 30
+) -> DbosJobWorker:
     return DbosJobWorker(
         run_job=module.run_job,
         recover_jobs=module.recover_jobs,
+        submit_queued_jobs=module.submit_queued_jobs,
         database=tmp_path / "jobs.sqlite",
         queue=QUEUE,
         workflow=WORKFLOW,
@@ -71,6 +90,7 @@ def worker_of(module: IngestionModule, tmp_path: Path, concurrency: int = 2) -> 
         concurrency=concurrency,
         stop_grace=0.05,
         poll_interval=0.01,
+        resubmit_interval=resubmit,
     )
 
 
@@ -226,3 +246,65 @@ async def test_a_job_queued_while_no_worker_ran_runs_on_the_next_start(
             return await state_of(module, queued.id) is JobState.SUCCEEDED
 
         await eventually(finished)
+
+
+async def test_a_job_dbos_did_not_take_when_queued_is_handed_over_again(
+    tmp_path: Path, eventually
+) -> None:
+    async def import_files(_job: Job, progress: JobProgress) -> None:
+        await progress.report(done=1, total=1)
+
+    runner = FlakyQueue()
+    module = module_of(InMemoryJobRepository(), {IMPORT: import_files}, runner=runner)
+    async with worker_of(module, tmp_path, resubmit=0.05).running():
+        queued = await module.enqueue_job(EnqueueJobCommand(kind="import", library="/a/b"))
+        assert runner.dropped == [queued.id]
+
+        async def finished() -> bool:
+            return await state_of(module, queued.id) is JobState.SUCCEEDED
+
+        await eventually(finished)
+
+
+async def test_the_steps_of_a_finished_job_leave_no_space_behind(
+    tmp_path: Path, eventually
+) -> None:
+    checkpoints = DbosCheckpoints()
+
+    async def big(name: str) -> str:
+        return name * 2**20  # a few MiB of stored step results
+
+    async def import_text(_job: Job, progress: JobProgress) -> None:
+        for name in "abcd":
+            await checkpoints.step(name, lambda name=name: big(name))
+        await progress.report(done=1, total=1)
+
+    module = module_of(InMemoryJobRepository(), {IMPORT: import_text})
+    database = tmp_path / "jobs.sqlite"
+    async with worker_of(module, tmp_path).running():
+        queued = await module.enqueue_job(EnqueueJobCommand(kind="import", library="/a/b"))
+
+        async def compacted() -> bool:
+            done = await state_of(module, queued.id) is JobState.SUCCEEDED
+            return done and database.stat().st_size < 2**20
+
+        await eventually(compacted, seconds=15)
+
+
+async def test_stopping_right_after_a_job_ended_logs_no_error(
+    tmp_path: Path, caplog, eventually
+) -> None:
+    async def import_files(_job: Job, progress: JobProgress) -> None:
+        await progress.report(done=1, total=1)
+
+    module = module_of(InMemoryJobRepository(), {IMPORT: import_files})
+    with caplog.at_level(logging.ERROR):
+        async with worker_of(module, tmp_path).running():
+            queued = await module.enqueue_job(EnqueueJobCommand(kind="import", library="/a/b"))
+
+            async def finished() -> bool:
+                return await state_of(module, queued.id) is JobState.SUCCEEDED
+
+            await eventually(finished)
+
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []

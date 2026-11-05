@@ -587,7 +587,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=25" },
     { name = "cryptography", specifier = ">=46" },
     { name = "cyclopts", specifier = ">=4" },
-    { name = "dbos", specifier = ">=3.3" },
+    { name = "dbos", specifier = ">=3.3,<4" },
     { name = "exactdocs-kernel", editable = "packages/exactdocs-kernel" },
     { name = "fastapi", specifier = ">=0.120" },
     { name = "fastmcp", specifier = ">=4" },

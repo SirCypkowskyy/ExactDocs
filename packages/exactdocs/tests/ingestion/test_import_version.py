@@ -13,6 +13,7 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
     InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
@@ -62,6 +63,7 @@ from exactdocs.ingestion.use_cases import (
     RunNextJobUseCase,
     Skip,
     _decode,
+    _ImageBudget,
     _Progress,
 )
 from exactdocs_kernel import SystemClock
@@ -1254,6 +1256,33 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
     ]
     assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
     assert world.progress.problems == []
+
+
+async def test_each_image_is_kept_by_the_one_step_that_read_it(tmp_path: Path) -> None:
+    """A step's result is stored: an image in two of them would be stored twice."""
+    world = build_world(
+        tmp_path,
+        {"docs/guide/flow.md": PAGE, "docs/guide/logo.svg": SVG},
+        elsewhere={"docs/img/flow.png": PNG},
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+
+    await world.run(make_job(), world.progress)
+
+    results = dict(checkpoints.completed)
+    assets = results["read the README, context7.json and the images"]
+    outside = results["fetch the images outside the selection"]
+    assert isinstance(assets, tuple)
+    inside = assets[2]
+    assert isinstance(inside, _ImageBudget)
+    assert isinstance(outside, _ImageBudget)
+    assert [i.path for i in inside.images] == ["docs/guide/logo.svg"]
+    assert [i.path for i in outside.images] == ["docs/img/flow.png"]
+    assert [i.path for i in world.catalog.stored[0].images] == [
+        "docs/guide/logo.svg",
+        "docs/img/flow.png",
+    ]
 
 
 async def test_no_second_fetch_when_the_first_checkout_has_every_image(tmp_path: Path) -> None:

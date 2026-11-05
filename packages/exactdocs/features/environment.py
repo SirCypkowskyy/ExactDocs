@@ -1,5 +1,6 @@
 """Behave hooks: build the fixture docs repository once per run and serve it on 127.0.0.1."""
 
+import os
 import sys
 import tempfile
 from contextlib import ExitStack
@@ -15,6 +16,8 @@ fixture_repo = import_module("fixture_repo")
 
 
 def before_all(context: Context) -> None:
+    # Jobs start at once in scenarios (the default polls once a second); child processes inherit.
+    os.environ["EXACTDOCS_JOB_POLL_SECONDS"] = "0.02"
     context.stack = ExitStack()
     base = Path(context.stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-fx-")))
     context.fixture_repo = context.stack.enter_context(fixture_repo.served(base))

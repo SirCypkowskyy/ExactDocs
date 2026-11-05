@@ -67,6 +67,7 @@ from exactdocs.ingestion.ports.driving import (
     RemoveVersion,
     RunJob,
     RunNextJob,
+    SubmitQueuedJobs,
     SyncLibrary,
     TagArticle,
 )
@@ -90,6 +91,7 @@ from exactdocs.ingestion.use_cases import (
     RemoveVersionUseCase,
     RunJobUseCase,
     RunNextJobUseCase,
+    SubmitQueuedJobsUseCase,
     SyncLibraryUseCase,
     TagArticleUseCase,
     TagLocks,
@@ -183,6 +185,7 @@ class IngestionModule:
     remove_version: RemoveVersion
     run_job: RunJob
     run_next_job: RunNextJob
+    submit_queued_jobs: SubmitQueuedJobs
     sync_library: SyncLibrary
     tag_article: TagArticle
 
@@ -246,6 +249,7 @@ class IngestionModule:
             remove_version=RemoveVersionUseCase(jobs, removals, index, enqueue_job),
             run_job=RunJobUseCase(jobs, clock, handlers, recovery_hooks),
             run_next_job=RunNextJobUseCase(jobs, clock, handlers),
+            submit_queued_jobs=SubmitQueuedJobsUseCase(jobs, runner),
             sync_library=SyncLibraryUseCase(
                 remote, sources or none, jobs, clock, enqueue_job, vault or _NoCredentials()
             ),

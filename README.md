@@ -386,7 +386,8 @@ Per-library split level and chunk sizes are planned (MVP-2).
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
 | `EXACTDOCS_MAX_IMPORT_BYTES` | `268435456` (256 MiB) | An import whose selected text adds up to more fails with `import_too_large` instead of exhausting memory |
-| `EXACTDOCS_IMPORT_BATCH_FILES` | `100` | Files an import parses and chunks per durable step. An import that a crash, `kill -9` or a deploy interrupted resumes on the next start after its last completed step (DBOS keeps them in `<data dir>/jobs.sqlite`), so it loses at most this many files of work |
+| `EXACTDOCS_IMPORT_BATCH_FILES` | `100` | Files an import parses and chunks per durable step. An import that a crash, `kill -9` or a deploy interrupted resumes on the next start after its last completed step (DBOS keeps them in `<data dir>/jobs.sqlite`: about 3x the version's text while the import runs, compacted once no job runs), so it loses at most this many files of work |
+| `EXACTDOCS_JOB_POLL_SECONDS` | `1` | How often the job worker looks for a queued job to start (at most 60). An idle server polls no more often than this; lower it only if a second of delay before an import starts matters |
 
 ### Upgrading
 

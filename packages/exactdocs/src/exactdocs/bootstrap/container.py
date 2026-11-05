@@ -276,6 +276,8 @@ class Container:
             job_worker=DbosJobWorker(
                 run_job=ingestion.run_job,
                 recover_jobs=ingestion.recover_jobs,
+                submit_queued_jobs=ingestion.submit_queued_jobs,
+                poll_interval=settings.job_poll_seconds,
                 database=settings.data_dir / JOBS_FILE,
                 queue=QUEUE,
                 workflow=WORKFLOW,

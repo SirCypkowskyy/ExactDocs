@@ -86,6 +86,14 @@ class RecoverJobs(Protocol):
         ...
 
 
+class SubmitQueuedJobs(Protocol):
+    """Hand every queued job to the runner again (it ignores the ones it already has)."""
+
+    async def __call__(self) -> None:
+        """Run the use case."""
+        ...
+
+
 class RunJob(Protocol):
     """Run one job to its end: a queued one, or one that was running when the app stopped."""
 

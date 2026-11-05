@@ -148,7 +148,7 @@ enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land 
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
 | wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 375 MB | 339 MB | no such model file anywhere in the filesystem |
+| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 375 MB | 374.5 MB (CI, PR #218) | no such model file anywhere in the filesystem |
 
 The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
 extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
@@ -168,6 +168,15 @@ of that is precompiled `.pyc`: dropping it would reach ~297 MB but make every st
 container recompile the whole dependency tree. Keeping it is the better trade, so the budget is the
 measured 339 MB (`du -sxb /`; `docker image inspect` reports 353 MB with overlay2 and only the compressed ~115 MB with the containerd store, so it is not used) plus about 10 % headroom for dependency and Debian security updates. Raising it needs a
 reason in the PR; lowering it is the goal if a dependency is dropped.
+
+**Where the headroom went (E3-11, #65).** Durable jobs brought DBOS 3.3 and, through it,
+`psycopg[binary]` (DBOS imports psycopg at module level, so the binary wheel with its bundled libpq
+and OpenSSL is needed even though ExactDocs only uses SQLite), croniter, python-dateutil and
+tzdata: about 28 MB installed, of which psycopg-binary is about 19 MB. The image went from the
+339 MB measured above to 374.5 MB in CI (Docker image job of #218), leaving about 0.5 MB. The next
+dependency or Debian update will need either a raised budget (with that reason) or a smaller DBOS
+footprint (for example a `Checkpoints` adapter on an ingestion-owned table instead of DBOS).
+psycopg is LGPL-3.0: list it if the image ever gets a third-party notices file.
 
 ## Image scan
 
