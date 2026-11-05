@@ -55,6 +55,7 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestRename,
     ManifestState,
+    ManualTag,
     ManualTags,
     RefKind,
     StoredArticle,
@@ -131,7 +132,8 @@ manifest_entries = Table(
     Column("tags", Text, nullable=False),  # JSON list: every tag (`ManifestEntry.all_tags`)
     Column("front_matter", Text, nullable=False),  # JSON object
     Column("size", Integer, nullable=False),
-    Column("manual_tags", Text, nullable=False, server_default="[]"),  # JSON list
+    # JSON list of {"tag", "path"}: path is where the tag was set (this one or an older name)
+    Column("manual_tags", Text, nullable=False, server_default="[]"),
     Column("imported_tags", Text),  # JSON list; NULL without manual tags (then it is `tags`)
     ForeignKeyConstraint(
         ["blob_sha", "content_version"],
@@ -352,7 +354,7 @@ def _entry(row: Row) -> ManifestEntry:
         tags=tuple(json.loads(imported)),
         front_matter=json.loads(row.front_matter),
         size=row.size,
-        manual_tags=tuple(json.loads(row.manual_tags)),
+        manual_tags=tuple(ManualTag(t["tag"], t["path"]) for t in json.loads(row.manual_tags)),
     )
 
 
@@ -360,7 +362,7 @@ def _tag_columns(entry: ManifestEntry) -> dict[str, str | None]:
     """Return the three tag columns of an entry row (see the table)."""
     return {
         "tags": json.dumps(entry.all_tags),
-        "manual_tags": json.dumps(entry.manual_tags),
+        "manual_tags": json.dumps([{"tag": t.tag, "path": t.path} for t in entry.manual_tags]),
         "imported_tags": json.dumps(entry.tags) if entry.manual_tags else None,
     }
 
@@ -549,7 +551,7 @@ class SqliteManifestRepository:
             return tuple(_manifest(row) for row in await connection.execute(query))
 
     async def set_manual_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
         """Read the entries that have or get manual tags, write those that change; one transaction.
 

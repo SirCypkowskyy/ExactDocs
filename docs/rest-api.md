@@ -54,7 +54,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   tags (front matter, path rules) of the article at `path` in every version, and of the article git
   saw it renamed to in a later version (rename maps are followed back across versions, never from a
   new name to an old one), and later imports get them too. Articles show every tag in `tags` and the
-  manual ones again in `manual_tags`; listings, tag counts and search see them at once (the tag
+  manual ones again in `manual_tags` as `[{"tag", "path"}]`, where `path` is the path the tag was
+  set on: the article's own, or an older one it was renamed from. `PUT` and `DELETE` act on the path
+  that was tagged, never on its successors: to remove a tag that came with a rename, remove it on
+  the `path` it names (which removes it from every version). Listings, tag counts and search see them at once (the tag
   copies on chunks are refreshed, nothing is chunked again). A path no version has is accepted and
   waits for one. An unknown library is 404; a value that cannot be a tag is 422 `invalid_tags`.
 - **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&path=&direction=` follows `path` one

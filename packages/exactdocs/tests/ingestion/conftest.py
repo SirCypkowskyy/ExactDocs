@@ -9,6 +9,7 @@ from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.models import JobKind
 from exactdocs.ingestion.ports import JobHandler, JobRepository, RecoveryHook
+from exactdocs.ingestion.ports.driven import ManualTagStore
 
 
 class _NoLibraryIds:
@@ -55,6 +56,7 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
         recovery_hooks: dict[JobKind, RecoveryHook] | None = None,
         *,
         repository: JobRepository | None = None,
+        manual_tags: ManualTagStore | None = None,
     ) -> IngestionModule:
         return IngestionModule.build(
             jobs=repository or jobs,
@@ -66,6 +68,7 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
             index=NoIndex(),
             handlers=handlers or {},
             recovery_hooks=recovery_hooks or {},
+            manual_tags=manual_tags,
         )
 
     return build

@@ -124,7 +124,7 @@ async def test_tags_reach_the_article_and_its_search_chunks_and_go_again(
     )
     assert (article.json()["tags"], article.json()["manual_tags"]) == (
         ["guide", "onboarding"],
-        ["onboarding"],
+        [{"tag": "onboarding", "path": "guide/setup.md"}],
     )
     assert await search_tags(client, "onboarding") == [["guide", "onboarding"]]
 

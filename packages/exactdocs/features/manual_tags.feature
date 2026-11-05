@@ -22,6 +22,17 @@ Feature: Users tag articles by hand, and manual tags follow renames
     And "docs/guide/install.md" in "v1.4.0" is tagged "onboarding"
     And "docs/guide/install.md" in "v1.4.0" shows "onboarding" as a manual tag
 
+  Scenario: A tag that came with a rename is removed on the path it was set on
+    Given "/fixture/docs-repo/v1.3.0" is imported
+    And the user tagged "docs/guide/setup.md" with "onboarding"
+    And the user adds the version "v1.4.0"
+    Then "docs/guide/install.md" in "v1.4.0" shows "onboarding" as a manual tag set on "docs/guide/setup.md"
+    When the user removes the manual tags of "docs/guide/install.md"
+    Then "docs/guide/install.md" in "v1.4.0" is tagged "onboarding"
+    When the user removes the manual tags of "docs/guide/setup.md"
+    Then "docs/guide/install.md" in "v1.4.0" has no manual tags
+    And "docs/guide/install.md" in "v1.4.0" is not tagged "onboarding"
+
   Scenario: Manual tags combine with imported tags in listings and search
     Given "/fixture/docs-repo/v1.3.0" is imported
     When the user tags "docs/guide/setup.md" with "onboarding"

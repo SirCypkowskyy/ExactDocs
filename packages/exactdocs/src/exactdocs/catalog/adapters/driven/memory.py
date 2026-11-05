@@ -22,6 +22,7 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestRename,
     ManifestState,
+    ManualTag,
     ManualTags,
     StoredArticle,
     StoredImage,
@@ -188,7 +189,7 @@ class InMemoryManifestRepository:
         )
 
     async def set_manual_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
         """Set each entry's manual tags; report the entries that have or had some."""
         found = self.manifests.get(manifest_id)

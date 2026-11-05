@@ -1,14 +1,15 @@
 """Tagging an article path by hand: the catalog stores the tags, the chunk index gets the copies."""
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import pytest
 
 from exactdocs.ingestion.dtos import TagArticleCommand
 from exactdocs.ingestion.models import ArticleChunk, ImportedVersion, TaggedPath
-from exactdocs.ingestion.use_cases import TagArticleUseCase
+from exactdocs.ingestion.module import IngestionModule
+from exactdocs.ingestion.use_cases import TagArticleUseCase, TagLocks
 from exactdocs_kernel import NotFoundError
 
 
@@ -66,7 +67,7 @@ async def test_every_touched_manifest_gets_the_new_tags_in_the_chunk_index() -> 
     )
     index = FakeIndex()
 
-    tagged = await TagArticleUseCase(catalog, index)(command("Onboarding"))
+    tagged = await TagArticleUseCase(catalog, index, TagLocks())(command("Onboarding"))
 
     assert (tagged.library, tagged.path, tagged.tags) == (
         "/acme/payments",
@@ -83,17 +84,17 @@ async def test_an_unknown_library_changes_nothing() -> None:
     index = FakeIndex()
 
     with pytest.raises(NotFoundError):
-        await TagArticleUseCase(FakeCatalog(known=False), index)(command("x"))
+        await TagArticleUseCase(FakeCatalog(known=False), index, TagLocks())(command("x"))
 
     assert index.copies == []
 
 
-async def test_tagging_waits_while_an_import_activates_a_version() -> None:
-    lock = asyncio.Lock()
+async def test_tagging_waits_while_an_import_of_its_library_activates_a_version() -> None:
+    locks = TagLocks()
     index = FakeIndex()
-    tag = TagArticleUseCase(FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index, lock)
+    tag = TagArticleUseCase(FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index, locks)
 
-    async with lock:  # what the importer holds from re-tagging to activation
+    async with locks.of("/acme/payments"):  # what the importer holds from re-tag to activation
         waiting = asyncio.create_task(tag(command("x")))
         await asyncio.sleep(0)
         assert not waiting.done()
@@ -101,3 +102,29 @@ async def test_tagging_waits_while_an_import_activates_a_version() -> None:
     await waiting
 
     assert index.copies == [("m1", {"a.md": ("x",)})]
+
+
+async def test_tagging_does_not_wait_for_an_import_of_another_library() -> None:
+    locks = TagLocks()
+    index = FakeIndex()
+    tag = TagArticleUseCase(FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index, locks)
+
+    async with locks.of("/acme/other"):
+        await asyncio.wait_for(tag(command("x")), timeout=5)
+
+    assert index.copies == [("m1", {"a.md": ("x",)})]
+
+
+def test_one_library_has_one_lock_whatever_the_letter_case() -> None:
+    locks = TagLocks()
+    held = locks.of("/acme/payments")
+
+    assert locks.of("/Acme/Payments") is held
+    assert locks.of("/acme/other") is not held
+
+
+def test_a_module_that_can_tag_needs_the_locks_of_the_importer(
+    build_module: Callable[..., IngestionModule],
+) -> None:
+    with pytest.raises(TypeError, match="tag_locks"):
+        build_module(manual_tags=FakeCatalog())

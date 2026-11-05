@@ -78,7 +78,13 @@ def step_no_manual(context: Context, path: str, ref: str) -> None:
 
 @then('"{path}" in "{ref}" shows "{tag}" as a manual tag')
 def step_manual(context: Context, path: str, ref: str, tag: str) -> None:
-    assert _article(context, path, ref)["manual_tags"] == [tag]
+    assert [t["tag"] for t in _article(context, path, ref)["manual_tags"]] == [tag]
+
+
+@then('"{path}" in "{ref}" shows "{tag}" as a manual tag set on "{origin}"')
+def step_manual_from(context: Context, path: str, ref: str, tag: str, origin: str) -> None:
+    found = _article(context, path, ref)["manual_tags"]
+    assert found == [{"tag": tag, "path": origin}], found
 
 
 @then('listing "{ref}" by the tag "{tag}" gives only "{path}"')

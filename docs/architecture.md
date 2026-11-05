@@ -137,14 +137,15 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   ingestion's `collect` job then runs each domain's collector, catalog first.
 - **Manual tags (E4-06):** `catalog_manual_tags` holds the tags users set by hand per library and
   article path (`SetManualTags`). A manifest entry keeps `tags` as every tag of the article (what
-  listings filter and count), `manual_tags`, and `imported_tags` while it has manual ones, so removing
+  listings filter and count), `manual_tags` (each with the path it was set on, which is where it is
+  changed), and `imported_tags` while it has manual ones, so removing
   them brings back exactly what the import gave. An entry gets the manual tags of its path and of every
   path the rename maps trace it back to, version by version (`ManualTagger`). Retrieval keeps a copy
   of the tags on each chunk row; ingestion's `TagArticle` (REST `PUT/DELETE .../tags?path=`) has the
   catalog re-tag the pending and active manifests and then the chunk rows (`RetagArticles`, an
   `UPDATE`, no re-chunking). An import applies them last (`ApplyManualTags`, then the chunk rows,
-  then activation) under a lock it shares with `TagArticle`, so the older of two re-tags never lands
-  last; one process runs jobs and serves the API.
+  then activation) under its library's lock (`TagLocks`, one object shared with `TagArticle`), so the
+  older of two re-tags never lands last; one process runs jobs and serves the API.
 - **Renames between versions (E3-12):** on import, `RenameSource.renames` (the system-`git`
   adapter) asks git which Markdown files (any letter case) moved between two commits. Which two
   (`previous_version`): a numeric tag (`v1.4.0`, `2.1`; `1.4` equals `1.4.0`) is compared with the
@@ -217,7 +218,7 @@ erDiagram
         text path PK
         text blob_sha FK "with content_version, composite"
         json tags "every tag: imported and manual"
-        json manual_tags
+        json manual_tags "tag and the path it was set on"
         json imported_tags "only while manual tags are set"
         json front_matter
     }
@@ -384,7 +385,10 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   (`serve --stdio` does not): recovery treats every `running` job as left over from a crash, so a
   second worker process on the same database would re-queue the first one's live jobs. The
   claim itself is safe across processes. Several job-running processes need a lease/heartbeat
-  per job first.
+  per job first. Manual tags rest on it too: `TagArticle` and an import's activation take turns
+  through a per-library `asyncio.Lock` (`TagLocks`), which only orders one process's writes; with
+  two, an older re-tag could land last in the chunk copies. So `serve` pins uvicorn to one worker
+  (`workers=1`, whatever `WEB_CONCURRENCY` says).
 - DBOS replaces the worker behind the same driving ports in MVP-2 (resumable imports).
 
 ### The import: a complete version or nothing

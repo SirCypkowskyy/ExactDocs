@@ -13,6 +13,7 @@ from exactdocs.catalog.models import (
     ManifestEntry,
     ManifestId,
     ManifestRename,
+    ManualTag,
     ManualTags,
     StoredArticle,
     StoredImage,
@@ -158,7 +159,7 @@ class ManifestRepository(Protocol):
         ...
 
     async def set_manual_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
         """Give every entry of the manifest the manual tags ``tags`` names for its path (or none).
 

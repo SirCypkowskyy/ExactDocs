@@ -2574,6 +2574,7 @@ Scenario: Two processes share one PostgreSQL database
 
 - [ ] PostgreSQL adapters for every repository, run by the existing adapter contract tests in CI (ParadeDB image)
 - [ ] job claiming safe across processes (`FOR UPDATE SKIP LOCKED`, or DBOS from E3-11)
+- [ ] manual tags ordered across processes: a lock shared by the processes (e.g. a PostgreSQL advisory lock per library) around `TagArticle` and an import's activation, or the retrieval re-tag re-reads the catalog's tags inside its write; until then `serve` pins one worker (`TagLocks`, E4-06)
 - [ ] migrations for both databases; docker-compose example in README verified in CI
 
 ### E12-02 · feat: the ranking suite passes on ParadeDB as on SQLite

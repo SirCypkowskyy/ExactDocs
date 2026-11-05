@@ -7,6 +7,7 @@ import os
 import stat
 import time
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
@@ -712,6 +713,27 @@ class SyncLibraryUseCase:
 
 
 @dataclass(frozen=True, slots=True)
+class TagLocks:
+    """One ``asyncio.Lock`` per library, for re-tagging (see ``TagArticleUseCase``).
+
+    Create one and give the same object to the importer and to tagging. Libraries do not wait on
+    each other; a lock nobody holds or waits for is dropped.
+    """
+
+    _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = field(
+        default_factory=weakref.WeakValueDictionary
+    )
+
+    def of(self, library: str) -> asyncio.Lock:
+        """Return the lock of ``library`` (`/owner/repo`, any letter case)."""
+        key = library.lower()
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = self._locks[key] = asyncio.Lock()
+        return lock
+
+
+@dataclass(frozen=True, slots=True)
 class ImportVersionUseCase:
     """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
 
@@ -751,7 +773,7 @@ class ImportVersionUseCase:
     refresh: bool = False
     renames: RenameSource | None = None
     """Where renames come from; without it none are detected. Never a reason to fail."""
-    tag_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    tag_locks: TagLocks = field(default_factory=TagLocks)
     """Shared with ``TagArticleUseCase``: see there."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
@@ -794,7 +816,7 @@ class ImportVersionUseCase:
         try:
             manifest_id = await self.versions.store(version)
             await self.index.index(manifest_id, version)
-            await self._activate(manifest_id)
+            await self._activate(job.library, manifest_id)
         except BaseException:
             # Run as a task of its own and shielded, so that the cancellation that got us here
             # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
@@ -814,12 +836,12 @@ class ImportVersionUseCase:
         except Exception:
             log.exception("could not apply the README of %s %s", job.library, job.version)
 
-    async def _activate(self, manifest_id: str) -> None:
+    async def _activate(self, library: str, manifest_id: str) -> None:
         """Give the manifest its library's manual tags, chunks included, then activate it.
 
         Last, so a tag set while the version was stored and indexed counts too.
         """
-        async with self.tag_lock:
+        async with self.tag_locks.of(library):
             tagged = await self.versions.apply_manual_tags(manifest_id)
             if tagged:
                 await self.index.retag(manifest_id, tagged)
@@ -1301,19 +1323,20 @@ async def _forget_chunks(index: ChunkIndex, removed: Removed) -> None:
 class TagArticleUseCase:
     """Implements ``ports.driving.TagArticle``.
 
-    The catalog re-tags its manifests, then the chunk index gets the same tags. ``lock`` (shared
-    with the importer) keeps that pair whole against an import that re-tags the manifest it is
-    about to activate: otherwise the older of two writes could land last in the chunk index.
-    One process runs the jobs and serves the API, so a process lock is enough.
+    The catalog re-tags its manifests, then the chunk index gets the same tags. The library's
+    lock (``locks``, shared with the importer) keeps that pair whole against an import that
+    re-tags the manifest it is about to activate: otherwise the older of two writes could land
+    last in the chunk index. One process runs the jobs and serves the API (``serve`` pins one
+    worker), so a process lock is enough.
     """
 
     tags: ManualTagStore
     index: ChunkIndex
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    locks: TagLocks
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
         """Store the tags, then copy every touched article's tags onto its chunks."""
-        async with self.lock:
+        async with self.locks.of(command.library):
             tagged = await self.tags.set_tags(command.library, command.path, command.tags)
             for manifest_id, articles in tagged.retagged.items():
                 await self.index.retag(manifest_id, articles)

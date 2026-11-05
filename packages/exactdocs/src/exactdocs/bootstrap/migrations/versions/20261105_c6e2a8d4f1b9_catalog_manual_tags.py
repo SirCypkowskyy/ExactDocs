@@ -31,7 +31,9 @@ def upgrade() -> None:
     )
     op.add_column(
         "catalog_manifest_entries",
-        sa.Column("manual_tags", sa.Text, nullable=False, server_default="[]"),  # JSON list
+        sa.Column(
+            "manual_tags", sa.Text, nullable=False, server_default="[]"
+        ),  # JSON list of {"tag", "path"}
     )
     # JSON list; NULL while the entry has no manual tags (then `tags` is what was imported).
     op.add_column("catalog_manifest_entries", sa.Column("imported_tags", sa.Text))

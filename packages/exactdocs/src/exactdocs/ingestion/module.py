@@ -4,7 +4,6 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 together with the job kinds it supports. ``import_job`` builds the import's handler and hook.
 """
 
-import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -84,6 +83,7 @@ from exactdocs.ingestion.use_cases import (
     RunNextJobUseCase,
     SyncLibraryUseCase,
     TagArticleUseCase,
+    TagLocks,
 )
 from exactdocs_kernel import Clock, NotFoundError
 
@@ -179,14 +179,18 @@ class IngestionModule:
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
         manual_tags: ManualTagStore | None = None,
-        tag_lock: asyncio.Lock | None = None,
+        tag_locks: TagLocks | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         ``handlers`` maps each job kind to what runs it; ``recovery_hooks`` maps a kind to its
-        clean-up after an interrupted run (a kind without one needs none). ``tag_lock`` is the
-        one given to ``import_job``, so tagging and an import's activation take turns.
+        clean-up after an interrupted run (a kind without one needs none). With ``manual_tags``
+        pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
+        activation take turns.
         """
+        if manual_tags is not None and tag_locks is None:
+            message = "manual_tags needs the tag_locks given to import_job"
+            raise TypeError(message)
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
         none = _NoLibrarySources()
         return cls(
@@ -214,7 +218,7 @@ class IngestionModule:
                 remote, sources or none, jobs, clock, enqueue_job, vault or _NoCredentials()
             ),
             tag_article=TagArticleUseCase(
-                manual_tags or _NoManualTags(), index, tag_lock or asyncio.Lock()
+                manual_tags or _NoManualTags(), index, tag_locks or TagLocks()
             ),
         )
 
@@ -232,11 +236,11 @@ def import_job(
     renames: RenameSource | None = None,
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
-    tag_lock: asyncio.Lock | None = None,
+    tag_locks: TagLocks,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
-    Pass the same ``tag_lock`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
+    Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
     """
     importer = ImportVersionUseCase(
         gateway,
@@ -250,7 +254,7 @@ def import_job(
         renames=renames,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
-        tag_lock=tag_lock or asyncio.Lock(),
+        tag_locks=tag_locks,
     )
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)

@@ -52,7 +52,7 @@ from exactdocs.ingestion.models import (
     git_blob_sha,
     parse_article,
 )
-from exactdocs.ingestion.module import import_job
+from exactdocs.ingestion.module import TagLocks, import_job
 from exactdocs.ingestion.ports import RenameSource
 from exactdocs.ingestion.use_cases import (
     MAX_WANTED_IMAGES,
@@ -327,6 +327,7 @@ def build_world(
         renames=renames,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
+        tag_locks=TagLocks(),
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]

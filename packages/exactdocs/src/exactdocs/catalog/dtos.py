@@ -581,6 +581,18 @@ class RenameList(_Dto):
     renames: list[RenamedPath]
 
 
+class ManualTagInfo(_Dto):
+    """A tag set by hand, and the article path it was set on."""
+
+    tag: str
+    path: str = Field(
+        description=(
+            "Where the tag was set: this article's path, or an older one it was renamed from. "
+            "Change or remove the tag on this path."
+        )
+    )
+
+
 class ArticleInfo(_Dto):
     """Where an article comes from and its metadata: everything but the text."""
 
@@ -596,8 +608,11 @@ class ArticleInfo(_Dto):
     path: str
     title: str
     tags: list[str] = Field(description="Every tag: from front matter, path rules and by hand.")
-    manual_tags: list[str] = Field(
-        description="The tags among `tags` set by hand: for this path or one it was renamed from."
+    manual_tags: list[ManualTagInfo] = Field(
+        description=(
+            "The tags among `tags` set by hand, each with the path it was set on: this one or "
+            "one it was renamed from. A tag set on both is listed for each."
+        )
     )
     size: int
     front_matter: dict[str, Any]
@@ -619,7 +634,7 @@ class ArticleInfo(_Dto):
             path=entry.path,
             title=entry.title,
             tags=list(entry.all_tags),
-            manual_tags=list(entry.manual_tags),
+            manual_tags=[ManualTagInfo(tag=t.tag, path=t.path) for t in entry.manual_tags],
             size=entry.size,
             front_matter=entry.front_matter,
             source_url=source_url,

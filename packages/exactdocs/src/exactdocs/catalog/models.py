@@ -306,7 +306,7 @@ class ManifestEntry:
     """Imported: from front matter and the library's path rules."""
     front_matter: dict[str, Any] = field(default_factory=dict)
     size: int = 0  # bytes of the content
-    manual_tags: tuple[str, ...] = ()
+    manual_tags: tuple[ManualTag, ...] = ()
     """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
 
     def __post_init__(self) -> None:
@@ -317,7 +317,8 @@ class ManifestEntry:
     @property
     def all_tags(self) -> tuple[str, ...]:
         """What readers see and filter by: the imported tags, then the manual ones they lack."""
-        return (*self.tags, *(t for t in self.manual_tags if t not in self.tags))
+        manual = dict.fromkeys(t.tag for t in self.manual_tags if t.tag not in self.tags)
+        return (*self.tags, *manual)
 
     @property
     def content_key(self) -> ContentKey:
@@ -328,6 +329,18 @@ class ManifestEntry:
 def _check_path(path: str) -> None:
     if not path or any(part in {"", ".", ".."} for part in path.split("/")):
         raise InvalidArticlePathError(path)
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class ManualTag:
+    """A tag an entry carries because a user set it by hand on ``path``.
+
+    ``path`` is the entry's own path, or an older path it was renamed from: the tag is changed or
+    removed there (``ManualTags`` is keyed by the path that was tagged, not by its successors).
+    """
+
+    tag: str
+    path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,16 +368,18 @@ class ManualTags:
     @staticmethod
     def reaching(
         origins: Mapping[str, Iterable[str]], by_path: Mapping[str, tuple[str, ...]]
-    ) -> dict[str, tuple[str, ...]]:
+    ) -> dict[str, tuple[ManualTag, ...]]:
         """Merge the manual tags each article gets: its own and those of the paths it came from.
 
         ``origins`` maps an article path to the older paths it was renamed from (any number of
-        versions back); paths it leaves out only have their own tags.
+        versions back); paths it leaves out only have their own tags. Each tag names the path it
+        was set on, so a tag set on two of them is there twice.
         """
-        reached = {path: set(tags) for path, tags in by_path.items()}
+        reached = {path: {ManualTag(t, path) for t in tags} for path, tags in by_path.items()}
         for path, olds in origins.items():
             for old in olds:
-                reached.setdefault(path, set()).update(by_path.get(old, ()))
+                found = reached.setdefault(path, set())
+                found.update(ManualTag(t, old) for t in by_path.get(old, ()))
         return {path: tuple(sorted(tags)) for path, tags in reached.items() if tags}
 
 

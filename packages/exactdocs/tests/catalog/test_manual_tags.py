@@ -32,6 +32,7 @@ from exactdocs.catalog.models import (
     Library,
     LibraryId,
     ManifestEntry,
+    ManualTag,
     ManualTags,
     RefKind,
 )
@@ -113,8 +114,15 @@ async def tag(catalog: CatalogModule, path: str, *tags: str) -> ManualTagsOut:
 
 
 async def tags_of(catalog: CatalogModule, ref: str, path: str) -> tuple[list[str], list[str]]:
+    """Every tag of the article, and the manual ones (whatever path they were set on)."""
     found = await catalog.get_article(GetArticleQuery(library=LIBRARY, ref=ref, path=path))
-    return found.tags, found.manual_tags
+    return found.tags, sorted({t.tag for t in found.manual_tags})
+
+
+async def origins_of(catalog: CatalogModule, ref: str, path: str) -> list[tuple[str, str]]:
+    """The article's manual tags with the path each was set on."""
+    found = await catalog.get_article(GetArticleQuery(library=LIBRARY, ref=ref, path=path))
+    return [(t.tag, t.path) for t in found.manual_tags]
 
 
 def test_manual_tags_are_normalized_sorted_and_deduplicated() -> None:
@@ -140,7 +148,11 @@ def test_an_entry_shows_imported_tags_first_then_the_manual_ones_it_lacks() -> N
         content_version=1,
         title="A",
         tags=("guide", "api"),
-        manual_tags=("api", "onboarding"),
+        manual_tags=(
+            ManualTag("api", "a.md"),
+            ManualTag("onboarding", "a.md"),
+            ManualTag("onboarding", "old.md"),
+        ),
     )
 
     assert entry.all_tags == ("guide", "api", "onboarding")
@@ -151,7 +163,22 @@ def test_reaching_merges_the_tags_of_every_path_an_article_came_from() -> None:
         {"c.md": {"b.md", "a.md"}}, {"a.md": ("x",), "b.md": ("y",), "z.md": ("z",)}
     )
 
-    assert reached == {"c.md": ("x", "y"), "a.md": ("x",), "b.md": ("y",), "z.md": ("z",)}
+    assert reached == {
+        "c.md": (ManualTag("x", "a.md"), ManualTag("y", "b.md")),
+        "a.md": (ManualTag("x", "a.md"),),
+        "b.md": (ManualTag("y", "b.md"),),
+        "z.md": (ManualTag("z", "z.md"),),
+    }
+
+
+def test_reaching_keeps_a_tag_once_for_each_path_it_was_set_on() -> None:
+    reached = ManualTags.reaching({"b.md": {"a.md"}}, {"a.md": ("x",), "b.md": ("x", "y")})
+
+    assert reached["b.md"] == (
+        ManualTag("x", "a.md"),
+        ManualTag("x", "b.md"),
+        ManualTag("y", "b.md"),
+    )
 
 
 async def test_a_manual_tag_applies_to_every_version_and_combines_with_imported_tags(
@@ -205,6 +232,24 @@ async def test_a_manual_tag_follows_a_rename_into_later_versions_only(
     assert (await tags_of(catalog, "v1.4.0", "guide/install.md"))[1] == ["later", "onboarding"]
 
 
+async def test_an_inherited_manual_tag_names_the_path_it_is_removed_on(
+    catalog: CatalogModule,
+) -> None:
+    await publish(catalog, "v1.3.0", article("a.md"))
+    await tag(catalog, "a.md", "x")
+    await publish(catalog, "v1.4.0", article("b.md"), renames=(rename("v1.3.0", "a.md", "b.md"),))
+
+    await tag(catalog, "b.md", "y")
+    assert await origins_of(catalog, "v1.4.0", "b.md") == [("x", "a.md"), ("y", "b.md")]
+
+    await tag(catalog, "b.md")  # removing on the new name leaves the inherited tag
+    assert await origins_of(catalog, "v1.4.0", "b.md") == [("x", "a.md")]
+
+    await tag(catalog, "a.md")  # removing it where it was set clears it everywhere
+    assert await origins_of(catalog, "v1.4.0", "b.md") == []
+    assert await origins_of(catalog, "v1.3.0", "a.md") == []
+
+
 async def test_a_manual_tag_follows_renames_across_several_versions(
     catalog: CatalogModule,
 ) -> None:
@@ -214,7 +259,7 @@ async def test_a_manual_tag_follows_renames_across_several_versions(
 
     await tag(catalog, "a.md", "kept")
 
-    assert (await tags_of(catalog, "v3", "c.md"))[1] == ["kept"]
+    assert await origins_of(catalog, "v3", "c.md") == [("kept", "a.md")]
 
 
 async def test_a_branch_rename_map_already_chained_is_not_followed_again(

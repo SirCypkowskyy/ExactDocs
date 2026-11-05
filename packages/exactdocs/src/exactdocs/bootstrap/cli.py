@@ -80,6 +80,9 @@ def serve(
         host=host or settings.host,
         port=port or settings.port,
         reload=reload,
+        # One process: it alone runs jobs and their recovery, and its tag lock orders re-tags.
+        # Without it uvicorn would start WEB_CONCURRENCY workers (docs/architecture.md).
+        workers=1,
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
     )

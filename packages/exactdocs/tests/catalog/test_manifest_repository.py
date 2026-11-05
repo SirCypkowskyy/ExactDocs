@@ -38,6 +38,7 @@ from exactdocs.catalog.models import (
     ManifestImage,
     ManifestRename,
     ManifestState,
+    ManualTag,
     ManualTags,
     RefKind,
     StoredImage,
@@ -1004,8 +1005,9 @@ async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undo
     await stores.manifests.activate(ManifestId("m1"), at=T0)
     manifests = stores.manifests
 
+    manual = (ManualTag("api", "a.md"), ManualTag("onboarding", "old.md"))
     touched = await manifests.set_manual_tags(
-        ManifestId("m1"), {"a.md": ("api", "onboarding"), "gone.md": ("x",)}
+        ManifestId("m1"), {"a.md": manual, "gone.md": (ManualTag("x", "gone.md"),)}
     )
     listed = await manifests.list_entries(
         ManifestId("m1"),
@@ -1019,10 +1021,10 @@ async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undo
 
     assert touched == {"a.md": ("api", "onboarding")}
     assert [(e.path, e.tags, e.manual_tags, e.all_tags) for e in listed] == [
-        ("a.md", ("api",), ("api", "onboarding"), ("api", "onboarding"))
+        ("a.md", ("api",), manual, ("api", "onboarding"))
     ]
     assert article is not None
-    assert article.entry.manual_tags == ("api", "onboarding")
+    assert article.entry.manual_tags == manual
     assert list(counted) == [("api", 1), ("onboarding", 1)]
 
     undone = await manifests.set_manual_tags(ManifestId("m1"), {})
@@ -1032,4 +1034,7 @@ async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undo
         ManifestId("m1"), prefix="", tags=TagSelection(), after=None, limit=10
     )
     assert entries == (api, plain)
-    assert await manifests.set_manual_tags(ManifestId("none"), {"a.md": ("x",)}) == {}
+    assert (
+        await manifests.set_manual_tags(ManifestId("none"), {"a.md": (ManualTag("x", "a.md"),)})
+        == {}
+    )
