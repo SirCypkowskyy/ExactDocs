@@ -16,7 +16,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
 
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
     BUSY_TIMEOUT_MS,
     MIGRATIONS,
@@ -26,6 +26,7 @@ from exactdocs.bootstrap.database import (
     migrate,
     open_database,
 )
+from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery
@@ -73,6 +74,42 @@ async def test_a_stored_library_is_listed_after_a_restart() -> None:
 
     assert [lib.id for lib in listed.libraries] == ["/acme/payments"]
     assert found.title == "Payments"
+
+
+async def test_a_container_runs_once_at_a_time() -> None:
+    """A second run would share the engine, and the first to stop would dispose it under the other.
+
+    A connection the other run had checked out (a job worker's poll) would then go back to a dead
+    pool and never be closed (#203).
+    """
+    container = Container.build(Settings())
+    app = create_app(container)
+
+    async with container.running():
+        with pytest.raises(RuntimeError, match="already running"):
+            async with container.running(jobs=False):
+                pass
+        with pytest.raises(RuntimeError, match="already running"):
+            async with app.router.lifespan_context(app):  # the app's lifespan runs it too
+                pass
+        assert await current_revision(container.engine) == head()  # the first run is untouched
+
+    async with app.router.lifespan_context(app):  # stopped, it may run again
+        assert await current_revision(container.engine) == head()
+
+
+async def test_a_read_only_container_runs_once_at_a_time() -> None:
+    async with Container.build(Settings()).running():
+        pass  # a database to open read-only
+    reader = ReadOnlyContainer.build(Settings())
+
+    async with reader.running():
+        with pytest.raises(RuntimeError, match="already running"):
+            async with reader.running():
+                pass
+
+    async with reader.running():  # stopped, it may run again
+        assert await current_revision(reader.engine) == head()
 
 
 async def test_nothing_survives_in_another_data_dir(tmp_path: Path) -> None:
