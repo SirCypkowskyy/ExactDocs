@@ -19,6 +19,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, ch
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
+    ArticleTagsIn,
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
@@ -28,6 +29,7 @@ from exactdocs.retrieval.dtos import (
     ReadChunkQuery,
     RemoveChunksCommand,
     RemovedChunks,
+    RetagArticlesCommand,
 )
 from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
@@ -917,3 +919,33 @@ async def test_a_manifest_counts_its_articles_and_chunks(world: World) -> None:
 
     assert await world.chunks.counts("m1") == VersionCounts(articles=2, chunks=4)
     assert await world.chunks.counts("unknown") == VersionCounts(articles=0, chunks=0)
+
+
+async def test_retagging_changes_one_articles_chunk_tags_in_one_manifest_only(
+    world: World,
+) -> None:
+    done = await world.index(
+        "m1", "v1", {"a.md": "one", "b.md": "two"}, status=ManifestStatus.ACTIVE
+    )
+    other = await world.index("m2", "v2", {"a.md": "one"}, status=ManifestStatus.ACTIVE)
+
+    retagged = await world.retrieval.retag_articles(
+        RetagArticlesCommand(
+            manifest_id="m1",
+            articles=[
+                ArticleTagsIn(path="a.md", tags=["guide", "onboarding"]),
+                ArticleTagsIn(path="missing.md", tags=["x"]),
+            ],
+        )
+    )
+    again = await world.retrieval.retag_articles(
+        RetagArticlesCommand(
+            manifest_id="m1", articles=[ArticleTagsIn(path="a.md", tags=["guide", "onboarding"])]
+        )
+    )
+
+    assert (retagged.chunks, again.chunks) == (2, 0)
+    for chunk_id in done.chunk_ids["a.md"]:  # same IDs: nothing was chunked again
+        assert (await world.read(chunk_id)).tags == ["guide", "onboarding"]
+    assert (await world.read(done.chunk_ids["b.md"][0])).tags == ["guide"]
+    assert (await world.read(other.chunk_ids["a.md"][0])).tags == ["guide"]
