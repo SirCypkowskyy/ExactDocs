@@ -307,8 +307,12 @@ class ApiClient:
     async def request_text(self, method: str, path: str, **kwargs: Any) -> str:  # ruff: ignore[any-type]
         """Call ``/api/v1<path>``; return a ``text/*`` success body (errors are JSON as usual)."""
         response = await self._send(method, path, **kwargs)
-        if response.is_success and response.headers.get("content-type", "").startswith("text/"):
+        content_type = response.headers.get("content-type", "")
+        if response.is_success and content_type.startswith("text/"):
             return response.text
+        if response.is_success:
+            message = f"{self.url} answered HTTP {response.status_code}; expected a text body"
+            raise ClientError(message + " (is it an older ExactDocs server?)")
         try:
             body = response.json()
         except ValueError:

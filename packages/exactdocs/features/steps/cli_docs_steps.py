@@ -12,9 +12,8 @@ from exactdocs_kernel import NOTICE
 from steps.mcp_steps import call_tool
 
 
-@given('the CLI holds the token "{name}"')
-def step_holds(context: Context, name: str) -> None:
-    assert name == "integration"  # the token the Background created
+@given("the CLI holds that token")
+def step_holds(context: Context) -> None:
     store(context.config_file, ClientConfig(url=context.server_url, token=context.token))
 
 

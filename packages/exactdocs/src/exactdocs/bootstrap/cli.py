@@ -359,10 +359,12 @@ def libraries(
     _call(work())
 
 
-@app.command
+@app.command(usage="Usage: exactdocs library [OPTIONS] NAME [QUERY...]")
 def library(
-    name: str,
-    *query: str,
+    name: Annotated[str, Parameter(help="Library name to look for, e.g. react.")],
+    *query: Annotated[
+        str, Parameter(name="QUERY", help="What to look up; ranks the matches (default: the name).")
+    ],
     json_output: JsonOption = False,
     url: UrlOption = None,
     token: TokenOption = None,
@@ -376,10 +378,13 @@ def library(
     _call(work())
 
 
-@app.command
+@app.command(usage="Usage: exactdocs docs [OPTIONS] LIBRARY-ID QUERY...")
 def docs(
-    library_id: str,
-    *query: str,
+    library_id: Annotated[
+        str,
+        Parameter(help="Library ID from `exactdocs library`, e.g. /owner/repo or /owner/repo@v1."),
+    ],
+    *query: Annotated[str, Parameter(name="QUERY", help="The question; several words are joined.")],
     language: Annotated[
         str | None,
         Parameter(help="Language you write in; chunks with code in it come first (no filter)."),

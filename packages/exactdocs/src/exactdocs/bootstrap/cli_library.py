@@ -480,16 +480,16 @@ async def find_library(
     if not results:
         say(f"No libraries found matching {name!r}")
         return
-    for number, lib in enumerate(results, 1):
+    for number, entry in enumerate(results, 1):
         say("")
-        say(f"{number}. Title: {_one_line(lib['title'])}")
-        say(f"   Context7-compatible library ID: {_one_line(lib['id'])}")
-        say(f"   Description: {_one_line(lib['description'])}")
-        say(f"   Default version: {_one_line(lib['defaultVersion'])}")
-        say(f"   Articles: {lib['articles']}")
-        say(f"   Chunks: {lib['totalSnippets']}")
-        say(f"   Versions: {', '.join(_one_line(v) for v in lib['versions'])}")
-        say(f"   Source: {_one_line(lib['sourceUrl'])}")
+        say(f"{number}. Title: {_one_line(entry['title'])}")
+        say(f"   Context7-compatible library ID: {_one_line(entry['id'])}")
+        say(f"   Description: {_one_line(entry['description'])}")
+        say(f"   Default version: {_one_line(entry['defaultVersion'])}")
+        say(f"   Articles: {entry['articles']}")
+        say(f"   Chunks: {entry['totalSnippets']}")
+        say(f"   Versions: {', '.join(_one_line(v) for v in entry['versions'])}")
+        say(f"   Source: {_one_line(entry['sourceUrl'])}")
 
 
 async def query_docs(

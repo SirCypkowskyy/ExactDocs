@@ -13,7 +13,7 @@ from exactdocs.bootstrap.cli_library import (
     find_library,
     query_docs,
 )
-from exactdocs.bootstrap.client import ApiClient, ApiError
+from exactdocs.bootstrap.client import ApiClient, ApiError, ClientError
 from exactdocs_kernel import NOTICE
 
 BIDI = chr(0x202E)
@@ -139,3 +139,13 @@ async def test_library_json_is_the_bare_list_and_the_notice_goes_to_stderr(
     out, err = capsys.readouterr()
     assert json.loads(out) == [LIBRARY]
     assert err.strip() == NOTICE
+
+
+async def test_a_success_that_is_not_text_says_a_text_body_was_expected() -> None:
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"notice": NOTICE})  # an older server ignoring type=txt
+
+    async with client(httpx2.MockTransport(handler)) as api:
+        with pytest.raises(ClientError, match="expected a text body") as raised:
+            await api.request_text("GET", "/c7/docs")
+    assert not isinstance(raised.value, ApiError)

@@ -7,7 +7,7 @@ Feature: Docs from the command line, shaped like ctx7
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"
     And the admin created a token named "integration"
     And the instance is served on a loopback port
-    And the CLI holds the token "integration"
+    And the CLI holds that token
 
   Scenario: The CLI shows what the agent gets
     When the user runs the command "exactdocs docs /fixture/docs-repo retry policy"
@@ -15,6 +15,8 @@ Feature: Docs from the command line, shaped like ctx7
 
   Scenario: A pinned version is asked for with @ or with a slash
     When the user runs the command "exactdocs docs /fixture/docs-repo@v1.4.0 'retry policy'"
+    Then the output equals the text of "query-docs" for the same arguments
+    When the user runs the command "exactdocs docs /fixture/docs-repo/v1.4.0 'retry policy'"
     Then the output equals the text of "query-docs" for the same arguments
 
   Scenario: The CLI finds the libraries an agent finds
@@ -33,3 +35,6 @@ Feature: Docs from the command line, shaped like ctx7
     And the output is empty
     When the user runs the command "exactdocs docs fixture 'retry policy'"
     Then the command exits with code 2
+    When the user runs the command "exactdocs docs /fixture/docs-repo"
+    Then the command exits with code 2
+    And the output is empty
