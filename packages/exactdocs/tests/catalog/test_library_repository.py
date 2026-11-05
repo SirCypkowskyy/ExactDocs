@@ -5,7 +5,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
@@ -133,20 +132,43 @@ async def test_a_library_without_versions_is_kept(repository: LibraryRepository)
     assert await repository.get(LEDGER.id) == LEDGER
 
 
-async def test_sqlite_keeps_a_pinned_version_when_the_library_is_saved_again() -> None:
-    # LIB-10 (MVP-2) will own `pinned_version`; until then saving must not clobber the column.
-    container = Container.build(Settings())
-    async with container.running():
-        repository = SqliteLibraryRepository(container.engine)
-        await repository.save(PAYMENTS)
-        async with container.engine.begin() as connection:
-            await connection.execute(text("UPDATE catalog_libraries SET pinned_version = 'v1.4.0'"))
+async def test_a_pin_names_an_imported_version_and_survives_a_save(
+    repository: LibraryRepository,
+) -> None:
+    await repository.save(PAYMENTS)
 
-        await repository.save(replace(PAYMENTS, title="Renamed"))
+    assert await repository.pin_default(PAYMENTS.id, VersionRef("main"))
+    await repository.save(replace(PAYMENTS, title="Renamed"))  # from a read before the pin
 
-        async with container.engine.connect() as connection:
-            pinned = await connection.execute(text("SELECT pinned_version FROM catalog_libraries"))
-            assert pinned.scalar_one() == "v1.4.0"
+    saved = await repository.get(PAYMENTS.id)
+    assert saved is not None
+    assert (saved.title, saved.pinned_version) == ("Renamed", VersionRef("main"))
+    assert saved.default_version() == version("main", RefKind.BRANCH, "b1")
+    assert await repository.list_all() == (saved,)
+
+
+async def test_unpinning_clears_the_pin(repository: LibraryRepository) -> None:
+    await repository.save(PAYMENTS)
+    await repository.pin_default(PAYMENTS.id, VersionRef("main"))
+
+    assert await repository.pin_default(PAYMENTS.id, None)
+
+    saved = await repository.get(PAYMENTS.id)
+    assert saved is not None
+    assert saved.pinned_version is None
+
+
+async def test_a_pin_on_a_version_or_library_that_is_not_there_writes_nothing(
+    repository: LibraryRepository,
+) -> None:
+    await repository.save(PAYMENTS)
+
+    assert not await repository.pin_default(PAYMENTS.id, VersionRef("v9.9.9"))
+    assert not await repository.pin_default(PAYMENTS.id, VersionRef("MAIN"))  # case-sensitive
+    assert not await repository.pin_default(LEDGER.id, None)
+
+    assert await repository.get(PAYMENTS.id) == PAYMENTS
+    assert await repository.get(LEDGER.id) is None
 
 
 async def test_add_refuses_a_taken_id_and_leaves_the_first_library_alone(

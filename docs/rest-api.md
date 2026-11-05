@@ -82,6 +82,16 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   cannot create a successor.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the root README (LIB-07).
+- **Pinning the default version**: `PUT /libraries/{owner}/{repo}/default-version` (`{"ref"}`, an
+  imported ref exactly as listed, or a unique short SHA of a commit version) makes that version
+  what `/owner/repo` without a ref means, even after a higher stable tag is imported (LIB-10).
+  `DELETE` on the same path unpins it, and the default follows the *Default version* rule again.
+  Both answer 200 with the library; a ref the library has not imported (refs are case-sensitive)
+  or an unknown library is 404 `not_found`; a missing or empty ref, a malformed library ID or ref,
+  or a short SHA that matches more than one commit version is 422. Libraries carry
+  `default_pinned` (also in the MCP `list_libraries` tool). Removing the pinned version unpins the
+  library. Changing the pin does not re-derive the title and description from the new default's
+  README (LIB-07); re-import the new default to refresh them.
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`
@@ -179,7 +189,7 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   run) with the same body as adding a library (`library_id` is the existing library) and
   `Location: /api/v1/jobs/{job_id}`, the import job to poll. The default version is computed from
   the versions, so it moves when the import finishes (a newer stable tag takes it; a branch does
-  not take it from a release). Errors: 404 `not_found` (unknown library), 422 `unknown_ref` /
+  not take it from a release; a pinned default does not move). Errors: 404 `not_found` (unknown library), 422 `unknown_ref` /
   `ambiguous_ref` (also 422 for a malformed library ID), 409 `version_exists` (the library already
   has that ref; re-importing is a sync, not this call), 409 `version_importing` (an import of that
   ref is queued or running; enforced atomically, so two simultaneous requests queue one import), and 409
