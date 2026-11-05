@@ -61,12 +61,9 @@ from exactdocs.ingestion.errors import (
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
-<<<<<<< HEAD
     NotATagError,
-    RefDeletedError,
-=======
     PreviewBusyError,
->>>>>>> origin/develop
+    RefDeletedError,
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
     SyncFailedError,
