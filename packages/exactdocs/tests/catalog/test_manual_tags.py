@@ -343,7 +343,9 @@ async def test_new_renames_of_a_version_let_manual_tags_follow_them(
         )
     )
 
-    assert {(a.path, tuple(a.tags)) for a in retagged.articles} == {
+    (only,) = retagged.retagged
+    assert only.manifest_id == retagged.manifest_id
+    assert {(a.path, tuple(a.tags)) for a in only.articles} == {
         ("guide/install.md", ("legacy",)),
         ("other.md", ("kept",)),
     }
@@ -353,8 +355,38 @@ async def test_new_renames_of_a_version_let_manual_tags_follow_them(
         ReplaceRenamesCommand(library=LIBRARY, ref="v1.4.0", renames=[])
     )
 
-    assert ("guide/install.md", ()) in {(a.path, tuple(a.tags)) for a in retagged.articles}
+    (only,) = retagged.retagged
+    assert ("guide/install.md", ()) in {(a.path, tuple(a.tags)) for a in only.articles}
     assert await origins_of(catalog, "v1.4.0", "guide/install.md") == []
+
+
+async def test_new_renames_of_a_version_reach_the_versions_after_it(
+    catalog: CatalogModule,
+) -> None:
+    newer = await publish(catalog, "v1.4.0", article("install.md"))
+    newest = await publish(
+        catalog,
+        "v1.5.0",
+        article("guide.md"),
+        renames=(rename("v1.4.0", "install.md", "guide.md"),),
+    )
+    await tag(catalog, "setup.md", "legacy")
+    await publish(catalog, "v1.3.0", article("setup.md"))
+
+    replaced = await catalog.replace_renames(
+        ReplaceRenamesCommand(
+            library=LIBRARY,
+            ref="v1.4.0",
+            renames=[rename("v1.3.0", "setup.md", "install.md")],
+        )
+    )
+
+    assert await origins_of(catalog, "v1.4.0", "install.md") == [("legacy", "setup.md")]
+    assert await origins_of(catalog, "v1.5.0", "guide.md") == [("legacy", "setup.md")]
+    retagged = {m.manifest_id: {a.path: a.tags for a in m.articles} for m in replaced.retagged}
+    assert replaced.manifest_id == newer
+    assert retagged[newer] == {"install.md": ["legacy"]}
+    assert retagged[newest] == {"guide.md": ["legacy"]}
 
 
 async def test_renames_of_an_unknown_library_or_version_are_not_found(

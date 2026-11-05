@@ -1177,13 +1177,14 @@ class ImportVersionUseCase:
     async def _replace_renames(
         self, library: str, ref: str, from_ref: str, renames: Sequence[GitRename]
     ) -> None:
-        """Store the map with the version ``ref`` serves and copy its manual tags to its chunks."""
+        """Store the map with the version ``ref`` serves; copy the tags it moves to the chunks."""
         async with self.tag_locks.of(library):
-            replaced = await self.versions.replace_renames(
+            retagged = await self.versions.replace_renames(
                 library, ref, from_ref=from_ref, renames=renames
             )
-            if replaced is not None and replaced[1]:
-                await self.index.retag(*replaced)
+            for manifest_id, articles in retagged.items():
+                if articles:
+                    await self.index.retag(manifest_id, articles)
 
     @staticmethod
     async def _quietly[T](job: Job, call: Awaitable[T], fallback: T) -> T:

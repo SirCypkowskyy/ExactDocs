@@ -15,6 +15,7 @@ from exactdocs.catalog.models import (
     ManifestRename,
     ManualTag,
     ManualTags,
+    RenameDirection,
     StoredArticle,
     StoredImage,
     TagSelection,
@@ -184,11 +185,15 @@ class ManifestRepository(Protocol):
         ...
 
     async def find_rename(
-        self, manifest_id: ManifestId, path: str, *, back: bool = False
+        self,
+        manifest_id: ManifestId,
+        path: str,
+        direction: RenameDirection = RenameDirection.FORWARD,
     ) -> ManifestRename | None:
-        """Return the rename of the old path ``path`` stored with the manifest, or ``None``.
+        """Return the rename stored with the manifest that ``path`` is on, or ``None``.
 
-        With ``back``, ``path`` is a new path: the rename that made it (the first by old path).
+        ``FORWARD``: ``path`` is an old path. ``BACK``: a new path, and the rename that made it
+        is returned (the first by old path).
         """
         ...
 

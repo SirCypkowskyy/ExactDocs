@@ -42,9 +42,9 @@ from exactdocs.catalog.dtos import (
     Removal,
     RemoveLibraryCommand,
     RemoveVersionCommand,
-    RenameDirection,
     RenamedPath,
     RenameList,
+    RenamesReplaced,
     ReplaceRenamesCommand,
     ResolvedVersion,
     ResolveRenamedPathQuery,
@@ -459,8 +459,13 @@ class ReplaceRenamesUseCase:
     manifests: ManifestRepository
     tagger: ManualTagger
 
-    async def __call__(self, command: ReplaceRenamesCommand) -> RetaggedManifest:
-        """Store the new map with the active manifest, then let manual tags follow it."""
+    async def __call__(self, command: ReplaceRenamesCommand) -> RenamesReplaced:
+        """Store the new map with the active manifest, then let manual tags follow it.
+
+        Tags reach an article through the maps of every version before it, so each pending and
+        active manifest of the library is re-tagged, not only this one (``v1.5.0`` gets a tag
+        through ``v1.4.0``'s new map too).
+        """
         library_id = LibraryId(command.library)
         if await self.repository.get(library_id) is None:
             raise LibraryNotFoundError(command.library)
@@ -480,7 +485,13 @@ class ReplaceRenamesUseCase:
             ],
         )
         by_path = await self.repository.get_manual_tags(library_id)
-        return await self.tagger.apply(manifest, by_path)
+        retagged = [
+            await self.tagger.apply(live, by_path)
+            for live in await self.manifests.list_live(library_id)
+        ]
+        return RenamesReplaced(
+            manifest_id=manifest.id, retagged=[r for r in retagged if r.articles]
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -569,9 +580,7 @@ class ResolveRenamedPathUseCase:
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
-        rename = await self.manifests.find_rename(
-            manifest, query.path, back=query.direction is RenameDirection.BACK
-        )
+        rename = await self.manifests.find_rename(manifest, query.path, query.direction)
         return None if rename is None else RenamedPath.from_model(library, ref, rename)
 
 

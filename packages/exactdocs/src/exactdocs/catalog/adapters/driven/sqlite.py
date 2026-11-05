@@ -58,6 +58,7 @@ from exactdocs.catalog.models import (
     ManualTag,
     ManualTags,
     RefKind,
+    RenameDirection,
     StoredArticle,
     StoredImage,
     TagMatch,
@@ -511,9 +512,13 @@ class SqliteManifestRepository:
                 )
 
     async def find_rename(
-        self, manifest_id: ManifestId, path: str, *, back: bool = False
+        self,
+        manifest_id: ManifestId,
+        path: str,
+        direction: RenameDirection = RenameDirection.FORWARD,
     ) -> ManifestRename | None:
-        """Return the rename of the old path, or (``back``) the first one into the new path."""
+        """Return the rename of the old path, or (``BACK``) the first one into the new path."""
+        back = direction is RenameDirection.BACK
         column = manifest_renames.c.new_path if back else manifest_renames.c.old_path
         return await self._one_rename(manifest_id, column == path)
 

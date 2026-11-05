@@ -41,6 +41,7 @@ from exactdocs.catalog.models import (
     ManualTag,
     ManualTags,
     RefKind,
+    RenameDirection,
     StoredImage,
     TagMatch,
     TagSelection,
@@ -851,8 +852,13 @@ async def test_renames_are_stored_with_their_manifest_and_found_by_old_path(stor
 
     assert found == rename("guide/setup.md", INSTALL)
     assert await stores.manifests.find_rename(ManifestId("m1"), INSTALL) is None  # not an old path
-    assert await stores.manifests.find_rename(ManifestId("m1"), INSTALL, back=True) == found
-    assert await stores.manifests.find_rename(ManifestId("m1"), "guide/setup.md", back=True) is None
+    assert (
+        await stores.manifests.find_rename(ManifestId("m1"), INSTALL, RenameDirection.BACK) == found
+    )
+    assert (
+        await stores.manifests.find_rename(ManifestId("m1"), "guide/setup.md", RenameDirection.BACK)
+        is None
+    )
     assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == (
         rename("guide/setup.md", INSTALL),
         rename("old.md", "new.md", similarity=100),
@@ -903,7 +909,10 @@ async def test_replacing_renames_keeps_only_renames_into_entries_once_per_old_pa
     await stores.manifests.replace_renames(ManifestId("m1"), [])
     assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == ()
     await stores.manifests.replace_renames(ManifestId("nope"), [rename("a.md", INSTALL)])
-    assert await stores.manifests.find_rename(ManifestId("nope"), INSTALL, back=True) is None
+    assert (
+        await stores.manifests.find_rename(ManifestId("nope"), INSTALL, RenameDirection.BACK)
+        is None
+    )
 
 
 PNG = StoredImage(blob_sha=sha("1a"), content_type="image/png", data=b"\x89PNG\r\n\x1a\n-one")

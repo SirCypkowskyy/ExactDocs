@@ -207,11 +207,18 @@ class Side:
 
     async def replace_renames(
         self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
-    ) -> tuple[str, dict[str, tuple[str, ...]]] | None:
+    ) -> dict[str, dict[str, tuple[str, ...]]]:
         del library
         await self._step(f"replace_renames {ref}")
         self.replaced.append((ref, from_ref, tuple(renames)))
-        return (f"active {ref}", dict(self.manual_tags)) if self.serving else None
+        if not self.serving:
+            return {}
+        # The renewed version and a later one that follows its map; one without manual tags.
+        return {
+            f"active {ref}": dict(self.manual_tags),
+            "later": dict(self.manual_tags),
+            "none": {},
+        }
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
         await self._step(f"retag {manifest_id} {sorted(tags)}")
@@ -1250,9 +1257,10 @@ async def test_an_older_version_imported_later_renews_the_map_of_the_next_newer_
     assert world.catalog.replaced == [
         ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
     ]
-    assert world.log[-3:] == [
+    assert world.log[-4:] == [
         "catalog replace_renames v1.4.0",
         "chunks retag active v1.4.0 ['docs/install.md']",
+        "chunks retag later ['docs/install.md']",
         "catalog describe",
     ]
 

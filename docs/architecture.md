@@ -159,7 +159,12 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
   its activation the import detects the map of each version whose previous version it now is
   again (git only, no re-chunking), replaces it (`ReplaceRenames`, which also re-tags the manifest
   from the new map) and copies the tags to the chunk rows, under the library's `TagLocks`. A map
-  git cannot give leaves the newer version as it was; this never fails the older import.
+  git cannot give leaves the newer version as it was; this never fails the older import. Every
+  pending and active manifest of the library is then re-tagged, because a version after the newer
+  one follows its map too (`v1.5.0` gets a tag through `v1.4.0`'s new map). Each import of a tag
+  does this, a re-import too. A sync never re-imports a tag, so a map built in the wrong order
+  before this existed (#216) is repaired by importing the older tag again: remove it and add it
+  again, or re-import it when it moved (`versions/reimport`).
   The map (`from_ref`, old path, new path, similarity) is stored with the new version's manifest
   (`catalog_manifest_renames`, indexed both ways), so it is replaced, collected and removed with
   it. It is read through the `ResolveRenamedPath` port (forward: old to new; back: new to old),

@@ -24,6 +24,7 @@ from exactdocs.catalog.models import (
     ManifestState,
     ManualTag,
     ManualTags,
+    RenameDirection,
     StoredArticle,
     StoredImage,
     TagSelection,
@@ -222,11 +223,15 @@ class InMemoryManifestRepository:
         return touched
 
     async def find_rename(
-        self, manifest_id: ManifestId, path: str, *, back: bool = False
+        self,
+        manifest_id: ManifestId,
+        path: str,
+        direction: RenameDirection = RenameDirection.FORWARD,
     ) -> ManifestRename | None:
-        """Return the rename of the old path, or (``back``) the first one into the new path."""
+        """Return the rename of the old path, or (``BACK``) the first one into the new path."""
         found = self.manifests.get(manifest_id)
         renames = sorted(found.renames, key=lambda r: r.old_path) if found else []
+        back = direction is RenameDirection.BACK
         return next((r for r in renames if (r.new_path if back else r.old_path) == path), None)
 
     async def list_renames(

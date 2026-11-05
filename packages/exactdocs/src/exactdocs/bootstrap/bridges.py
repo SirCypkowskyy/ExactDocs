@@ -353,8 +353,8 @@ class CatalogVersionPublisher:
 
     async def replace_renames(
         self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
-    ) -> tuple[str, dict[str, tuple[str, ...]]] | None:
-        """Give the version's active manifest the new map; ``None`` when it serves none."""
+    ) -> dict[str, dict[str, tuple[str, ...]]]:
+        """Give the version's active manifest the new map; empty when it serves none."""
         try:
             found = await self.replace_renames_of(
                 ReplaceRenamesCommand(
@@ -372,8 +372,8 @@ class CatalogVersionPublisher:
                 )
             )
         except NotFoundError:
-            return None
-        return found.manifest_id, {a.path: tuple(a.tags) for a in found.articles}
+            return {}
+        return {m.manifest_id: {a.path: tuple(a.tags) for a in m.articles} for m in found.retagged}
 
     async def describe(
         self,
