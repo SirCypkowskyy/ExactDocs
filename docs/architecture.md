@@ -16,7 +16,7 @@ same idea with **vertical slices**. All of this is enforced by tests, not by con
 | `packages/exactdocs/src/exactdocs/catalog/` | domain: libraries, versions, manifests, article contents |
 | `packages/exactdocs/src/exactdocs/identity/` | domain: the admin account, web sessions and API tokens |
 | `packages/exactdocs/src/exactdocs/retrieval/` | domain: chunks, the BM25 index, `search_docs`, `query-docs`, `resolve-library-id` |
-| `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the worker, git access, parsing, chunking and the import |
+| `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the DBOS worker, git access, parsing, chunking and the import |
 | `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
 | `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
 | `web/` | React client (Vite, TanStack Router and Query, shadcn); see [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md) |
@@ -111,7 +111,9 @@ Everything ExactDocs stores lives in the **data directory**: `EXACTDOCS_DATA_DIR
 image sets to `/data`, else the platform user-data directory (so `uvx` and stdio MCP share it).
 `bootstrap/database.py` creates it, refuses to start if it is not writable, and opens one SQLite
 file in it (`EXACTDOCS_DATABASE_URL` overrides the path): SQLAlchemy **Core**, async, no ORM,
-on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`.
+on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`. Next to it, DBOS keeps the
+durable state of running jobs in `jobs.sqlite` (its own schema and migrations; see
+[Background jobs](#background-jobs)): back up the data directory as a whole.
 
 - **Each domain owns its tables**, prefixed with its name (`catalog_libraries`, `retrieval_...`).
   Foreign keys only between tables of the same domain; another domain's IDs are held by value
@@ -314,10 +316,11 @@ stateDiagram-v2
     }
     state "Job (ingestion)" as J {
         [*] --> queued
-        queued --> running: worker claims it
+        queued --> running: its workflow starts
         running --> succeeded
         running --> failed
-        running --> queued: restart recovery
+        running --> running: resumed after a crash, at its first unfinished step
+        running --> queued: no workflow to resume (restart recovery)
     }
 ```
 
@@ -385,21 +388,37 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   through a `JobProgress` port; every report is stored at once. Raising fails the job: a domain
   error's message is shown to users, anything else only as `unexpected <ErrorType>` (details go
   to the log).
-- **The worker is a driving adapter** (`ingestion/adapters/driving/worker.py`): asyncio tasks
-  started in the app lifespan (`Container.running()`) that poll `RunNextJob`. Its use case claims
-  the oldest queued job **whose library has no running job** in one atomic statement, so two jobs
-  for one library never run together while other libraries run alongside.
-- **Restart.** Stopping the app lets idle workers finish and cancels a job still running after
-  a short grace period, so it stays `running` in the database. On the next start `RecoverJobs`
-  runs each one's recovery hook (no-op by default; the import registers the discard of its
-  pending manifest), then re-queues it, and it runs from the beginning. A hook that raises fails
-  its job instead of blocking the start.
-- **One process runs jobs.** Only the HTTP server starts the worker and recovery
-  (`serve --stdio` does not): recovery treats every `running` job as left over from a crash, so a
-  second worker process on the same database would re-queue the first one's live jobs. The
-  claim itself is safe across processes. Several job-running processes need a lease/heartbeat
-  per job first.
-- DBOS replaces the worker behind the same driving ports in MVP-2 (resumable imports).
+- **The worker is DBOS** (durable workflows; `ingestion/adapters/driving/dbos_worker.py`),
+  started in the app lifespan (`Container.running()`). Every job is one DBOS workflow whose ID is
+  the job's ID and whose body is the `RunJob` driving port. `EnqueueJob` stores the job, then
+  hands it to the `JobRunner` driven port (`adapters/driven/dbos.py` queues the workflow by
+  name). The queue runs two jobs at once and one per library: the library is its partition key.
+  DBOS keeps its workflows and their steps in its own SQLite file, `<data dir>/jobs.sqlite`; the
+  `ingestion_jobs` table stays what the API reads. DBOS is imported only by ingestion's adapters
+  and `bootstrap` (architecture test).
+- **Durable steps.** A handler marks its steps with the `Checkpoints` driven port
+  (`step(name, run)`, DBOS steps in production, `InMemoryCheckpoints` in tests): a completed
+  step's result is stored, and a resumed job gets it back without running the step again. A
+  handler must take the same steps in the same order on every run and keep each step safe to run
+  twice. `STEPS_VERSION` (the DBOS application version) changes when a job's steps do; a
+  workflow of another version is not resumed, its job starts over.
+- **Restart.** Stopping the app lets running jobs finish for a second, then cancels them: the job
+  stays `running` and its workflow pending. A process killed outright (`kill -9`, OOM, a deploy)
+  leaves the same state. On the next start DBOS resumes the pending workflows: `RunJob` finds the
+  job `running`, runs its kind's recovery hook (the import's discards a pending manifest the
+  interrupted step may have left), resets its progress and runs the handler, whose completed
+  steps are replayed from the stored results. Every other unfinished job (`RecoverJobs`: a job
+  `running` without a workflow, e.g. one the in-process worker of an earlier release left behind,
+  or queued while no worker ran) gets its hook, is queued again from the beginning and submitted.
+  Workflows that ended, or of another `STEPS_VERSION`, are deleted at start; a job's workflow is
+  deleted when it ends (its steps hold the whole text of an import). A hook that raises fails its
+  job instead of blocking the start.
+- **One process runs jobs.** Only the HTTP server starts the worker (`serve --stdio`, `reindex`
+  and the account commands do not), and DBOS allows one worker per process. Two servers on one
+  data directory would both resume the same workflows; that needs DBOS executor IDs per process
+  first.
+- `RunNextJob` (claim the oldest queued job whose library has none running, in one atomic
+  statement, and run it inline) remains for tests that drive jobs one at a time.
 
 ### The import: a complete version or nothing
 
@@ -409,17 +428,32 @@ selected file, tag, chunk, then **store** the articles as a pending catalog mani
 their chunks in retrieval and **activate** the manifest. Readers see the previous state until
 that last step, which is one transaction in the catalog.
 
+- **Steps (resumable, E3-11).** The import is a sequence of durable steps: list the selected
+  files; parse and chunk them `EXACTDOCS_IMPORT_BATCH_FILES` (100) at a time; read the README and
+  the images; fetch the images outside the selection; detect renames; publish (store, index,
+  activate). A killed import resumes at its first unfinished step: an import killed after 120 of
+  200 files (batches of 20) parses and chunks files 121 to 200 only, and the version has each
+  article once. A step's result carries everything later steps and the job's progress depend on
+  (articles with their chunks, problems, bytes used), so a replay rebuilds the job as the first
+  run left it. The commit is fetched only when a step needs its files: a resume with only
+  publishing left fetches nothing. Each step reads the pinned commit, and what publishing writes is
+  keyed by content (contents by blob SHA and parser version, chunk sets by blob SHA and chunking
+  config) or replaced as a whole (a new pending manifest), so running a step twice changes
+  nothing a reader sees. The results stay in `jobs.sqlite` only while the job runs: about the
+  version's text and chunks once more, on disk, at the peak.
 - **Undo.** Any failure after the store (an exception or a cancellation) discards the pending
   chunks and then the pending manifest. The order matters: retrieval asks the catalog and only
   removes a manifest it is told is still pending. After a crash the recovery hook does the same
-  for the library's pending data before the job runs again (a library has one running job).
+  for the library's pending data before the job resumes or runs again (a library has one running
+  job).
 - **Reuse.** Content is keyed by git blob SHA and the parser version, chunk sets by blob SHA and
   the chunking config, so a blob that an earlier import chunked is not chunked again. The
   stored chunks are read back through retrieval's `GetChunkSets`; parsing is repeated, because
   the title and tags depend on the path as well as the bytes. Importing a commit again changes
   nothing a reader can see.
 - **Memory.** The selected text is held in memory until stored, and again as chunks, as DTOs in
-  the bridges and as SQL parameters: several times over, and the worker runs two jobs at once.
+  the bridges and as SQL parameters: several times over, and the worker runs two jobs at once
+  (a resumed import loads its stored steps back into memory the same way).
   `EXACTDOCS_MAX_IMPORT_BYTES` (256 MiB) bounds the text an import takes; above it the import
   fails with `import_too_large` instead of the process being killed. The CPU-heavy part of
   storing and indexing (DTO validation, sorting, chunk-ID hashing) runs in a thread so the event
@@ -455,8 +489,9 @@ that last step, which is one transaction in the catalog.
   renamed articles (#66) are not followed yet (#191).
 - **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
   bare commit, so the import never asks the remote again; a deleted tag does not break it.
-- **Replays.** A crash right after the activation commits re-queues the job; importing the same
-  commit again activates an equal manifest, so nothing a reader sees changes.
+- **Replays.** A crash right after the activation commits, before the publish step's result is
+  stored, publishes again on resume: storing the same commit again activates an equal manifest,
+  so nothing a reader sees changes.
 - **Files.** Only regular files are read (a symlink could point out of the checkout), none over
   `EXACTDOCS_MAX_ARTICLE_BYTES` (2 MiB), and only valid UTF-8. A skipped file (also an
   unreadable one or one with a file name that is not UTF-8) is recorded as a job problem (the

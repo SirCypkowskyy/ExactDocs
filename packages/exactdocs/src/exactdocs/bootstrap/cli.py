@@ -794,14 +794,14 @@ def _read_password(*, from_stdin: bool, new: bool = False) -> str:
 
 async def _create_first_admin(settings: Settings, username: str, password: str) -> str:
     container = _build(settings)
-    async with container.running():
+    async with container.running(jobs=False):  # the server runs the jobs
         command = CreateFirstAdminCommand(username=username, password=SecretStr(password))
         return (await container.identity.create_first_admin(command)).username
 
 
 async def _reset_password(settings: Settings, username: str, password: str) -> None:
     container = _build(settings)
-    async with container.running():
+    async with container.running(jobs=False):  # the server runs the jobs
         command = ResetPasswordCommand(username=username, password=SecretStr(password))
         await container.identity.reset_password(command)
 

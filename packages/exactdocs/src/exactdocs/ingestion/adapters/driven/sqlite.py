@@ -143,6 +143,16 @@ class SqliteJobRepository:
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
+    async def list_queued(self) -> Sequence[Job]:
+        """Return every job in the ``queued`` state, oldest first."""
+        query = (
+            select(jobs)
+            .where(jobs.c.state == JobState.QUEUED)
+            .order_by(jobs.c.created_at, jobs.c.id)
+        )
+        async with self.engine.connect() as connection:
+            return [_job(row) for row in await connection.execute(query)]
+
     async def claim_next(self, now: datetime) -> Job | None:
         """Atomically start the oldest queued job whose library has no running job.
 

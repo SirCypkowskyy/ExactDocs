@@ -103,7 +103,7 @@ def step_two_blocks(context: Context) -> None:
 def step_no_schema(context: Context) -> None:
     async def tool() -> Any:
         container = Container.build(context.settings)
-        async with container.running(), Client(build_mcp(container)) as mcp:
+        async with container.running(jobs=False), Client(build_mcp(container)) as mcp:
             return next(t for t in await mcp.list_tools() if t.name == "resolve-library-id")
 
     found = asyncio.run(tool())

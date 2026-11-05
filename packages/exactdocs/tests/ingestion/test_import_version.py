@@ -483,6 +483,7 @@ async def test_a_blob_that_was_chunked_before_is_not_chunked_again(tmp_path: Pat
 async def test_known_chunk_sets_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
     files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
     world = build_world(tmp_path, files)
+    world.run = replace(world.run, batch_files=len(files))  # one step for every file
 
     await world.run(make_job(), world.progress)
 

@@ -300,3 +300,100 @@ async def test_a_failing_hook_fails_its_job_and_the_others_are_still_recovered(
     assert jobs.jobs[JobId("a")].state is JobState.FAILED
     assert jobs.jobs[JobId("a")].error == "recovery failed: unexpected OSError"
     assert jobs.jobs[JobId("b")].state is JobState.QUEUED
+
+
+class Runner:
+    """A ``JobRunner`` that records what it is handed."""
+
+    def __init__(self) -> None:
+        self.submitted: list[str] = []
+
+    async def submit(self, job: Job) -> None:
+        assert job.state is JobState.QUEUED
+        self.submitted.append(job.id)
+
+
+async def test_a_queued_job_is_handed_to_the_runner(build_module) -> None:
+    runner = Runner()
+
+    job = await build_module({IMPORT: succeed}, runner=runner).enqueue_job(enqueue())
+
+    assert runner.submitted == [job.id]
+
+
+async def test_recovery_leaves_the_jobs_the_runner_resumes_and_submits_the_queued_ones(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    hooked: list[str] = []
+
+    async def hook(job: Job) -> None:
+        hooked.append(job.id)
+
+    runner = Runner()
+    resumed = queued(clock, "resumed", library="/a/x").started(clock.now())
+    for each in (queued(clock, "older"), resumed, queued(clock, "lost", library="/b/x")):
+        await jobs.add(each)
+    await jobs.save(jobs.jobs[JobId("lost")].started(clock.now()))
+
+    await build_module({IMPORT: succeed}, {IMPORT: hook}, runner=runner).recover_jobs(
+        resuming={"resumed"}
+    )
+
+    assert hooked == ["lost"]
+    assert jobs.jobs[JobId("resumed")] == resumed
+    assert runner.submitted == ["older", "lost"]  # oldest first
+
+
+async def test_run_job_runs_a_queued_job_to_its_end(clock, jobs, build_module) -> None:
+    await jobs.add(queued(clock, "j1"))
+
+    await build_module({IMPORT: succeed}).run_job("j1")
+
+    job = jobs.jobs[JobId("j1")]
+    assert job.state is JobState.SUCCEEDED
+    assert job.started_at is not None
+
+
+async def test_run_job_resumes_a_running_job_after_its_hook_with_its_progress_reset(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    calls: list[str] = []
+
+    async def hook(job: Job) -> None:
+        calls.append(f"hook at {job.done}")
+
+    async def resume(job: Job, progress: JobProgress) -> None:
+        calls.append(f"run from {job.done} with {len(job.problems)} problems")
+        await progress.report(done=10, total=10)
+
+    interrupted = queued(clock, "j1").started(clock.now()).progressed(done=4, total=10)
+    await jobs.add(interrupted.with_problem("x", ProblemCode.BINARY, "y"))
+
+    await build_module({IMPORT: resume}, {IMPORT: hook}).run_job("j1")
+
+    assert calls == ["hook at 4", "run from 0 with 0 problems"]
+    assert jobs.jobs[JobId("j1")].state is JobState.SUCCEEDED
+
+
+async def test_run_job_fails_a_resumed_job_whose_hook_fails(clock, jobs, build_module) -> None:
+    async def broken(_job: Job) -> None:
+        message = "disk on fire"
+        raise OSError(message)
+
+    await jobs.add(queued(clock, "j1").started(clock.now()))
+
+    await build_module({IMPORT: succeed}, {IMPORT: broken}).run_job("j1")
+
+    assert jobs.jobs[JobId("j1")].error == "recovery failed: unexpected OSError"
+
+
+@pytest.mark.parametrize("job_id", ["finished", "unknown"])
+async def test_run_job_leaves_a_finished_or_unknown_job_alone(
+    clock, jobs: InMemoryJobRepository, build_module, job_id: str
+) -> None:
+    finished = queued(clock, "finished").started(clock.now()).succeeded(clock.now())
+    await jobs.add(finished)
+
+    await build_module({IMPORT: succeed}).run_job(job_id)
+
+    assert jobs.jobs == {JobId("finished"): finished}

@@ -73,7 +73,7 @@ async def import_versions(
 ) -> None:
     container = Container.build(context.settings)
     chunker = MarkdownChunker()
-    async with container.running():
+    async with container.running(jobs=False):
         await SqliteLibraryRepository(container.engine).save(
             Library(
                 id=LibraryId(library),

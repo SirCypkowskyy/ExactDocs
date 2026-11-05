@@ -7,10 +7,11 @@ import os
 import stat
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import BinaryIO
 
@@ -66,6 +67,7 @@ from exactdocs.ingestion.models import (
     ACTIVE_JOB_STATES,
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
+    DEFAULT_IMPORT_BATCH_FILES,
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGES_BYTES,
@@ -113,6 +115,7 @@ from exactdocs.ingestion.models import (
     sniff_image,
 )
 from exactdocs.ingestion.ports.driven import (
+    Checkpoints,
     Chunker,
     ChunkIndex,
     Collector,
@@ -122,6 +125,7 @@ from exactdocs.ingestion.ports.driven import (
     JobHandler,
     JobProgress,
     JobRepository,
+    JobRunner,
     LibraryIds,
     LibrarySources,
     NewLibraries,
@@ -159,9 +163,10 @@ class EnqueueJobUseCase:
     jobs: JobRepository
     clock: Clock
     handlers: Mapping[JobKind, JobHandler]
+    runner: JobRunner
 
     async def __call__(self, command: EnqueueJobCommand) -> JobSummary:
-        """Queue the job; the worker picks it up."""
+        """Queue the job and hand it to the runner."""
         kind = JobKind(command.kind)
         if kind not in self.handlers:
             raise UnknownJobKindError(kind)
@@ -175,6 +180,7 @@ class EnqueueJobUseCase:
             now=self.clock.now(),
         )
         await self.jobs.add(job)
+        await self.runner.submit(job)
         return JobSummary.from_model(job)
 
 
@@ -251,17 +257,23 @@ class RecoverJobsUseCase:
     jobs: JobRepository
     clock: Clock
     hooks: Mapping[JobKind, RecoveryHook]
+    runner: JobRunner
 
-    async def __call__(self) -> None:
+    async def __call__(self, *, resuming: Collection[str] = ()) -> None:
         """Run the hook of every job left ``running``, then queue it again to run from scratch.
 
         A kind without a hook has nothing to clean up. A hook that raises fails its job instead
         of keeping the app from starting, because re-running over unclean state would be worse.
+        A job in ``resuming`` is the runner's to resume (from its last durable step) and is
+        left alone. Every other queued job is then submitted to the runner, oldest first: also
+        the ones queued while it was not running.
         """
         # ponytail: assumes one live process runs jobs on the database (the HTTP server; stdio
         # does not). Several would re-queue each other's running jobs: add a lease/heartbeat
         # column and re-queue only expired leases if that ever changes.
         for job in await self.jobs.list_running():
+            if job.id in resuming:
+                continue
             hook = self.hooks.get(job.kind)
             try:
                 if hook is not None:
@@ -277,6 +289,46 @@ class RecoverJobsUseCase:
                 )
             else:
                 await self.jobs.save(job.requeued())
+        for job in await self.jobs.list_queued():
+            if job.id not in resuming:
+                await self.runner.submit(job)
+
+
+@dataclass(frozen=True, slots=True)
+class RunJobUseCase:
+    """Implements ``ports.driving.RunJob``."""
+
+    jobs: JobRepository
+    clock: Clock
+    handlers: Mapping[JobKind, JobHandler]
+    hooks: Mapping[JobKind, RecoveryHook]
+
+    async def __call__(self, job_id: str, /) -> None:
+        """Start (or resume) the job, run its handler and record how it ended.
+
+        A job found ``running`` was interrupted: its kind's recovery hook undoes what the
+        interrupted step left half done (a hook that raises fails the job), then the job starts
+        over, its handler replaying the durable steps it had completed.
+        """
+        job = await self.jobs.get(JobId(job_id))
+        if job is None or job.state not in ACTIVE_JOB_STATES:
+            return
+        if job.state is JobState.RUNNING:
+            hook = self.hooks.get(job.kind)
+            try:
+                if hook is not None:
+                    await hook(job)
+            except Exception as error:
+                log.exception("recovery of job %s (%s) failed", job.id, job.kind)
+                failure = f"recovery failed: {_describe(error)}"
+                await self.jobs.save(
+                    job.failed(failure, self.clock.now(), code=failure_code(error))
+                )
+                return
+            job = job.requeued()  # its progress is rebuilt as the steps are replayed
+        started = job.started(self.clock.now())
+        await self.jobs.save(started)
+        await _run(self.jobs, self.clock, self.handlers, started)
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,30 +344,37 @@ class RunNextJobUseCase:
         job = await self.jobs.claim_next(self.clock.now())
         if job is None:
             return False
-        progress = _Progress(self.jobs, job)
-        handler = self.handlers.get(job.kind)
-        code = UNEXPECTED_ERROR
-        try:
-            if handler is None:
-                failure = f"no handler is registered for job kind {job.kind!r}"
-            else:
-                await handler(job, progress)
-                failure = None
-        except Exception as error:
-            log.exception("job %s (%s) failed", job.id, job.kind)
-            failure, code = _describe(error), failure_code(error)
-        now = self.clock.now()
-        final = (
-            progress.job.succeeded(now)
-            if failure is None
-            else progress.job.failed(failure, now, code=code)
-        )
-        try:
-            await self.jobs.save(final)
-        except Exception:
-            log.exception("could not store the end of job %s (%s)", job.id, job.kind)
-            raise
+        await _run(self.jobs, self.clock, self.handlers, job)
         return True
+
+
+async def _run(
+    jobs: JobRepository, clock: Clock, handlers: Mapping[JobKind, JobHandler], job: Job
+) -> None:
+    """Run a started job's handler and store how it ended (raising only if that store fails)."""
+    progress = _Progress(jobs, job)
+    handler = handlers.get(job.kind)
+    code = UNEXPECTED_ERROR
+    try:
+        if handler is None:
+            failure = f"no handler is registered for job kind {job.kind!r}"
+        else:
+            await handler(job, progress)
+            failure = None
+    except Exception as error:
+        log.exception("job %s (%s) failed", job.id, job.kind)
+        failure, code = _describe(error), failure_code(error)
+    now = clock.now()
+    final = (
+        progress.job.succeeded(now)
+        if failure is None
+        else progress.job.failed(failure, now, code=code)
+    )
+    try:
+        await jobs.save(final)
+    except Exception:
+        log.exception("could not store the end of job %s (%s)", job.id, job.kind)
+        raise
 
 
 SAVE_EVERY_FILES = 100
@@ -788,6 +847,14 @@ class SyncLibraryUseCase:
         return job
 
 
+class _NoCheckpoints:
+    """The default ``Checkpoints``: every step runs, nothing survives a crash."""
+
+    async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        del name
+        return await run()
+
+
 @dataclass(frozen=True, slots=True)
 class ImportVersionUseCase:
     """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
@@ -828,9 +895,21 @@ class ImportVersionUseCase:
     refresh: bool = False
     renames: RenameSource | None = None
     """Where renames come from; without it none are detected. Never a reason to fail."""
+    checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
+    """Makes the steps durable: a resumed import skips the files it had parsed and chunked."""
+    batch_files: int = DEFAULT_IMPORT_BATCH_FILES
+    """Files parsed and chunked per durable step."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
-        """Run the import from the beginning; raising fails the job."""
+        """Run the import, skipping the steps a run before a crash completed; raising fails it.
+
+        The steps, in order: list the selected files; parse and chunk them ``batch_files`` at a
+        time; read the README and the images; fetch the images outside the selection; detect
+        renames; publish. Each one's result is a checkpoint, so a resumed import starts at the
+        first step it had not finished. The commit is fetched only when a step needs its files
+        (a resume that only has publishing left fetches nothing). Every step is safe to run
+        again: it reads the pinned commit, and what it stores is keyed by content.
+        """
         if job.version is None or job.commit_sha is None:
             raise ImportNotPinnedError
         source = await self.sources.get(job.library)
@@ -840,22 +919,43 @@ class ImportVersionUseCase:
         kind = job.ref_kind or RefKind.COMMIT
         refs = _full_refs(kind, job.version)
         config_hash = self.chunker.config_hash
+        step = self.checkpoints.step
         try:
-            async with self.gateway.fetch(
-                source.url, job.commit_sha, source.selection, refs=refs, credential=credential
-            ) as folder:
-                articles, wanted = await self._articles(folder, source, config_hash, progress)
-                readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
-                taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
-                taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
+            async with AsyncExitStack() as stack:
+                checkout = _Checkout(
+                    lambda: self.gateway.fetch(
+                        source.url,
+                        str(job.commit_sha),
+                        source.selection,
+                        refs=refs,
+                        credential=credential,
+                    ),
+                    stack,
+                )
+                paths = await step("list the selected files", lambda: _list(checkout, source))
+                articles, wanted = await self._articles(
+                    checkout, paths, source, config_hash, progress
+                )
+                readme, taken = await step(
+                    "read the README and the images", lambda: self._assets(checkout, wanted)
+                )
         except RepositoryAuthRequiredError as error:
             raise _anonymous(error, credential) from error
         if not articles:
             raise NoArticlesError
-        await self._outside_images(job, source, credential, taken, progress)
         # After the fetch above has given its slot back: a second slot held while waiting for one
         # could deadlock two imports.
-        renamed_from, renames = await self._renames(job, source, credential, refs, articles)
+        taken = await step(
+            "fetch the images outside the selection",
+            lambda: self._outside_images(job, source, credential, taken),
+        )
+        for skip in (*taken.skipped, *(_Missing(path) for path in taken.absent)):
+            await progress.problem(
+                skip.path.encode(errors="replace").decode(), skip.code, skip.reason
+            )
+        renamed_from, renames = await step(
+            "detect renames", lambda: self._renames(job, source, credential, refs, articles)
+        )
         version = ImportedVersion(
             library=job.library,
             ref=job.version,
@@ -868,19 +968,7 @@ class ImportVersionUseCase:
             renamed_from=renamed_from,
             renames=renames,
         )
-        manifest_id: str | None = None
-        try:
-            manifest_id = await self.versions.store(version)
-            await self.index.index(manifest_id, version)
-            await self.versions.activate(manifest_id)
-        except BaseException:
-            # Run as a task of its own and shielded, so that the cancellation that got us here
-            # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
-            cleanup = asyncio.ensure_future(self._discard(job.library, manifest_id))
-            _cleanups.add(cleanup)
-            cleanup.add_done_callback(_cleanups.discard)
-            await asyncio.shield(cleanup)
-            raise
+        await step("publish", lambda: self._publish(version))
         # The version is live now: a catalog that cannot take the README's text must not fail it.
         try:
             await self.versions.describe(
@@ -891,6 +979,36 @@ class ImportVersionUseCase:
             )
         except Exception:
             log.exception("could not apply the README of %s %s", job.library, job.version)
+
+    async def _publish(self, version: ImportedVersion) -> None:
+        """Store the version as a pending manifest, index its chunks, then activate it.
+
+        Any failure after the store discards what this run stored. What a run killed halfway
+        left pending is discarded by the recovery hook before the job resumes.
+        """
+        manifest_id: str | None = None
+        try:
+            manifest_id = await self.versions.store(version)
+            await self.index.index(manifest_id, version)
+            await self.versions.activate(manifest_id)
+        except BaseException:
+            # Run as a task of its own and shielded, so that the cancellation that got us here
+            # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
+            cleanup = asyncio.ensure_future(self._discard(version.library, manifest_id))
+            _cleanups.add(cleanup)
+            cleanup.add_done_callback(_cleanups.discard)
+            await asyncio.shield(cleanup)
+            raise
+
+    async def _assets(
+        self, checkout: _Checkout, wanted: Sequence[str]
+    ) -> tuple[ReadmeSummary, _ImageBudget]:
+        """Summarize the README and read the wanted images the checkout holds."""
+        folder = await checkout.folder()
+        readme = await asyncio.to_thread(_readme, folder, self.max_article_bytes)
+        taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
+        taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
+        return readme, taken
 
     async def _renames(
         self,
@@ -963,9 +1081,8 @@ class ImportVersionUseCase:
         source: ImportSource,
         credential: Credential | None,
         taken: _ImageBudget,
-        progress: JobProgress,
-    ) -> None:
-        """Fetch the images the first checkout lacked (outside the selection); list the problems."""
+    ) -> _ImageBudget:
+        """Fetch the images the first checkout lacked (outside the selection) into ``taken``."""
         if taken.absent and job.commit_sha and job.version:
             async with self.gateway.fetch_files(
                 source.url,
@@ -976,65 +1093,111 @@ class ImportVersionUseCase:
                 credential=credential,
             ) as outside:
                 taken.absent = await asyncio.to_thread(_read_images, outside, taken.absent, taken)
-        for skip in (*taken.skipped, *(_Missing(path) for path in taken.absent)):
-            await progress.problem(
-                skip.path.encode(errors="replace").decode(), skip.code, skip.reason
-            )
+        return taken
 
     async def _articles(
-        self, folder: Path, source: ImportSource, config_hash: str, progress: JobProgress
+        self,
+        checkout: _Checkout,
+        paths: Sequence[str],
+        source: ImportSource,
+        config_hash: str,
+        progress: JobProgress,
     ) -> tuple[list[ImportedArticle], list[str]]:
-        """Return the articles and the image paths they reference (first-seen order)."""
-        try:
-            paths = await asyncio.to_thread(_selected_files, folder, source.selection)
-        except OSError as error:
-            raise CheckoutUnreadableError from error
-        await progress.report(done=0, total=len(paths))
-        loaded: list[tuple[str, str, ParsedArticle]] = []
+        """Return the articles and the image paths they reference (first-seen order).
+
+        One durable step per ``batch_files`` files. What a step returns is all that later steps
+        and the progress depend on, so a replayed step leaves the job as the first run did.
+        """
+        total = len(paths)
+        await progress.report(done=0, total=total)
+        articles: list[_Article] = []
+        chunks: dict[str, tuple[ArticleChunk, ...]] = {}
+        stored: set[str] = set()
         used = 0
-        for done, path in enumerate(paths, 1):
+        for start in range(0, total, self.batch_files):
+            files = paths[start : start + self.batch_files]
+            batch = await self.checkpoints.step(
+                f"parse and chunk files {start + 1}-{start + len(files)}",
+                partial(
+                    self._batch,
+                    checkout,
+                    _BatchInput(files, start, total, used, dict(chunks), source, config_hash),
+                    progress,
+                ),
+            )
+            used = batch.used
+            for path, code, reason in batch.problems:
+                await progress.problem(path, code, reason)
+            articles.extend(batch.articles)
+            chunks |= {a.imported.blob_sha: a.imported.chunks for a in batch.articles}
+            stored |= batch.stored
+            await progress.report(done=start + len(files), total=total)
+            await progress.chunking(
+                chunked=len(chunks.keys() - stored),
+                reused=sum(article.imported.blob_sha in stored for article in articles),
+            )
+        wanted = list(dict.fromkeys(image for article in articles for image in article.images))
+        if len(wanted) > MAX_WANTED_IMAGES:
+            reason = f"{len(wanted) - MAX_WANTED_IMAGES} more images are referenced; not looked at"
+            await progress.problem("", ProblemCode.TRUNCATED, reason)
+        return [article.imported for article in articles], wanted[:MAX_WANTED_IMAGES]
+
+    async def _batch(
+        self, checkout: _Checkout, given: _BatchInput, progress: JobProgress
+    ) -> _Batch:
+        """Read, parse and chunk some files; reuse the chunks stored or cut for the same blob."""
+        folder = await checkout.folder()
+        loaded: list[tuple[str, str, ParsedArticle]] = []
+        problems: list[tuple[str, ProblemCode, str]] = []
+        used = given.used
+        for offset, path in enumerate(given.paths, 1):
             result = await asyncio.to_thread(_load, folder, path, self.max_article_bytes)
             shown = path.encode(errors="replace").decode()
             if isinstance(result, Skip):
-                await progress.problem(shown, result.code, result.reason)
+                problems.append((shown, result.code, result.reason))
             else:
                 blob_sha, parsed, size = result
                 used += size
                 if used > self.max_import_bytes:
                     raise ImportTooLargeError(self.max_import_bytes)
                 loaded.append((path, blob_sha, parsed))
-                for problem in parsed.problems:  # the article is imported; the note is listed
-                    await progress.problem(shown, ProblemCode.FRONT_MATTER, problem)
-            await progress.report(done=done, total=len(paths))
+                # The article is imported; the note is listed.
+                problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
+            if offset < len(given.paths):  # the caller reports the last one, also on a replay
+                await progress.report(done=given.first + offset, total=given.total)
         # ponytail: every file is parsed again on a re-sync, only chunking is reused; see #164.
-        blobs = list(dict.fromkeys(blob_sha for _, blob_sha, _ in loaded))
-        chunks: dict[str, tuple[ArticleChunk, ...]] = {}
-        for start in range(0, len(blobs), KNOWN_BATCH):
-            chunks |= await self.index.known(config_hash, blobs[start : start + KNOWN_BATCH])
+        known = given.known
+        asked = [sha for sha in dict.fromkeys(sha for _, sha, _ in loaded) if sha not in known]
+        found: dict[str, tuple[ArticleChunk, ...]] = {}
+        for start in range(0, len(asked), KNOWN_BATCH):
+            found |= await self.index.known(given.config_hash, asked[start : start + KNOWN_BATCH])
         unknown: dict[str, ParsedArticle] = {}
         for _, blob_sha, parsed in loaded:
-            if blob_sha not in chunks:
+            if blob_sha not in known and blob_sha not in found:
                 unknown.setdefault(blob_sha, parsed)
-        reused = sum(sha in chunks for _, sha, _ in loaded)
-        await progress.chunking(chunked=len(unknown), reused=reused)
-        chunks |= await asyncio.to_thread(self._cut, unknown)
-        articles = [
-            ImportedArticle(
-                path=path,
-                blob_sha=blob_sha,
-                title=parsed.title,
-                tags=article_tags(path, parsed.tags, source.tag_rules),
-                front_matter=parsed.front_matter,
-                content=parsed.body,
-                chunks=chunks[blob_sha],
-            )
-            for path, blob_sha, parsed in loaded
-        ]
-        wanted = list(dict.fromkeys(image for _, _, parsed in loaded for image in parsed.images))
-        if len(wanted) > MAX_WANTED_IMAGES:
-            reason = f"{len(wanted) - MAX_WANTED_IMAGES} more images are referenced; not looked at"
-            await progress.problem("", ProblemCode.TRUNCATED, reason)
-        return articles, wanted[:MAX_WANTED_IMAGES]
+        cut = await asyncio.to_thread(self._cut, unknown)
+        every = {**known, **found, **cut}
+        rules = given.source.tag_rules
+        return _Batch(
+            articles=tuple(
+                _Article(
+                    imported=ImportedArticle(
+                        path=path,
+                        blob_sha=blob_sha,
+                        title=parsed.title,
+                        tags=article_tags(path, parsed.tags, rules),
+                        front_matter=parsed.front_matter,
+                        content=parsed.body,
+                        chunks=every[blob_sha],
+                    ),
+                    images=parsed.images,
+                )
+                for path, blob_sha, parsed in loaded
+            ),
+            problems=tuple(problems),
+            stored=frozenset(found),
+            used=used,
+        )
 
     def _cut(self, articles: Mapping[str, ParsedArticle]) -> dict[str, tuple[ArticleChunk, ...]]:
         return {sha: tuple(self.chunker.chunk(a)) for sha, a in articles.items()}
@@ -1054,6 +1217,60 @@ def _full_refs(kind: RefKind, name: str) -> list[str]:
 KNOWN_BATCH = 500
 MAX_WANTED_IMAGES = 4 * MAX_IMAGES  # distinct image paths looked for per version
 _cleanups: set[asyncio.Future[None]] = set()  # the loop holds tasks weakly
+
+
+@dataclass(slots=True)
+class _Checkout:
+    """The commit's files, fetched when a step first needs them, removed with ``stack``."""
+
+    fetch: Callable[[], AbstractAsyncContextManager[Path]]
+    stack: AsyncExitStack
+    fetched: Path | None = None
+
+    async def folder(self) -> Path:
+        if self.fetched is None:
+            self.fetched = await self.stack.enter_async_context(self.fetch())
+        return self.fetched
+
+
+async def _list(checkout: _Checkout, source: ImportSource) -> list[str]:
+    try:
+        return await asyncio.to_thread(_selected_files, await checkout.folder(), source.selection)
+    except OSError as error:
+        raise CheckoutUnreadableError from error
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchInput:
+    """What one parse-and-chunk step needs, all of it fixed by the steps before it."""
+
+    paths: Sequence[str]
+    first: int
+    """How many files the steps before this one took."""
+    total: int
+    used: int
+    """Bytes of text taken by the steps before this one."""
+    known: Mapping[str, tuple[ArticleChunk, ...]]
+    """Chunks of the blobs the steps before this one took."""
+    source: ImportSource
+    config_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Article:
+    imported: ImportedArticle
+    images: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _Batch:
+    """The durable result of one parse-and-chunk step."""
+
+    articles: tuple[_Article, ...]
+    problems: tuple[tuple[str, ProblemCode, str], ...]
+    stored: frozenset[str]
+    """Blobs whose chunks an earlier import had stored."""
+    used: int
 
 
 @dataclass(frozen=True, slots=True)
