@@ -504,6 +504,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/versions/reimport": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reimport
+         * @description Re-import a tag version that moved upstream, at the commit the tag names now.
+         *
+         *     This is the confirmation a sync's `tag_moved` asks for: the tag is checked again and its
+         *     import queued (`Location` is the job); the version keeps serving the old commit until the
+         *     import has finished, and its error clears with it. 404 for an unknown library or version,
+         *     422 `not_a_tag` for a branch (a sync follows it) or a commit, 409 `tag_not_moved` when the
+         *     tag still names the commit the version serves, 422 `ref_deleted` when the tag is gone
+         *     upstream, 409 `version_importing` when an import of it is queued or running, and the 422
+         *     codes of reading a repository (`repository_unreachable`, `credentials_required`, ...).
+         */
+        readonly post: operations["ingestion-reimport"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/sync": {
         readonly parameters: {
             readonly query?: never;
@@ -522,11 +550,12 @@ export interface paths {
          *     status, for what happened to it: `up_to_date`, `queued`, `importing` (an import of it is
          *     already queued or running), `failed` with an `error_code`: `ref_deleted` (the branch or
          *     tag is gone upstream), `tag_moved` (the tag names another commit now; it is reported,
-         *     never re-imported) or `unexpected` (its import could not be queued). Every version keeps
-         *     what it served. Queued imports answer 202, anything else 200. 409 `version_importing`
-         *     when a running import left nothing queued. 422 when the remote cannot be read, mostly
-         *     `repo_unreachable` (deleted, private, moved or down; also a login prompt for a library
-         *     without a credential) or `auth_failed` (the credential was refused or cannot be read).
+         *     and re-imported only when confirmed with `versions/reimport`) or `unexpected` (its
+         *     import could not be queued). Every version keeps what it served. Queued imports answer
+         *     202, anything else 200. 409 `version_importing` when a running import left nothing
+         *     queued. 422 when the remote cannot be read, mostly `repo_unreachable` (deleted, private,
+         *     moved or down; also a login prompt for a library without a credential) or `auth_failed`
+         *     (the credential was refused or cannot be read).
          *     Other codes are possible: `host_key_changed` (the SSH host key changed, possibly a man
          *     in the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed
          *     jobs recorded for it are named in the message.
@@ -1653,6 +1682,40 @@ export interface components {
             readonly commit_sha: string;
         };
         /**
+         * ReimportVersionBody
+         * @description The request body of re-importing a version; the library is in the path.
+         */
+        readonly ReimportVersionBody: {
+            /**
+             * Ref
+             * @description The tag version to re-import, e.g. `v1.4.0`.
+             */
+            readonly ref: string;
+        };
+        /**
+         * ReimportedVersion
+         * @description The tag version whose re-import is queued, and the commits it moves between.
+         */
+        readonly ReimportedVersion: {
+            /** Library Id */
+            readonly library_id: string;
+            /** Ref */
+            readonly ref: string;
+            readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
+            /**
+             * Previous Commit Sha
+             * @description The commit the version served until now.
+             */
+            readonly previous_commit_sha: string;
+            /**
+             * Commit Sha
+             * @description The commit the tag names now, which the import takes.
+             */
+            readonly commit_sha: string;
+            /** Job Id */
+            readonly job_id: string;
+        };
+        /**
          * RemovalResult
          * @description A removal is done for readers when this is returned; the disk is freed by a job.
          */
@@ -1982,7 +2045,7 @@ export interface components {
             readonly job_id: string | null;
             /**
              * Error Code
-             * @description Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone upstream), `tag_moved` (the tag names another commit now; it is not re-imported) or `unexpected` (its import could not be queued); null otherwise.
+             * @description Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone upstream), `tag_moved` (the tag names another commit now; it is re-imported only when confirmed, with `versions/reimport`) or `unexpected` (its import could not be queued); null otherwise.
              */
             readonly error_code?: string | null;
             /**
@@ -4767,6 +4830,89 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AddedVersion"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-reimport": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReimportVersionBody"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    /** @description The import job: `/api/v1/jobs/{job_id}`. */
+                    readonly Location?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReimportedVersion"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

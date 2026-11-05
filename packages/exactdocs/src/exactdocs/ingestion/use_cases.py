@@ -36,6 +36,8 @@ from exactdocs.ingestion.dtos import (
     ListRepositoryRefsQuery,
     PreviewRepositoryCommand,
     RefOut,
+    ReimportedVersion,
+    ReimportVersionCommand,
     RemovalResult,
     RemoveLibraryCommand,
     RemoveVersionCommand,
@@ -59,12 +61,16 @@ from exactdocs.ingestion.errors import (
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
+    NotATagError,
     PreviewBusyError,
+    RefDeletedError,
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
     SyncFailedError,
+    TagNotMovedError,
     UnknownJobKindError,
     UnknownLibraryError,
+    UnknownVersionError,
     VersionExistsError,
     VersionImportingError,
 )
@@ -769,8 +775,8 @@ class SyncLibraryUseCase:
             # Never re-imported: a moved tag is a surprise upstream, not an update to follow.
             reason = (
                 f"the tag {current.ref!r} now points at commit {tip}, not at {current.commit_sha} "
-                "which this version serves; it is not re-imported: remove the version and add "
-                "it again to import the new commit"
+                "which this version serves; it is not re-imported until you confirm the re-import "
+                "of the version at the new commit"
             )
             failed = await self._failed(library, current, reason, SyncErrorCode.TAG_MOVED, last)
             return failure(failed)
@@ -841,6 +847,68 @@ class SyncLibraryUseCase:
         job = self._job(library, current, now).failed(reason, now, code=code)
         await self.jobs.add(job)
         return job
+
+
+@dataclass(frozen=True, slots=True)
+class ReimportVersionUseCase:
+    """Implements ``ports.driving.ReimportVersion``."""
+
+    remote: GitRemote
+    sources: LibrarySources
+    jobs: JobRepository
+    enqueue_job: EnqueueJob
+    vault: CredentialVault
+
+    async def __call__(self, command: ReimportVersionCommand) -> ReimportedVersion:
+        """Ask the remote where the tag is now and queue its import there, as a sync would a branch.
+
+        The import is a ``refresh``: pinned to the new commit, it reuses the chunks of every
+        unchanged blob and activates the new manifest in place of the old one, so the version
+        keeps its ID and serves the old commit until then; it fails, not resurrects, if the
+        version is removed meanwhile. Its job becomes the version's newest, so the ``tag_moved``
+        failure a sync recorded is no longer the version's state. The tag is checked again here,
+        not taken from that record: only a tag that names another commit now is re-imported.
+        """
+        library = command.library
+        source = await self.sources.get(library)  # an unknown library is not found
+        versions = {v.ref: v for v in await self.sources.imported_versions(library)}
+        current = versions.get(command.ref)
+        if current is None:
+            raise UnknownVersionError(library, command.ref)
+        if current.kind is not RefKind.TAG:
+            raise NotATagError(current.ref, current.kind.value)
+        if current.ref in _busy_refs(await self.jobs.list_for_library(library)):
+            raise VersionImportingError(library, current.ref)
+        credential: Credential | None = None
+        try:
+            credential = await self.vault.load(library, source.url.credential_scope)
+            refs = await self.remote.list_refs(source.url, credential=credential)
+        except DomainError as raised:
+            raise _anonymous(raised, credential) from raised
+        tips = {(t.kind, t.name): t.commit_sha for t in ref_tips(refs)}
+        tip = tips.get((RefKind.TAG, current.ref))
+        if tip is None:
+            raise RefDeletedError(current.ref)
+        if tip == current.commit_sha:
+            raise TagNotMovedError(library, current.ref, tip)
+        # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
+        job = await self.enqueue_job(
+            EnqueueJobCommand(
+                kind=REFRESH_JOB,
+                library=library,
+                version=current.ref,
+                commit_sha=tip,
+                ref_kind=RefKind.TAG,
+            )
+        )
+        return ReimportedVersion(
+            library_id=library,
+            ref=current.ref,
+            ref_kind=RefKind.TAG,
+            previous_commit_sha=current.commit_sha,
+            commit_sha=tip,
+            job_id=job.id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1007,16 +1075,19 @@ class ImportVersionUseCase:
     ) -> tuple[str | None, tuple[GitRename, ...]]:
         """Find the renames to store with the version: ``(None, ())`` whatever goes wrong.
 
-        A numeric tag gets what changed since the previous tag. A branch (or commit) builds its
-        map up: the renames its earlier syncs found are chained with this sync's
-        (``compose_renames``). Old paths are filtered by the library's *current* selection,
-        which may differ from the one the previous version was imported with.
+        A numeric tag gets what changed since the previous tag, also when a moved tag is
+        re-imported; any other tag gets none. A branch (or commit) builds its map up: the
+        renames its earlier syncs found are chained with this sync's (``compose_renames``). Old
+        paths are filtered by the library's *current* selection, which may differ from the one
+        the previous version was imported with.
         """
         if self.renames is None or job.version is None or job.commit_sha is None:
             return None, ()
         imported = await self._quietly(job, self.sources.imported_versions(job.library), [])
         before = previous_version(job.version, imported)
-        if before is None:
+        if before is None or (before.ref == job.version and before.kind is RefKind.TAG):
+            # A tag has no map of its own past: a re-imported (moved) tag without a numeric
+            # order has nothing to be compared with, as when it was first imported.
             return None, ()
         unordered = is_unordered(job.version)
         earlier = (

@@ -21,11 +21,26 @@ Feature: Sync failures say which upstream problem it was, and never take the doc
       | branch "next" was deleted         | ref_deleted      |
       | tag "v1.4.0" now points elsewhere | tag_moved        |
 
-  Scenario: A moved tag is reported, never re-imported
+  Scenario: A moved tag is reported, never re-imported by a sync
     Given tag "v1.4.0" now points elsewhere
     When the library is synced
     Then no import of "v1.4.0" is queued
     And the sync reports "v1.4.0" as failed with "tag_moved"
+
+  Scenario: Confirming a moved tag
+    Given tag "v1.4.0" was reported as moved
+    When the user confirms the re-import of "v1.4.0"
+    Then "v1.4.0" is re-imported at its new commit and the error clears
+
+  Scenario Outline: Only a tag that moved is re-imported
+    When the user confirms the re-import of "<ref>"
+    Then the re-import is refused with "<code>"
+    And the last good version is still served
+
+    Examples:
+      | ref    | code          |
+      | v1.4.0 | tag_not_moved |
+      | next   | not_a_tag     |
 
   Scenario: The same problem is recorded once, and its end is recorded too
     Given the credential expired
