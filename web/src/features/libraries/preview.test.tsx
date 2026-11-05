@@ -438,7 +438,11 @@ describe("add library preview", () => {
     await userEvent.click(
       within(extras).getByRole("button", { name: "Try again to import v1.3.0" }),
     );
+    // The button unmounts with the retry; the keyboard stays on that tag's row, not the page top.
+    const row = within(extras).getByText("v1.3.0");
+    expect(document.activeElement).toBe(row);
     expect(await within(extras).findByText("Reading the repository")).toBeInTheDocument();
+    expect(document.activeElement).toBe(row);
     expect(version).toHaveBeenCalledTimes(2);
   });
 

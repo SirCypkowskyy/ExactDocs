@@ -268,7 +268,14 @@ export function ExtraVersions({
       <ul className="mt-3 space-y-4">
         {extras.map((x) => (
           <li key={x.tag}>
-            <p className="font-mono text-[13px] [overflow-wrap:anywhere]">{x.tag}</p>
+            {/* Focus lands here when Try again unmounts its button: the row stays, its state changes. */}
+            <p
+              data-tag-name
+              tabIndex={-1}
+              className="w-fit rounded font-mono text-[13px] outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {x.tag}
+            </p>
             {x.jobId ? (
               <JobLine jobId={x.jobId} label={`${libraryId} ${x.tag}`} />
             ) : x.error ? (
@@ -279,7 +286,14 @@ export function ExtraVersions({
                     variant="ghost"
                     className="-ml-3 h-11 md:h-8"
                     aria-label={`Try again to import ${x.tag}`}
-                    onClick={() => onRetry(x.tag)}
+                    onClick={(e) => {
+                      // The button goes away with the retry; keep the keyboard on this tag's row.
+                      e.currentTarget
+                        .closest("li")
+                        ?.querySelector<HTMLElement>("[data-tag-name]")
+                        ?.focus();
+                      onRetry(x.tag);
+                    }}
                   >
                     Try again
                   </Button>
