@@ -256,6 +256,8 @@ describe("relative links (table)", () => {
     ["docs/a/b.md", "javascript:alert(1)", { kind: "none" }],
     ["docs/a/b.md", "JaVaScRiPt:alert(1)", { kind: "none" }],
     ["docs/a/b.md", " javascript:x", { kind: "none" }],
+    // the tab breaks the scheme: a (safe) repository file, never a script
+    ["docs/a/b.md", "java\tscript:x", { kind: "file", path: "docs/a/java\tscript:x" }],
     ["docs/a/b.md", "data:text/html,<b>x</b>", { kind: "none" }],
     ["docs/a/b.md", "%2e%2e/%2e%2e/%2e%2e/out.md", { kind: "none" }],
     ["docs/a/b.md", "..%2f..%2f..%2fout.md", { kind: "none" }],
@@ -321,6 +323,17 @@ describe("images", () => {
     const params = new URL(url, "http://x.test").searchParams;
     expect(params.get("ref")).toBe(ref);
     expect(params.get("path")).toBe(path);
+  });
+  it.each([
+    ["![x](./x.png)", "doc-figure"],
+    ["  ![x](./x.png)  ", "doc-figure"],
+    ["a ![x](./x.png) b", null],
+    ["![x](./x.png) ![y](./y.png)", null],
+  ])("%j: the paragraph class is %s", (source, cls) => {
+    const { container } = render(
+      <Markdown source={source} mdx={false} where={where({ imageSources: () => ["/x"] })} />,
+    );
+    expect(container.querySelector("p")?.getAttribute("class") ?? null).toBe(cls);
   });
   it("never loads an image that is not a repository file", () => {
     const { container } = render(

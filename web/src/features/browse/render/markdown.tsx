@@ -127,29 +127,40 @@ function many(nodes: readonly Node[], ctx: Ctx): ReactNode[] {
   return nodes.map((node) => <Fragment key={node.key}>{one(node, ctx)}</Fragment>);
 }
 
+/** A same-page `#x` link. Heading ids are `doc-<anchor>`, so the browser's own jump finds nothing: scroll there ourselves. */
+function hashLink(href: string, kids: ReactNode) {
+  return (
+    <a
+      href={href}
+      onClick={() => {
+        try {
+          document.getElementById(idOf(decodeURIComponent(href.slice(1))))?.scrollIntoView();
+        } catch {
+          // a malformed fragment points at nothing
+        }
+      }}
+    >
+      {kids}
+    </a>
+  );
+}
+
+/** A paragraph whose only content is one image (whitespace aside): the image stands as a block. */
+const isFigure = (node: Node) => {
+  const inline = node.children[0]?.children ?? [];
+  const solid = inline.filter(
+    (c) => !(c.token.type === "softbreak" || (c.token.type === "text" && !c.token.content.trim())),
+  );
+  return solid.length === 1 && solid[0]?.token.type === "image";
+};
+
 function link(node: Node, ctx: Ctx) {
   const { where } = ctx;
   const target = classifyLink(where.path, attr(node.token, "href"));
   const kids = many(node.children, ctx);
   switch (target.kind) {
     case "hash":
-      // Heading ids are `doc-<anchor>`, so the browser's own jump finds nothing: scroll there ourselves.
-      return (
-        <a
-          href={target.href}
-          onClick={() => {
-            try {
-              document
-                .getElementById(idOf(decodeURIComponent(target.href.slice(1))))
-                ?.scrollIntoView();
-            } catch {
-              // a malformed fragment points at nothing
-            }
-          }}
-        >
-          {kids}
-        </a>
-      );
+      return hashLink(target.href, kids);
     case "external":
       return (
         <a href={target.href} target="_blank" rel="noopener noreferrer">
@@ -157,7 +168,11 @@ function link(node: Node, ctx: Ctx) {
         </a>
       );
     case "doc":
-      return where.docLink(target.path, target.hash, kids);
+      // A link to this article's own heading: the hash may already be the URL's, so the router
+      // would not scroll again. Treat it as a same-page link, which scrolls on every click.
+      return target.path === where.path && target.hash
+        ? hashLink(target.hash, kids)
+        : where.docLink(target.path, target.hash, kids);
     case "file": {
       const url = where.fileUrl(target.path);
       return url ? (
@@ -261,7 +276,8 @@ function one(node: Node, ctx: Ctx): ReactNode {
       return image(token, ctx);
     case "paragraph_open":
       if (node.children[0]?.children.length === 0) return null;
-      return token.hidden ? kids() : <p>{kids()}</p>;
+      if (token.hidden) return kids();
+      return isFigure(node) ? <p className="doc-figure">{kids()}</p> : <p>{kids()}</p>;
     case "heading_open":
       return heading(node, ctx);
     case "blockquote_open": {

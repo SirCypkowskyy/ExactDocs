@@ -63,9 +63,9 @@ print(f&quot;created {payment.id}&quot;)</code></pre>
 </li>
 </ul>
 <h5 id="doc-pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
-<p><img src="https://raw.githubusercontent.com/acme/payments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/docs/guide/img/dashboard.png" alt="Dashboard overview" loading="lazy" decoding="async" referrerPolicy="no-referrer"/></p>
-<p><span class="doc-noimage"><svg/><span>Image not available: Logo from elsewhere</span></span></p>
-<p><span class="doc-noimage"><svg/><span>Image not available: Escapes the repo</span></span></p>
+<p class="doc-figure"><img src="https://raw.githubusercontent.com/acme/payments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/docs/guide/img/dashboard.png" alt="Dashboard overview" loading="lazy" decoding="async" referrerPolicy="no-referrer"/></p>
+<p class="doc-figure"><span class="doc-noimage"><svg/><span>Image not available: Logo from elsewhere</span></span></p>
+<p class="doc-figure"><span class="doc-noimage"><svg/><span>Image not available: Escapes the repo</span></span></p>
 <hr/><h4 id="doc-usage" class="doc-h doc-h2">Usage<a href="#usage" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
 <p>Duplicate heading, to check the anchors.</p>
 <h4 id="doc-usage-1" class="doc-h doc-h2">Usage<a href="#usage-1" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
@@ -235,9 +235,9 @@ print(f&quot;created {payment.id}&quot;)</code></pre>
 </li>
 </ul>
 <h5 id="doc-pictures" class="doc-h doc-h3">Pictures<a href="#pictures" class="doc-anchor" aria-label="Link to Pictures">#</a></h5>
-<p><span class="doc-noimage"><svg/><span>Image not available: Dashboard overview</span></span></p>
-<p><span class="doc-noimage"><svg/><span>Image not available: Logo from elsewhere</span></span></p>
-<p><span class="doc-noimage"><svg/><span>Image not available: Escapes the repo</span></span></p>
+<p class="doc-figure"><span class="doc-noimage"><svg/><span>Image not available: Dashboard overview</span></span></p>
+<p class="doc-figure"><span class="doc-noimage"><svg/><span>Image not available: Logo from elsewhere</span></span></p>
+<p class="doc-figure"><span class="doc-noimage"><svg/><span>Image not available: Escapes the repo</span></span></p>
 <hr/><h4 id="doc-usage" class="doc-h doc-h2">Usage<a href="#usage" class="doc-anchor" aria-label="Link to Usage">#</a></h4>
 <p>Duplicate heading, to check the anchors.</p>
 <h4 id="doc-usage-1" class="doc-h doc-h2">Usage<a href="#usage-1" class="doc-anchor" aria-label="Link to Usage">#</a></h4>

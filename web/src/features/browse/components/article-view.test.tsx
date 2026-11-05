@@ -138,4 +138,14 @@ describe("ArticleView", () => {
     await vi.waitFor(() => expect(scroll.mock.contexts).toContain(heading));
     scroll.mockRestore();
   });
+
+  it("a link to this article's heading scrolls again when the URL already has its hash", async () => {
+    serve(false);
+    view("/#install");
+    const heading = await screen.findByRole("heading", { name: /Install/ });
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+    await userEvent.click(screen.getByRole("link", { name: "other" }));
+    await vi.waitFor(() => expect(scroll.mock.contexts).toContain(heading));
+    scroll.mockRestore();
+  });
 });

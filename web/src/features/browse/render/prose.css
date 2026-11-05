@@ -251,7 +251,7 @@
   border-radius: var(--radius-lg);
   background: var(--secondary);
 }
-.doc p > img:only-child {
+.doc .doc-figure > img {
   display: block;
 }
 /* An image that is not shown: a frame with the reason, not something to press. */
