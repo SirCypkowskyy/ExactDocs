@@ -94,6 +94,21 @@ uvx exactdocs token list
 uvx exactdocs token revoke 0198f2c1
 ```
 
+See what an agent would get, with the commands and flags of `ctx7` (`library <name> [query]`,
+`docs <libraryId> <query> [--language L] [--json]`):
+
+```bash
+uvx exactdocs library acme "retry policy"
+uvx exactdocs docs /acme/docs "retry policy"
+uvx exactdocs docs /acme/docs@v1.4.0 "retry policy" --language go --json
+```
+
+Differences from `ctx7`: the output starts with the untrusted-content notice (with `--json` of
+`library` the notice goes to stderr so stdout stays the plain list); control characters are
+stripped; failures go to stderr with the exit codes below (ctx7: stdout, always 1); the query may
+be given as several words; a library lists its default version, articles and chunks (no stars or
+trust score); there is no `ctx7 search` yet (it needs a search-all REST route).
+
 Exit codes: 0 done, 1 other failure, 2 usage or rejected input (also: `remove` without a terminal
 and without `--yes`), 3 not found, 4 conflict (an import is running, the ID is taken), 5 not signed
 in or refused, 6 an import or a sync failed (or `--wait` lost track of it), 130 interrupted.
