@@ -59,7 +59,11 @@ def release_key(version: str) -> tuple[int, ...] | None:
 
 
 def this_version(wheels: Path | None) -> tuple[int, ...] | None:
-    """Return this build's release version: the wheel's, else a ``vX.Y.Z`` tag on HEAD."""
+    """Return this build's release version: the wheel's, else a ``vX.Y.Z`` tag on HEAD.
+
+    The tag fallback only matters for a manual run on a tagged checkout: CI does not build
+    tags, and on a pull request HEAD is the merge commit.
+    """
     if wheels and (key := release_key(wheel_version(wheels))):
         return key
     tags = subprocess.run(

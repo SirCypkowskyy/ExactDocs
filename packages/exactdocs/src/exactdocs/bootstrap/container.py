@@ -253,10 +253,15 @@ class Container:
             await migrate(self.engine)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
+                stored = (
+                    "has no recorded format"
+                    if index.stored_format is None
+                    else f"is in format {index.stored_format}"
+                )
                 logger.warning(
-                    "The search index is in format %s; this version writes format %s. It keeps "
-                    "answering as it was built; `exactdocs reindex` rebuilds it while serving.",
-                    "unrecorded" if index.stored_format is None else index.stored_format,
+                    "The search index %s; this version writes format %s. It keeps answering as "
+                    "it was built; `exactdocs reindex` rebuilds it while serving.",
+                    stored,
                     index.current_format,
                 )
             if jobs:

@@ -192,7 +192,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-tags: true # upgrade_check.py: a release build upgrades from the release before it
+          fetch-tags: true # only for a manual run on a tagged checkout: CI has no tag builds, and a PR's HEAD is the merge commit
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
         with:
           enable-cache: true

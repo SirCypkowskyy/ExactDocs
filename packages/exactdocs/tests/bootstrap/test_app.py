@@ -17,6 +17,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import LibrarySummary
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
+from exactdocs.retrieval.adapters.driven.sqlite_fts import FORMAT
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -62,7 +63,7 @@ async def test_health_reports_the_schema_revision(client: httpx.AsyncClient) -> 
 async def test_health_reports_the_search_index_format(client: httpx.AsyncClient) -> None:
     body = (await client.get("/api/health")).json()
 
-    assert (body["search_index_format"], body["reindex_required"]) == (2, False)
+    assert (body["search_index_format"], body["reindex_required"]) == (FORMAT, False)
 
 
 async def test_health_stays_up_without_a_recorded_index_format(
