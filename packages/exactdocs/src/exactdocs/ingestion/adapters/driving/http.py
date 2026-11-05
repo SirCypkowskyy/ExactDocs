@@ -127,11 +127,32 @@ def build_router(
         await _session_for(require_session, command.credential, request)
         return await preview_repository(command)
 
-    @router.post("/libraries", status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "/libraries",
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            status.HTTP_429_TOO_MANY_REQUESTS: {
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
+                },
+                "description": "Sent without paths while every preview slot is taken, so the "
+                "repository's `context7.json` could not be read (`preview_busy`); nothing is "
+                "stored. Try again shortly.",
+                "headers": {
+                    "Retry-After": {
+                        "description": "Seconds to wait before trying again.",
+                        "schema": {"type": "integer"},
+                    }
+                },
+            }
+        },
+    )
     async def add(command: AddLibraryCommand, request: Request, response: Response) -> AddedLibrary:
         """Create a library, pin its ref to a commit and queue the import (see the job ID).
 
-        `Location` is the new library.
+        `Location` is the new library. Without paths, those of the repository's `context7.json`
+        are taken; if every preview slot stays busy so it cannot be read, the answer is 429
+        `preview_busy` and nothing is stored.
         """
         await _session_for(require_session, command.credential, request)
         added = await add_library(command)

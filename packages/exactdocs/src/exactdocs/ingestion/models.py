@@ -836,6 +836,7 @@ def branch_name(raw: str) -> str | None:
         and all(p and not p.startswith(".") and not p.endswith(".lock") for p in parts)
         and ".." not in raw
         and "@{" not in raw
+        and raw != "@"  # git refuses the single character @
         and not raw.startswith("-")
         and not raw.endswith((".", "/"))
         and raw.isprintable()

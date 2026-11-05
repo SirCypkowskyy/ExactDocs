@@ -630,12 +630,16 @@ def _pack(sections: Sequence[DocSectionOut], room: int) -> list[DocSectionOut]:
 
 
 def _fit_rules(rules: Sequence[str], room: int) -> list[str]:
-    """Take the library's rules in order while they fit ``room``; they come before any chunk."""
+    """Take the library's rules in order until one does not fit ``room``; they precede any chunk.
+
+    The agent sees a prefix of what the authors wrote, never a later rule without an earlier one.
+    """
     used, kept = RULES_FRAMING_CHARS, []
     for rule in rules:
-        if used + RULE_FRAMING_CHARS + len(rule) <= room:
-            kept.append(rule)
-            used += RULE_FRAMING_CHARS + len(rule)
+        if used + RULE_FRAMING_CHARS + len(rule) > room:
+            break
+        kept.append(rule)
+        used += RULE_FRAMING_CHARS + len(rule)
     return kept
 
 
@@ -655,7 +659,7 @@ class QueryDocsUseCase:
         chunk that could never fit is listed as a pointer (no text, ``too_large``) so the agent
         can fetch it; one that merely found no room left is counted in ``omitted``. The
         library's rules (from its ``context7.json``) come first and are counted too; they take
-        at most a ``RULES_SHARE``-th of the room, in order, whole rules only.
+        at most a ``RULES_SHARE``-th of the room: whole rules, a prefix of the list.
         """
         text = SearchText(value=query.query)
         # `/owner/repo` or `/owner/repo/<ref>`; a ref may itself contain slashes.

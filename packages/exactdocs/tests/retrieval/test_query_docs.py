@@ -270,6 +270,15 @@ async def test_rules_take_at_most_a_quarter_of_the_budget_so_docs_still_fit(leng
     assert len(whole_payload(result)) <= BUDGET * 4
 
 
+async def test_the_rules_shown_are_a_prefix_of_what_the_authors_wrote() -> None:
+    rules = ("y" * 490, "z" * 10)  # the first does not fit the minimum budget's share
+    module = await build(BUDGET, [], [chunk("New", "retry")], rules)
+
+    result = await module.query_docs(QueryDocsQuery(library_id=LIB, query="retry"))
+
+    assert result.rules == []  # never the later rule without the earlier one
+
+
 def test_the_rules_heading_says_they_are_untrusted_repository_text() -> None:
     assert "context7.json" in RULES_HEADING
     assert "untrusted" in RULES_HEADING

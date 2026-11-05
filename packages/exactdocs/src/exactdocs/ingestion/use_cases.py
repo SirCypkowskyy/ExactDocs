@@ -475,8 +475,11 @@ class AddLibraryUseCase:
         """Check everything that can be checked first, then store the library and queue its import.
 
         Sent without paths, the library takes those of the root ``context7.json`` at the pinned
-        commit (LIB-06); paths a user sends win. The file's title, description and rules are
-        applied by the import, which reads it again with the README.
+        commit (LIB-06); paths a user sends win. Without paths, ``PreviewBusyError`` (429) when
+        the file cannot be read because every preview slot stays busy, before anything is
+        stored: the paths are fixed at creation, so guessing "every file" would be for good. The
+        file's title, description and rules are applied by the import, which reads it again with
+        the README.
         The credential, if any, is stored (encrypted) before the import is queued, because the
         import reads it. If that or queueing fails, the new library and its credential are
         removed again, so a retry is not met with a 409.
@@ -490,7 +493,14 @@ class AddLibraryUseCase:
             raise LibraryIdTakenError(library_id)
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
-        context7 = await _fetch_context7(self.tree, repository, resolved, credential)
+        # Without paths the file decides them for good: a busy slot is a 429, not "every file".
+        context7 = await _fetch_context7(
+            self.tree,
+            repository,
+            resolved,
+            credential,
+            busy_raises=not (selection.include or selection.exclude),
+        )
         selection = _prefilled(selection, context7)
         created = await self.libraries.add(
             NewLibrary(
@@ -1217,12 +1227,15 @@ async def _fetch_context7(
     repository: RepositoryUrl,
     resolved: ResolvedRef,
     credential: Credential | None,
+    *,
+    busy_raises: bool = False,
 ) -> _Context7Read:
-    """Read only the root ``context7.json`` of the pinned commit; never raises.
+    """Read only the root ``context7.json`` of the pinned commit; raises only when told to.
 
     The file is a pre-fill: whatever goes wrong (the remote, every preview slot busy for longer
-    than a preview waits, the disk) is a warning and adding or previewing goes on without it.
-    Without a tree (a module built with no git) there is no file.
+    than a preview waits, the disk) is a warning and adding or previewing goes on without it,
+    except that ``busy_raises`` lets ``PreviewBusyError`` through. Without a tree (a module
+    built with no git) there is no file.
     """
     if tree is None:
         return _Context7Read()
@@ -1236,6 +1249,8 @@ async def _fetch_context7(
             credential=credential,
         )
     except PreviewBusyError:
+        if busy_raises:
+            raise
         reason = "it was not read, every preview slot is busy; try again shortly"
     except DomainError as error:
         log.warning("could not fetch context7.json: %s", type(error).__name__)

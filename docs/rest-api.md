@@ -86,8 +86,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **`context7.json`** (LIB-06): a repository's root `context7.json` is read when a library is
   added or previewed (only that one file of the pinned commit: its tree entry, then its blob) and
   again by every import. Reading it for an add or a preview uses a preview slot, never an
-  import's, and waits for one only as long as a preview does; when every slot stays busy it is
-  skipped with a warning. Used keys: `projectTitle`, `description`, `folders`, `excludeFolders`,
+  import's, and waits for one only as long as a preview does. When every slot stays busy, an add
+  sent **without** paths answers 429 `preview_busy` (with `Retry-After`) before anything is
+  stored, because the file would decide the library's paths for good; a preview, or an add with
+  paths, goes on with a warning instead. Used keys: `projectTitle`, `description`, `folders`, `excludeFolders`,
   `excludeFiles`, `rules`, `previousVersions`; others (`$schema`, `url`, ...) are ignored. Sent
   **without** `include_paths` and `exclude_paths`, `POST /libraries` and
   `POST /repositories/preview` apply its folders and exclusions: a folder is that path and all
@@ -100,8 +102,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   user's edit wins over both. Its `rules` (at most 20 distinct ones of at most 500 characters)
   are stored on the library (`rules` in `GET /libraries/{owner}/{repo}`) and come first in every
   `query-docs` answer, under a heading that marks them as untrusted repository text. They take
-  at most a quarter of the size budget (whole rules, in order). They are the **default version's**
-  rules: `query-docs` for `/owner/repo/<ref>` shows them too, not that version's. Both responses
+  at most a quarter of the size budget: whole rules, from the first one on, until one does not
+  fit. They are the **default version's** rules: `query-docs` for `/owner/repo/<ref>` shows them
+  too, not that version's. Both responses
   carry `include_paths` and `exclude_paths` (what is applied), `context7` (the parsed file, with
   its paths translated, its `rules`, `previous_versions` (`tag`, `title`) to offer for import
   with `POST /libraries/{owner}/{repo}/versions`, and `notes`) and `context7_warning`. A

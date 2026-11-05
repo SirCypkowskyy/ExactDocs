@@ -1232,7 +1232,7 @@
           "ingestion"
         ],
         "summary": "Add",
-        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).\n\n`Location` is the new library.",
+        "description": "Create a library, pin its ref to a commit and queue the import (see the job ID).\n\n`Location` is the new library. Without paths, those of the repository's `context7.json`\nare taken; if every preview slot stays busy so it cannot be read, the answer is 429\n`preview_busy` and nothing is stored.",
         "operationId": "ingestion-add",
         "security": [
           {
@@ -1319,6 +1319,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sent without paths while every preview slot is taken, so the repository's `context7.json` could not be read (`preview_busy`); nothing is stored. Try again shortly.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before trying again.",
+                "schema": {
+                  "type": "integer"
                 }
               }
             }

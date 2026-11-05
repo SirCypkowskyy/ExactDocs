@@ -158,7 +158,9 @@ export interface paths {
          * Add
          * @description Create a library, pin its ref to a commit and queue the import (see the job ID).
          *
-         *     `Location` is the new library.
+         *     `Location` is the new library. Without paths, those of the repository's `context7.json`
+         *     are taken; if every preview slot stays busy so it cannot be read, the answer is 429
+         *     `preview_busy` and nothing is stored.
          */
         readonly post: operations["ingestion-add"];
         readonly delete?: never;
@@ -3107,6 +3109,17 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Sent without paths while every preview slot is taken, so the repository's `context7.json` could not be read (`preview_busy`); nothing is stored. Try again shortly. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before trying again. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {

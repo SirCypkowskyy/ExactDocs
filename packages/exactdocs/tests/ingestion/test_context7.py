@@ -145,6 +145,7 @@ def test_unusable_previous_versions_are_dropped_with_a_note_and_the_rest_kept() 
         {"title": "no tag"},
         {"tag": "v0.8.0", "title": 3},
         {"tag": "release/2.0", "title": "two"},
+        {"tag": "@"},  # git refuses the single character @
     ]
 
     config = parse_context7(as_bytes({"previousVersions": entries}))
@@ -153,7 +154,7 @@ def test_unusable_previous_versions_are_dropped_with_a_note_and_the_rest_kept() 
         PreviousVersion("v1.0.0"),
         PreviousVersion("release/2.0", "two"),
     )
-    assert len(config.notes) == 7
+    assert len(config.notes) == 8
     assert all(n.startswith("previousVersions: an entry is left out") for n in config.notes)
     assert "'--upload-pack=x'" in config.notes[0]
 
@@ -316,15 +317,11 @@ async def test_paths_a_user_sends_win_over_context7_json(
             "context7.json is ignored: it could not be fetched",
         ),
         (
-            FakeTree(error=PreviewBusyError(retry_after=5)),
-            "context7.json is ignored: it was not read, every preview slot is busy",
-        ),
-        (
             FakeTree(error=OSError(28, "No space left on device")),
             "context7.json is ignored: it could not be read",
         ),
     ],
-    ids=["absent", "invalid", "too-large", "unfetchable", "busy", "unexpected"],
+    ids=["absent", "invalid", "too-large", "unfetchable", "unexpected"],
 )
 async def test_a_missing_or_unusable_file_adds_the_library_as_if_there_were_none(
     catalog: FakeCatalog, tree: FakeTree, warning: str | None
@@ -338,6 +335,34 @@ async def test_a_missing_or_unusable_file_adds_the_library_as_if_there_were_none
         assert added.context7_warning is None
     else:
         assert (added.context7_warning or "").startswith(warning), added.context7_warning
+
+
+async def test_an_add_without_paths_is_refused_while_every_preview_slot_is_busy(
+    catalog: FakeCatalog,
+) -> None:
+    busy = FakeTree(error=PreviewBusyError(retry_after=5))
+
+    with pytest.raises(PreviewBusyError):
+        await build(busy, catalog).add_library(AddLibraryCommand(url=URL))
+
+    assert catalog.added == []  # nothing stored: a retry is not met with a 409
+
+
+async def test_an_add_with_paths_goes_on_while_every_preview_slot_is_busy(
+    catalog: FakeCatalog,
+) -> None:
+    busy = FakeTree(error=PreviewBusyError(retry_after=5))
+
+    added = await build(busy, catalog).add_library(
+        AddLibraryCommand(url=URL, include_paths=["docs/"])
+    )
+
+    (library,) = catalog.added
+    assert library.selection == PathSelection.of(["docs/"])
+    assert added.context7 is None
+    assert (added.context7_warning or "").startswith(
+        "context7.json is ignored: it was not read, every preview slot is busy"
+    )
 
 
 async def test_a_module_without_git_has_no_context7_json(catalog: FakeCatalog) -> None:
