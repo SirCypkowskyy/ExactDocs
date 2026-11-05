@@ -37,7 +37,8 @@ test("setup, add the fixture repository, browse an article, search a term", asyn
   await page.screenshot({ path: "shots/2-article.png" });
 
   // search: the result opens its section
-  await page.getByRole("searchbox").fill("retry_policy");
+  // the header also holds the all-libraries box (#187): use the per-version one
+  await page.getByRole("searchbox", { name: "Search v1.4.0" }).fill("retry_policy");
   await page.keyboard.press("Enter");
   const hit = page.locator("[data-result]").first();
   await expect(hit).toContainText("resilience.md");

@@ -161,13 +161,15 @@ async def world(
 ) -> RetrievalModule:
     chunks = InMemoryChunkRepository()
     versions = OneVersionEach(docs)
+    index = InMemorySearchIndex(chunks)
     module = RetrievalModule.build(
         searchable=versions,
         defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(libraries),
         manifests=versions,
         chunks=chunks,
-        search=InMemorySearchIndex(chunks),
+        search=index,
+        maintenance=index,
     )
     for library, articles in docs.items():
         await module.index_manifest(

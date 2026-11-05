@@ -1,16 +1,19 @@
 import json
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
     ManifestHit,
+    RebuiltIndex,
     SearchHit,
+    SearchIndexState,
     TagFilter,
     TagMatch,
     highlights,
@@ -32,6 +35,50 @@ from exactdocs.retrieval.models import (
 # finds "Docker", not "Docker > Troubleshooting"), yet "docker troubleshooting" still finds the
 # latter because the path still counts.
 HEADING_WEIGHT, PATH_WEIGHT, TEXT_WEIGHT, IDENTIFIERS_WEIGHT = 20.0, 4.0, 1.0, 0.1
+
+# The format this build writes, stored in `retrieval_search_format` by every rebuild. Bump it when
+# what an entry holds changes but the table keeps its columns (`fts_row`, `identifier_tokens`, the
+# tokenizer): old entries keep answering, built the old way, until `exactdocs reindex`, and the
+# release notes say "requires reindex" (docs/releasing.md). A change of columns needs an Alembic
+# revision that rebuilds the table instead (as a91c4e7b3d02 did), since these queries name them.
+FORMAT = 2
+REBUILD_BATCH = 500  # chunks per write transaction while the new index is built
+
+# `exactdocs reindex` builds `retrieval_search_next` beside `retrieval_search`, then renames it over
+# it. Same definition as the Alembic revisions' (columns, tokenizer). While it is built, a trigger
+# deletes from it the chunks deleted meanwhile, so a reused chunk id never keeps the old text.
+_CREATE_NEXT = """
+    CREATE VIRTUAL TABLE retrieval_search_next USING fts5(
+        heading, path, text, identifiers,
+        tokenize = "unicode61 tokenchars '-_.'"
+    )
+"""
+_CREATE_NEXT_TRIGGER = """
+    CREATE TRIGGER retrieval_chunks_search_next_delete AFTER DELETE ON retrieval_chunks
+    BEGIN
+        DELETE FROM retrieval_search_next WHERE rowid = old.id;
+    END
+"""
+_CREATE_TRIGGER = """
+    CREATE TRIGGER retrieval_chunks_search_delete AFTER DELETE ON retrieval_chunks
+    BEGIN
+        DELETE FROM retrieval_search WHERE rowid = old.id;
+    END
+"""
+_CHUNKS_AFTER = text(
+    "SELECT id, heading_path, content FROM retrieval_chunks WHERE id > :after "
+    "ORDER BY id LIMIT :limit"
+)
+_NOT_IN_NEXT = text(
+    """
+    SELECT c.id, c.heading_path, c.content FROM retrieval_chunks c
+    WHERE NOT EXISTS (SELECT 1 FROM retrieval_search_next s WHERE s.rowid = c.id)
+    """
+)
+_INSERT_NEXT = text(
+    "INSERT INTO retrieval_search_next (rowid, heading, path, text, identifiers) "
+    "VALUES (:rowid, :heading, :path, :text, :identifiers)"
+)
 
 _MISSING = text(
     """
@@ -114,6 +161,10 @@ def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, 
     }
 
 
+def _rows(chunks: Sequence[Any]) -> list[dict[str, object]]:
+    return [fts_row(c.id, json.loads(c.heading_path), c.content) for c in chunks]
+
+
 def _match(query: str) -> str | None:
     """FTS5 query: every word as a quoted string, OR-ed; ``None`` when there is no word.
 
@@ -132,6 +183,7 @@ class SqliteSearchIndex:
     """
 
     engine: AsyncEngine
+    rebuild_batch: int = REBUILD_BATCH
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Index the chunks of this set that have no entry yet.
@@ -205,6 +257,77 @@ class SqliteSearchIndex:
                 statement, self._params(match, manifest_ids, tag_filter)
             )
             return {row.manifest_id: row.matches for row in found}
+
+    async def state(self) -> SearchIndexState:
+        """Return the format recorded with the index and the one this build writes."""
+        async with self.engine.connect() as connection:
+            stored = await connection.scalar(text("SELECT format FROM retrieval_search_format"))
+        return SearchIndexState(stored_format=stored, current_format=FORMAT)
+
+    async def rebuild(self) -> RebuiltIndex:
+        """Build ``retrieval_search_next`` of every stored chunk, then swap it in (`swap`)."""
+        await self.build_next()
+        return await self.swap()
+
+    async def build_next(self) -> None:
+        """Fill a new index beside the one that answers, ``REBUILD_BATCH`` chunks per transaction.
+
+        Searches and imports go on meanwhile: each batch holds the write lock for milliseconds,
+        and readers never wait in WAL mode. A rebuild that died left its table: it starts over.
+        """
+        async with self._writing() as connection:
+            await connection.exec_driver_sql(
+                "DROP TRIGGER IF EXISTS retrieval_chunks_search_next_delete"
+            )
+            await connection.exec_driver_sql("DROP TABLE IF EXISTS retrieval_search_next")
+            await connection.exec_driver_sql(_CREATE_NEXT)
+            await connection.exec_driver_sql(_CREATE_NEXT_TRIGGER)
+        after = 0
+        while True:
+            async with self._writing() as connection:
+                batch = (
+                    await connection.execute(
+                        _CHUNKS_AFTER, {"after": after, "limit": self.rebuild_batch}
+                    )
+                ).all()
+                if not batch:
+                    break
+                await connection.execute(_INSERT_NEXT, _rows(batch))
+            after = batch[-1].id
+        async with self._writing() as connection:  # merge the b-trees: faster searches after
+            await connection.exec_driver_sql(
+                "INSERT INTO retrieval_search_next(retrieval_search_next) VALUES ('optimize')"
+            )
+
+    async def swap(self) -> RebuiltIndex:
+        """Add what was indexed since `build_next` began, then replace the index in one step.
+
+        One write transaction: a search sees the old index or the new one, never a mix.
+        """
+        async with self._writing() as connection:
+            missing = (await connection.execute(_NOT_IN_NEXT)).all()
+            if missing:
+                await connection.execute(_INSERT_NEXT, _rows(missing))
+            for statement in (
+                "DROP TRIGGER retrieval_chunks_search_next_delete",
+                "DROP TRIGGER retrieval_chunks_search_delete",
+                "DROP TABLE retrieval_search",
+                "ALTER TABLE retrieval_search_next RENAME TO retrieval_search",
+                _CREATE_TRIGGER,
+            ):
+                await connection.exec_driver_sql(statement)
+            await connection.execute(
+                text(
+                    "INSERT INTO retrieval_search_format (id, format) VALUES (1, :format) "
+                    "ON CONFLICT (id) DO UPDATE SET format = excluded.format"
+                ),
+                {"format": FORMAT},
+            )
+            entries = await connection.scalar(text("SELECT count(*) FROM retrieval_search"))
+        return RebuiltIndex(format=FORMAT, entries=entries or 0)
+
+    def _writing(self) -> AbstractAsyncContextManager[AsyncConnection]:
+        return self.engine.execution_options(begin_immediate=True).begin()
 
     @staticmethod
     def _params(

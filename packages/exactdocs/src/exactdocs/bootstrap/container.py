@@ -73,13 +73,15 @@ def _build_read_side(
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine), manifests=SqliteManifestRepository(engine)
     )
+    search = SqliteSearchIndex(engine)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
         libraries=CatalogLibraries(catalog.list_libraries),
         defaults=CatalogDefaultVersions(catalog.list_default_manifests),
         manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
         chunks=SqliteChunkRepository(engine),
-        search=SqliteSearchIndex(engine),
+        search=search,
+        maintenance=search,
         renames=CatalogRenamedPaths(catalog.resolve_renamed_path),
         query_docs_token_budget=settings.query_docs_token_budget,
     )
@@ -253,6 +255,19 @@ class Container:
         """
         try:
             await migrate(self.engine)
+            index = await self.retrieval.get_search_index_state()
+            if index.needs_rebuild:
+                stored = (
+                    "has no recorded format"
+                    if index.stored_format is None
+                    else f"is in format {index.stored_format}"
+                )
+                logger.warning(
+                    "The search index %s; this version writes format %s. It keeps answering as "
+                    "it was built; `exactdocs reindex` rebuilds it while serving.",
+                    stored,
+                    index.current_format,
+                )
             if jobs:
                 # Fetch folders a crash left behind. A data dir has exactly one job runner.
                 await asyncio.to_thread(sweep_stale_fetches, self.settings.data_dir / WORK_DIR)
