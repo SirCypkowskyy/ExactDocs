@@ -121,12 +121,8 @@ class ClientConfig:
         A token from the config file is only used for the server it was issued by: pairing it
         with a different URL (a flag or the environment) would hand it to the wrong host.
         """
+        chosen_url = resolve_url(url=url, env=env)
         stored = read_stored(config_path(env))
-        chosen_url = url or env.get(URL_VARIABLE) or stored.get("url")
-        if not chosen_url:
-            message = "no server configured; run `exactdocs login <url>` or set EXACTDOCS_URL"
-            raise ClientError(message)
-        chosen_url = normalize_url(chosen_url)
         chosen_token = token or env.get(TOKEN_VARIABLE)
         if not chosen_token and stored.get("url") and normalize_url(stored["url"]) == chosen_url:
             chosen_token = stored.get("token")
