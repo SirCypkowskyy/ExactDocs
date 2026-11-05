@@ -9,7 +9,8 @@ The URL comes from a user, so git is treated as a process that must not surprise
   (ssh is told to use no authentication at all), no askpass, no terminal prompt, a throw-away
   working directory;
 - the process has no stdin, its own session, a timeout and capped output; its whole process
-  group is killed whenever the call ends, so no helper outlives it;
+  group is killed whenever the call ends, so no helper outlives it, and its pipes are read to
+  EOF before the call returns, so no file descriptor outlives it either;
 - at most ``MAX_PROCESSES`` git processes run at once;
 - git's stderr is only classified, never passed on: it may contain the URL.
 
@@ -107,6 +108,7 @@ RENAME_TIMEOUT_SECONDS = 60.0
 RENAME_LIMIT = 400
 _MAX_STEP_OUTPUT = 1024 * 1024
 _MAX_BRACE_EXPANSIONS = 64
+_DRAIN_SECONDS = 2  # for a killed git's pipes to reach EOF
 _PREFIX = "fetch-"
 _ROOT_README = ("/README.md", "/README.mdx")
 # models.ARTICLE_SUFFIXES, whatever the letter case: never fetch the blobs of other files
@@ -624,6 +626,7 @@ class GitCli:
                 guard.cancel()
             _kill_group(process)
             await process.wait()
+            await _drain(process)
         if tripped:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
         if len(out) > cap:
@@ -966,6 +969,22 @@ async def _read(process: Process, stream: asyncio.StreamReader | None, cap: int 
         if cap is not None and len(kept) > cap:
             _kill_group(process)
     return kept
+
+
+async def _drain(process: Process) -> None:
+    """Read git's pipes to EOF (for at most ``_DRAIN_SECONDS``) and throw the bytes away.
+
+    After a timeout or a cancellation git is killed while its output is still unread, and
+    ``wait()`` returns at once if git had already exited. The process's transport (and the
+    two pipe file descriptors) only closes once both pipes have reached EOF, so without this
+    they stay open until the event loop happens to run again. Bounded: a helper that left
+    git's process group could keep a pipe open for as long as it lives.
+    """
+    with suppress(TimeoutError):
+        async with asyncio.timeout(_DRAIN_SECONDS):
+            for stream in (process.stdout, process.stderr):
+                while stream and await stream.read(65536):
+                    pass
 
 
 def _kill_group(process: Process) -> None:

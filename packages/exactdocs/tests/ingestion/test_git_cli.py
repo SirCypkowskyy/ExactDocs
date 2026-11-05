@@ -185,6 +185,25 @@ async def test_a_helper_that_outlives_git_is_killed_too(tmp_path: Path) -> None:
     assert await gone(marker), processes_mentioning(marker)
 
 
+def open_files() -> int:
+    """File descriptors this process has open."""
+    return len(list(Path("/proc/self/fd").iterdir()))
+
+
+async def test_a_timed_out_call_leaves_no_pipe_open(tmp_path: Path) -> None:
+    # The same helper holding git's stdout: once the call has raised, git's pipes are closed
+    # already, not left for the event loop (or the garbage collector) to find later.
+    marker = f"holder-{tmp_path.name}"
+    git = fake_git(tmp_path, f"sh -c 'sleep 77; :' {marker} &\nexit 0\n")
+    before = open_files()
+
+    with pytest.raises(RepositoryUnreachableError, match="no answer"):
+        await GitCli(git=git, timeout=1).list_refs(repository("https://git.example.com/a/b"))
+
+    assert open_files() == before
+    assert await gone(marker), processes_mentioning(marker)
+
+
 async def test_a_flood_of_refs_is_cut_off_at_once_and_reported(tmp_path: Path) -> None:
     marker = f"flood-{tmp_path.name}"
     git = fake_git(tmp_path, f'exec yes "{"a" * 40}\trefs/heads/{marker}"\n')
