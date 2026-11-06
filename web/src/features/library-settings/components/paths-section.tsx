@@ -13,8 +13,8 @@ import { FormAlert } from "@/shared/ui/form-alert";
 import { PathFields, TagRules } from "@/shared/ui/path-selection";
 import {
   accessQueryOptions,
-  lastReprocessQueryOptions,
   refreshLibraries,
+  reprocessJobsQueryOptions,
   saveSelection,
 } from "../api/settings";
 import {
@@ -22,7 +22,6 @@ import {
   draftOf,
   effectiveChange,
   explainSettings,
-  failedReprocess,
   type JobViews,
   type Problem,
   type ReprocessJob,
@@ -34,6 +33,7 @@ import {
   savedHeadline,
   saveHint,
   selectionChange,
+  unhealedJob,
   validateSelection,
 } from "../model/settings";
 import { secondary, sectionHeading } from "./styles";
@@ -231,9 +231,9 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
   // Where focus goes once the warning closes: back to Save, or to what the server refused.
   const after = useRef<() => HTMLElement | null | undefined>(() => save.current);
 
-  const { data: last } = useQuery(lastReprocessQueryOptions(owner, repo));
+  const { data: recent } = useQuery(reprocessJobsQueryOptions(owner, repo));
   const { data: access } = useQuery(accessQueryOptions(owner, repo));
-  const failed = failedReprocess(last);
+  const failed = unhealedJob(recent);
 
   const change = selectionChange(base, draft);
   const refs = library.versions.map((v) => v.ref);
@@ -296,7 +296,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
     // With no version yet nothing is re-processed: there is nothing to warn about.
     if (refs.length === 0) mutation.mutate(draft);
     else {
-      setWarned(effectiveChange(change, last));
+      setWarned(effectiveChange(change, recent));
       setConfirming(true);
     }
   }

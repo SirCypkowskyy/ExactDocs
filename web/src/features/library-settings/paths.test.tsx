@@ -13,6 +13,7 @@ import {
   savedHeadline,
   selectionChange,
   settingsOf,
+  unhealedJob,
 } from "./model/settings";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
@@ -207,18 +208,47 @@ describe("paths and tag rules model", () => {
   it("warns a tag-only change as a full re-process while the last re-process failed", () => {
     const failed = { kind: "reprocess", state: "failed" } as const;
     expect(effectiveChange("tags", null)).toEqual({ change: "tags", afterFailure: false });
-    expect(effectiveChange("tags", failed)).toEqual({ change: "paths", afterFailure: true });
-    expect(effectiveChange("tags", { ...failed, kind: "retag" })).toEqual({
+    expect(effectiveChange("tags", [failed])).toEqual({ change: "paths", afterFailure: true });
+    expect(effectiveChange("tags", [{ ...failed, kind: "retag" }])).toEqual({
       change: "tags",
       afterFailure: false,
     });
-    expect(effectiveChange("tags", { ...failed, state: "succeeded" }).change).toBe("tags");
+    expect(effectiveChange("tags", [{ ...failed, state: "succeeded" }]).change).toBe("tags");
+  });
+
+  it("keeps a failed re-process pending after a narrower job succeeded, as the server does", () => {
+    const failed = { kind: "reprocess", state: "failed" } as const;
+    const retagged = { kind: "retag", state: "succeeded" } as const;
+    const rechunked = { kind: "rechunk", state: "succeeded" } as const;
+    // Newest first: the re-tag after the failed re-process did not re-import anything.
+    expect(effectiveChange("tags", [retagged, failed])).toEqual({
+      change: "paths",
+      afterFailure: true,
+    });
+    expect(effectiveChange("tags", [rechunked, failed]).change).toBe("paths");
+    expect(unhealedJob([retagged, failed])).toBe(failed);
+    // A re-process that did not fail since redoes it; one still queued will too.
+    const redone = { kind: "reprocess", state: "succeeded" } as const;
+    expect(effectiveChange("tags", [retagged, redone, failed]).change).toBe("tags");
+    expect(effectiveChange("tags", [{ kind: "reprocess", state: "queued" }, failed]).change).toBe(
+      "tags",
+    );
+    // The widest failure wins, whichever is newer.
+    const retagFailed = { kind: "retag", state: "failed" } as const;
+    expect(unhealedJob([retagFailed, failed])).toBe(failed);
+    // Other jobs (imports) neither fail nor redo a re-processing.
+    expect(effectiveChange("tags", [{ kind: "import", state: "succeeded" }, failed]).change).toBe(
+      "paths",
+    );
   });
 
   it("warns a tag-only change as a re-chunk while the last re-chunk failed", () => {
     const failed = { kind: "rechunk", state: "failed" } as const;
-    expect(effectiveChange("tags", failed)).toEqual({ change: "chunking", afterFailure: true });
-    expect(effectiveChange("paths", failed)).toEqual({ change: "paths", afterFailure: true });
+    expect(effectiveChange("tags", [failed])).toEqual({ change: "chunking", afterFailure: true });
+    expect(effectiveChange("paths", [failed])).toEqual({ change: "paths", afterFailure: true });
+    expect(effectiveChange("tags", [{ kind: "retag", state: "succeeded" }, failed]).change).toBe(
+      "chunking",
+    );
     const warning = reprocessWarning("chunking", ["v1.2.0"], true);
     expect(warning.title).toBe("Re-chunk every version?");
     expect(warning.what).toMatch(/^Its version \(v1\.2\.0\) will be re-chunked/);
@@ -454,6 +484,23 @@ describe("editing paths and tag rules", () => {
     renderPage();
     const s = await section();
     await s.findByText(/The last re-processing failed/);
+    await userEvent.clear(s.getByLabelText("Tag for rule 1"));
+    await userEvent.type(s.getByLabelText("Tag for rule 1"), "reference");
+    await userEvent.click(saveButton());
+    const dialog = await screen.findByRole("alertdialog", { name: "Re-process every version?" });
+    expect(dialog).toHaveTextContent("runs it in full");
+    expect(dialog).not.toHaveTextContent("nothing is fetched");
+  });
+
+  it("warns about the failed re-processing, not the re-tag that succeeded after it", async () => {
+    serve(undefined, {
+      jobs: [reprocessJob({ id: "t1", kind: "retag", state: "succeeded" }), reprocessJob()],
+    });
+    renderPage();
+    const s = await section();
+    // The re-tag did not redo it, so the failed re-processing is still offered again.
+    expect(await s.findByText(/The last re-processing failed/)).toBeInTheDocument();
+    expect(s.getByText("job f1 for every version")).toBeInTheDocument();
     await userEvent.clear(s.getByLabelText("Tag for rule 1"));
     await userEvent.type(s.getByLabelText("Tag for rule 1"), "reference");
     await userEvent.click(saveButton());
