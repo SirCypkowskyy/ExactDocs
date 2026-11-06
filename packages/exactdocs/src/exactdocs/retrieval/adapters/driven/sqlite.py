@@ -117,7 +117,7 @@ def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteChunkRepository:
     """Implements ``ports.driven.ChunkRepository`` with SQLAlchemy Core on SQLite."""
 

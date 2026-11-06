@@ -63,7 +63,7 @@ async def test_a_library_without_jobs_has_an_empty_list(client: httpx.AsyncClien
 async def test_a_library_lists_its_jobs_newest_first_in_pages(
     container: Container, client: httpx.AsyncClient
 ) -> None:
-    repository = SqliteJobRepository(container.engine)
+    repository = SqliteJobRepository(engine=container.engine)
     for job_id in ("job-1", "job-2", "job-3"):
         await repository.add(a_job(job_id).started(NOW).succeeded(NOW))
     url = "/api/v1/libraries/acme/payments/jobs"
@@ -87,7 +87,7 @@ async def test_the_worker_starts_with_the_app_and_recovers_what_the_last_run_lef
     # proof that the lifespan ran recovery and the worker.
     first = Container.build(Settings())
     await migrate(first.engine)
-    await SqliteJobRepository(first.engine).add(a_job("j1", kind="gone").started(NOW))
+    await SqliteJobRepository(engine=first.engine).add(a_job("j1", kind="gone").started(NOW))
     await first.engine.dispose()
 
     second = Container.build(Settings())
@@ -106,7 +106,7 @@ async def test_a_process_started_without_jobs_neither_recovers_nor_runs_them() -
     """`serve --stdio` leaves the jobs to the HTTP server."""
     first = Container.build(Settings())
     await migrate(first.engine)
-    await SqliteJobRepository(first.engine).add(a_job("j1", kind="gone").started(NOW))
+    await SqliteJobRepository(engine=first.engine).add(a_job("j1", kind="gone").started(NOW))
     await first.engine.dispose()
 
     second = Container.build(Settings())
@@ -120,7 +120,7 @@ async def test_a_process_started_without_jobs_neither_recovers_nor_runs_them() -
 async def test_the_latest_jobs_are_one_per_version_and_say_how_many_files_were_skipped(
     container: Container, client: httpx.AsyncClient
 ) -> None:
-    repository = SqliteJobRepository(container.engine)
+    repository = SqliteJobRepository(engine=container.engine)
     await repository.add(a_job("job-1").started(NOW).failed("old failure", NOW))
     await repository.add(
         a_job("job-2")

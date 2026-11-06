@@ -317,38 +317,72 @@ class IngestionModule:
             message = "settings needs the reprocess, rechunk and retag handlers of import_job"
             raise TypeError(message)
         runner = runner or _NoRunner()
-        enqueue_job = EnqueueJobUseCase(jobs, clock, handlers, runner)
+        enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=handlers, runner=runner)
         none = _NoLibrarySources()
         vault = vault or _NoCredentials()
         schedules = auto_syncs or _NoAutoSyncs()
         switch = schedule_switch or _NoSwitch()
-        remove_version = RemoveVersionUseCase(jobs, removals, index, enqueue_job)
-        sync_library = SyncLibraryUseCase(remote, sources or none, jobs, clock, enqueue_job, vault)
-        return cls(
-            add_library=AddLibraryUseCase(remote, library_ids, libraries, enqueue_job, vault, tree),
-            add_version=AddVersionUseCase(
-                remote, sources or _NoLibrarySources(), jobs, enqueue_job, vault
-            ),
-            check_repository=CheckRepositoryUseCase(remote, library_ids),
-            disable_auto_sync=DisableAutoSyncUseCase(sources or none, schedules, switch),
+        remove_version = RemoveVersionUseCase(
+            jobs=jobs, removals=removals, index=index, enqueue_job=enqueue_job
+        )
+        sync_library = SyncLibraryUseCase(
+            remote=remote,
+            sources=sources or none,
+            jobs=jobs,
+            clock=clock,
             enqueue_job=enqueue_job,
-            get_auto_sync=GetAutoSyncUseCase(sources or none, schedules),
-            get_job=GetJobUseCase(jobs),
-            get_library_access=GetLibraryAccessUseCase(vault, library_ids),
-            list_latest_jobs=ListLatestJobsUseCase(jobs),
-            list_library_jobs=ListLibraryJobsUseCase(jobs),
-            list_repository_refs=ListRepositoryRefsUseCase(remote),
-            preview_repository=PreviewRepositoryUseCase(remote, tree or _NoTree()),
-            recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks, runner),
+            vault=vault,
+        )
+        return cls(
+            add_library=AddLibraryUseCase(
+                remote=remote,
+                library_ids=library_ids,
+                libraries=libraries,
+                enqueue_job=enqueue_job,
+                vault=vault,
+                tree=tree,
+            ),
+            add_version=AddVersionUseCase(
+                remote=remote,
+                sources=sources or _NoLibrarySources(),
+                jobs=jobs,
+                enqueue_job=enqueue_job,
+                vault=vault,
+            ),
+            check_repository=CheckRepositoryUseCase(remote=remote, library_ids=library_ids),
+            disable_auto_sync=DisableAutoSyncUseCase(
+                sources=sources or none, schedules=schedules, switch=switch
+            ),
+            enqueue_job=enqueue_job,
+            get_auto_sync=GetAutoSyncUseCase(sources=sources or none, schedules=schedules),
+            get_job=GetJobUseCase(jobs=jobs),
+            get_library_access=GetLibraryAccessUseCase(vault=vault, library_ids=library_ids),
+            list_latest_jobs=ListLatestJobsUseCase(jobs=jobs),
+            list_library_jobs=ListLibraryJobsUseCase(jobs=jobs),
+            list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
+            preview_repository=PreviewRepositoryUseCase(remote=remote, tree=tree or _NoTree()),
+            recover_jobs=RecoverJobsUseCase(
+                jobs=jobs, clock=clock, hooks=recovery_hooks, runner=runner
+            ),
             reimport_version=ReimportVersionUseCase(
-                remote, sources or none, jobs, enqueue_job, vault
+                remote=remote,
+                sources=sources or none,
+                jobs=jobs,
+                enqueue_job=enqueue_job,
+                vault=vault,
             ),
             remove_library=RemoveLibraryUseCase(
-                jobs, removals, index, enqueue_job, vault, schedules, switch
+                jobs=jobs,
+                removals=removals,
+                index=index,
+                enqueue_job=enqueue_job,
+                vault=vault,
+                schedules=schedules,
+                switch=switch,
             ),
             remove_version=remove_version,
-            run_job=RunJobUseCase(jobs, clock, handlers, recovery_hooks),
-            run_next_job=RunNextJobUseCase(jobs, clock, handlers),
+            run_job=RunJobUseCase(jobs=jobs, clock=clock, handlers=handlers, hooks=recovery_hooks),
+            run_next_job=RunNextJobUseCase(jobs=jobs, clock=clock, handlers=handlers),
             run_scheduled_checks=RunScheduledChecksUseCase(
                 schedules=schedules,
                 sources=sources or none,
@@ -361,15 +395,20 @@ class IngestionModule:
                 remove_version=remove_version,
                 switch=switch,
             ),
-            set_auto_sync=SetAutoSyncUseCase(sources or none, schedules, switch),
-            submit_queued_jobs=SubmitQueuedJobsUseCase(jobs, runner),
-            switch_schedule=SwitchScheduleUseCase(schedules, switch),
+            set_auto_sync=SetAutoSyncUseCase(
+                sources=sources or none, schedules=schedules, switch=switch
+            ),
+            submit_queued_jobs=SubmitQueuedJobsUseCase(jobs=jobs, runner=runner),
+            switch_schedule=SwitchScheduleUseCase(schedules=schedules, switch=switch),
             sync_library=sync_library,
             tag_article=TagArticleUseCase(
-                manual_tags or _NoManualTags(), index, tag_locks or TagLocks()
+                tags=manual_tags or _NoManualTags(), index=index, locks=tag_locks or TagLocks()
             ),
             update_library_settings=UpdateLibrarySettingsUseCase(
-                sources or none, settings or _NoSettings(), jobs, enqueue_job
+                sources=sources or none,
+                settings=settings or _NoSettings(),
+                jobs=jobs,
+                enqueue_job=enqueue_job,
             ),
         )
 
@@ -405,14 +444,14 @@ def import_job(
     chunked); without it an interrupted import starts over.
     """
     importer = ImportVersionUseCase(
-        gateway,
-        chunker,
-        sources,
-        versions,
-        index,
-        vault or _NoCredentials(),
-        max_article_bytes,
-        max_import_bytes,
+        gateway=gateway,
+        chunker=chunker,
+        sources=sources,
+        versions=versions,
+        index=index,
+        vault=vault or _NoCredentials(),
+        max_article_bytes=max_article_bytes,
+        max_import_bytes=max_import_bytes,
         renames=renames,
         stored=stored,
         max_image_bytes=max_image_bytes,
@@ -423,18 +462,28 @@ def import_job(
     if checkpoints is not None:
         importer = replace(importer, checkpoints=checkpoints)
     refresher = replace(importer, refresh=True)
-    hook = DiscardInterruptedImportUseCase(versions, index)
+    hook = DiscardInterruptedImportUseCase(versions=versions, index=index)
     steps = importer.checkpoints
     # One durable step per version: the re-import inside it records none of its own.
     inline = replace(refresher, checkpoints=_InlineSteps())
     handlers: dict[JobKind, JobHandler] = {
         IMPORT_JOB: importer,
         REFRESH_JOB: refresher,
-        REPROCESS_JOB: ReprocessLibraryUseCase(sources, inline, steps),
+        REPROCESS_JOB: ReprocessLibraryUseCase(sources=sources, importer=inline, checkpoints=steps),
         RECHUNK_JOB: RechunkLibraryUseCase(
-            sources, copier, chunker, imported_tags, versions, index, tag_locks, inline, steps
+            sources=sources,
+            copier=copier,
+            chunker=chunker,
+            tags=imported_tags,
+            versions=versions,
+            index=index,
+            tag_locks=tag_locks,
+            importer=inline,
+            checkpoints=steps,
         ),
-        RETAG_JOB: RetagLibraryUseCase(sources, imported_tags, index, tag_locks, steps),
+        RETAG_JOB: RetagLibraryUseCase(
+            sources=sources, tags=imported_tags, index=index, tag_locks=tag_locks, checkpoints=steps
+        ),
     }
     # A re-tag writes each version in one transaction and is safe to redo: nothing to clean up.
     hooks = {IMPORT_JOB: hook, REFRESH_JOB: hook, REPROCESS_JOB: hook, RECHUNK_JOB: hook}
@@ -445,4 +494,4 @@ def collect_job(
     *, collectors: Sequence[Collector], grace_seconds: int = DEFAULT_GRACE_SECONDS
 ) -> Mapping[JobKind, JobHandler]:
     """Return the ``handlers`` entry that makes the module free unused content, in this order."""
-    return {COLLECT_JOB: CollectGarbageUseCase(collectors, grace_seconds)}
+    return {COLLECT_JOB: CollectGarbageUseCase(collectors=collectors, grace_seconds=grace_seconds)}

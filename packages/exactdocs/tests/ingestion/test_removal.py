@@ -104,7 +104,10 @@ class World:
 def build(*, with_collect: bool = True, broken_index: bool = False) -> World:
     jobs, catalog, index, calls = InMemoryJobRepository(), Catalog(), Index(broken=broken_index), []
     vault = InMemoryCredentialVault(
-        {LIBRARY: AccessToken(token="ghp_s3cretvalue"), "/b/c": AccessToken(token="other")}
+        credentials={
+            LIBRARY: AccessToken(token="ghp_s3cretvalue"),
+            "/b/c": AccessToken(token="other"),
+        }
     )
     handlers: dict[JobKind, object] = {IMPORT_JOB: nothing, REFRESH_JOB: nothing}
     if with_collect:

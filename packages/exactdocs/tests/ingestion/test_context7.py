@@ -61,7 +61,10 @@ def test_every_key_exactdocs_uses_is_read_and_the_rest_ignored() -> None:
         exclude_folders=("archive", "./docs/internal"),
         exclude_files=("CHANGELOG.md",),
         rules=("Use v2 client", "Always pin the SDK"),
-        previous_versions=(PreviousVersion("v1.0.0", "version 1.0"), PreviousVersion("v0.9.0")),
+        previous_versions=(
+            PreviousVersion(tag="v1.0.0", title="version 1.0"),
+            PreviousVersion(tag="v0.9.0"),
+        ),
         selection=PathSelection.of(
             ["docs/", "guides/"], ["**/archive/", "docs/internal/", "**/CHANGELOG.md"]
         ),
@@ -151,8 +154,8 @@ def test_unusable_previous_versions_are_dropped_with_a_note_and_the_rest_kept() 
     config = parse_context7(as_bytes({"previousVersions": entries}))
 
     assert config.previous_versions == (
-        PreviousVersion("v1.0.0"),
-        PreviousVersion("release/2.0", "two"),
+        PreviousVersion(tag="v1.0.0"),
+        PreviousVersion(tag="release/2.0", title="two"),
     )
     assert len(config.notes) == 8
     assert all(n.startswith("previousVersions: an entry is left out") for n in config.notes)

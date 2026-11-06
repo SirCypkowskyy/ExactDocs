@@ -228,7 +228,7 @@ async def test_every_tool_declares_a_required_notice_and_the_same_hints(
 
 
 async def test_list_libraries_stays_small_with_many_versions(container: Container) -> None:
-    repository = SqliteLibraryRepository(container.engine)
+    repository = SqliteLibraryRepository(engine=container.engine)
     async with container.running(), Client(build_mcp(container)) as mcp:
         payments = await repository.get(LibraryId("/acme/payments"))
         assert payments is not None

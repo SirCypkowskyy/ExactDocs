@@ -91,20 +91,20 @@ class Db:
             return await connection.scalar(text(sql))
 
     async def remove(self, manifest_id: str) -> None:
-        await SqliteChunkRepository(self.container.engine).remove([manifest_id])
+        await SqliteChunkRepository(engine=self.container.engine).remove([manifest_id])
 
 
 @pytest.fixture
 async def db() -> AsyncIterator[Db]:
     container = Container.build(Settings())
     async with container.running(jobs=False):
-        index = SqliteSearchIndex(container.engine, rebuild_batch=1)
+        index = SqliteSearchIndex(engine=container.engine, rebuild_batch=1)
         retrieval = RetrievalModule.build(
             defaults=InMemoryDefaultVersions(),
             libraries=InMemoryLibraries(),
             searchable=NoCatalog(),
             manifests=NoCatalog(),
-            chunks=SqliteChunkRepository(container.engine),
+            chunks=SqliteChunkRepository(engine=container.engine),
             search=index,
             maintenance=index,
         )

@@ -352,7 +352,7 @@ README_TITLE_MAX = 120
 README_DESCRIPTION_MAX = 500
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReadmeSummary:
     """What a root README says about its library; ``None`` where it says nothing usable."""
 
@@ -511,7 +511,7 @@ UNEXPECTED_ERROR = "unexpected"
 """The ``error_code`` of a job that failed on something no domain error describes (a bug)."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FileProblem:
     """A problem with one file of an import: ``code`` is the stable kind, ``reason`` the text."""
 
@@ -612,20 +612,24 @@ class Job:
         if code is ProblemCode.FRONT_MATTER:
             if self.notes >= MAX_JOB_NOTES:
                 return self
-            problem = FileProblem(path, code, reason)
+            problem = FileProblem(path=path, code=code, reason=reason)
             return replace(self, problems=(*self.problems, problem), notes=self.notes + 1)
         if len(self.problems) - self.notes < MAX_JOB_PROBLEMS:
-            return replace(self, problems=(*self.problems, FileProblem(path, code, reason)))
+            return replace(
+                self, problems=(*self.problems, FileProblem(path=path, code=code, reason=reason))
+            )
         # The marker is the last skip-sized entry; notes may have been appended after it.
         marker = next(
             (i for i, p in enumerate(self.problems) if p.code is ProblemCode.TRUNCATED), None
         )
         if marker is None:
-            problem = FileProblem("", ProblemCode.TRUNCATED, _dropped_reason(1))
+            problem = FileProblem(path="", code=ProblemCode.TRUNCATED, reason=_dropped_reason(1))
             return replace(self, problems=(*self.problems, problem))
         dropped = _dropped(self.problems[marker]) + 1
         problems = list(self.problems)
-        problems[marker] = FileProblem("", ProblemCode.TRUNCATED, _dropped_reason(dropped))
+        problems[marker] = FileProblem(
+            path="", code=ProblemCode.TRUNCATED, reason=_dropped_reason(dropped)
+        )
         return replace(self, problems=tuple(problems))
 
     @property
@@ -1125,7 +1129,7 @@ _ANY, _ONE = "*", "?"  # as tokens they are the 1-tuples ("*",) and ("?",)
 type _Segment = tuple[_Token, ...] | None  # None: `**`, any number of folders
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Glob:
     segments: tuple[_Segment, ...]
     folder: bool  # a plain name also selects everything below it
@@ -1173,7 +1177,7 @@ def _glob(pattern: str) -> _Glob:
         if segment is None and segments and segments[-1] is None:
             continue  # `**/**` is `**`
         segments.append(segment)
-    return _Glob(tuple(segments), folder)
+    return _Glob(segments=tuple(segments), folder=folder)
 
 
 def _name_matches(tokens: tuple[_Token, ...], name: str) -> bool:
@@ -1231,7 +1235,7 @@ def _clean_pattern(raw: str) -> str:
     return pattern
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PathSelection:
     """Which repository files are articles: ``include`` minus ``exclude``, only ``.md``/``.mdx``.
 
@@ -1265,7 +1269,7 @@ class PathSelection:
         return not self.include or any(_matches(_glob(p), path) for p in self.include)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TagRule:
     """Articles whose path matches the glob get the tag (``docs/api/** -> api``).
 
@@ -1280,7 +1284,7 @@ class TagRule:
         """Validate the glob and normalize the tag; a tag that cannot be one is refused."""
         if (normalized := normalize_tag(tag)) is None:
             raise InvalidTagError(TagProblem.INVALID)
-        return cls(PathSelection.of([pattern]), normalized)
+        return cls(selection=PathSelection.of([pattern]), tag=normalized)
 
     @classmethod
     def many(cls, pairs: Sequence[tuple[str, str]]) -> tuple[Self, ...]:
@@ -1316,7 +1320,7 @@ MAX_PREVIOUS_VERSION_CHARS = 255
 _GLOB_CHARS = frozenset("*?{[")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PreviousVersion:
     """An older tag a ``context7.json`` offers for import, with its optional display title."""
 
@@ -1346,7 +1350,7 @@ class Context7Config:
     """What was left out of an otherwise usable file (``previousVersions`` entries), and why."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FetchedFile:
     """One file of a commit read on its own: its bytes, nothing (absent), or why it was not read."""
 
@@ -1830,7 +1834,7 @@ class CopiedVersion:
     articles: tuple[CopiedArticle, ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Collected:
     """What one collector deleted."""
 

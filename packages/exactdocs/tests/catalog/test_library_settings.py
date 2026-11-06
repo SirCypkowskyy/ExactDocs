@@ -77,13 +77,13 @@ def catalog() -> CatalogModule:
             )
         ]
     )
-    manifests = InMemoryManifestRepository(libraries)
+    manifests = InMemoryManifestRepository(libraries=libraries)
     return CatalogModule.build(
         repository=libraries,
         manifests=manifests,
-        imported_tags=InMemoryImportedTags(manifests),
-        copier=InMemoryManifestCopier(manifests),
-        stored_articles=InMemoryStoredArticles(manifests),
+        imported_tags=InMemoryImportedTags(repository=manifests),
+        copier=InMemoryManifestCopier(repository=manifests),
+        stored_articles=InMemoryStoredArticles(repository=manifests),
     )
 
 

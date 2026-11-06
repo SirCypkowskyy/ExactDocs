@@ -29,7 +29,7 @@ _HKDF_INFO = b"exactdocs credentials v1"
 _OWNER_ONLY = 0o600
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FernetSecretBox:
     """Implements ``ports.driven.SecretBox``.
 
@@ -42,7 +42,7 @@ class FernetSecretBox:
     @classmethod
     def from_secrets(cls, secret: str, *previous: str) -> Self:
         """Derive the keys from ``EXACTDOCS_SECRET_KEY`` (and ``_PREVIOUS``), 32+ characters."""
-        return cls(MultiFernet([_derive(text) for text in (secret, *previous)]))
+        return cls(fernet=MultiFernet([_derive(text) for text in (secret, *previous)]))
 
     @classmethod
     def from_secret(cls, secret: str) -> Self:

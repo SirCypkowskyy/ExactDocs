@@ -211,14 +211,14 @@ class _OutputTooBigError(RepositoryUnreachableError):
     """A git step printed more than its cap."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Output:
     stdout: bytes
     stderr: str
     code: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GitCli:
     """Implements ``ports.driven.GitRemote`` with ``git ls-remote``."""
 
@@ -721,7 +721,7 @@ class GitCli:
             raise RepositoryTooLargeError(max_bytes)
         if len(out) > cap:
             raise _OutputTooBigError(_TOO_BIG)
-        return _Output(out, err.decode(errors="replace").lower(), code)
+        return _Output(stdout=out, stderr=err.decode(errors="replace").lower(), code=code)
 
     async def _guard(self, process: Process, folder: Path, max_bytes: int) -> None:
         """Return (after killing git) as soon as ``folder`` holds too many bytes or files."""
@@ -733,7 +733,7 @@ class GitCli:
                 return
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Trees:
     """A blob-less fetch of one commit: its folder, and ``git`` steps under its deadline."""
 
@@ -743,7 +743,7 @@ class _Trees:
     deadline: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MissingGit:
     """Stands in for ``GitCli`` when there is no ``git``: every use says what to install."""
 
@@ -1008,7 +1008,7 @@ def _anchored(pattern: str) -> list[str] | None:
     return expanded if len(expanded) <= _MAX_BRACE_EXPANSIONS else None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Auth:
     """A credential and the only host it may be offered to."""
 
@@ -1017,7 +1017,11 @@ class _Auth:
 
     @classmethod
     def of(cls, repository: RepositoryUrl, credential: Credential | None) -> Self | None:
-        return None if credential is None else cls(credential, repository.credential_scope)
+        return (
+            None
+            if credential is None
+            else cls(credential=credential, scope=repository.credential_scope)
+        )
 
 
 def _ssh_command(known_hosts: Path | None, key: str | None = None) -> str:

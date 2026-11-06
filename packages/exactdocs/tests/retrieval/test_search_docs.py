@@ -103,7 +103,7 @@ async def retrieval() -> RetrievalModule:
         {"v1.3.0": version("v1.3.0", "m13", "a"), "v1.4.0": version("v1.4.0", "m14", "b")},
         default="v1.4.0",
     )
-    index = InMemorySearchIndex(chunks)
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
         defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),
@@ -280,7 +280,7 @@ async def test_a_chunk_that_vanished_is_neither_a_result_nor_a_candidate() -> No
 
     chunks = Vanishing()
     versions = FakeVersions({"v1.4.0": version("v1.4.0", "m14", "b")}, default="v1.4.0")
-    index = InMemorySearchIndex(chunks)
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
         defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),

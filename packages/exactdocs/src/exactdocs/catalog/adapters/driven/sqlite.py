@@ -214,7 +214,7 @@ _LIBRARY_COLUMNS = (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteLibraryRepository:
     """Implements ``ports.driven.LibraryRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -403,7 +403,9 @@ def _entry(row: Row) -> ManifestEntry:
         tags=tuple(json.loads(imported)),
         front_matter=json.loads(row.front_matter),
         size=row.size,
-        manual_tags=tuple(ManualTag(t["tag"], t["path"]) for t in json.loads(row.manual_tags)),
+        manual_tags=tuple(
+            ManualTag(tag=t["tag"], path=t["path"]) for t in json.loads(row.manual_tags)
+        ),
     )
 
 
@@ -434,7 +436,7 @@ def _tag_condition(selection: TagSelection) -> TextClause:
     return condition.bindparams(tags=json.dumps(sorted(selection.tags)))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteManifestRepository:
     """Implements ``ports.driven.ManifestRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -1015,7 +1017,7 @@ async def _insert_versions(connection: AsyncConnection, library: Library) -> Non
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteImportedTags:
     """Implements ``ports.driven.ImportedTagWriter`` on the catalog's SQLite tables."""
 
@@ -1056,7 +1058,7 @@ class SqliteImportedTags:
 _PATHS_PER_QUERY = 500  # bound variables per statement stay far below SQLite's limit
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on the catalog's SQLite tables."""
 
@@ -1204,7 +1206,7 @@ async def _texts(
 _FILES_PER_QUERY = 250  # three bound variables per file at most
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteManifestCopier:
     """Implements ``ports.driven.ManifestCopier`` on the catalog's SQLite tables."""
 

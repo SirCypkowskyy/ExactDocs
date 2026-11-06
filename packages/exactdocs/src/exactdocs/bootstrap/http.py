@@ -202,7 +202,9 @@ def create_app(container: Container) -> FastAPI:
     # (e.g. ChatGPT) are configured with.
     for path in _route_paths(mcp_app.routes):
         app.router.routes.append(Route(path, endpoint=mcp_app))
-    app.router.routes.append(Route(f"{MCP_PATH}/", endpoint=_RewritePath(mcp_app, MCP_PATH)))
+    app.router.routes.append(
+        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=mcp_app, path=MCP_PATH))
+    )
     if WEB_DIST.is_dir():
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
@@ -219,7 +221,7 @@ def _route_paths(routes: Iterable[object]) -> list[str]:
     return [path for route in routes if isinstance(path := getattr(route, "path", None), str)]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _RewritePath:
     """ASGI wrapper that serves another path's app (an alias without a redirect)."""
 
@@ -234,7 +236,7 @@ class _RewritePath:
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- middleware
 class OriginCheck:
     """Reject state-changing browser requests from foreign origins (CSRF / DNS rebinding).
 

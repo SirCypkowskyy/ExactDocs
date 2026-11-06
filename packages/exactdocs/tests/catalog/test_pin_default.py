@@ -63,10 +63,10 @@ def build(*versions: Version) -> CatalogModule:
     )
     return CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
 
@@ -200,10 +200,10 @@ async def test_a_library_removed_while_pinning_is_reported_as_missing() -> None:
     repository = LibraryRemovedWhilePinning(inner)
     catalog = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(inner)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=inner)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
     with pytest.raises(LibraryNotFoundError):

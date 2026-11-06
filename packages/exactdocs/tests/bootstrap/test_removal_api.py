@@ -64,12 +64,14 @@ async def test_removing_the_default_version_recomputes_the_default(
 async def test_removing_an_existing_version_whose_ref_has_slashes_is_a_200(
     container: Container, client: httpx.AsyncClient
 ) -> None:
-    payments = await SqliteLibraryRepository(container.engine).get(LibraryId("/acme/payments"))
+    payments = await SqliteLibraryRepository(engine=container.engine).get(
+        LibraryId("/acme/payments")
+    )
     assert payments is not None
     slashed = Version(
         ref=VersionRef("release/1.4"), kind=RefKind.BRANCH, commit_sha="c" * 40, imported_at=NOW
     )
-    await SqliteLibraryRepository(container.engine).save(
+    await SqliteLibraryRepository(engine=container.engine).save(
         replace(payments, versions=payments.versions | {slashed})
     )
 
@@ -117,7 +119,7 @@ async def test_removal_is_refused_with_409_while_an_import_is_unfinished(
         version="v1.4.0",
         now=NOW,
     )
-    jobs = SqliteJobRepository(container.engine)
+    jobs = SqliteJobRepository(engine=container.engine)
     await jobs.add(job if state is JobState.QUEUED else job.started(NOW))
 
     version = await client.delete(f"{PAYMENTS}/versions/v1.4.0")

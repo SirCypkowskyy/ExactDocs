@@ -160,7 +160,7 @@ SETUP_EXEMPT = frozenset(
 )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # conventions: allow-mutable-dataclass, allow-positional -- middleware
 class SetupGuard:
     """Refuse everything under ``/api/v1`` with 403 ``setup_required`` until an account exists.
 

@@ -76,21 +76,31 @@ class IdentityModule:
         clock: Clock,
     ) -> Self:
         """Assemble the use cases around the given driven adapters."""
-        authenticate = AuthenticateUseCase(repository, hasher, failures, clock)
-        identify_caller = IdentifyCallerUseCase(sessions, repository, clock)
-        create_token = CreateTokenUseCase(tokens, clock)
+        authenticate = AuthenticateUseCase(
+            repository=repository, hasher=hasher, failures=failures, clock=clock
+        )
+        identify_caller = IdentifyCallerUseCase(sessions=sessions, accounts=repository, clock=clock)
+        create_token = CreateTokenUseCase(tokens=tokens, clock=clock)
         return cls(
-            get_setup_state=GetSetupStateUseCase(repository),
-            create_first_admin=CreateFirstAdminUseCase(repository, hasher, clock),
+            get_setup_state=GetSetupStateUseCase(repository=repository),
+            create_first_admin=CreateFirstAdminUseCase(
+                repository=repository, hasher=hasher, clock=clock
+            ),
             authenticate=authenticate,
-            sign_in=SignInUseCase(authenticate, sessions, clock),
-            sign_out=SignOutUseCase(sessions),
+            sign_in=SignInUseCase(authenticate=authenticate, sessions=sessions, clock=clock),
+            sign_out=SignOutUseCase(sessions=sessions),
             identify_caller=identify_caller,
-            get_session_state=GetSessionStateUseCase(repository, identify_caller),
-            reset_password=ResetPasswordUseCase(repository, sessions, tokens, hasher),
+            get_session_state=GetSessionStateUseCase(
+                accounts=repository, identify_caller=identify_caller
+            ),
+            reset_password=ResetPasswordUseCase(
+                accounts=repository, sessions=sessions, tokens=tokens, hasher=hasher
+            ),
             create_token=create_token,
-            login_for_token=LoginForTokenUseCase(authenticate, create_token),
-            list_tokens=ListTokensUseCase(tokens),
-            revoke_token=RevokeTokenUseCase(tokens),
-            identify_token=IdentifyTokenUseCase(tokens, repository, clock),
+            login_for_token=LoginForTokenUseCase(
+                authenticate=authenticate, create_token=create_token
+            ),
+            list_tokens=ListTokensUseCase(tokens=tokens),
+            revoke_token=RevokeTokenUseCase(tokens=tokens),
+            identify_token=IdentifyTokenUseCase(tokens=tokens, accounts=repository, clock=clock),
         )

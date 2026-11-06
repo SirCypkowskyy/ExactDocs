@@ -42,7 +42,7 @@ class Role(StrEnum):
     ADMIN = "admin"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class Username:
     """A login name, compared case-insensitively: ``Admin`` and ``admin`` are the same account."""
 

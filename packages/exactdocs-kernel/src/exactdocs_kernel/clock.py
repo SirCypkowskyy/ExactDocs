@@ -11,7 +11,7 @@ class Clock(Protocol):
         ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SystemClock:
     """Real wall clock (UTC)."""
 

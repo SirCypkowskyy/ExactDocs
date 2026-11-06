@@ -66,7 +66,7 @@ def step_each_article_once(context: Context) -> None:
     with TestClient(create_app(container), base_url="http://localhost") as client:
         portal = client.portal  # the app's own event loop
         assert portal is not None
-        portal.call(SqliteAccountRepository(container.engine).add_first, PLACEHOLDER_ADMIN)
+        portal.call(SqliteAccountRepository(engine=container.engine).add_first, PLACEHOLDER_ADMIN)
         now = datetime.now(UTC)
         session = Session(
             token_hash=hash_token(ADMIN_COOKIE),
@@ -74,7 +74,7 @@ def step_each_article_once(context: Context) -> None:
             created_at=now,
             last_used_at=now,
         )
-        portal.call(SqliteSessionRepository(container.engine).add, session)
+        portal.call(SqliteSessionRepository(engine=container.engine).add, session)
         client.cookies.set(SESSION_COOKIE, ADMIN_COOKIE)
         paths, cursor = [], None
         while True:

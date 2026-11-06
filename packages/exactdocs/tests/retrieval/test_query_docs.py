@@ -91,7 +91,7 @@ async def build(
     versions = FakeVersions(
         {"v1": version("v1", "m1", rules), "v2": version("v2", "m2", rules)}, default="v2"
     )
-    index = InMemorySearchIndex(chunks)
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
         defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),

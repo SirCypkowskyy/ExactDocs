@@ -73,7 +73,7 @@ async def repository(request: pytest.FixtureRequest) -> AsyncIterator[LibraryRep
         return
     container = Container.build(Settings())
     async with container.running():
-        yield SqliteLibraryRepository(container.engine)
+        yield SqliteLibraryRepository(engine=container.engine)
 
 
 async def test_starts_empty(repository: LibraryRepository) -> None:

@@ -1,6 +1,6 @@
 """Title and description of a library: README defaults for the default version, user edits win."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 import pytest
@@ -54,10 +54,10 @@ def build(*versions: Version, **fields: object) -> CatalogModule:
     )
     catalog = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
     REPOSITORIES[id(catalog)] = repository
     return catalog
@@ -178,16 +178,16 @@ def repository_of(catalog: CatalogModule) -> InMemoryLibraryRepository:
     return REPOSITORIES[id(catalog)]
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EditsBetweenReadAndWrite(InMemoryLibraryRepository):
     """A user edit lands after the import read the library and before it writes."""
 
-    edit_once: bool = True
+    edits: list[str] = field(default_factory=lambda: ["once"])
 
     async def get(self, library_id: LibraryId) -> Library | None:
         found = await super().get(library_id)
-        if self.edit_once:
-            self.edit_once = False
+        if self.edits:
+            self.edits.pop()
             await self.set_text(library_id, title="Payments SDK", description=None)
         return found
 
@@ -207,10 +207,10 @@ async def test_an_edit_between_the_import_read_and_write_survives() -> None:
     )
     catalog = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
     await catalog.apply_readme(

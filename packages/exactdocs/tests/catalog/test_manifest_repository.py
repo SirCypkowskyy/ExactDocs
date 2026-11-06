@@ -135,7 +135,7 @@ class Stores:
 async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
     if request.param == "memory":
         libraries = InMemoryLibraryRepository()
-        manifests = InMemoryManifestRepository(libraries)
+        manifests = InMemoryManifestRepository(libraries=libraries)
 
         async def count() -> int:
             return len(manifests.contents)
@@ -144,9 +144,9 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
             libraries,
             manifests,
             count,
-            InMemoryImportedTags(manifests),
-            InMemoryManifestCopier(manifests),
-            InMemoryStoredArticles(manifests),
+            InMemoryImportedTags(repository=manifests),
+            InMemoryManifestCopier(repository=manifests),
+            InMemoryStoredArticles(repository=manifests),
         )
     else:
         container = Container.build(Settings())
@@ -158,12 +158,12 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                     return (await connection.execute(query)).scalar_one()
 
             found = Stores(
-                SqliteLibraryRepository(container.engine),
-                SqliteManifestRepository(container.engine),
+                SqliteLibraryRepository(engine=container.engine),
+                SqliteManifestRepository(engine=container.engine),
                 count,
-                SqliteImportedTags(container.engine),
-                SqliteManifestCopier(container.engine),
-                SqliteStoredArticles(container.engine),
+                SqliteImportedTags(engine=container.engine),
+                SqliteManifestCopier(engine=container.engine),
+                SqliteStoredArticles(engine=container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -675,9 +675,19 @@ async def test_saving_a_stale_library_does_not_undo_an_activation(stores: Stores
 
 
 async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_active() -> None:
-    libraries = InMemoryLibraryRepository()
+    class FailingOnWrite(UserDict[LibraryId, Library]):
+        failing = False
+
+        def __setitem__(self, key: LibraryId, item: Library) -> None:
+            if self.failing:
+                message = "injected failure"
+                raise RuntimeError(message)
+            super().__setitem__(key, item)
+
+    stored = FailingOnWrite()
+    libraries = InMemoryLibraryRepository(libraries=stored)
     await libraries.save(PAYMENTS)
-    manifests = InMemoryManifestRepository(libraries)
+    manifests = InMemoryManifestRepository(libraries=libraries)
     await manifests.add(
         manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {(sha("b1"), 1): "x"}
     )
@@ -686,14 +696,7 @@ async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_
     )
     await manifests.activate(ManifestId("m1"), at=T0)
 
-    class FailingOnWrite(UserDict[LibraryId, Library]):
-        def __setitem__(self, key: LibraryId, item: Library) -> None:
-            message = "injected failure"
-            raise RuntimeError(message)
-
-    failing = FailingOnWrite()
-    failing.data.update(libraries.libraries)
-    libraries.libraries = failing  # the last step of the swap fails
+    stored.failing = True  # the last step of the swap fails
 
     with pytest.raises(RuntimeError, match="injected failure"):
         await manifests.activate(ManifestId("m2"), at=T0)
@@ -714,14 +717,14 @@ async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_
 async def sqlite() -> AsyncIterator[Container]:
     container = Container.build(Settings())
     async with container.running():
-        await SqliteLibraryRepository(container.engine).save(PAYMENTS)
+        await SqliteLibraryRepository(engine=container.engine).save(PAYMENTS)
         yield container
 
 
 async def test_sqlite_a_failure_during_activation_leaves_the_previous_manifest_active(
     sqlite: Container,
 ) -> None:
-    manifests = SqliteManifestRepository(sqlite.engine)
+    manifests = SqliteManifestRepository(engine=sqlite.engine)
     await manifests.add(
         manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {(sha("b1"), 1): "old"}
     )
@@ -747,13 +750,13 @@ async def test_sqlite_a_failure_during_activation_leaves_the_previous_manifest_a
     article = await manifests.get_article(PAYMENTS.id, VersionRef("main"), INSTALL)
     assert article is not None
     assert (article.commit_sha, article.content) == (sha("aaa111"), "old")
-    library = await SqliteLibraryRepository(sqlite.engine).get(PAYMENTS.id)
+    library = await SqliteLibraryRepository(engine=sqlite.engine).get(PAYMENTS.id)
     assert library is not None
     assert {v.commit_sha for v in library.versions} == {sha("aaa111")}
 
 
 async def test_sqlite_refuses_a_second_active_manifest_for_one_version(sqlite: Container) -> None:
-    manifests = SqliteManifestRepository(sqlite.engine)
+    manifests = SqliteManifestRepository(engine=sqlite.engine)
     await manifests.add(manifest("m1", "main", "aaa111"), {})
     await manifests.add(manifest("m2", "main", "bbb222"), {})
     await manifests.activate(ManifestId("m1"), at=T0)
@@ -779,8 +782,8 @@ async def test_listing_filters_by_tags_before_it_pages(stores: Stores) -> None:
             entry("e.md", "b5", tags=("api",)),
         ),
     )
-    any_of = TagSelection(frozenset({"api", "adr"}))
-    all_of = TagSelection(frozenset({"api", "auth"}), TagMatch.ALL)
+    any_of = TagSelection(tags=frozenset({"api", "adr"}))
+    all_of = TagSelection(tags=frozenset({"api", "auth"}), match=TagMatch.ALL)
 
     assert await paths(stores.manifests, "m1", tags=any_of) == ["b.md", "c.md", "d.md", "e.md"]
     assert await paths(stores.manifests, "m1", tags=any_of, limit=2, after="b.md") == [
@@ -788,7 +791,7 @@ async def test_listing_filters_by_tags_before_it_pages(stores: Stores) -> None:
         "d.md",
     ]
     assert await paths(stores.manifests, "m1", tags=all_of) == ["b.md"]
-    assert await paths(stores.manifests, "m1", tags=TagSelection(frozenset({"nope"}))) == []
+    assert await paths(stores.manifests, "m1", tags=TagSelection(tags=frozenset({"nope"}))) == []
     assert await paths(stores.manifests, "m1", prefix="a.md", tags=any_of) == []
 
 
@@ -1156,7 +1159,9 @@ async def test_imported_tags_are_replaced_and_manual_ones_kept(stores: Stores) -
         manifest("m1", "main", "a1", entry("a.md", "a", tags=("old",)), entry("b.md", "b")),
     )
     await stores.manifests.activate(ManifestId("m1"), at=T0)
-    await stores.manifests.set_manual_tags(ManifestId("m1"), {"a.md": (ManualTag("x", "a.md"),)})
+    await stores.manifests.set_manual_tags(
+        ManifestId("m1"), {"a.md": (ManualTag(tag="x", path="a.md"),)}
+    )
     many = {f"n{i}.md": ("n",) for i in range(1200)}  # more than one batch of paths
 
     touched = await stores.imported_tags.set_imported_tags(
@@ -1201,9 +1206,9 @@ async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undo
     await stores.manifests.activate(ManifestId("m1"), at=T0)
     manifests = stores.manifests
 
-    manual = (ManualTag("api", "a.md"), ManualTag("onboarding", "old.md"))
+    manual = (ManualTag(tag="api", path="a.md"), ManualTag(tag="onboarding", path="old.md"))
     touched = await manifests.set_manual_tags(
-        ManifestId("m1"), {"a.md": manual, "gone.md": (ManualTag("x", "gone.md"),)}
+        ManifestId("m1"), {"a.md": manual, "gone.md": (ManualTag(tag="x", path="gone.md"),)}
     )
     listed = await manifests.list_entries(
         ManifestId("m1"),
@@ -1231,7 +1236,9 @@ async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undo
     )
     assert entries == (api, plain)
     assert (
-        await manifests.set_manual_tags(ManifestId("none"), {"a.md": (ManualTag("x", "a.md"),)})
+        await manifests.set_manual_tags(
+            ManifestId("none"), {"a.md": (ManualTag(tag="x", path="a.md"),)}
+        )
         == {}
     )
 
@@ -1256,7 +1263,9 @@ async def test_a_copy_of_the_active_manifest_is_pending_with_everything_it_has(
     )
     await stores.manifests.add(first, contents(*first.entries), images=blobs)
     await stores.manifests.activate(ManifestId("m1"), at=T0)
-    await stores.manifests.set_manual_tags(ManifestId("m1"), {"a.md": (ManualTag("x", "a.md"),)})
+    await stores.manifests.set_manual_tags(
+        ManifestId("m1"), {"a.md": (ManualTag(tag="x", path="a.md"),)}
+    )
     later = T0 + timedelta(hours=1)
 
     copied = await stores.copier.copy_active(
@@ -1331,7 +1340,7 @@ async def test_sqlite_stored_articles_are_looked_up_by_index_never_by_a_scan(
 
 
 async def test_sqlite_a_file_many_manifests_hold_is_read_once(sqlite: Container) -> None:
-    manifests = SqliteManifestRepository(sqlite.engine)
+    manifests = SqliteManifestRepository(engine=sqlite.engine)
     install = entry(INSTALL, "b1")
     for i in range(30):
         await manifests.add(
@@ -1343,7 +1352,7 @@ async def test_sqlite_a_file_many_manifests_hold_is_read_once(sqlite: Container)
         rows = (await connection.execute(query)).all()
 
     assert len(rows) == 1  # deduplicated in SQL, not 30 rows dropped in Python
-    found = await SqliteStoredArticles(sqlite.engine).find_articles(
+    found = await SqliteStoredArticles(engine=sqlite.engine).find_articles(
         PAYMENTS.id, VersionRef("v3"), 1, [(INSTALL, sha("b1"))]
     )
     assert [a.entry.path for a in found] == [INSTALL]

@@ -121,7 +121,7 @@ def make_module(
         remote=remote,
         library_ids=None,  # ty: ignore[invalid-argument-type]
         libraries=None,  # ty: ignore[invalid-argument-type]
-        sources=InMemoryLibrarySources({LIBRARY: SOURCE}, {LIBRARY: versions}),
+        sources=InMemoryLibrarySources(sources={LIBRARY: SOURCE}, versions={LIBRARY: versions}),
         removals=NoRemovals(),
         index=NoIndex(),
         vault=vault,
@@ -443,7 +443,7 @@ async def test_a_private_librarys_sync_reads_the_remote_with_its_stored_credenti
     remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
 ) -> None:
     token = AccessToken(token="ghp_s3cretvalue")
-    vault = InMemoryCredentialVault({LIBRARY: token})
+    vault = InMemoryCredentialVault(credentials={LIBRARY: token})
     module = make_module(remote, versions, jobs, clock, vault)
     remote.heads["next"] = NEW
 
@@ -527,7 +527,7 @@ async def test_a_remote_that_cannot_be_read_says_why(
 async def test_an_auth_demand_with_a_stored_credential_is_an_auth_failure(
     remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
 ) -> None:
-    vault = InMemoryCredentialVault({LIBRARY: AccessToken(token="ghp_revoked")})
+    vault = InMemoryCredentialVault(credentials={LIBRARY: AccessToken(token="ghp_revoked")})
     module = make_module(remote, versions, jobs, clock, vault)
     remote.error = RepositoryAuthRequiredError()  # an expired or revoked token
 
@@ -727,7 +727,9 @@ async def test_a_private_tag_is_checked_with_its_stored_credential(
     remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
 ) -> None:
     token = AccessToken(token="ghp_s3cretvalue")
-    module = make_module(remote, versions, jobs, clock, InMemoryCredentialVault({LIBRARY: token}))
+    module = make_module(
+        remote, versions, jobs, clock, InMemoryCredentialVault(credentials={LIBRARY: token})
+    )
     versions[:] = [tag("v1")]
     remote.tags["v1"] = NEW
 

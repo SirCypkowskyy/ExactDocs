@@ -40,7 +40,7 @@ async def repository(request: pytest.FixtureRequest) -> AsyncIterator[JobReposit
     # Not a Container: its worker would pick up the queued jobs these tests look at.
     engine = open_database(Settings())
     await migrate(engine)
-    yield SqliteJobRepository(engine)
+    yield SqliteJobRepository(engine=engine)
     await engine.dispose()
 
 
@@ -180,7 +180,7 @@ async def test_claimers_on_separate_connections_get_one_job_per_library_and_no_d
     """Several engines on one file stand in for several processes."""
     engines = [open_database(Settings()) for _ in range(4)]
     await migrate(engines[0])
-    repositories = [SqliteJobRepository(engine) for engine in engines]
+    repositories = [SqliteJobRepository(engine=engine) for engine in engines]
     for number in range(30):
         await repositories[0].add(
             queued(f"job-{number:02}", library=f"/acme/lib-{number % 5}", version=f"v{number}")
@@ -202,7 +202,7 @@ async def test_claimers_on_separate_connections_get_one_job_per_library_and_no_d
 async def test_problems_saved_by_another_version_are_read_without_failing() -> None:
     engine = open_database(Settings())
     await migrate(engine)
-    repository = SqliteJobRepository(engine)
+    repository = SqliteJobRepository(engine=engine)
     await repository.add(queued("j1"))
     old_and_new = [
         {"path": "a.md", "reason": "not valid UTF-8"},

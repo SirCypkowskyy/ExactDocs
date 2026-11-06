@@ -174,7 +174,7 @@ def _match(query: str) -> str | None:
     return " OR ".join('"' + term.replace('"', '""') + '"' for term in search_terms(query)) or None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteSearchIndex:
     """Implements ``ports.driven.SearchIndex`` with SQLite FTS5 and its ``bm25()`` ranking.
 

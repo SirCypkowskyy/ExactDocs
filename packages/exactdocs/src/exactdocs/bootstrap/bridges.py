@@ -136,7 +136,7 @@ from exactdocs.retrieval.ports.driving import (
 from exactdocs_kernel import MAX_LIMIT, NotFoundError, ValidationError
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogSearchableVersions:
     """Implements ``retrieval.ports.driven.SearchableVersions`` using the catalog."""
 
@@ -171,7 +171,7 @@ class CatalogSearchableVersions:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogDefaultVersions:
     """Implements ``retrieval.ports.driven.DefaultVersions`` using the catalog."""
 
@@ -193,7 +193,7 @@ class CatalogDefaultVersions:
         ]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogLibraries:
     """Implements ``retrieval.ports.driven.Libraries`` using the catalog."""
 
@@ -224,7 +224,7 @@ class CatalogLibraries:
                 return found
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogLibraryIds:
     """Implements ``ingestion.ports.driven.LibraryIds`` using the catalog."""
 
@@ -247,7 +247,7 @@ _STATUSES = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogActiveManifests:
     """Implements ``retrieval.ports.driven.ActiveManifests`` using the catalog."""
 
@@ -272,7 +272,7 @@ class CatalogActiveManifests:
         return {i: _STATUSES.get(state, ManifestStatus.OTHER) for i, state in found.states.items()}
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogRenamedPaths:
     """Implements ``retrieval.ports.driven.RenamedPaths`` using the catalog."""
 
@@ -289,7 +289,7 @@ class CatalogRenamedPaths:
         return None if found is None else found.new_path
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogNewLibraries:
     """Implements ``ingestion.ports.driven.NewLibraries`` using the catalog."""
 
@@ -317,7 +317,7 @@ class CatalogNewLibraries:
         await self.discard_library(DiscardLibraryCommand(id=library_id))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogLibrarySources:
     """Implements ``ingestion.ports.driven.LibrarySources`` using the catalog."""
 
@@ -367,7 +367,7 @@ class CatalogLibrarySources:
         ]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogVersionPublisher:
     """Implements ``ingestion.ports.driven.VersionPublisher`` using the catalog."""
 
@@ -442,7 +442,7 @@ class CatalogVersionPublisher:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RetrievalChunkIndex:
     """Implements ``ingestion.ports.driven.ChunkIndex`` using retrieval."""
 
@@ -502,7 +502,7 @@ class RetrievalChunkIndex:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogManualTags:
     """Implements ``ingestion.ports.driven.ManualTagStore`` using the catalog."""
 
@@ -523,7 +523,7 @@ class CatalogManualTags:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogLibrarySettings:
     """Implements ``ingestion.ports.driven.LibrarySettingsStore`` using the catalog."""
 
@@ -553,7 +553,7 @@ class CatalogLibrarySettings:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogVersionCopier:
     """Implements ``ingestion.ports.driven.VersionCopier`` using the catalog."""
 
@@ -587,7 +587,7 @@ class CatalogVersionCopier:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogImportedTags:
     """Implements ``ingestion.ports.driven.ImportedTagStore`` using the catalog."""
 
@@ -623,7 +623,7 @@ class CatalogImportedTags:
         return {a.path: tuple(a.tags) for a in done.articles}
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogStoredArticles:
     """Implements ``ingestion.ports.driven.StoredArticleSource`` using the catalog."""
 
@@ -653,7 +653,7 @@ class CatalogStoredArticles:
         ]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogRemovals:
     """Implements ``ingestion.ports.driven.Removals`` using the catalog."""
 
@@ -678,7 +678,7 @@ def _removed(result: CatalogRemoval) -> Removed:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogCollector:
     """Implements ``ingestion.ports.driven.Collector`` using the catalog."""
 
@@ -690,7 +690,7 @@ class CatalogCollector:
         return Collected(deleted=done.manifests + done.contents + done.images)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RetrievalCollector:
     """Implements ``ingestion.ports.driven.Collector`` using retrieval."""
 

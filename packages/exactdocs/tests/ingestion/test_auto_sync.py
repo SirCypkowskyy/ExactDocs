@@ -226,7 +226,9 @@ def make_module(
         remote=remote,
         library_ids=NoLibraryIds(),
         libraries=NoLibraries(),
-        sources=InMemoryLibrarySources({LIBRARY: SOURCE}, {LIBRARY: catalog.versions}),
+        sources=InMemoryLibrarySources(
+            sources={LIBRARY: SOURCE}, versions={LIBRARY: catalog.versions}
+        ),
         removals=catalog,
         index=catalog,
         handlers={IMPORT_JOB: _noop, REFRESH_JOB: _noop},

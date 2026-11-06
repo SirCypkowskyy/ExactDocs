@@ -124,24 +124,26 @@ class World:
         c = self.container
         git_cli = GitCli.locate()
         publisher = (FailingActivation if activation_fails else CatalogVersionPublisher)(
-            c.catalog.store_manifest,
-            c.catalog.activate_manifest,
-            c.catalog.discard_pending_manifests,
-            c.catalog.apply_readme,
-            c.catalog.apply_manual_tags,
-            c.catalog.replace_renames,
+            store_manifest=c.catalog.store_manifest,
+            activate_manifest=c.catalog.activate_manifest,
+            discard_pending_manifests=c.catalog.discard_pending_manifests,
+            apply_readme=c.catalog.apply_readme,
+            apply_manual_tags_to=c.catalog.apply_manual_tags,
+            replace_renames_of=c.catalog.replace_renames,
         )
         return ImportVersionUseCase(
             gateway=git_cli,
             chunker=self.chunker,
-            sources=CatalogLibrarySources(c.catalog.get_library, c.catalog.list_renames),
+            sources=CatalogLibrarySources(
+                get_library=c.catalog.get_library, list_renames=c.catalog.list_renames
+            ),
             versions=publisher,
             index=(HangingIndex if hang_after_index else RetrievalChunkIndex)(
-                c.retrieval.index_manifest,
-                c.retrieval.get_chunk_sets,
-                c.retrieval.discard_pending_chunks,
-                c.retrieval.remove_chunks,
-                c.retrieval.retag_articles,
+                index_manifest=c.retrieval.index_manifest,
+                get_chunk_sets=c.retrieval.get_chunk_sets,
+                discard_pending_chunks=c.retrieval.discard_pending_chunks,
+                remove_chunks=c.retrieval.remove_chunks,
+                retag_articles=c.retrieval.retag_articles,
             ),
             refresh=refresh,
             vault=InMemoryCredentialVault(),
@@ -375,7 +377,7 @@ async def test_a_restart_discards_what_an_interrupted_import_left_and_runs_it_ag
             commit_sha=git("rev-parse", "v1.3.0^{commit}", cwd=docs_repo.path),
             now=now,
         ).started(now)
-        await SqliteJobRepository(first.engine).add(running)
+        await SqliteJobRepository(engine=first.engine).add(running)
         assert await _count(first, manifest_rows) == 1
         assert await _count(first, chunk_set_rows) == 1
 
@@ -385,7 +387,7 @@ async def test_a_restart_discards_what_an_interrupted_import_left_and_runs_it_ag
         assert await _count(restarted, manifest_rows) == 0
         assert await _count(restarted, chunk_set_rows) == 0
         assert await _count(restarted, indexed_manifests) == 0
-        job = await SqliteJobRepository(restarted.engine).get(JobId("j"))
+        job = await SqliteJobRepository(engine=restarted.engine).get(JobId("j"))
         assert job is not None
         assert job.state.value == "queued"  # runs again from the beginning
 

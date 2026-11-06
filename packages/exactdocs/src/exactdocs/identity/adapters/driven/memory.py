@@ -18,7 +18,7 @@ from exactdocs.identity.models import (
 MAX_FAILED_SIGN_IN_KEYS = 10_000
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryAccountRepository:
     """Implements ``ports.driven.AccountRepository``. For tests."""
 
@@ -50,7 +50,7 @@ class InMemoryAccountRepository:
         return bool(self.accounts)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemorySessionRepository:
     """Implements ``ports.driven.SessionRepository``. For tests."""
 
@@ -75,18 +75,20 @@ class InMemorySessionRepository:
 
     async def delete_for_account(self, account_id: AccountId) -> None:
         """Remove every session of the account."""
-        self.sessions = {h: s for h, s in self.sessions.items() if s.account_id != account_id}
+        for token_hash in [h for h, s in self.sessions.items() if s.account_id == account_id]:
+            del self.sessions[token_hash]
 
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
         """Remove sessions last used before ``idle_before`` or created before ``created_before``."""
-        self.sessions = {
-            h: s
+        for token_hash in [
+            h
             for h, s in self.sessions.items()
-            if s.last_used_at >= idle_before and s.created_at >= created_before
-        }
+            if s.last_used_at < idle_before or s.created_at < created_before
+        ]:
+            del self.sessions[token_hash]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryTokenRepository:
     """Implements ``ports.driven.TokenRepository``. For tests."""
 
@@ -120,14 +122,16 @@ class InMemoryTokenRepository:
 
     async def delete_for_account(self, account_id: AccountId) -> None:
         """Remove every token of the account."""
-        self.tokens = {h: t for h, t in self.tokens.items() if t.account_id != account_id}
+        for token_hash in [h for h, t in self.tokens.items() if t.account_id == account_id]:
+            del self.tokens[token_hash]
 
     async def delete_expired(self, now: datetime) -> None:
         """Remove the tokens whose expiry is at or before ``now``."""
-        self.tokens = {h: t for h, t in self.tokens.items() if not t.is_expired(now)}
+        for token_hash in [h for h, t in self.tokens.items() if t.is_expired(now)]:
+            del self.tokens[token_hash]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryFailedSignInLog:
     """Implements ``ports.driven.FailedSignInLog`` in the process's memory. Used in production.
 

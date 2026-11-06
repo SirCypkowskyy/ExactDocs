@@ -162,7 +162,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
 
     if request.param == "memory":
         memory = InMemoryChunkRepository()
-        memory_index = InMemorySearchIndex(memory)
+        memory_index = InMemorySearchIndex(chunks=memory)
 
         async def entries() -> int:
             return sum(
@@ -182,7 +182,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
         return
     container = Container.build(Settings())
     async with container.running():
-        index = SqliteSearchIndex(container.engine)
+        index = SqliteSearchIndex(engine=container.engine)
 
         async def count() -> int:
             async with container.engine.connect() as connection:
@@ -204,7 +204,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                 await connection.execute(text("UPDATE retrieval_search_format SET format = 1"))
 
         yield World(
-            build(SqliteChunkRepository(container.engine), index),
+            build(SqliteChunkRepository(engine=container.engine), index),
             index,
             clock,
             count,

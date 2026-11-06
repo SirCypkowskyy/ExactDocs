@@ -96,9 +96,9 @@ async def demo_catalog() -> dict[str, str]:
     """
     container = Container.build(Settings())
     async with container.running():
-        await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
+        await SqliteAccountRepository(engine=container.engine).add_first(PLACEHOLDER_ADMIN)
         now = datetime.now(UTC)
-        await SqliteSessionRepository(container.engine).add(
+        await SqliteSessionRepository(engine=container.engine).add(
             Session(
                 token_hash=hash_token(DEMO_COOKIE),
                 account_id=PLACEHOLDER_ADMIN.id,
@@ -106,7 +106,7 @@ async def demo_catalog() -> dict[str, str]:
                 last_used_at=now,
             )
         )
-        repository = SqliteLibraryRepository(container.engine)
+        repository = SqliteLibraryRepository(engine=container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)
     return {SESSION_COOKIE: DEMO_COOKIE}

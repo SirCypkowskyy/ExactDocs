@@ -257,7 +257,8 @@ async def test_a_credential_row_of_another_host_makes_the_import_fail_closed(
     assert (await _job(client, added.json()["job_id"]))["state"] == "succeeded"
     # a row from before the library moved: sealed for another host
     vault = SqliteCredentialVault(
-        container.engine, FernetSecretBox.from_file(container.settings.data_dir / KEY_FILE)
+        engine=container.engine,
+        box=FernetSecretBox.from_file(container.settings.data_dir / KEY_FILE),
     )
     await vault.save(
         "/fixture/docs-repo", "https://elsewhere.example.com", AccessToken(token="t0ken")

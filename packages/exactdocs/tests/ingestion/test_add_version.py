@@ -92,7 +92,9 @@ def module(jobs: InMemoryJobRepository) -> IngestionModule:
         libraries=_None(),
         removals=NoRemovals(),
         index=NoIndex(),
-        sources=InMemoryLibrarySources({"/acme/orders": SOURCE}, {"/acme/orders": EXISTING}),
+        sources=InMemoryLibrarySources(
+            sources={"/acme/orders": SOURCE}, versions={"/acme/orders": EXISTING}
+        ),
         handlers={IMPORT_JOB: _run},
     )
 

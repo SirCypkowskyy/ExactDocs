@@ -136,16 +136,16 @@ def world() -> World:
             )
         ]
     )
-    manifests = InMemoryManifestRepository(libraries)
+    manifests = InMemoryManifestRepository(libraries=libraries)
     clock = FakeClock()
     return World(
         CatalogModule.build(
             repository=libraries,
             manifests=manifests,
             clock=clock,
-            imported_tags=InMemoryImportedTags(manifests),
-            copier=InMemoryManifestCopier(manifests),
-            stored_articles=InMemoryStoredArticles(manifests),
+            imported_tags=InMemoryImportedTags(repository=manifests),
+            copier=InMemoryManifestCopier(repository=manifests),
+            stored_articles=InMemoryStoredArticles(repository=manifests),
         ),
         manifests,
         clock,

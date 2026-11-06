@@ -44,7 +44,7 @@ def _queued(context: Context, job_id: str, library: str) -> Job:
 
 
 def _store(context: Context, job: Job) -> None:
-    repository = SqliteJobRepository(context.container.engine)
+    repository = SqliteJobRepository(engine=context.container.engine)
     context.client.portal.call(repository.add, job)  # runs on the app's own event loop
 
 
@@ -57,7 +57,7 @@ def step_running(context: Context) -> None:
     context.client = stack.enter_context(
         TestClient(create_app(context.container), base_url="http://localhost")
     )
-    accounts = SqliteAccountRepository(context.container.engine)
+    accounts = SqliteAccountRepository(engine=context.container.engine)
     context.client.portal.call(accounts.add_first, PLACEHOLDER_ADMIN)
     session = Session(
         token_hash=hash_token(ADMIN_COOKIE),
@@ -65,7 +65,7 @@ def step_running(context: Context) -> None:
         created_at=datetime.now(UTC),
         last_used_at=datetime.now(UTC),
     )
-    sessions = SqliteSessionRepository(context.container.engine)
+    sessions = SqliteSessionRepository(engine=context.container.engine)
     context.client.portal.call(sessions.add, session)
     context.client.cookies.set(SESSION_COOKIE, ADMIN_COOKIE)
 

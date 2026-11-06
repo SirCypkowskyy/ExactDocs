@@ -101,7 +101,7 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ClientConfig:
     """The server to talk to and the API token to do it with (never shown in a repr)."""
 

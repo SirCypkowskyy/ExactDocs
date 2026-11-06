@@ -22,7 +22,7 @@ class Kdf(Protocol):
         ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Argon2idPasswordHasher:
     """Implements ``ports.driven.PasswordHasher`` with argon2id (argon2-cffi's defaults).
 

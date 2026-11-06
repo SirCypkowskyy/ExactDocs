@@ -195,7 +195,7 @@ async def run(use_case: ImportVersionUseCase, jobs: InMemoryJobRepository) -> Jo
         now=datetime(2026, 1, 1, tzinfo=UTC),
     ).started(datetime(2026, 1, 1, tzinfo=UTC))
     await jobs.add(job)
-    progress = _Progress(jobs, job)
+    progress = _Progress(jobs=jobs, job=job)
     await use_case(job, progress)
     return progress.job
 

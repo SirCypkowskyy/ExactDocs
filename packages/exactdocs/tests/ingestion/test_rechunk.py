@@ -246,15 +246,15 @@ class World:
 
     def handler(self, checkpoints: InMemoryCheckpoints | None = None) -> RechunkLibraryUseCase:
         return RechunkLibraryUseCase(
-            self.sources,
-            self.copier,
-            MarkdownChunker(),
-            self.tags,
-            self.publisher,  # ty: ignore[invalid-argument-type]
-            self.index,
-            TagLocks(),
-            self.importer,
-            checkpoints or InMemoryCheckpoints(),
+            sources=self.sources,
+            copier=self.copier,
+            chunker=MarkdownChunker(),
+            tags=self.tags,
+            versions=self.publisher,  # ty: ignore[invalid-argument-type]
+            index=self.index,
+            tag_locks=TagLocks(),
+            importer=self.importer,
+            checkpoints=checkpoints or InMemoryCheckpoints(),
         )
 
     async def run(self, checkpoints: InMemoryCheckpoints | None = None) -> None:

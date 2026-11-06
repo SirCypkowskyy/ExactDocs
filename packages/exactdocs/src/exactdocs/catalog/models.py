@@ -40,7 +40,7 @@ _STABLE_SEMVER = re.compile(
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class LibraryId:
     """`/owner/repo`, exactly two segments. Stored lower-case, so matched case-insensitively."""
 
@@ -56,7 +56,7 @@ class LibraryId:
         return self.value
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class VersionRef:
     """A git ref as published (`v1.4.0`, `main`, `release/1.4`, a SHA). Case-sensitive.
 
@@ -80,7 +80,7 @@ class VersionRef:
         return self.value
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ParsedId:
     """A context7-style ID split into its library and the optional ref after it."""
 
@@ -164,7 +164,7 @@ class TagMatch(StrEnum):
     ALL = "all"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TagSelection:
     """Which articles a tag filter keeps. No tags keeps every article."""
 
@@ -179,7 +179,7 @@ class TagSelection:
         if None in found:
             message = f"tags must be valid tags, at most {MAX_TAGS} of them"
             raise InvalidTagFilterError(message)
-        return cls(frozenset(t for t in found if t), match)
+        return cls(tags=frozenset(t for t in found if t), match=match)
 
     def keeps(self, article_tags: Iterable[str]) -> bool:
         """Tell whether an article with these tags passes."""
@@ -368,7 +368,7 @@ def _check_path(path: str) -> None:
         raise InvalidArticlePathError(path)
 
 
-@dataclass(frozen=True, slots=True, order=True)
+@dataclass(frozen=True, slots=True, kw_only=True, order=True)
 class ManualTag:
     """A tag an entry carries because a user set it by hand on ``path``.
 
@@ -380,7 +380,7 @@ class ManualTag:
     path: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ManualTags:
     """Tags a user set by hand on an article path of a library: they hold for every version.
 
@@ -400,7 +400,7 @@ class ManualTags:
         found = [normalize_tag(tag) for tag in raw]
         if len(raw) > MAX_TAGS or None in found:
             raise InvalidManualTagsError
-        return cls(path, tuple(sorted({t for t in found if t})))
+        return cls(path=path, tags=tuple(sorted({t for t in found if t})))
 
     @staticmethod
     def reaching(
@@ -412,11 +412,13 @@ class ManualTags:
         versions back); paths it leaves out only have their own tags. Each tag names the path it
         was set on, so a tag set on two of them is there twice.
         """
-        reached = {path: {ManualTag(t, path) for t in tags} for path, tags in by_path.items()}
+        reached = {
+            path: {ManualTag(tag=t, path=path) for t in tags} for path, tags in by_path.items()
+        }
         for path, olds in origins.items():
             for old in olds:
                 found = reached.setdefault(path, set())
-                found.update(ManualTag(t, old) for t in by_path.get(old, ()))
+                found.update(ManualTag(tag=t, path=old) for t in by_path.get(old, ()))
         return {path: tuple(sorted(tags)) for path, tags in reached.items() if tags}
 
 

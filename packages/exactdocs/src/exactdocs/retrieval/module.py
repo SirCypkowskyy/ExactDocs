@@ -81,17 +81,30 @@ class RetrievalModule:
         """Assemble the use cases around the given driven adapters."""
         clock = clock or SystemClock()
         return cls(
-            search_docs=SearchDocsUseCase(searchable, search, chunks),
-            search_all_libraries=SearchAllLibrariesUseCase(defaults, searchable, search, chunks),
-            index_manifest=IndexManifestUseCase(chunks, search, clock),
-            get_chunk_sets=GetChunkSetsUseCase(chunks),
-            read_chunk=ReadChunkUseCase(searchable, manifests, chunks, renames),
-            resolve_library_id=ResolveLibraryIdUseCase(libraries, searchable, search, chunks),
-            query_docs=QueryDocsUseCase(searchable, search, chunks, query_docs_token_budget),
-            discard_pending_chunks=DiscardPendingChunksUseCase(manifests, chunks, clock),
-            collect_chunks=CollectChunksUseCase(manifests, chunks, clock),
-            remove_chunks=RemoveChunksUseCase(manifests, chunks),
-            retag_articles=RetagArticlesUseCase(chunks),
-            get_search_index_state=GetSearchIndexStateUseCase(maintenance),
-            rebuild_search_index=RebuildSearchIndexUseCase(maintenance),
+            search_docs=SearchDocsUseCase(versions=searchable, search=search, chunks=chunks),
+            search_all_libraries=SearchAllLibrariesUseCase(
+                defaults=defaults, versions=searchable, search=search, chunks=chunks
+            ),
+            index_manifest=IndexManifestUseCase(chunks=chunks, search=search, clock=clock),
+            get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),
+            read_chunk=ReadChunkUseCase(
+                versions=searchable, manifests=manifests, chunks=chunks, renames=renames
+            ),
+            resolve_library_id=ResolveLibraryIdUseCase(
+                libraries=libraries, versions=searchable, search=search, chunks=chunks
+            ),
+            query_docs=QueryDocsUseCase(
+                versions=searchable,
+                search=search,
+                chunks=chunks,
+                token_budget=query_docs_token_budget,
+            ),
+            discard_pending_chunks=DiscardPendingChunksUseCase(
+                manifests=manifests, chunks=chunks, clock=clock
+            ),
+            collect_chunks=CollectChunksUseCase(manifests=manifests, chunks=chunks, clock=clock),
+            remove_chunks=RemoveChunksUseCase(manifests=manifests, chunks=chunks),
+            retag_articles=RetagArticlesUseCase(chunks=chunks),
+            get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
+            rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
         )

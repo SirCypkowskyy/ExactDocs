@@ -80,7 +80,7 @@ async def vault(request: pytest.FixtureRequest) -> AsyncIterator[CredentialVault
         return
     engine = open_database(Settings())
     await migrate(engine)
-    yield SqliteCredentialVault(engine, FernetSecretBox.from_secret(SECRET))
+    yield SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
     await engine.dispose()
 
 
@@ -106,7 +106,7 @@ async def test_the_vault_round_trips_and_forgets(vault: CredentialVault) -> None
 async def test_the_database_holds_no_plaintext_and_a_new_key_cannot_read_it() -> None:
     engine = open_database(Settings())
     await migrate(engine)
-    vault = SqliteCredentialVault(engine, FernetSecretBox.from_secret(SECRET))
+    vault = SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
     await vault.save("/a/b", SCOPE, AccessToken(token=TOKEN))
     await vault.save("/c/d", SCOPE, DeployKey(private_key=KEY))
 
@@ -118,7 +118,7 @@ async def test_the_database_holds_no_plaintext_and_a_new_key_cannot_read_it() ->
         ).all()
     assert {r.library for r in rows} == {"/a/b", "/c/d"}
     assert all(TOKEN not in r.sealed and "QmFkZ2VyS2V5" not in r.sealed for r in rows)
-    other = SqliteCredentialVault(engine, FernetSecretBox.from_secret("z" * 40))
+    other = SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret("z" * 40))
     with pytest.raises(CredentialsRequiredError):
         await other.load("/a/b", SCOPE)
     # a row copied to another library is not accepted either
@@ -189,7 +189,7 @@ def test_seeding_is_idempotent_and_keeps_entries_ssh_added(tmp_path: Path) -> No
 async def test_a_credential_is_only_opened_for_the_host_it_was_stored_for() -> None:
     engine = open_database(Settings())
     await migrate(engine)
-    vault = SqliteCredentialVault(engine, FernetSecretBox.from_secret(SECRET))
+    vault = SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
     await vault.save("/a/b", "https://github.com", AccessToken(token=TOKEN))
 
     assert await vault.load("/a/b", "https://github.com") == AccessToken(token=TOKEN)

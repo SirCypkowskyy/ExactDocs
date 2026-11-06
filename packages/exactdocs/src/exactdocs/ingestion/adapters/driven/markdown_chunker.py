@@ -25,7 +25,7 @@ _ANCHOR_DROP = re.compile(r"[^\w\- ]")
 _LANGUAGE = re.compile(r"[\w+#-]+")  # `python{1,3}` and `{.python}` both name python
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- grows as lines come
 class _Section:
     """The lines from one top-level heading to the next (``level`` 0: before the first)."""
 
@@ -38,7 +38,7 @@ class _Section:
     size: int = 0  # characters
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- grows as lines come
 class _Piece:
     """Consecutive sections that become one chunk; named after the first."""
 
@@ -135,9 +135,9 @@ class MarkdownChunker:
         grouped: list[_Piece] = []
         for section in sections:
             if grouped and section.level > config.split_depth:
-                grouped[-1].add(_Piece([section], section.size))
+                grouped[-1].add(_Piece(sections=[section], size=section.size))
             else:
-                grouped.append(_Piece([section], section.size))
+                grouped.append(_Piece(sections=[section], size=section.size))
         pieces: list[_Piece] = []
         for piece in grouped:
             if config.max_chars is None or piece.size <= config.max_chars:
@@ -146,9 +146,9 @@ class MarkdownChunker:
             cut: list[_Piece] = []
             for section in piece.sections:
                 if cut and cut[-1].size + section.size <= config.max_chars:
-                    cut[-1].add(_Piece([section], section.size))
+                    cut[-1].add(_Piece(sections=[section], size=section.size))
                 else:
-                    cut.append(_Piece([section], section.size))
+                    cut.append(_Piece(sections=[section], size=section.size))
             pieces.extend(cut)
         return self._merged(pieces) if config.min_chars else pieces
 

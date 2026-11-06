@@ -23,7 +23,7 @@ class DocTarget:
     version: str
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class SearchText:
     """What the agent is looking for: an identifier, an error code or a question."""
 
@@ -222,7 +222,7 @@ class SearchHit:
     highlights: tuple[tuple[int, int], ...]  # [start, end) offsets into ``snippet``, in order
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ManifestHit:
     """A hit of a search over several manifests: which manifest (so which library) it came from."""
 

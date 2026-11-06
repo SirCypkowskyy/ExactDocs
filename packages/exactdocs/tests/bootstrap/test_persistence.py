@@ -66,7 +66,7 @@ async def test_empty_data_dir_gets_a_database_at_the_alembic_head(
 async def test_a_stored_library_is_listed_after_a_restart() -> None:
     first = Container.build(Settings())
     async with first.running():
-        await SqliteLibraryRepository(first.engine).save(library("/acme/payments"))
+        await SqliteLibraryRepository(engine=first.engine).save(library("/acme/payments"))
 
     second = Container.build(Settings())
     async with second.running():
@@ -116,7 +116,7 @@ async def test_a_read_only_container_runs_once_at_a_time() -> None:
 async def test_nothing_survives_in_another_data_dir(tmp_path: Path) -> None:
     first = Container.build(Settings())
     async with first.running():
-        await SqliteLibraryRepository(first.engine).save(library("/a/b"))
+        await SqliteLibraryRepository(engine=first.engine).save(library("/a/b"))
 
     other = Container.build(Settings(data_dir=tmp_path / "other"))
     async with other.running():
@@ -248,7 +248,7 @@ async def test_a_batch_alteration_keeps_the_rows_that_reference_the_table(tmp_pa
         """,
     )
     async with container.running():
-        repository = SqliteLibraryRepository(container.engine)
+        repository = SqliteLibraryRepository(engine=container.engine)
         stored = library("/acme/payments")
         await repository.save(stored)
 

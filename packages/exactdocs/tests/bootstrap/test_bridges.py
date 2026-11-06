@@ -82,22 +82,24 @@ PAYMENTS = Library(
 _LIBRARIES = InMemoryLibraryRepository.of([PAYMENTS])
 CATALOG = CatalogModule.build(
     repository=_LIBRARIES,
-    manifests=(written := InMemoryManifestRepository(_LIBRARIES)),
-    imported_tags=InMemoryImportedTags(written),
-    copier=InMemoryManifestCopier(written),
-    stored_articles=InMemoryStoredArticles(written),
+    manifests=(written := InMemoryManifestRepository(libraries=_LIBRARIES)),
+    imported_tags=InMemoryImportedTags(repository=written),
+    copier=InMemoryManifestCopier(repository=written),
+    stored_articles=InMemoryStoredArticles(repository=written),
 )
-ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
+ACTIVE = CatalogActiveManifests(
+    get_active_manifest=CATALOG.get_active_manifest, get_manifest_states=CATALOG.get_manifest_states
+)
 
 
 _TAKEN = InMemoryLibraryRepository.of([PAYMENTS])
 LIBRARY_IDS = CatalogLibraryIds(
-    CatalogModule.build(
+    get_library=CatalogModule.build(
         repository=_TAKEN,
-        manifests=(written := InMemoryManifestRepository(_TAKEN)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=_TAKEN)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     ).get_library
 )
 
@@ -155,7 +157,9 @@ async def test_a_state_the_catalog_adds_later_maps_to_other_so_it_is_kept() -> N
         states = {"m1": "failed", "m2": "active"}  # "failed" does not exist yet
         return ManifestStates.model_construct(states=states)
 
-    bridge = CatalogActiveManifests(CATALOG.get_active_manifest, newer_catalog)
+    bridge = CatalogActiveManifests(
+        get_active_manifest=CATALOG.get_active_manifest, get_manifest_states=newer_catalog
+    )
 
     assert await bridge.statuses(["m1", "m2"]) == {
         "m1": ManifestStatus.OTHER,
@@ -163,7 +167,9 @@ async def test_a_state_the_catalog_adds_later_maps_to_other_so_it_is_kept() -> N
     }
 
 
-SEARCHABLE = CatalogSearchableVersions(CATALOG.get_library, CATALOG.get_active_manifest)
+SEARCHABLE = CatalogSearchableVersions(
+    get_library=CATALOG.get_library, get_active_manifest=CATALOG.get_active_manifest
+)
 
 
 async def test_a_searchable_version_needs_an_active_manifest_and_names_its_source() -> None:
@@ -201,13 +207,13 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
     repository = InMemoryLibraryRepository.of(many)
     catalog = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
-    found = await CatalogLibraries(catalog.list_libraries).all()
+    found = await CatalogLibraries(list_libraries=catalog.list_libraries).all()
 
     assert len(found) == MAX_LIMIT + 4  # lib-000 has no version
     assert found[0].id == "/acme/lib-001"
@@ -226,10 +232,10 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
     repository = InMemoryLibraryRepository.of([PAYMENTS, other])
     catalog = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
     stored = await catalog.store_manifest(
         StoreManifestCommand(
@@ -252,7 +258,9 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
     )
     await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
 
-    found = await CatalogDefaultVersions(catalog.list_default_manifests).all()
+    found = await CatalogDefaultVersions(
+        list_default_manifests=catalog.list_default_manifests
+    ).all()
 
     # /acme/payments has a default version (v1.4.0) but nothing active: it is left out.
     assert [(v.library, v.version, v.manifest_id) for v in found] == [
@@ -286,12 +294,14 @@ async def test_library_sources_report_each_versions_origin_and_the_pinned_defaul
     repository = InMemoryLibraryRepository.of([library])
     catalog = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
-    sources = CatalogLibrarySources(catalog.get_library, catalog.list_renames)
+    sources = CatalogLibrarySources(
+        get_library=catalog.get_library, list_renames=catalog.list_renames
+    )
 
     found = sorted(await sources.imported_versions("/acme/ledger"), key=lambda v: v.ref)
 
@@ -315,19 +325,21 @@ async def test_library_sources_report_each_versions_origin_and_the_pinned_defaul
 
 def _tagging_catalog() -> CatalogModule:
     libraries = InMemoryLibraryRepository.of([PAYMENTS])
-    manifests = InMemoryManifestRepository(libraries)
+    manifests = InMemoryManifestRepository(libraries=libraries)
     return CatalogModule.build(
         repository=libraries,
         manifests=manifests,
-        imported_tags=InMemoryImportedTags(manifests),
-        copier=InMemoryManifestCopier(manifests),
-        stored_articles=InMemoryStoredArticles(manifests),
+        imported_tags=InMemoryImportedTags(repository=manifests),
+        copier=InMemoryManifestCopier(repository=manifests),
+        stored_articles=InMemoryStoredArticles(repository=manifests),
     )
 
 
 async def test_imported_tags_are_read_and_written_through_the_catalog() -> None:
     catalog = _tagging_catalog()
-    bridge = CatalogImportedTags(catalog.get_version_tags, catalog.set_imported_tags)
+    bridge = CatalogImportedTags(
+        get_version_tags=catalog.get_version_tags, set_imported_tags_of=catalog.set_imported_tags
+    )
     stored = await catalog.store_manifest(
         StoreManifestCommand(
             library="/acme/payments",
@@ -364,7 +376,7 @@ async def test_imported_tags_are_read_and_written_through_the_catalog() -> None:
 
 async def test_settings_are_stored_on_the_catalog_library() -> None:
     catalog = _tagging_catalog()
-    bridge = CatalogLibrarySettings(catalog.set_library_settings)
+    bridge = CatalogLibrarySettings(set_library_settings=catalog.set_library_settings)
 
     await bridge.save(
         "/acme/payments",
@@ -386,7 +398,7 @@ async def test_settings_are_stored_on_the_catalog_library() -> None:
 
 async def test_a_version_is_copied_for_re_chunking_through_the_catalog() -> None:
     catalog = _tagging_catalog()
-    bridge = CatalogVersionCopier(catalog.copy_manifest)
+    bridge = CatalogVersionCopier(copy_manifest=catalog.copy_manifest)
     stored = await catalog.store_manifest(
         StoreManifestCommand(
             library="/acme/payments",
@@ -431,23 +443,23 @@ async def test_a_version_is_copied_for_re_chunking_through_the_catalog() -> None
 
 async def test_the_chunking_settings_reach_the_importer() -> None:
     catalog = _tagging_catalog()
-    await CatalogLibrarySettings(catalog.set_library_settings).save(
+    await CatalogLibrarySettings(set_library_settings=catalog.set_library_settings).save(
         "/acme/payments",
         PathSelection.of(["docs/"]),
         (),
         ChunkingConfig(split_depth=3, min_chars=5),
     )
 
-    source = await CatalogLibrarySources(catalog.get_library, catalog.list_renames).get(
-        "/acme/payments"
-    )
+    source = await CatalogLibrarySources(
+        get_library=catalog.get_library, list_renames=catalog.list_renames
+    ).get("/acme/payments")
 
     assert source.chunking == ChunkingConfig(split_depth=3, min_chars=5)
 
 
 async def test_stored_articles_are_found_through_the_catalog_by_parser_version() -> None:
     catalog = _tagging_catalog()
-    bridge = CatalogStoredArticles(catalog.find_stored_articles)
+    bridge = CatalogStoredArticles(find_stored_articles=catalog.find_stored_articles)
     await catalog.store_manifest(
         StoreManifestCommand(
             library="/acme/payments",

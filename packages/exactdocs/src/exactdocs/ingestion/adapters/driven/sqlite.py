@@ -89,7 +89,7 @@ jobs = Table(
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteJobRepository:
     """Implements ``ports.driven.JobRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -244,7 +244,7 @@ def _problem(raw: Mapping[str, str]) -> FileProblem:
             code = ProblemCode.TRUNCATED
         else:
             code = _LEGACY_CODES.get(reason, ProblemCode.UNREADABLE)
-    return FileProblem(path, code, reason)
+    return FileProblem(path=path, code=code, reason=reason)
 
 
 def _origin(stored: str) -> VersionOrigin:
@@ -295,7 +295,7 @@ credentials = Table(
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteCredentialVault:
     """Implements ``ports.driven.CredentialVault``: rows of encrypted credentials."""
 
@@ -355,7 +355,7 @@ auto_syncs = Table(
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteAutoSyncStore:
     """Implements ``ports.driven.AutoSyncStore``: one row per library checked on its own."""
 

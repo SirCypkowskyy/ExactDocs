@@ -118,7 +118,7 @@ async def _confirmed_removals(
     return [m.manifest_id for m in survivors]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SearchDocsUseCase:
     """Implements ``ports.driving.SearchDocs``."""
 
@@ -169,7 +169,7 @@ class SearchDocsUseCase:
 MAX_SEARCHED_LIBRARIES = 500
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SearchAllLibrariesUseCase:
     """Implements ``ports.driving.SearchAllLibraries``."""
 
@@ -247,7 +247,7 @@ class SearchAllLibrariesUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IndexManifestUseCase:
     """Implements ``ports.driving.IndexManifest``."""
 
@@ -315,7 +315,7 @@ class IndexManifestUseCase:
         return chunk_sets, rows
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReadChunkUseCase:
     """Implements ``ports.driving.ReadChunk``."""
 
@@ -419,7 +419,7 @@ def _pick(current: Sequence[SectionRef], was: Chunk, position: int) -> SectionRe
     return _nearest(same_text, position)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetChunkSetsUseCase:
     """Implements ``ports.driving.GetChunkSets``."""
 
@@ -448,7 +448,7 @@ class GetChunkSetsUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DiscardPendingChunksUseCase:
     """Implements ``ports.driving.DiscardPendingChunks``."""
 
@@ -469,7 +469,7 @@ class DiscardPendingChunksUseCase:
         return RemovedChunks.from_model(await self.chunks.remove(doomed))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CollectChunksUseCase:
     """Implements ``ports.driving.CollectChunks``."""
 
@@ -488,7 +488,7 @@ class CollectChunksUseCase:
         return RemovedChunks.from_model(await self.chunks.remove(doomed))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RemoveChunksUseCase:
     """Implements ``ports.driving.RemoveChunks``."""
 
@@ -504,7 +504,7 @@ class RemoveChunksUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RetagArticlesUseCase:
     """Implements ``ports.driving.RetagArticles``."""
 
@@ -516,7 +516,7 @@ class RetagArticlesUseCase:
         return RetaggedChunks(chunks=await self.chunks.set_tags(command.manifest_id, tags))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetSearchIndexStateUseCase:
     """Implements ``ports.driving.GetSearchIndexState``."""
 
@@ -527,7 +527,7 @@ class GetSearchIndexStateUseCase:
         return SearchIndexStateOut.from_model(await self.maintenance.state())
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RebuildSearchIndexUseCase:
     """Implements ``ports.driving.RebuildSearchIndex``."""
 
@@ -544,7 +544,7 @@ MAX_RESOLVED = 10
 QUERY_HITS_CAP = 5
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ResolveLibraryIdUseCase:
     """Implements ``ports.driving.ResolveLibraryId``."""
 
@@ -657,7 +657,7 @@ def _fit_rules(rules: Sequence[str], room: int) -> list[str]:
     return kept
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class QueryDocsUseCase:
     """Implements ``ports.driving.QueryDocs``."""
 
