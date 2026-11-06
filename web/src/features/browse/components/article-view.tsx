@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { type HistoryState, Link, Navigate, useRouterState } from "@tanstack/react-router";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
-import { accessQueryOptions, articleQueryOptions } from "../api/browse-queries";
+import {
+  accessQueryOptions,
+  articleQueryOptions,
+  renamedInVersionQueryOptions,
+} from "../api/browse-queries";
 import {
   type Article,
   commitUrl,
@@ -387,6 +391,7 @@ function Body({
   library,
   version,
   tags,
+  movedFrom,
 }: {
   article: Article;
   owner: string;
@@ -394,11 +399,22 @@ function Body({
   library: LibraryDetail;
   version: Version;
   tags: string | undefined;
+  /** The path a link asked for, when it led here through a rename. */
+  movedFrom: string | undefined;
 }) {
   const large = article.content.length > LARGE;
   const [view, setView] = useState<View>(large ? "source" : "rendered");
   return (
     <article className="min-w-0 max-w-3xl">
+      {movedFrom && (
+        <p className="mb-3 text-sm text-pretty text-muted-foreground">
+          Moved from{" "}
+          <code className="font-mono text-foreground [overflow-wrap:anywhere]">
+            <PathText path={movedFrom} />
+          </code>{" "}
+          in {version.ref}
+        </p>
+      )}
       <p className="font-mono text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         <PathText path={article.path} />
       </p>
@@ -429,13 +445,37 @@ function Body({
   );
 }
 
-/** The article pane: loading, the text, "not in this version" with suggestions, or an error. */
+/**
+ * The article pane: loading, the text, "not in this version" with suggestions, or an error.
+ * A path the version does not have is first looked up in the version's renames: a link to an
+ * article git saw moved opens its new path instead, in the same version and at the same anchor.
+ */
 export function ArticleView(props: ArticleViewProps) {
-  const { owner, repo, library, version, path } = props;
-  const query = useQuery(
-    articleQueryOptions({ owner, repo, ref: version.ref, sha: version.commit_sha }, path),
-  );
-  if (query.isPending) {
+  const { owner, repo, library, version, path, tags } = props;
+  const at = { owner, repo, ref: version.ref, sha: version.commit_sha };
+  const query = useQuery(articleQueryOptions(at, path));
+  const missing = query.error instanceof HttpError && query.error.status === 404;
+  const renamed = useQuery({ ...renamedInVersionQueryOptions(at, path), enabled: missing });
+  // Set by the redirect below; any other navigation drops it.
+  const movedFrom = useRouterState({
+    select: (s) => {
+      const from = (s.location.state as { movedFrom?: unknown }).movedFrom;
+      return typeof from === "string" && from !== path ? from : undefined;
+    },
+  });
+  if (missing && renamed.data) {
+    return (
+      <Navigate
+        to="/libraries/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ version: version.ref, path: renamed.data, tags }}
+        hash={true}
+        state={{ movedFrom: path } as HistoryState}
+        replace
+      />
+    );
+  }
+  if (query.isPending || (missing && renamed.isPending)) {
     return (
       <div role="status" aria-busy="true">
         <span className="sr-only">Loading {path}</span>
@@ -476,6 +516,7 @@ export function ArticleView(props: ArticleViewProps) {
       library={library}
       version={version}
       tags={props.tags}
+      movedFrom={movedFrom}
     />
   );
 }
