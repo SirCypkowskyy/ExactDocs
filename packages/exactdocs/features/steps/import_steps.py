@@ -154,8 +154,13 @@ def step_running(context: Context) -> None:
 def start(
     context: Context, max_image_bytes: int | None = None, secret_key: str | None = None
 ) -> None:
+    # A scenario that starts over with other settings stops the instance it had first: a
+    # process runs one job worker.
+    if (earlier := getattr(context, "instance", None)) is not None:
+        earlier.close()
     stack = ExitStack()
     context.add_cleanup(stack.close)
+    context.instance = stack
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     settings = Settings(data_dir=data_dir)
     if secret_key is not None:

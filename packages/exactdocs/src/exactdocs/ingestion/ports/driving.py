@@ -1,5 +1,6 @@
 """Driving (primary) ports of ingestion: what the outside world may ask it to do."""
 
+from collections.abc import Collection
 from typing import Protocol
 
 from exactdocs.ingestion.dtos import (
@@ -76,10 +77,35 @@ class ListLatestJobs(Protocol):
 
 
 class RecoverJobs(Protocol):
-    """On start: run each interrupted job's recovery hook, then queue it again."""
+    """On start: clean up after interrupted jobs and hand every queued job to the runner."""
+
+    async def __call__(self, *, resuming: Collection[str] = ()) -> None:
+        """Run the hook of each ``running`` job, queue it again, then submit the queued jobs.
+
+        Jobs whose ID is in ``resuming`` are left as they are: the runner already has them and
+        resumes them from their last durable step.
+        """
+        ...
+
+
+class SubmitQueuedJobs(Protocol):
+    """Hand every queued job to the runner again (it ignores the ones it already has)."""
 
     async def __call__(self) -> None:
         """Run the use case."""
+        ...
+
+
+class RunJob(Protocol):
+    """Run one job to its end: a queued one, or one that was running when the app stopped."""
+
+    async def __call__(self, job_id: str, /) -> None:
+        """Do nothing for a job that is unknown or already finished.
+
+        The caller makes sure that no other job of the library runs meanwhile. A job found
+        ``running`` is resumed: its recovery hook runs, its progress starts over and its
+        handler's completed durable steps (``Checkpoints``) are not done again.
+        """
         ...
 
 

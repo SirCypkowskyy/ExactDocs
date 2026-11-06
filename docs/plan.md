@@ -194,7 +194,7 @@ What MVP-1 turned out differently from the issues as first written (source: the 
 | Plan | As built | Why |
 |---|---|---|
 | Chunker: Chonkie's Markdown recipe | `markdown-it-py` behind the `Chunker` port (#27) | Chonkie's recipe downloads rules from the Hugging Face Hub (network), and its `MarkdownChef` mis-detects fences in block quotes |
-| Image budget 300 MB | 375 MB, measured 339 MB (#55) | The floor is the Python base image, git and ssh, and 57 MB of `.pyc` that keeps read-only containers from recompiling; see [Size and model-free budgets](releasing.md#size-and-model-free-budgets) |
+| Image budget 300 MB | 375 MB, measured 339 MB (#55); 400 MB since DBOS (#65), measured 374.5 MB | The floor is the Python base image, git and ssh, and 57 MB of `.pyc` that keeps read-only containers from recompiling; see [Size and model-free budgets](releasing.md#size-and-model-free-budgets) |
 | MCP tools take `version` | `list_articles`, `read_article` and `search_docs` take `ref` (#38) | Matches `search_docs` and the REST `?ref=`; the context7 tools keep their own names |
 | `LibrarySummary.versions` (ref strings) | `refs` (kind, commit SHA, default flag; at most 50) plus `version_count` (#38) | Agents need the kind and commit SHA per version |
 | No tags endpoint | `GET /libraries/{owner}/{repo}/tags` lists a version's tags with counts (#50) | The UI's tag filter needs them |

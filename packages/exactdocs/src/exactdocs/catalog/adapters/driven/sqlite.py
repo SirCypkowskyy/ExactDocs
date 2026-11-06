@@ -58,6 +58,7 @@ from exactdocs.catalog.models import (
     ManualTag,
     ManualTags,
     RefKind,
+    RenameDirection,
     StoredArticle,
     StoredImage,
     TagMatch,
@@ -519,13 +520,16 @@ class SqliteManifestRepository:
                     ],
                 )
 
-    async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
-        """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
-        return await self._one_rename(manifest_id, manifest_renames.c.old_path == old_path)
-
-    async def find_rename_to(self, manifest_id: ManifestId, new_path: str) -> ManifestRename | None:
-        """Return the rename that made ``new_path`` (the first by old path), or ``None``."""
-        return await self._one_rename(manifest_id, manifest_renames.c.new_path == new_path)
+    async def find_rename(
+        self,
+        manifest_id: ManifestId,
+        path: str,
+        direction: RenameDirection = RenameDirection.FORWARD,
+    ) -> ManifestRename | None:
+        """Return the rename of the old path, or (``BACK``) the first one into the new path."""
+        back = direction is RenameDirection.BACK
+        column = manifest_renames.c.new_path if back else manifest_renames.c.old_path
+        return await self._one_rename(manifest_id, column == path)
 
     async def list_renames(
         self, manifest_id: ManifestId, *, limit: int
@@ -539,6 +543,43 @@ class SqliteManifestRepository:
                 .limit(limit)
             )
             return tuple(_rename(row) for row in rows)
+
+    async def replace_renames(
+        self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
+    ) -> None:
+        """Delete the manifest's renames, then add those into its entries; one transaction."""
+        wanted = sorted({r.new_path for r in renames})
+        async with self._write() as connection:
+            await connection.execute(
+                delete(manifest_renames).where(manifest_renames.c.manifest_id == manifest_id)
+            )
+            paths: set[str] = set()
+            for start in range(0, len(wanted), 500):  # stay under SQLite's bound-variable limit
+                rows = await connection.execute(
+                    select(manifest_entries.c.path).where(
+                        manifest_entries.c.manifest_id == manifest_id,
+                        manifest_entries.c.path.in_(wanted[start : start + 500]),
+                    )
+                )
+                paths.update(row.path for row in rows)
+            kept: dict[str, ManifestRename] = {}
+            for r in renames:
+                if r.new_path in paths:
+                    kept.setdefault(r.old_path, r)
+            if kept:
+                await connection.execute(
+                    insert(manifest_renames),
+                    [
+                        {
+                            "manifest_id": manifest_id,
+                            "old_path": r.old_path,
+                            "from_ref": r.from_ref.value,
+                            "new_path": r.new_path,
+                            "similarity": r.similarity,
+                        }
+                        for r in kept.values()
+                    ],
+                )
 
     async def _one_rename(
         self, manifest_id: ManifestId, *where: ColumnElement[bool]

@@ -1,4 +1,5 @@
 from exactdocs.ingestion.ports.driven import (
+    Checkpoints,
     Chunker,
     ChunkIndex,
     Collector,
@@ -8,6 +9,7 @@ from exactdocs.ingestion.ports.driven import (
     JobHandler,
     JobProgress,
     JobRepository,
+    JobRunner,
     LibraryIds,
     LibrarySources,
     NewLibraries,
@@ -32,7 +34,9 @@ from exactdocs.ingestion.ports.driving import (
     ReimportVersion,
     RemoveLibrary,
     RemoveVersion,
+    RunJob,
     RunNextJob,
+    SubmitQueuedJobs,
     SyncLibrary,
 )
 
@@ -40,6 +44,7 @@ __all__ = [
     "AddLibrary",
     "AddVersion",
     "CheckRepository",
+    "Checkpoints",
     "ChunkIndex",
     "Chunker",
     "Collector",
@@ -51,6 +56,7 @@ __all__ = [
     "JobHandler",
     "JobProgress",
     "JobRepository",
+    "JobRunner",
     "LibraryIds",
     "LibrarySources",
     "ListLatestJobs",
@@ -66,8 +72,10 @@ __all__ = [
     "RemoveVersion",
     "RenameSource",
     "RepositoryTree",
+    "RunJob",
     "RunNextJob",
     "SecretBox",
+    "SubmitQueuedJobs",
     "SyncLibrary",
     "VersionPublisher",
 ]

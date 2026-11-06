@@ -22,7 +22,7 @@ def _run[T](context: Context, action: Callable[[CatalogModule], Awaitable[T]]) -
 
     async def go() -> T:
         container = Container.build(context.settings)
-        async with container.running():
+        async with container.running(jobs=False):
             return await action(container.catalog)
 
     return asyncio.run(go())

@@ -282,7 +282,7 @@ async def test_processes_starting_together_all_migrate_an_empty_database(
         containers = [Container.build(Settings()) for _ in range(8)]
 
         async def start(container: Container) -> str | None:
-            async with container.running():
+            async with container.running(jobs=False):  # one job worker per process
                 return await current_revision(container.engine)
 
         assert await asyncio.gather(*(start(c) for c in containers)) == [head()] * 8

@@ -1442,6 +1442,9 @@ DEFAULT_MAX_ARTICLE_BYTES = 2 * 2**20
 DEFAULT_MAX_IMPORT_BYTES = 256 * 2**20
 """An import whose selected articles add up to more than this many bytes fails."""
 
+DEFAULT_IMPORT_BATCH_FILES = 100
+"""Files an import parses and chunks per durable step: a resumed import loses at most these."""
+
 DEFAULT_MAX_IMAGE_BYTES = 2 * 2**20
 """Referenced images above this many bytes are skipped without being read."""
 

@@ -172,6 +172,20 @@ def test_database_libraries_live_only_in_driven_adapters_and_bootstrap(
     )
 
 
+@pytest.mark.parametrize("domain", [domain for domain in DOMAINS if domain != "ingestion"])
+def test_dbos_lives_only_in_ingestion_adapters_and_bootstrap(domain: str) -> None:
+    # Ingestion's core is covered by `test_core_is_framework_free`; jobs are ingestion's.
+    assert_passes(
+        project_files(SRC)
+        .in_path(_path(domain))
+        .should_not()
+        .depend_on_external_modules()
+        .matching("dbos*")
+        .because("durable jobs belong to ingestion's adapters, wired in bootstrap"),
+        _ALLOW_EMPTY,
+    )
+
+
 @pytest.mark.parametrize("domain", DOMAINS)
 @pytest.mark.parametrize("layer", ["models", "errors"])
 def test_domain_model_does_not_depend_on_pydantic(domain: str, layer: str) -> None:

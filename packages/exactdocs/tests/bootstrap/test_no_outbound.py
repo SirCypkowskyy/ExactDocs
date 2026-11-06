@@ -415,6 +415,7 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
             c.catalog.discard_pending_manifests,
             c.catalog.apply_readme,
             c.catalog.apply_manual_tags,
+            c.catalog.replace_renames,
         ),
         index=RetrievalChunkIndex(
             c.retrieval.index_manifest,

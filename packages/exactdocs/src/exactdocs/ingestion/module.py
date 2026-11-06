@@ -13,6 +13,7 @@ from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.models import (
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
+    DEFAULT_IMPORT_BATCH_FILES,
     DEFAULT_MAX_ARTICLE_BYTES,
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGES_BYTES,
@@ -26,12 +27,14 @@ from exactdocs.ingestion.models import (
     GitRename,
     ImportedRef,
     ImportSource,
+    Job,
     JobKind,
     PathSelection,
     TaggedPath,
     TagRule,
 )
 from exactdocs.ingestion.ports.driven import (
+    Checkpoints,
     Chunker,
     ChunkIndex,
     Collector,
@@ -41,6 +44,7 @@ from exactdocs.ingestion.ports.driven import (
     ImportedTagStore,
     JobHandler,
     JobRepository,
+    JobRunner,
     LibraryIds,
     LibrarySettingsStore,
     LibrarySources,
@@ -67,7 +71,9 @@ from exactdocs.ingestion.ports.driving import (
     ReimportVersion,
     RemoveLibrary,
     RemoveVersion,
+    RunJob,
     RunNextJob,
+    SubmitQueuedJobs,
     SyncLibrary,
     TagArticle,
     UpdateLibrarySettings,
@@ -92,7 +98,9 @@ from exactdocs.ingestion.use_cases import (
     RemoveVersionUseCase,
     ReprocessLibraryUseCase,
     RetagLibraryUseCase,
+    RunJobUseCase,
     RunNextJobUseCase,
+    SubmitQueuedJobsUseCase,
     SyncLibraryUseCase,
     TagArticleUseCase,
     TagLocks,
@@ -171,6 +179,13 @@ class _NoCredentials:
         return False
 
 
+class _NoRunner:
+    """The default ``runner`` of ``build``: jobs wait in the repository for ``RunNextJob``."""
+
+    async def submit(self, job: Job) -> None:
+        del job
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IngestionModule:
     """The ingestion's driving ports, ready to be exposed by driving adapters."""
@@ -189,7 +204,9 @@ class IngestionModule:
     reimport_version: ReimportVersion
     remove_library: RemoveLibrary
     remove_version: RemoveVersion
+    run_job: RunJob
     run_next_job: RunNextJob
+    submit_queued_jobs: SubmitQueuedJobs
     sync_library: SyncLibrary
     tag_article: TagArticle
     update_library_settings: UpdateLibrarySettings
@@ -210,6 +227,7 @@ class IngestionModule:
         vault: CredentialVault | None = None,
         handlers: Mapping[JobKind, JobHandler] = MappingProxyType({}),
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
+        runner: JobRunner | None = None,
         manual_tags: ManualTagStore | None = None,
         tag_locks: TagLocks | None = None,
         settings: LibrarySettingsStore | None = None,
@@ -220,7 +238,8 @@ class IngestionModule:
         clean-up after an interrupted run (a kind without one needs none). With ``manual_tags``
         pass ``tag_locks``, the object given to ``import_job``, so tagging and an import's
         activation take turns. ``tree`` also reads a repository's ``context7.json`` when a
-        library is added; without it there is none. ``settings`` stores edited paths and tag
+        library is added; without it there is none. ``runner`` is told about every queued job;
+        without one, jobs wait for ``run_next_job``. ``settings`` stores edited paths and tag
         rules; it needs the ``reprocess`` and ``retag`` handlers of ``import_job``.
         """
         if manual_tags is not None and tag_locks is None:
@@ -229,7 +248,8 @@ class IngestionModule:
         if settings is not None and not {REPROCESS_JOB, RETAG_JOB} <= handlers.keys():
             message = "settings needs the reprocess and retag handlers of import_job"
             raise TypeError(message)
-        enqueue_job = EnqueueJobUseCase(jobs, clock, handlers)
+        runner = runner or _NoRunner()
+        enqueue_job = EnqueueJobUseCase(jobs, clock, handlers, runner)
         none = _NoLibrarySources()
         return cls(
             add_library=AddLibraryUseCase(
@@ -246,7 +266,7 @@ class IngestionModule:
             list_library_jobs=ListLibraryJobsUseCase(jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote),
             preview_repository=PreviewRepositoryUseCase(remote, tree or _NoTree()),
-            recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks),
+            recover_jobs=RecoverJobsUseCase(jobs, clock, recovery_hooks, runner),
             reimport_version=ReimportVersionUseCase(
                 remote, sources or none, jobs, enqueue_job, vault or _NoCredentials()
             ),
@@ -254,7 +274,9 @@ class IngestionModule:
                 jobs, removals, index, enqueue_job, vault or _NoCredentials()
             ),
             remove_version=RemoveVersionUseCase(jobs, removals, index, enqueue_job),
+            run_job=RunJobUseCase(jobs, clock, handlers, recovery_hooks),
             run_next_job=RunNextJobUseCase(jobs, clock, handlers),
+            submit_queued_jobs=SubmitQueuedJobsUseCase(jobs, runner),
             sync_library=SyncLibraryUseCase(
                 remote, sources or none, jobs, clock, enqueue_job, vault or _NoCredentials()
             ),
@@ -282,12 +304,16 @@ def import_job(
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
     tag_locks: TagLocks,
     imported_tags: ImportedTagStore,
+    checkpoints: Checkpoints | None = None,
+    batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
     Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
     The handlers re-process a library after a settings edit too: ``reprocess`` re-imports every
     version; ``retag`` re-tags them from what ``imported_tags`` has stored.
+    ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
+    chunked); without it an interrupted import starts over.
     """
     importer = ImportVersionUseCase(
         gateway,
@@ -301,8 +327,11 @@ def import_job(
         renames=renames,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
+        batch_files=batch_files,
         tag_locks=tag_locks,
     )
+    if checkpoints is not None:
+        importer = replace(importer, checkpoints=checkpoints)
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)
     handlers: dict[JobKind, JobHandler] = {

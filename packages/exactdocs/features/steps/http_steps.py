@@ -85,7 +85,7 @@ PLACEHOLDER_ADMIN = Account(
 
 async def store_demo_catalog(settings: Settings) -> None:
     container = Container.build(settings)
-    async with container.running():
+    async with container.running(jobs=False):
         await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
         now = datetime.now(UTC)
         await SqliteSessionRepository(container.engine).add(

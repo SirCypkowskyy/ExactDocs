@@ -27,7 +27,7 @@ CONFIG_HASH = "default-chunking"
 def _run[T](context: Context, action: Callable[[Container], Awaitable[T]]) -> T:
     async def go() -> T:
         container = Container.build(context.settings)
-        async with container.running():
+        async with container.running(jobs=False):
             return await action(container)
 
     return asyncio.run(go())

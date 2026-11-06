@@ -27,6 +27,7 @@ def step_maps(context: Context, ref: str, old: str, new: str) -> None:
     response = _renamed_path(context, ref, old)
     assert response.status_code == HTTPStatus.OK, response.text
     found = response.json()["renamed"]
+    assert found is not None, f"{ref} has no rename of {old}"
     assert (found["old_path"], found["new_path"], found["ref"]) == (old, new, ref), found
     assert found["from_ref"] == "v1.3.0", found
     assert GIT_MIN_SIMILARITY <= found["similarity"] <= FULL_SIMILARITY, found

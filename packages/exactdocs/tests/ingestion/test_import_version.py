@@ -13,6 +13,7 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
     InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
@@ -63,6 +64,7 @@ from exactdocs.ingestion.use_cases import (
     RunNextJobUseCase,
     Skip,
     _decode,
+    _ImageBudget,
     _Progress,
 )
 from exactdocs_kernel import SystemClock
@@ -183,6 +185,8 @@ class Side:
     broken_discard: bool = False
     manual_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reached: asyncio.Event = field(default_factory=asyncio.Event)
+    replaced: list[tuple[str, str, tuple[GitRename, ...]]] = field(default_factory=list)
+    serving: bool = True
 
     async def _step(self, step: str) -> None:
         self.log.append(f"{self.name} {step}")
@@ -203,6 +207,21 @@ class Side:
     async def apply_manual_tags(self, manifest_id: str) -> dict[str, tuple[str, ...]]:
         await self._step(f"apply_manual_tags {manifest_id}")
         return dict(self.manual_tags)
+
+    async def replace_renames(
+        self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
+    ) -> dict[str, dict[str, tuple[str, ...]]]:
+        del library
+        await self._step(f"replace_renames {ref}")
+        self.replaced.append((ref, from_ref, tuple(renames)))
+        if not self.serving:
+            return {}
+        # The renewed version and a later one that follows its map; one without manual tags.
+        return {
+            f"active {ref}": dict(self.manual_tags),
+            "later": dict(self.manual_tags),
+            "none": {},
+        }
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
         await self._step(f"retag {manifest_id} {sorted(tags)}")
@@ -609,6 +628,7 @@ async def test_a_blob_that_was_chunked_before_is_not_chunked_again(tmp_path: Pat
 async def test_known_chunk_sets_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
     files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
     world = build_world(tmp_path, files)
+    world.run = replace(world.run, batch_files=len(files))  # one step for every file
 
     await world.run(make_job(), world.progress)
 
@@ -1160,7 +1180,6 @@ async def test_a_resync_of_a_tag_gives_the_same_map_as_its_first_import(tmp_path
     ("version", "imported", "kind"),
     [
         ("v1.4.0", [], RefKind.TAG),  # the first version has nothing to compare with
-        ("v1.2.0", [V13], RefKind.TAG),  # only older versions count
         ("main", [V13], RefKind.BRANCH),  # a branch has no place in a version order
         ("v1.4.0", [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=SHA)], RefKind.TAG),
         ("main", [], RefKind.BRANCH),  # a branch never imported has no earlier commit
@@ -1216,6 +1235,145 @@ async def test_cancelling_the_import_is_not_swallowed_by_rename_detection(tmp_pa
     assert world.catalog.stored == []
 
 
+NEW = "c" * 40
+V14 = ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=NEW)
+
+
+async def test_an_older_version_imported_later_renews_the_map_of_the_next_newer_one(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames(
+        [
+            moved("docs/setup.md", "docs/install.md", 84),
+            moved("docs/same.md", "docs/same.md"),
+            moved("other/b.md", "docs/b.md"),  # came from outside the library's paths
+        ]
+    )
+    world = build_world(
+        tmp_path, {"docs/setup.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+    world.catalog.manual_tags = {"docs/install.md": ("legacy",)}
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert (version.renamed_from, version.renames) == (None, ())  # v1.3.0 is the oldest
+    assert source.asked == [(SHA, NEW, ["refs/tags/v1.4.0", "refs/tags/v1.3.0"])]
+    assert world.catalog.replaced == [
+        ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
+    ]
+    assert world.log[-4:] == [
+        "catalog replace_renames v1.4.0",
+        "chunks retag active v1.4.0 ['docs/install.md']",
+        "chunks retag later ['docs/install.md']",
+        "catalog describe",
+    ]
+
+
+async def test_a_resume_after_publishing_renews_the_newer_map_without_publishing_again(
+    tmp_path: Path,
+) -> None:
+    """The renewal is no durable step: a run killed in it does it again, and only it."""
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    world = build_world(
+        tmp_path, {"docs/setup.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+    world.catalog.fail_at = "replace_renames v1.4.0"  # caught; the import goes on
+    await world.run(make_job("v1.3.0"), world.progress)
+    world.catalog.fail_at = None
+
+    resumed = checkpoints.resumed()
+    world.run = replace(world.run, checkpoints=resumed)
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert resumed.ran == []  # every step replayed: nothing fetched, stored or activated again
+    assert len(world.catalog.stored) == 1
+    assert world.catalog.replaced == [
+        ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
+    ]
+
+
+async def test_only_the_version_whose_previous_one_this_is_now_is_renewed(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    v12 = ImportedRef(ref="v1.2.0", kind=RefKind.TAG, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[v12, V14, ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=NEW)],
+    )
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert [r[:2] for r in world.catalog.replaced] == [("v1.4.0", "v1.3.0")]
+    assert [asked[:2] for asked in source.asked] == [(OLD, SHA), (SHA, NEW)]
+
+
+@pytest.mark.parametrize("kind", [RefKind.BRANCH, RefKind.COMMIT])
+async def test_a_version_out_of_the_tag_order_renews_nothing(tmp_path: Path, kind: RefKind) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+
+    await world.run(make_job("v1.3.0", kind=kind), world.progress)
+
+    assert source.asked == []
+    assert world.catalog.replaced == []
+
+
+async def test_a_newer_map_git_cannot_give_is_left_as_it_was(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=RepositoryUnreachableError("it took too long")),
+        imported=[V14],
+    )
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.catalog.replaced == []
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+
+
+@pytest.mark.parametrize("failing", ["replace_renames v1.4.0", "retag active v1.4.0"])
+async def test_a_failing_renewal_never_fails_the_import_of_the_older_version(
+    tmp_path: Path, failing: str
+) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames([moved("docs/a.md", "docs/install.md")]),
+        imported=[V14],
+    )
+    world.catalog.manual_tags = {"docs/install.md": ("legacy",)}
+    side = world.catalog if failing.startswith("replace") else world.chunks
+    side.fail_at = failing if side is world.catalog else f"{failing} ['docs/install.md']"
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.log[-1] == "catalog describe"
+    assert "catalog discard m1 /a/b" not in world.log
+
+
+async def test_a_newer_version_removed_meanwhile_is_not_retagged(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames([moved("docs/a.md", "docs/install.md")]),
+        imported=[V14],
+    )
+    world.catalog.serving = False
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.log[-2:] == ["catalog replace_renames v1.4.0", "catalog describe"]
+
+
 async def test_renames_are_not_asked_for_while_a_fetch_slot_is_held(tmp_path: Path) -> None:
     held: list[bool] = []
 
@@ -1255,6 +1413,33 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
     ]
     assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
     assert world.progress.problems == []
+
+
+async def test_each_image_is_kept_by_the_one_step_that_read_it(tmp_path: Path) -> None:
+    """A step's result is stored: an image in two of them would be stored twice."""
+    world = build_world(
+        tmp_path,
+        {"docs/guide/flow.md": PAGE, "docs/guide/logo.svg": SVG},
+        elsewhere={"docs/img/flow.png": PNG},
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+
+    await world.run(make_job(), world.progress)
+
+    results = dict(checkpoints.completed)
+    assets = results["read the README, context7.json and the images"]
+    outside = results["fetch the images outside the selection"]
+    assert isinstance(assets, tuple)
+    inside = assets[2]
+    assert isinstance(inside, _ImageBudget)
+    assert isinstance(outside, _ImageBudget)
+    assert [i.path for i in inside.images] == ["docs/guide/logo.svg"]
+    assert [i.path for i in outside.images] == ["docs/img/flow.png"]
+    assert [i.path for i in world.catalog.stored[0].images] == [
+        "docs/guide/logo.svg",
+        "docs/img/flow.png",
+    ]
 
 
 async def test_no_second_fetch_when_the_first_checkout_has_every_image(tmp_path: Path) -> None:

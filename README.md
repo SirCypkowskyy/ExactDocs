@@ -132,6 +132,11 @@ are and, past 1000, `truncated`; nothing is stored. `--id` and `--wait` have no 
 `--tag-rule` is only checked, so a malformed rule fails the dry run as it would fail `add`. There are no file sizes: knowing them would mean downloading every file. A server running
 as many previews as it allows answers "try again" (exit 1).
 
+In the web UI, **Preview** on the add-library form does the same: it shows the matching files as a
+folder tree with counts, what the repository's `context7.json` says (its paths fill the empty path
+boxes, still editable) and its `previousVersions` as checkboxes; the ticked tags are imported
+after the library is added.
+
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
 from a file of at most 64 KB, never from the command line; group- or world-readable files get a
 warning) and all `token` commands need **your password**, not an
@@ -374,7 +379,7 @@ Per-library split level and chunk sizes are planned (MVP-2).
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, the generated secret key, `known_hosts` and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
+| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, the generated secret key, `known_hosts`, fetch caches and `jobs.sqlite`, the durable steps of running imports). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
 | `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
 | `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
 | `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
@@ -386,6 +391,8 @@ Per-library split level and chunk sizes are planned (MVP-2).
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
 | `EXACTDOCS_MAX_IMPORT_BYTES` | `268435456` (256 MiB) | An import whose selected text adds up to more fails with `import_too_large` instead of exhausting memory |
+| `EXACTDOCS_IMPORT_BATCH_FILES` | `100` | Files an import parses and chunks per durable step. An import that a crash, `kill -9` or a deploy interrupted resumes on the next start after its last completed step (DBOS keeps them in `<data dir>/jobs.sqlite`: about 3x the version's text while the import runs, compacted once no job runs), so it loses at most this many files of work |
+| `EXACTDOCS_JOB_POLL_SECONDS` | `1` | How often the job worker looks for a queued job to start (at most 60). An idle server polls no more often than this; lower it only if a second of delay before an import starts matters |
 
 ### Upgrading
 

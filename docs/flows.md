@@ -15,7 +15,7 @@ sequenceDiagram
     actor U as User (UI or REST)
     participant API as REST: POST /libraries
     participant Q as Job queue (ingestion_jobs)
-    participant W as Worker
+    participant W as Worker (DBOS workflow)
     participant G as Git host
     participant C as Catalog
     participant R as Retrieval
@@ -28,9 +28,9 @@ sequenceDiagram
     loop poll GET /jobs/{job_id}
         U->>Q: state, done / total, problems
     end
-    W->>Q: claim the oldest queued job whose library has none running
+    W->>Q: start the oldest queued job whose library has none running
     W->>G: shallow, blobless fetch of the pinned commit, sparse checkout of the selected paths
-    W->>W: read each file, parse (front matter, tags), chunk by headings
+    W->>W: read each file, parse (front matter, tags), chunk by headings: 100 files per durable step
     W->>C: store the articles as a pending manifest
     W->>R: index the chunks (reusing chunk sets by blob SHA and chunking config)
     alt every step succeeded
@@ -41,9 +41,13 @@ sequenceDiagram
         W->>R: discard the pending chunks
         W->>C: discard the pending manifest
         Note over C: readers still see the last good version
-        W->>Q: job failed with a message, or re-queued on the next start
+        W->>Q: job failed with a message, or resumed on the next start
     end
 ```
+
+A process that stops or is killed mid-import resumes the job on the next start: the steps it
+completed (files listed, batches parsed and chunked) are taken from DBOS's stored results, and
+the import goes on from the first unfinished one.
 
 Skipped files (binary, too large, undecodable...) do not fail the import: they are recorded as
 job problems with a code, and the version is published without them.

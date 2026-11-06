@@ -22,7 +22,7 @@ SHA_LENGTH = 40
 def _call(context: Context, tool: str, arguments: dict[str, Any]) -> CallToolResult:
     async def go() -> CallToolResult:
         container = Container.build(context.settings)
-        async with container.running(), Client(build_mcp(container)) as mcp:
+        async with container.running(jobs=False), Client(build_mcp(container)) as mcp:
             return await mcp.call_tool(tool, arguments, raise_on_error=False)
 
     context.mcp_result = asyncio.run(go())

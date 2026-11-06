@@ -21,7 +21,7 @@ def call_tool(
 ) -> None:
     async def go() -> Any:
         container = Container.build(context.settings)
-        async with container.running(), Client(build_mcp(container)) as mcp:
+        async with container.running(jobs=False), Client(build_mcp(container)) as mcp:
             return await mcp.call_tool(tool, arguments, raise_on_error=raise_on_error)
 
     result = asyncio.run(go())

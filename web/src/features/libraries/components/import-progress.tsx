@@ -164,6 +164,8 @@ interface Props {
   onAddAnother?: (() => void) | undefined;
   /** Shown in place of the default buttons once the import is over. */
   finish?: ReactNode;
+  /** More to watch under this import (older versions queued with it), above the buttons. */
+  children?: ReactNode;
 }
 
 /** The list and its sync badges must not show the old state once the import is over. */
@@ -304,7 +306,7 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant 
 }
 
 /** Watches the import job of a library that was just added, including the files it skipped. */
-export function ImportProgress({ added, onAddAnother, finish }: Props) {
+export function ImportProgress({ added, onAddAnother, finish, children }: Props) {
   const { data: job, error } = useQuery(importJobQueryOptions(added.job_id));
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus({ preventScroll: true }), []);
@@ -346,6 +348,7 @@ export function ImportProgress({ added, onAddAnother, finish }: Props) {
         lostContact={lostContact}
         variant={onAddAnother ? "library" : "version"}
       />
+      {children}
 
       <Actions
         over={finished || gone}
