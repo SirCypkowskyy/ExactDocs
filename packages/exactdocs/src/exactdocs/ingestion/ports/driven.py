@@ -1,6 +1,6 @@
 """Driven (secondary) ports of ingestion: what it needs from git, storage and other domains."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +65,10 @@ class JobRepository(Protocol):
         """Return every job in the ``running`` state."""
         ...
 
+    async def list_queued(self) -> Sequence[Job]:
+        """Return every job in the ``queued`` state, oldest first."""
+        ...
+
     async def claim_next(self, now: datetime) -> Job | None:
         """Atomically start the oldest queued job whose library has no running job.
 
@@ -87,6 +91,33 @@ class JobProgress(Protocol):
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         """``chunked`` articles were cut into chunks, ``reused`` took the chunks stored before."""
+        ...
+
+
+class JobRunner(Protocol):
+    """Whatever runs queued jobs (a durable workflow engine), told about each new one."""
+
+    async def submit(self, job: Job) -> None:
+        """Hand over a job that was just queued; it runs when its library has no running job.
+
+        Best effort, never raises: a job that cannot be handed over now stays queued and is
+        handed over again when the runner starts (see ``RecoverJobs``).
+        """
+        ...
+
+
+class Checkpoints(Protocol):
+    """Durable steps: what a job did before a crash is not done again when it resumes."""
+
+    async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        """Return what ``run`` returns, running it at most once per job to completion.
+
+        A job that resumes after a crash gets the results of the steps it completed before,
+        in the same order and without running them; the first step it had not completed runs
+        again from its start. A job must therefore take the same steps in the same order on
+        every run, and a step must be safe to run twice (its writes keyed by content). Results
+        are stored, so they must be plain, picklable data.
+        """
         ...
 
 

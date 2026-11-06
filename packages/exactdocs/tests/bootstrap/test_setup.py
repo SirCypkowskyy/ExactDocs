@@ -117,7 +117,7 @@ async def test_an_admin_created_elsewhere_ends_the_setup_state(client: httpx.Asy
     # The CLI creates the admin in another process while the server is already running.
     assert (await client.get("/api/v1/libraries")).status_code == 403
     other = Container.build(Settings())
-    async with other.running():
+    async with other.running(jobs=False):  # as the CLI does: the server runs the jobs
         await other.identity.create_first_admin(
             CreateFirstAdminCommand(
                 username=CREDENTIALS["username"], password=SecretStr(CREDENTIALS["password"])

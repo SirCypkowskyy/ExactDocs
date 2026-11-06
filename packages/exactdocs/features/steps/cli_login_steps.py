@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import uvicorn
 from behave import given, then, when
 from behave.runner import Context
@@ -31,6 +32,8 @@ HORSE = "correct horse battery staple"
 def step_served(context: Context) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
+    # The server is the instance from here on: one job worker per process, and it is the server's.
+    context.client.__exit__(None, None, None)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(
@@ -45,6 +48,7 @@ def step_served(context: Context) -> None:
         time.sleep(0.05)
     assert server.started, "the server did not start"
     context.server_url = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    context.client = stack.enter_context(httpx.Client(base_url=context.server_url))
     config_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-cfg-")))
     context.config_file = config_dir / "config.json"
 

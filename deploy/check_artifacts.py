@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 
 WHEEL_BUDGET = 5_000_000
-IMAGE_BUDGET = 375_000_000
+IMAGE_BUDGET = 400_000_000  # 375 MB until DBOS (#65); see docs/releasing.md
 MODEL_SUFFIXES = (".safetensors", ".bin", ".onnx", ".gguf", ".pt")
 # ML stacks that must stay out of the default install; optional extras (`[ai]`) may carry them.
 ML_PACKAGES = {

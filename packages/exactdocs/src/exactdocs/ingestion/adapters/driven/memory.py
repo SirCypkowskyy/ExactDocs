@@ -1,7 +1,8 @@
-from collections.abc import Iterable, Mapping, Sequence
+import copy
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Self
+from typing import Self, cast
 
 from exactdocs.ingestion.errors import CredentialsRequiredError, VersionImportingError
 from exactdocs.ingestion.models import (
@@ -74,6 +75,11 @@ class InMemoryJobRepository:
     async def list_running(self) -> Sequence[Job]:
         """Return every job in the ``running`` state."""
         return [job for job in self.jobs.values() if job.state is JobState.RUNNING]
+
+    async def list_queued(self) -> Sequence[Job]:
+        """Return every job in the ``queued`` state, oldest first."""
+        waiting = [job for job in self.jobs.values() if job.state is JobState.QUEUED]
+        return sorted(waiting, key=lambda job: (job.created_at, job.id))
 
     async def claim_next(self, now: datetime) -> Job | None:
         """Atomically start the oldest queued job whose library has no running job."""
@@ -176,3 +182,38 @@ class InMemoryCredentialVault:
     async def has(self, library: str) -> bool:
         """Whether the library has a credential."""
         return library in self.credentials
+
+
+@dataclass(slots=True)
+class InMemoryCheckpoints:
+    """``Checkpoints`` that keep the results of one job's completed steps, as DBOS does.
+
+    ``resumed()`` returns the checkpoints of the next run of the same job: it replays the
+    completed steps in order, then runs the rest. Results are copied, as a stored result would
+    be, so nothing a later step changes reaches them.
+    """
+
+    completed: list[tuple[str, object]] = field(default_factory=list)
+    ran: list[str] = field(default_factory=list)
+    """The steps that really ran (not replayed), in order."""
+    _next: int = 0
+
+    async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        """Replay the step if this job completed it before, else run and record it."""
+        if self._next < len(self.completed):
+            recorded, result = self.completed[self._next]
+            if recorded != name:
+                message = f"step {self._next} was {recorded!r}, not {name!r}"
+                raise AssertionError(message)
+            self._next += 1
+            # The step of this name recorded a T: a job takes the same steps on every run.
+            return cast("T", copy.deepcopy(result))
+        self.ran.append(name)
+        value = await run()
+        self.completed.append((name, copy.deepcopy(value)))
+        self._next += 1
+        return value
+
+    def resumed(self) -> Self:
+        """Return the checkpoints of the job's next run, after a crash."""
+        return type(self)(completed=list(self.completed))

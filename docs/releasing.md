@@ -148,7 +148,7 @@ enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land 
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
 | wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 375 MB | 339 MB | no such model file anywhere in the filesystem |
+| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 374.5 MB (CI, PR #218) | no such model file anywhere in the filesystem |
 
 The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
 extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
@@ -162,12 +162,24 @@ HF Hub and network, which breaks RUN-02). If it is ever added, these extras must
 pulling torch, transformers, sentence-transformers, onnx/onnxruntime, huggingface-hub or model2vec
 (for Chonkie: the `semantic`, `neural`, `embeddings`, `code` and `all` extras).
 
-**Why 375 MB and not the 300 MB first planned.** The floor is the `python:3.14-slim` base (~120 MB),
+**Why 375 MB and not the 300 MB first planned** (before DBOS; see below for 400 MB). The floor is the `python:3.14-slim` base (~120 MB),
 git and ssh (~25 MB git-core plus libraries; Perl is already purged) and the virtualenv (167 MB). 57 MB
 of that is precompiled `.pyc`: dropping it would reach ~297 MB but make every start of a read-only
 container recompile the whole dependency tree. Keeping it is the better trade, so the budget is the
 measured 339 MB (`du -sxb /`; `docker image inspect` reports 353 MB with overlay2 and only the compressed ~115 MB with the containerd store, so it is not used) plus about 10 % headroom for dependency and Debian security updates. Raising it needs a
 reason in the PR; lowering it is the goal if a dependency is dropped.
+
+**Why 400 MB since E3-11 (#65).** Resumable imports run on DBOS 3.3, which imports psycopg at
+module level (`dbos._utils`, `dbos._queue`), so it needs a working psycopg at import time even
+though ExactDocs only uses its SQLite backend. Plain `psycopg` fails to import without a system
+libpq, and without psycopg DBOS does not import at all; making the import lazy would mean patching
+DBOS. So the image carries `psycopg[binary]` (about 19 MB, with its bundled libpq and OpenSSL), plus
+croniter, python-dateutil and tzdata: about 28 MB in all. That took the image from the 339 MB
+measured above to 374.5 MB in CI (Docker image job of #218), 0.5 MB under the old 375 MB budget, so
+the budget was raised to 400 MB: the same headroom (about 7 %) as before, for dependency and Debian
+updates. A smaller footprint stays possible behind the same `Checkpoints` port (an ingestion-owned
+checkpoint table instead of DBOS). psycopg is LGPL-3.0: list it if the image ever gets a
+third-party notices file.
 
 ## Image scan
 

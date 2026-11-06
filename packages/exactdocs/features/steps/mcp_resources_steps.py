@@ -21,7 +21,7 @@ DEFAULT_REF = "v1.4.0"
 
 async def _with_client(context: Context, action: Any) -> Any:
     container = Container.build(context.settings)
-    async with container.running(), Client(build_mcp(container)) as mcp:
+    async with container.running(jobs=False), Client(build_mcp(container)) as mcp:
         return await action(mcp)
 
 

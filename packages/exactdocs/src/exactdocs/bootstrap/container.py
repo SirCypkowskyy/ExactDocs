@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Self
 
+from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.bridges import (
@@ -45,12 +46,19 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteTokenRepository,
 )
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
+from exactdocs.ingestion.adapters.driven.dbos import (
+    QUEUE,
+    STEPS_VERSION,
+    WORKFLOW,
+    DbosCheckpoints,
+    DbosJobQueue,
+)
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault, SqliteJobRepository
-from exactdocs.ingestion.adapters.driving.worker import JobWorker
+from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     GitGateway,
@@ -66,6 +74,7 @@ from exactdocs_kernel import SystemClock
 logger = logging.getLogger(__name__)
 WORK_DIR = "work"  # under the data dir: one folder per running git fetch
 KNOWN_HOSTS_FILE = "known_hosts"  # under the data dir: SSH host keys, the big three pre-seeded
+JOBS_FILE = "jobs.sqlite"  # under the data dir: DBOS's workflows, the durable steps of jobs
 
 
 def _build_read_side(
@@ -138,7 +147,7 @@ class Container:
     identity: IdentityModule
     ingestion: IngestionModule
     retrieval: RetrievalModule
-    job_worker: JobWorker
+    job_worker: DbosJobWorker
     # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
     # event loop) is refused as well.
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -221,6 +230,8 @@ class Container:
             renames=renames,
             max_image_bytes=settings.max_image_bytes,
             max_images_bytes=settings.max_images_bytes,
+            checkpoints=DbosCheckpoints(),
+            batch_files=settings.import_batch_files,
             tag_locks=tag_locks,
         )
         ingestion = IngestionModule.build(
@@ -247,6 +258,7 @@ class Container:
             recovery_hooks=recovery_hooks,
             manual_tags=CatalogManualTags(catalog.set_manual_tags),
             tag_locks=tag_locks,
+            runner=DbosJobQueue(),
         )
         return cls(
             settings=settings,
@@ -262,8 +274,16 @@ class Container:
             ),
             ingestion=ingestion,
             retrieval=retrieval,
-            job_worker=JobWorker(
-                recover_jobs=ingestion.recover_jobs, run_next_job=ingestion.run_next_job
+            job_worker=DbosJobWorker(
+                run_job=ingestion.run_job,
+                recover_jobs=ingestion.recover_jobs,
+                submit_queued_jobs=ingestion.submit_queued_jobs,
+                poll_interval=settings.job_poll_seconds,
+                database=settings.data_dir / JOBS_FILE,
+                queue=QUEUE,
+                workflow=WORKFLOW,
+                version=STEPS_VERSION,
+                engine_options={"poolclass": NullPool},
             ),
         )
 

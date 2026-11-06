@@ -47,6 +47,7 @@ async def repository(request: pytest.FixtureRequest) -> AsyncIterator[JobReposit
 async def test_starts_empty(repository: JobRepository) -> None:
     assert await repository.get(JobId("j1")) is None
     assert await repository.list_running() == []
+    assert await repository.list_queued() == []
     assert await repository.claim_next(T0) is None
 
 
@@ -128,6 +129,14 @@ async def test_list_running_returns_only_running_jobs(repository: JobRepository)
     await repository.add(queued("done", library="/c/d").started(T0).succeeded(T0))
 
     assert [job.id for job in await repository.list_running()] == ["busy"]
+
+
+async def test_list_queued_returns_only_queued_jobs_oldest_first(repository: JobRepository) -> None:
+    await repository.add(queued("young", library="/a/b", minute=2))
+    await repository.add(queued("old", library="/c/d", minute=1))
+    await repository.add(queued("busy", library="/e/f").started(T0))
+
+    assert [job.id for job in await repository.list_queued()] == ["old", "young"]
 
 
 async def test_claim_starts_the_oldest_queued_job(repository: JobRepository) -> None:

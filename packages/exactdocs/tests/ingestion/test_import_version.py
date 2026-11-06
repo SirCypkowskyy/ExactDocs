@@ -13,6 +13,7 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
     InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
@@ -62,6 +63,7 @@ from exactdocs.ingestion.use_cases import (
     RunNextJobUseCase,
     Skip,
     _decode,
+    _ImageBudget,
     _Progress,
 )
 from exactdocs_kernel import SystemClock
@@ -624,6 +626,7 @@ async def test_a_blob_that_was_chunked_before_is_not_chunked_again(tmp_path: Pat
 async def test_known_chunk_sets_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
     files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
     world = build_world(tmp_path, files)
+    world.run = replace(world.run, batch_files=len(files))  # one step for every file
 
     await world.run(make_job(), world.progress)
 
@@ -1265,6 +1268,31 @@ async def test_an_older_version_imported_later_renews_the_map_of_the_next_newer_
     ]
 
 
+async def test_a_resume_after_publishing_renews_the_newer_map_without_publishing_again(
+    tmp_path: Path,
+) -> None:
+    """The renewal is no durable step: a run killed in it does it again, and only it."""
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    world = build_world(
+        tmp_path, {"docs/setup.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+    world.catalog.fail_at = "replace_renames v1.4.0"  # caught; the import goes on
+    await world.run(make_job("v1.3.0"), world.progress)
+    world.catalog.fail_at = None
+
+    resumed = checkpoints.resumed()
+    world.run = replace(world.run, checkpoints=resumed)
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert resumed.ran == []  # every step replayed: nothing fetched, stored or activated again
+    assert len(world.catalog.stored) == 1
+    assert world.catalog.replaced == [
+        ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
+    ]
+
+
 async def test_only_the_version_whose_previous_one_this_is_now_is_renewed(
     tmp_path: Path,
 ) -> None:
@@ -1383,6 +1411,33 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
     ]
     assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
     assert world.progress.problems == []
+
+
+async def test_each_image_is_kept_by_the_one_step_that_read_it(tmp_path: Path) -> None:
+    """A step's result is stored: an image in two of them would be stored twice."""
+    world = build_world(
+        tmp_path,
+        {"docs/guide/flow.md": PAGE, "docs/guide/logo.svg": SVG},
+        elsewhere={"docs/img/flow.png": PNG},
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+
+    await world.run(make_job(), world.progress)
+
+    results = dict(checkpoints.completed)
+    assets = results["read the README, context7.json and the images"]
+    outside = results["fetch the images outside the selection"]
+    assert isinstance(assets, tuple)
+    inside = assets[2]
+    assert isinstance(inside, _ImageBudget)
+    assert isinstance(outside, _ImageBudget)
+    assert [i.path for i in inside.images] == ["docs/guide/logo.svg"]
+    assert [i.path for i in outside.images] == ["docs/img/flow.png"]
+    assert [i.path for i in world.catalog.stored[0].images] == [
+        "docs/guide/logo.svg",
+        "docs/img/flow.png",
+    ]
 
 
 async def test_no_second_fetch_when_the_first_checkout_has_every_image(tmp_path: Path) -> None:

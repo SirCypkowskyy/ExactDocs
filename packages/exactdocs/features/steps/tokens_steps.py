@@ -101,7 +101,7 @@ def step_expired(context: Context) -> None:
 
 async def _plant(context: Context, secret: str) -> None:
     container = Container.build(context.settings)
-    async with container.running():
+    async with container.running(jobs=False):
         owner = await _first_account_id(container)
         now = datetime.now(UTC)
         await SqliteTokenRepository(container.engine).add(
