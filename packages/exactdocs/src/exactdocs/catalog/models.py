@@ -103,6 +103,13 @@ class RefKind(StrEnum):
     COMMIT = "commit"
 
 
+class VersionOrigin(StrEnum):
+    """Who asked for a version: a person, or the scheduled check (which may prune its own)."""
+
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Version:
     """One imported version of a library: a ref pinned to the commit it was resolved to."""
@@ -111,6 +118,8 @@ class Version:
     kind: RefKind
     commit_sha: str
     imported_at: datetime
+    origin: VersionOrigin = VersionOrigin.MANUAL
+    """Set by the version's first import and never changed by a later one."""
 
     def __post_init__(self) -> None:
         if not _OBJECT_ID.fullmatch(self.commit_sha):
@@ -490,6 +499,8 @@ class Manifest:
     superseded_at: datetime | None = None
     renames: tuple[ManifestRename, ...] = ()
     """Files moved since an earlier version; not loaded with the manifest (``find_rename``)."""
+    origin: VersionOrigin = VersionOrigin.MANUAL
+    """What its activation gives the version when it creates it (an existing one keeps its own)."""
 
     def __post_init__(self) -> None:
         if not _OBJECT_ID.fullmatch(self.commit_sha):

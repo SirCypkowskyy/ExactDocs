@@ -1,4 +1,5 @@
 from exactdocs.ingestion.ports.driven import (
+    AutoSyncStore,
     Checkpoints,
     Chunker,
     ChunkIndex,
@@ -17,6 +18,7 @@ from exactdocs.ingestion.ports.driven import (
     Removals,
     RenameSource,
     RepositoryTree,
+    ScheduleSwitch,
     SecretBox,
     VersionPublisher,
 )
@@ -43,6 +45,7 @@ from exactdocs.ingestion.ports.driving import (
 __all__ = [
     "AddLibrary",
     "AddVersion",
+    "AutoSyncStore",
     "CheckRepository",
     "Checkpoints",
     "ChunkIndex",
@@ -74,6 +77,7 @@ __all__ = [
     "RepositoryTree",
     "RunJob",
     "RunNextJob",
+    "ScheduleSwitch",
     "SecretBox",
     "SubmitQueuedJobs",
     "SyncLibrary",

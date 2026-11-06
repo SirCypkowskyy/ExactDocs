@@ -9,6 +9,7 @@ from typing import Protocol
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ArticleTags,
+    AutoSync,
     ChunkingConfig,
     Collected,
     CopiedVersion,
@@ -550,5 +551,45 @@ class ManualTagStore(Protocol):
 
         Raises a not-found error for an unknown library and a validation error for a bad path or
         tag.
+        """
+        ...
+
+
+class AutoSyncStore(Protocol):
+    """Where the libraries' scheduled checks are kept (``AutoSync``, one per library)."""
+
+    async def get(self, library: str) -> AutoSync | None:
+        """Return the library's schedule, or ``None`` when it is not checked on its own."""
+        ...
+
+    async def save(self, auto_sync: AutoSync) -> None:
+        """Store the schedule, replacing the library's earlier one."""
+        ...
+
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Store a check's result if the schedule is still the one it read; say whether it was.
+
+        ``checked``'s ``checked_at`` and ``last_error`` are stored in one atomic step only when
+        the stored ``revision`` and ``checked_at`` are ``read``'s: a schedule saved or removed
+        meanwhile is left alone.
+        """
+        ...
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's schedule (nothing happens when it has none)."""
+        ...
+
+    async def list_all(self) -> Sequence[AutoSync]:
+        """Return every stored schedule, by library."""
+        ...
+
+
+class ScheduleSwitch(Protocol):
+    """Turns the scheduled check's tick on or off: with no schedule, nothing is written."""
+
+    async def turn(self, *, on: bool) -> None:
+        """Make the tick run (``on``) or stop; best effort, never raises.
+
+        The worker sets it again from the stored schedules when it starts.
         """
         ...

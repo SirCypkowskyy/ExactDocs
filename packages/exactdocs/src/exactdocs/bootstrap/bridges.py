@@ -49,6 +49,9 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.dtos import (
     Removal as CatalogRemoval,
 )
+from exactdocs.catalog.dtos import (
+    VersionOrigin as CatalogVersionOrigin,
+)
 from exactdocs.catalog.errors import StoredContentOutdatedError
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
@@ -98,6 +101,7 @@ from exactdocs.ingestion.models import (
     StoredTags,
     TaggedPath,
     TagRule,
+    VersionOrigin,
 )
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
@@ -345,10 +349,16 @@ class CatalogLibrarySources:
         )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
-        """Return the library's imported versions with their kind and commit."""
+        """Return the versions: kind, commit, origin and whether it is the pinned default."""
         detail = await self.get_library(GetLibraryQuery(id=library))
         return [
-            ImportedRef(ref=v.ref, kind=RefKind(v.kind.value), commit_sha=v.commit_sha)
+            ImportedRef(
+                ref=v.ref,
+                kind=RefKind(v.kind.value),
+                commit_sha=v.commit_sha,
+                origin=VersionOrigin(v.origin.value),
+                pinned=detail.default_pinned and v.is_default,
+            )
             for v in detail.versions
         ]
 
@@ -673,6 +683,7 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
         kind=CatalogRefKind(version.kind.value),
         commit_sha=version.commit_sha,
         must_exist=version.refresh,
+        origin=CatalogVersionOrigin(version.origin.value),
         renames=[
             RenameIn(
                 from_ref=version.renamed_from,

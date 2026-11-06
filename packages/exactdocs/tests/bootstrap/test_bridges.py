@@ -33,6 +33,7 @@ from exactdocs.catalog.models import (
     LibraryId,
     RefKind,
     Version,
+    VersionOrigin,
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
@@ -41,6 +42,7 @@ from exactdocs.ingestion.models import (
     PARSER_VERSION,
     ChunkingConfig,
     CopiedArticle,
+    ImportedRef,
     PathSelection,
     ProposedId,
     StoredArticleTags,
@@ -48,6 +50,7 @@ from exactdocs.ingestion.models import (
     TagRule,
 )
 from exactdocs.ingestion.models import RefKind as IngestionRefKind
+from exactdocs.ingestion.models import VersionOrigin as IngestionOrigin
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
 from exactdocs_kernel import MAX_LIMIT
 
@@ -250,6 +253,56 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
     ]
     assert (found[0].commit_sha, found[0].host) == ("d" * 40, SourceHost.GITLAB)
     assert found[0].repository_url == "https://gitlab.com/acme/other"
+
+
+async def test_library_sources_report_each_versions_origin_and_the_pinned_default() -> None:
+    at = datetime(2026, 11, 4, tzinfo=UTC)
+    library = Library(
+        id=LibraryId("/acme/ledger"),
+        title="Ledger",
+        source_url="https://github.com/acme/ledger",
+        host=HostKind.GITHUB,
+        versions=frozenset(
+            {
+                Version(
+                    ref=VersionRef(ref),
+                    kind=RefKind.TAG,
+                    commit_sha=sha * 40,
+                    imported_at=at,
+                    origin=VersionOrigin.AUTO,
+                )
+                for ref, sha in (("v1.3.0", "a"), ("v1.4.0", "b"))
+            }
+        ),
+        pinned_version=VersionRef("v1.3.0"),
+    )
+    repository = InMemoryLibraryRepository.of([library])
+    catalog = CatalogModule.build(
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
+    )
+    sources = CatalogLibrarySources(catalog.get_library, catalog.list_renames)
+
+    found = sorted(await sources.imported_versions("/acme/ledger"), key=lambda v: v.ref)
+
+    assert found == [
+        ImportedRef(
+            ref="v1.3.0",
+            kind=IngestionRefKind.TAG,
+            commit_sha="a" * 40,
+            origin=IngestionOrigin.AUTO,
+            pinned=True,
+        ),
+        ImportedRef(
+            ref="v1.4.0",
+            kind=IngestionRefKind.TAG,
+            commit_sha="b" * 40,
+            origin=IngestionOrigin.AUTO,
+            pinned=False,
+        ),
+    ]
 
 
 def _tagging_catalog() -> CatalogModule:

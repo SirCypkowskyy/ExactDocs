@@ -65,6 +65,7 @@ from exactdocs.catalog.models import (
     TagMatch,
     TagSelection,
     Version,
+    VersionOrigin,
     VersionRef,
 )
 
@@ -97,6 +98,7 @@ library_versions = Table(
     Column("kind", Text, nullable=False),
     Column("commit_sha", Text, nullable=False),
     Column("imported_at", Text, nullable=False),
+    Column("origin", Text, nullable=False, server_default="manual"),  # set once, at creation
 )
 
 manifests = Table(
@@ -112,6 +114,7 @@ manifests = Table(
     Column("state", Text, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("superseded_at", Text),
+    Column("origin", Text, nullable=False, server_default="manual"),  # for a new version
 )
 article_contents = Table(
     "catalog_article_contents",
@@ -356,6 +359,7 @@ class SqliteLibraryRepository:
                     kind=RefKind(row.kind),
                     commit_sha=row.commit_sha,
                     imported_at=datetime.fromisoformat(row.imported_at),
+                    origin=_origin(row.origin),
                 )
             )
         return tuple(
@@ -478,6 +482,7 @@ class SqliteManifestRepository:
                     commit_sha=manifest.commit_sha,
                     state=manifest.state.value,
                     created_at=_iso(manifest.created_at),
+                    origin=manifest.origin.value,
                 )
             )
             if manifest.entries:
@@ -824,18 +829,13 @@ class SqliteManifestRepository:
             moved = {"kind": row.kind, "commit_sha": row.commit_sha, "imported_at": at.isoformat()}
             await connection.execute(
                 sqlite_insert(library_versions)
-                .values(library_id=row.library_id, ref=row.ref, **moved)
-                .on_conflict_do_update(
+                .values(library_id=row.library_id, ref=row.ref, origin=row.origin, **moved)
+                .on_conflict_do_update(  # the origin stays the one the version was created with
                     index_elements=[library_versions.c.library_id, library_versions.c.ref],
                     set_=moved,
                 )
             )
-        return Version(
-            ref=VersionRef(row.ref),
-            kind=RefKind(row.kind),
-            commit_sha=row.commit_sha,
-            imported_at=at,
-        )
+            return await _stored_version(connection, row)
 
     async def discard_pending(
         self,
@@ -946,6 +946,7 @@ def _manifest(row: Row) -> Manifest:
         created_at=datetime.fromisoformat(row.created_at),
         state=ManifestState(row.state),
         superseded_at=(datetime.fromisoformat(row.superseded_at) if row.superseded_at else None),
+        origin=_origin(row.origin),
     )
 
 
@@ -963,7 +964,16 @@ async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version
         kind=RefKind(row.kind),
         commit_sha=row.commit_sha,
         imported_at=datetime.fromisoformat(row.imported_at),
+        origin=_origin(row.origin),
     )
+
+
+def _origin(stored: str) -> VersionOrigin:
+    """Read a stored origin; an unknown one (a newer release) counts as ``manual``: kept."""
+    try:
+        return VersionOrigin(stored)
+    except ValueError:
+        return VersionOrigin.MANUAL
 
 
 def _library_values(library: Library) -> dict[str, str | bool | None]:
@@ -991,6 +1001,7 @@ async def _insert_versions(connection: AsyncConnection, library: Library) -> Non
                     "kind": v.kind.value,
                     "commit_sha": v.commit_sha,
                     "imported_at": v.imported_at.isoformat(),
+                    "origin": v.origin.value,
                 }
                 for v in library.versions
             ],
@@ -1084,6 +1095,7 @@ class SqliteManifestCopier:
                     commit_sha=row.commit_sha,
                     state=ManifestState.PENDING.value,
                     created_at=_iso(at),
+                    origin=row.origin,
                 )
             )
             for table in (manifest_entries, manifest_images, manifest_renames):

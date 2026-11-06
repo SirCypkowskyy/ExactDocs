@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Index,
     Integer,
@@ -31,6 +32,7 @@ from exactdocs.ingestion.errors import (
 from exactdocs.ingestion.models import (
     ACTIVE_JOB_STATES,
     IMPORT_KINDS,
+    AutoSync,
     Credential,
     FileProblem,
     Job,
@@ -39,6 +41,7 @@ from exactdocs.ingestion.models import (
     JobState,
     ProblemCode,
     RefKind,
+    VersionOrigin,
     dump_credential,
     load_credential,
 )
@@ -66,6 +69,7 @@ jobs = Table(
     Column("reused", Integer, nullable=False, server_default="0"),
     Column("error", Text),
     Column("error_code", Text),  # null on rows that failed before codes were recorded
+    Column("origin", Text, nullable=False, server_default="manual"),
     # UTC ISO-8601 with microseconds, so text order is time order
     Column("created_at", Text, nullable=False),
     Column("started_at", Text),
@@ -209,6 +213,7 @@ def _values(job: Job) -> Mapping[str, Any]:
         "reused": job.reused,
         "error": job.error,
         "error_code": job.error_code,
+        "origin": job.origin.value,
         "created_at": _text(job.created_at),
         "started_at": _text(job.started_at),
         "finished_at": _text(job.finished_at),
@@ -238,6 +243,14 @@ def _problem(raw: Mapping[str, str]) -> FileProblem:
     return FileProblem(path, code, reason)
 
 
+def _origin(stored: str) -> VersionOrigin:
+    """Read a stored origin; an unknown one (a newer release) counts as ``manual``: kept."""
+    try:
+        return VersionOrigin(stored)
+    except ValueError:
+        return VersionOrigin.MANUAL
+
+
 def _job(row: Row) -> Job:
     created_at = _moment(row.created_at)
     if created_at is None:
@@ -260,6 +273,7 @@ def _job(row: Row) -> Job:
         reused=row.reused,
         error=row.error,
         error_code=row.error_code,
+        origin=_origin(row.origin),
         created_at=created_at,
         started_at=_moment(row.started_at),
         finished_at=_moment(row.finished_at),
@@ -319,3 +333,91 @@ class SqliteCredentialVault:
                 select(credentials.c.library).where(credentials.c.library == library)
             )
             return row.first() is not None
+
+
+auto_syncs = Table(
+    "ingestion_auto_syncs",
+    metadata,
+    Column("library", Text, primary_key=True),  # by value: the catalog's library ID
+    Column("tag_pattern", Text),
+    Column("keep_last", Integer, nullable=False),
+    Column("interval_minutes", Integer, nullable=False),
+    Column("sync_branches", Boolean, nullable=False),
+    Column("checked_at", Text),  # UTC ISO-8601
+    Column("last_error", Text),
+    Column("revision", Text, nullable=False, server_default=""),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteAutoSyncStore:
+    """Implements ``ports.driven.AutoSyncStore``: one row per library checked on its own."""
+
+    engine: AsyncEngine
+
+    async def get(self, library: str) -> AutoSync | None:
+        """Return the library's schedule, or ``None``."""
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(select(auto_syncs).where(auto_syncs.c.library == library))
+            ).first()
+        return None if row is None else _auto_sync(row)
+
+    async def save(self, auto_sync: AutoSync) -> None:
+        """Store the schedule, replacing the library's earlier one."""
+        values = {
+            "tag_pattern": auto_sync.tag_pattern,
+            "keep_last": auto_sync.keep_last,
+            "interval_minutes": auto_sync.interval_minutes,
+            "sync_branches": auto_sync.sync_branches,
+            "checked_at": _text(auto_sync.checked_at),
+            "last_error": auto_sync.last_error,
+            "revision": auto_sync.revision,
+        }
+        statement = sqlite_insert(auto_syncs).values(library=auto_sync.library, **values)
+        statement = statement.on_conflict_do_update(
+            index_elements=[auto_syncs.c.library], set_=values
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's schedule."""
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(auto_syncs).where(auto_syncs.c.library == library))
+
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Compare and set: store the check only on the row the check read."""
+        before = _text(read.checked_at)
+        statement = (
+            update(auto_syncs)
+            .where(
+                auto_syncs.c.library == read.library,
+                auto_syncs.c.revision == read.revision,
+                auto_syncs.c.checked_at.is_(None)
+                if before is None
+                else auto_syncs.c.checked_at == before,
+            )
+            .values(checked_at=_text(checked.checked_at), last_error=checked.last_error)
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(statement)).rowcount == 1
+
+    async def list_all(self) -> Sequence[AutoSync]:
+        """Return every schedule, by library."""
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(select(auto_syncs).order_by(auto_syncs.c.library))
+            return [_auto_sync(row) for row in rows]
+
+
+def _auto_sync(row: Row) -> AutoSync:
+    return AutoSync(
+        library=row.library,
+        tag_pattern=row.tag_pattern,
+        keep_last=row.keep_last,
+        interval_minutes=row.interval_minutes,
+        sync_branches=bool(row.sync_branches),
+        checked_at=_moment(row.checked_at),
+        last_error=row.last_error,
+        revision=row.revision,
+    )

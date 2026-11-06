@@ -15,6 +15,7 @@ const version = (ref: string, sha: string): Version => ({
   commit_sha: sha.repeat(40),
   imported_at: "2026-11-01T10:00:00Z",
   is_default: ref === "v1.4.0",
+  origin: "manual",
 });
 const versions = [version("v1.4.0", "b"), version("v1.3.0", "a"), version("v1.2.0", "9")];
 const rename: RenamedPath = {

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from dbos import DBOS
@@ -11,20 +12,23 @@ from sqlalchemy import NullPool
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.dbos import (
     QUEUE,
+    SCHEDULE,
     STEPS_VERSION,
     WORKFLOW,
     DbosCheckpoints,
     DbosJobQueue,
+    DbosScheduleSwitch,
 )
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
-from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery
+from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ScheduledChecks
 from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
 from exactdocs.ingestion.ports import JobHandler, JobProgress, JobRunner, RecoveryHook
 from exactdocs_kernel import SystemClock
 
 IMPORT = JobKind("import")
+TWICE = 2
 
 
 class _NoLibraryIds:
@@ -308,3 +312,80 @@ async def test_stopping_right_after_a_job_ended_logs_no_error(
             await eventually(finished)
 
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+async def test_the_schedule_ticks_the_scheduled_checks_and_leaves_no_workflow(
+    tmp_path: Path, eventually
+) -> None:
+    ticks: list[str | None] = []
+
+    async def run_scheduled_checks() -> ScheduledChecks:
+        ticks.append(DBOS.workflow_id)  # outside the tick's workflow: its jobs are their own
+        return ScheduledChecks(checked=[], imports=[], removed=[])
+
+    module = module_of(InMemoryJobRepository(), {})
+    worker = replace(
+        worker_of(module, tmp_path),
+        run_scheduled_checks=run_scheduled_checks,
+        schedule="* * * * * *",
+    )
+    async with worker.running():
+
+        async def ticked_twice() -> bool:
+            return len(ticks) >= TWICE
+
+        await eventually(ticked_twice, seconds=15)
+        assert set(ticks) == {None}
+
+        async def forgotten() -> bool:
+            listed = await DBOS.list_workflows_async(load_input=False, load_output=False)
+            return all(w.status not in {"SUCCESS", "ERROR"} for w in listed)
+
+        await eventually(forgotten, seconds=15)
+
+
+async def test_without_scheduled_checks_no_schedule_is_kept(tmp_path: Path) -> None:
+    async with worker_of(module_of(InMemoryJobRepository(), {}), tmp_path).running():
+        assert await DBOS.get_schedule_async(SCHEDULE) is None
+
+
+async def test_the_schedule_is_paused_while_no_library_has_one(tmp_path: Path, eventually) -> None:
+    """An idle server with no schedule writes no tick workflow: the DBOS schedule is paused."""
+    ticks: list[None] = []
+    wanted = False
+
+    async def run_scheduled_checks() -> ScheduledChecks:
+        ticks.append(None)
+        return ScheduledChecks(checked=[], imports=[], removed=[])
+
+    switch = DbosScheduleSwitch(SCHEDULE)
+
+    async def switch_schedule() -> None:
+        await switch.turn(on=wanted)
+
+    module = module_of(InMemoryJobRepository(), {})
+    worker = replace(
+        worker_of(module, tmp_path),
+        run_scheduled_checks=run_scheduled_checks,
+        switch_schedule=switch_schedule,
+        schedule_name=SCHEDULE,
+        schedule="* * * * * *",
+    )
+    async with worker.running():
+        paused = await DBOS.get_schedule_async(SCHEDULE)
+        assert paused is not None
+        assert paused["status"] == "PAUSED"
+        await asyncio.sleep(2.5)
+        assert ticks == []
+        assert not await DBOS.list_workflows_async(load_input=False, load_output=False)
+
+        await switch.turn(on=True)  # a library got a schedule
+
+        resumed = await DBOS.get_schedule_async(SCHEDULE)
+        assert resumed is not None
+        assert resumed["status"] == "ACTIVE"
+
+        async def ticked() -> bool:
+            return bool(ticks)
+
+        await eventually(ticked, seconds=15)
