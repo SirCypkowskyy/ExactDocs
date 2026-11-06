@@ -558,9 +558,11 @@ that last step, which is one transaction in the catalog.
   and the parser. The version's own active manifest is looked in first (by primary key), then the
   library's other manifests, one probe per file through the blob-SHA index, so the lookup stays
   far cheaper than the parse whatever the size of the catalog. Title, front matter and text are taken as stored; the tags are derived again
-  from the stored front matter and the library's rules now, the image links from the text. A text
-  that starts with a `---` block is parsed anyway: it may be front matter that did not parse,
-  whose note only a parse can list again. Importing a commit again changes nothing a reader can
+  from the stored front matter and the library's rules now, the image links from the text. Whether
+  a text that starts with a `---` block was malformed front matter (kept in the text, with a
+  note to list again) is told from the blob SHA (`stored_front_matter_problems`, shared with the
+  re-chunk); a text it cannot tell (a front matter that loaded to nothing before a block YAML
+  refuses, or invisible characters the parser stripped, #228) is parsed anyway. Importing a commit again changes nothing a reader can
   see.
 - **Memory.** The selected text is held in memory until stored, and again as chunks, as DTOs in
   the bridges and as SQL parameters: several times over, and the worker runs two jobs at once
