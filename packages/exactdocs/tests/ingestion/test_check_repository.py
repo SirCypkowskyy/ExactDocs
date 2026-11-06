@@ -1,15 +1,18 @@
 from dataclasses import dataclass, field
 
 import pytest
+from pydantic import SecretStr
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
-from exactdocs.ingestion.dtos import CheckRepositoryCommand
+from exactdocs.ingestion.dtos import AccessTokenIn, CheckRepositoryCommand, ListRepositoryRefsQuery
 from exactdocs.ingestion.errors import (
+    InvalidCredentialError,
     InvalidRepositoryUrlError,
     LibraryIdTakenError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
+    AccessToken,
     Credential,
     RemoteRef,
     RemoteRefs,
@@ -121,3 +124,40 @@ async def test_remote_failures_reach_the_caller() -> None:
 
     with pytest.raises(RepositoryUnreachableError):
         await module.check_repository(CheckRepositoryCommand(url="https://git.example.com/acme/x"))
+
+
+TOKEN = AccessTokenIn(kind="token", token=SecretStr("glpat-secret"))
+
+
+async def test_the_refs_of_a_private_repository_are_listed_with_the_credential_sent() -> None:
+    remote = FakeRemote(
+        RemoteRefs(default_branch="main", refs=(RemoteRef(name="refs/tags/v1", sha="a" * 40),))
+    )
+
+    refs = await build(remote).list_repository_refs(
+        ListRepositoryRefsQuery(url="https://git.example.com/acme/private", credential=TOKEN)
+    )
+
+    assert [t.name for t in refs.tags] == ["v1"]
+    assert remote.credentials == [AccessToken(token="glpat-secret")]
+
+
+async def test_refs_without_a_credential_ask_the_remote_without_one() -> None:
+    remote = FakeRemote()
+
+    await build(remote).list_repository_refs(
+        ListRepositoryRefsQuery(url="https://git.example.com/acme/x")
+    )
+
+    assert remote.credentials == [None]
+
+
+async def test_a_token_for_an_ssh_url_is_refused_before_any_network_traffic() -> None:
+    remote = FakeRemote()
+
+    with pytest.raises(InvalidCredentialError):
+        await build(remote).list_repository_refs(
+            ListRepositoryRefsQuery(url="git@git.example.com:acme/x.git", credential=TOKEN)
+        )
+
+    assert remote.asked == []

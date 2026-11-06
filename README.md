@@ -137,6 +137,16 @@ folder tree with counts, what the repository's `context7.json` says (its paths f
 boxes, still editable) and its `previousVersions` as checkboxes; the ticked tags are imported
 after the library is added.
 
+For a private repository, tick **This repository is private** on the same form and give an access
+token (https address; optionally the user name the host expects, `x-token-auth` for Bitbucket) or a
+deploy key without a passphrase (ssh address; paste it or choose the key file). The check, the
+branch and tag list (`POST /repositories/refs`), the preview and the add all send it in the request
+body; the form keeps it in memory only and drops it once the library is added. For an ssh address
+the check shows the server's host-key fingerprint: compare it with the one your git host publishes
+before you add the library. On a library's settings page, **Add a version** of a private library
+takes a replacement token or key, which is what to do when the stored one can't be read any more
+(`credentials_required`, after the secret key changed) or was refused.
+
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
 from a file of at most 64 KB, never from the command line; group- or world-readable files get a
 warning) and all `token` commands need **your password**, not an

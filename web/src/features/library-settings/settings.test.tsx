@@ -72,6 +72,8 @@ interface Routes {
   removeLibrary?: () => Reply;
   /** Held until released: lets a test act while a DELETE is in flight. */
   gate?: Promise<unknown>;
+  /** The library has a stored token or key. */
+  private?: boolean;
 }
 
 function serve(routes: Routes = {}) {
@@ -84,6 +86,9 @@ function serve(routes: Routes = {}) {
       calls.push({ method, url, body });
       const reply = (r: Reply) => Response.json(r.body, { status: r.status });
       if (url.includes("/v1/repositories/refs")) return Response.json(REFS);
+      if (url.endsWith("/access") && routes.private !== undefined) {
+        return Response.json({ private: routes.private });
+      }
       if (method === "PATCH") {
         return reply(routes.patch?.(body) ?? { status: 200, body: { ...library, ...body } });
       }
@@ -774,5 +779,99 @@ describe("removal while a request is in flight", () => {
     expect(confirm).toHaveClass("aria-disabled:cursor-not-allowed");
     expect(confirm).not.toHaveClass("aria-disabled:cursor-progress");
     expect(within(dialog).getByLabelText(/Type main/)).toHaveClass("text-base");
+  });
+});
+
+describe("adding a version of a private library", () => {
+  const TOKEN = ["typed", "replacement", "value"].join("-");
+  const cached = (queryClient: QueryClient) =>
+    JSON.stringify([
+      queryClient
+        .getQueryCache()
+        .getAll()
+        .map((q) => [q.queryKey, q.state.data]),
+      queryClient
+        .getMutationCache()
+        .getAll()
+        .map((m) => [m.state.variables, m.state.data]),
+    ]);
+
+  it("asks for the token again when the stored one can't be read, and sends it once", async () => {
+    let first = true;
+    const calls = serve({
+      addVersion: (body) => {
+        if (first) {
+          first = false;
+          return failure(422, "credentials_required");
+        }
+        return {
+          status: 202,
+          body: {
+            library_id: "/acme/payments",
+            ref: body.ref,
+            ref_kind: "tag",
+            commit_sha: SHA,
+            job_id: "j9",
+          },
+        };
+      },
+    });
+    const queryClient = renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    await userEvent.selectOptions(await screen.findByLabelText("Version to import"), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+
+    const box = await screen.findByLabelText("Access token");
+    expect(box).toHaveAttribute("type", "password");
+    expect(await screen.findByText(/can't be read any more/)).toBeInTheDocument();
+    await waitFor(() => expect(box).toHaveFocus());
+    await userEvent.type(box, TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+
+    expect(await screen.findByText("Importing v1.3.0")).toBeInTheDocument();
+    const posts = calls.filter((c) => c.url.endsWith("/versions") && c.method === "POST");
+    expect(posts.map((c) => c.body)).toEqual([
+      { ref: "v1.3.0" },
+      { ref: "v1.3.0", credential: { kind: "token", token: TOKEN } },
+    ]);
+    expect(calls.some((c) => c.url.includes(TOKEN))).toBe(false);
+    expect(cached(queryClient)).not.toContain(TOKEN);
+    expect(document.body.innerHTML).not.toContain(TOKEN);
+  });
+
+  it("lists a private repository's refs only with a typed token, by POST", async () => {
+    const calls = serve({ private: true });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    const box = await screen.findByLabelText("Access token");
+    expect(screen.getByText(/Leave it empty to use the token stored/)).toBeInTheDocument();
+    expect(await screen.findByText(/enter it above to see them/)).toBeInTheDocument();
+    // Nothing is asked without a credential; typing alone asks nothing; leaving the box does, once.
+    expect(calls.filter((c) => c.url.includes("/repositories/refs"))).toEqual([]);
+    await userEvent.type(box, TOKEN);
+    const refs = () => calls.filter((c) => c.url.includes("/repositories/refs"));
+    expect(refs().filter((c) => c.method === "POST")).toEqual([]);
+    await userEvent.tab();
+    const picker = await screen.findByRole("combobox", { name: "Version to import" });
+    expect(within(picker).getByRole("option", { name: "v1.3.0" })).toBeInTheDocument();
+    expect(refs().filter((c) => c.method === "POST")).toEqual([
+      {
+        method: "POST",
+        url: "/api/v1/repositories/refs",
+        body: { url: library.source_url, credential: { kind: "token", token: TOKEN } },
+      },
+    ]);
+    expect(calls.some((c) => c.url.includes(TOKEN))).toBe(false);
+  });
+
+  it("explains a refused replacement and a changed host key", () => {
+    const e = (code: string) =>
+      new HttpError(422, "/v1/x", { error: code, detail: "d", fields: [] });
+    expect(explainAddVersion(e("repository_auth_required"), "v1", "token")).toMatchObject({
+      field: "credential",
+      message: expect.stringMatching(/refused this token/),
+    });
+    expect(explainAddVersion(e("repository_auth_required"), "v1").field).toBe("credential");
+    expect(explainAddVersion(e("host_key_changed"), "v1").message).toMatch(/different host key/);
   });
 });

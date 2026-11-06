@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import type { Credential } from "@/shared/lib/credentials";
 import { lines, validatePatterns } from "@/shared/lib/path-selection";
 import { addVersion, previewRepository } from "../api/add-library";
 import {
@@ -15,6 +16,8 @@ export interface PreviewForm {
   ref: string | null;
   include: string;
   exclude: string;
+  /** A private repository's token or key; sent in the body, never part of `previewKey`. */
+  credential?: Credential | undefined;
 }
 
 interface Previewed {
@@ -71,6 +74,7 @@ export function usePreview({ onFail, onPrefill, onStart }: Callbacks) {
         ...(form.ref && { ref: form.ref }),
         include_paths: lines(form.include),
         exclude_paths: lines(form.exclude),
+        ...(form.credential && { credential: form.credential }),
       });
       if (run.current !== mine) return;
       const prefill = prefillOf(result, form);
@@ -83,7 +87,9 @@ export function usePreview({ onFail, onPrefill, onStart }: Callbacks) {
         prefilled: Boolean(prefill),
       });
     } catch (error) {
-      if (run.current === mine) onFail(explainPreviewError(error, form.ref));
+      if (run.current === mine) {
+        onFail(explainPreviewError(error, form.ref, form.credential?.kind));
+      }
     } finally {
       setWaiting((w) => (w === mine ? undefined : w));
     }

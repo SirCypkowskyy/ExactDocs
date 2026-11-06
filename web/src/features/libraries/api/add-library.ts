@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import type { Credential } from "@/shared/lib/credentials";
 import { getJson, HttpError, sendJson } from "@/shared/lib/http";
 import type {
   AddedLibrary,
@@ -11,8 +12,12 @@ import type {
 import type { Job } from "../model/library";
 import { librariesKeys } from "./libraries-query";
 
-export const checkRepository = (url: string) =>
-  sendJson<CheckedRepository>("POST", "/v1/repositories/check", { url });
+/** A private repository's credential rides in the body; nothing here keeps it. */
+export const checkRepository = (url: string, credential?: Credential) =>
+  sendJson<CheckedRepository>("POST", "/v1/repositories/check", {
+    url,
+    ...(credential && { credential }),
+  });
 
 export const addLibrary = (command: AddLibraryCommand) =>
   sendJson<AddedLibrary>("POST", "/v1/libraries", command);

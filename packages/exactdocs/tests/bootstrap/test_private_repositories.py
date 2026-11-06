@@ -90,6 +90,12 @@ async def test_secrets_never_reach_logs_responses_or_the_database(
         url=docs_repo.private_url,
         credential={"kind": "ssh_key", "private_key": KEY},
     )
+    listed = await post("/api/v1/repositories/refs", url=docs_repo.private_url, credential=ok)
+    refused = await post(
+        "/api/v1/repositories/refs",
+        url=docs_repo.private_url,
+        credential={"kind": "token", "token": wrong},
+    )
     added = await post(
         "/api/v1/libraries",
         url=docs_repo.private_url,
@@ -110,6 +116,9 @@ async def test_secrets_never_reach_logs_responses_or_the_database(
     assert (insecure.status_code, insecure.json()["error"]) == (422, "invalid_credential")
     assert (wrong_kind.status_code, wrong_kind.json()["error"]) == (422, "invalid_credential")
     assert (added.status_code, job["state"]) == (201, "succeeded")
+    assert listed.status_code == 200
+    assert "v1.3.0" in [t["name"] for t in listed.json()["tags"]]
+    assert (refused.status_code, refused.json()["error"]) == (422, "repository_auth_required")
     secrets = (token, wrong, KEY_BODY)
     for secret in secrets:
         assert not any(secret in text for text in texts), secret

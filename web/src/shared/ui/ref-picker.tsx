@@ -1,14 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, CircleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import type { Credential } from "@/shared/lib/credentials";
 import {
   decodeChoice,
   encodeChoice,
   filterRefs,
   type RefChoice,
   type RepositoryRefs,
-  repositoryRefsQueryOptions,
 } from "@/shared/lib/refs";
+import { useRepositoryRefs } from "@/shared/lib/use-repository-refs";
 import { Input } from "./input";
 
 const FILTER_FROM = 15;
@@ -17,6 +17,13 @@ const selectClass =
 
 interface Props {
   url: string;
+  /** A private repository's token or key: the list is asked for with it, outside the cache. */
+  credential?: Credential | undefined;
+  /**
+   * Why there is no list to ask for (a private repository and no credential at hand): nothing is
+   * requested and this is shown instead, with the box to type a version.
+   */
+  unlisted?: ReactNode;
   choice: RefChoice;
   typed: string;
   error: ReactNode;
@@ -151,9 +158,38 @@ function Select({
   );
 }
 
+/** No list: why (nothing was asked), or the request failed and may be tried again. */
+function Unavailable({
+  why,
+  fetching,
+  onRetry,
+}: {
+  why: ReactNode;
+  fetching: boolean;
+  onRetry: () => unknown;
+}) {
+  if (why) return <p className="text-sm text-muted-foreground">{why}</p>;
+  return (
+    <p className="text-sm text-muted-foreground">
+      Couldn't load branches and tags. Type a version below, or leave it empty for the default
+      branch.{" "}
+      <button
+        type="button"
+        onClick={() => void onRetry()}
+        aria-disabled={fetching}
+        className="min-h-11 rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+      >
+        Try again
+      </button>
+    </p>
+  );
+}
+
 /** Branch and tag picker for the repository that was just checked. */
 export function RefPicker({
   url,
+  credential,
+  unlisted,
   choice,
   typed,
   error,
@@ -163,8 +199,10 @@ export function RefPicker({
   onUnavailable,
   onTyped,
 }: Props) {
-  const { data, isPending, isError, refetch, isFetching } = useQuery(
-    repositoryRefsQueryOptions(url),
+  const { data, isPending, isError, refetch, isFetching } = useRepositoryRefs(
+    url,
+    credential,
+    !unlisted,
   );
   // Without a list the only way to name a version is to type it, so the typed value must count.
   useEffect(() => {
@@ -196,18 +234,11 @@ export function RefPicker({
         </p>
       )}
       {isError && (
-        <p className="text-sm text-muted-foreground">
-          Couldn't load branches and tags. Type a version below, or leave it empty for the default
-          branch.{" "}
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            aria-disabled={isFetching}
-            className="min-h-11 rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-          >
-            Try again
-          </button>
-        </p>
+        <Unavailable
+          why={credential ? undefined : unlisted}
+          fetching={isFetching}
+          onRetry={refetch}
+        />
       )}
       {data && (
         <Select
