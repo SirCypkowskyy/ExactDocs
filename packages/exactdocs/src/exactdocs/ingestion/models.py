@@ -1715,17 +1715,23 @@ class CopiedArticle:
     """Imported: path rules and front matter (manual tags are kept apart)."""
     content: str
 
-    def parsed(self) -> ParsedArticle:
+    def parsed(self) -> ParsedArticle | None:
         """Return the article as the parser gave it: what a chunker cuts.
 
         Only whether the front matter was malformed (it is then still in the body, and not
-        Markdown to cut at) is not stored: it is when nothing was taken from a leading block
-        that the YAML loader refuses.
+        Markdown to cut at) is not stored. It can be only when nothing was taken from the file
+        and the stored text starts with a block that the YAML loader refuses. Then the file
+        either was that text (its blob SHA says so: the front matter was malformed) or had a
+        front matter that loaded to nothing before it (``---`` / ``---`` around blank lines or
+        comments, and that block is Markdown). ``None`` when the blob SHA cannot tell them
+        apart (the parser also strips invisible characters): only a parse of the file can.
         """
         problems: tuple[str, ...] = ()
         if not self.front_matter and malformed_front_matter_length(self.content):
             reparsed = parse_article(self.path, self.content)
-            if reparsed.body == self.content:
+            if reparsed.body == self.content and reparsed.problems:
+                if git_blob_sha(self.content.encode()) != self.blob_sha:
+                    return None
                 problems = reparsed.problems
         return ParsedArticle(
             path=self.path,

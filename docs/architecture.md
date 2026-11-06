@@ -536,7 +536,10 @@ that last step, which is one transaction in the catalog.
   retrieval already has for the new hash (`GetChunkSets`), cuts the other blobs, indexes the copy
   and activates it like an import (manual tags last, under the tag lock). Nothing is fetched:
   the stored text is what the parser gave, and whether its front matter was malformed is
-  recovered from it (`CopiedArticle.parsed`). A version whose text was stored by another parser
+  recovered from it and the blob SHA (`CopiedArticle.parsed`: the file was exactly that text).
+  When they cannot tell (a front matter that loaded to nothing, then a block YAML refuses; or
+  invisible characters the parser stripped), the version is re-imported at its commit instead
+  (#228), so a re-chunk never cuts a blob differently from its import. A version whose text was stored by another parser
   version (`content_version`) is refused by the copy and re-imported at its commit instead: a
   chunk set keyed with the current parser must not be cut from older text. The copy is pending,
   so readers keep the old chunks until the activation; the recovery hook discards it after a
