@@ -39,6 +39,8 @@ FINGERPRINTS = {
     "jobs-1": "9bf7464faeb9cb3f19bb905319608080e03d640c21227eaf3ff85aae740f1463",
     "jobs-2": "332748524fa2b742b1046783782c8e545c92949d0835ae0c6c4ebaf74159114a",
     "jobs-3": "a2759f3dbbb75d22e28409afd9e8902af066e7bcb64ee225c14a89558e448834",
+    # jobs-4 is taken by #224 (chunking settings), open at the same time.
+    "jobs-5": "030eb75d79730d7b7b2ee980831159fd4261865f7b091ac7780399acc29960d8",
 }
 
 

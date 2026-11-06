@@ -294,3 +294,21 @@ class ImportedTagWriter(Protocol):
         between this write and theirs).
         """
         ...
+
+
+class StoredArticleFinder(Protocol):
+    """Finds stored articles by what they were imported from, across a library's manifests.
+
+    Split from ``ManifestRepository`` only to keep that port within ruff's public-method limit
+    (PLR0904), like ``ImportedTagWriter``: same tables.
+    """
+
+    async def find_articles(
+        self, library_id: LibraryId, content_version: int, files: Collection[tuple[str, str]]
+    ) -> Sequence[StoredArticle]:
+        """Return one stored article per ``(path, blob SHA)`` stored with ``content_version``.
+
+        Any manifest of the library counts (pending, active or superseded); files no manifest
+        holds that way are left out. Batched, so a caller may pass thousands of files.
+        """
+        ...

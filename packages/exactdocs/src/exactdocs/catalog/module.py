@@ -10,6 +10,7 @@ from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
     ManifestRepository,
+    StoredArticleFinder,
 )
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
@@ -19,6 +20,7 @@ from exactdocs.catalog.ports.driving import (
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
+    FindStoredArticles,
     GetActiveManifest,
     GetArticle,
     GetAsset,
@@ -50,6 +52,7 @@ from exactdocs.catalog.use_cases import (
     CreateLibraryUseCase,
     DiscardLibraryUseCase,
     DiscardPendingManifestsUseCase,
+    FindStoredArticlesUseCase,
     GetActiveManifestUseCase,
     GetArticleUseCase,
     GetAssetUseCase,
@@ -109,6 +112,7 @@ class CatalogModule:
     set_library_settings: SetLibrarySettings
     get_version_tags: GetVersionTags
     set_imported_tags: SetImportedTags
+    find_stored_articles: FindStoredArticles
     replace_renames: ReplaceRenames
 
     @classmethod
@@ -118,11 +122,13 @@ class CatalogModule:
         repository: LibraryRepository,
         manifests: ManifestRepository,
         imported_tags: ImportedTagWriter,
+        stored_articles: StoredArticleFinder,
         clock: Clock | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
-        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores.
+        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores;
+        ``stored_articles`` finds their articles by what they were imported from.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository, manifests)
@@ -155,5 +161,6 @@ class CatalogModule:
             set_library_settings=SetLibrarySettingsUseCase(repository),
             get_version_tags=GetVersionTagsUseCase(repository, manifests),
             set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags),
+            find_stored_articles=FindStoredArticlesUseCase(stored_articles),
             replace_renames=ReplaceRenamesUseCase(repository, manifests, tagger),
         )

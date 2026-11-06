@@ -1046,3 +1046,57 @@ class SqliteImportedTags:
 
 
 _PATHS_PER_QUERY = 500  # bound variables per statement stay far below SQLite's limit
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteStoredArticles:
+    """Implements ``ports.driven.StoredArticleFinder`` on the catalog's SQLite tables."""
+
+    engine: AsyncEngine
+
+    async def find_articles(
+        self, library_id: LibraryId, content_version: int, files: Collection[tuple[str, str]]
+    ) -> Sequence[StoredArticle]:
+        """Read the matching entries in batches (one per file), then their texts once each."""
+        entries = manifest_entries.c
+        asked = list(files)
+        found: dict[tuple[str, str], Row] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(asked), _FILES_PER_QUERY):
+                query = (
+                    select(manifests.c.id, manifests.c.commit_sha, manifest_entries)
+                    .select_from(
+                        manifests.join(manifest_entries, entries.manifest_id == manifests.c.id)
+                    )
+                    .where(
+                        manifests.c.library_id == library_id.value,
+                        entries.content_version == content_version,
+                        tuple_(entries.path, entries.blob_sha).in_(
+                            asked[start : start + _FILES_PER_QUERY]
+                        ),
+                    )
+                )
+                for row in (await connection.execute(query)).all():
+                    found.setdefault((row.path, row.blob_sha), row)
+            shas = list({sha for _, sha in found})
+            texts: dict[str, str] = {}
+            for start in range(0, len(shas), _PATHS_PER_QUERY):
+                rows = await connection.execute(
+                    select(article_contents.c.blob_sha, article_contents.c.content).where(
+                        article_contents.c.content_version == content_version,
+                        article_contents.c.blob_sha.in_(shas[start : start + _PATHS_PER_QUERY]),
+                    )
+                )
+                texts |= {row.blob_sha: row.content for row in rows.all()}
+        return [
+            StoredArticle(
+                manifest_id=ManifestId(row.id),
+                commit_sha=row.commit_sha,
+                entry=_entry(row),
+                content=texts[row.blob_sha],
+            )
+            for row in found.values()
+        ]
+
+
+_FILES_PER_QUERY = 250  # two bound variables per file

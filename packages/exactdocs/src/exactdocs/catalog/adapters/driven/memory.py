@@ -437,3 +437,32 @@ class InMemoryImportedTags:
         entries = tuple(replace(e, tags=tags.get(e.path, e.tags)) for e in found.entries)
         self.repository.manifests[manifest_id] = replace(found, entries=entries)
         return {e.path: e.all_tags for e in entries if e.path in tags}
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryStoredArticles:
+    """Implements ``ports.driven.StoredArticleFinder`` on an ``InMemoryManifestRepository``."""
+
+    repository: InMemoryManifestRepository
+
+    async def find_articles(
+        self, library_id: LibraryId, content_version: int, files: Collection[tuple[str, str]]
+    ) -> Sequence[StoredArticle]:
+        """Return the first entry of the library's manifests stored for each file."""
+        wanted, found = set(files), {}
+        for manifest in self.repository.manifests.values():
+            if manifest.library != library_id:
+                continue
+            for entry in manifest.entries:
+                key = (entry.path, entry.blob_sha)
+                if key in wanted and entry.content_version == content_version:
+                    found.setdefault(
+                        key,
+                        StoredArticle(
+                            manifest_id=manifest.id,
+                            commit_sha=manifest.commit_sha,
+                            entry=entry,
+                            content=self.repository.contents[entry.content_key],
+                        ),
+                    )
+        return list(found.values())

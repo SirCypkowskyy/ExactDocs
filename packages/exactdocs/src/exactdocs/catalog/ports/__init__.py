@@ -2,6 +2,7 @@ from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
     ManifestRepository,
+    StoredArticleFinder,
 )
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
@@ -46,4 +47,5 @@ __all__ = [
     "ResolveRenamedPath",
     "ResolveVersion",
     "StoreManifest",
+    "StoredArticleFinder",
 ]

@@ -17,6 +17,7 @@ from exactdocs.catalog.dtos import (
     CreateLibraryCommand,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
+    FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
@@ -33,6 +34,7 @@ from exactdocs.catalog.dtos import (
     SetImportedTagsCommand,
     SetLibrarySettingsCommand,
     SetManualTagsCommand,
+    StoredFileIn,
     StoreManifestCommand,
     TagRuleIn,
 )
@@ -57,6 +59,7 @@ from exactdocs.catalog.ports.driving import (
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
+    FindStoredArticles,
     GetActiveManifest,
     GetLibrary,
     GetManifestStates,
@@ -87,6 +90,7 @@ from exactdocs.ingestion.models import (
     RefKind,
     Removed,
     RepositoryUrl,
+    StoredArticle,
     StoredArticleTags,
     StoredTags,
     TaggedPath,
@@ -556,6 +560,35 @@ class CatalogImportedTags:
             )
         )
         return {a.path: tuple(a.tags) for a in done.articles}
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogStoredArticles:
+    """Implements ``ingestion.ports.driven.StoredArticleSource`` using the catalog."""
+
+    find_stored_articles: FindStoredArticles
+
+    async def find(
+        self, library: str, parser_version: int, files: Sequence[tuple[str, str]]
+    ) -> list[StoredArticle]:
+        """Ask the catalog; the parser version is its content version (see ``_store_command``)."""
+        found = await self.find_stored_articles(
+            FindStoredArticlesQuery(
+                library=library,
+                content_version=parser_version,
+                files=[StoredFileIn(path=path, blob_sha=sha) for path, sha in files],
+            )
+        )
+        return [
+            StoredArticle(
+                path=a.path,
+                blob_sha=a.blob_sha,
+                title=a.title,
+                front_matter=a.front_matter,
+                content=a.content,
+            )
+            for a in found.articles
+        ]
 
 
 @dataclass(frozen=True, slots=True)

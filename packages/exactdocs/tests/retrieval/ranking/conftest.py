@@ -39,6 +39,8 @@ class _Progress:
 
     async def chunking(self, *, chunked: int, reused: int) -> None: ...
 
+    async def parsing(self, *, parsed: int, taken: int) -> None: ...
+
 
 def open_container(engine: str, data_dir: Path) -> Container:
     """The app's container for ``engine``; every engine shares the import and the search port."""

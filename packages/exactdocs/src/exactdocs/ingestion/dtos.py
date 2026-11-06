@@ -83,6 +83,15 @@ class JobSummary(_Dto):
     reused: int = Field(
         description="Articles whose chunk set an earlier import had stored (files, not blobs)."
     )
+    parsed: int = Field(default=0, description="Articles an import parsed.")
+    taken: int = Field(
+        default=0,
+        description=(
+            "Articles an import did not parse: an earlier import had stored the same file at the "
+            "same path with the same parser, so its title, front matter and text were taken from "
+            "the catalog (tags are derived again)."
+        ),
+    )
     error: str | None
     error_code: str | None = Field(description=ERROR_CODE)
     origin: VersionOrigin = Field(
@@ -108,6 +117,8 @@ class JobSummary(_Dto):
             problems=[FileProblemSummary.from_model(p) for p in job.problems],
             chunked=job.chunked,
             reused=job.reused,
+            parsed=job.parsed,
+            taken=job.taken,
             error=job.error,
             error_code=job.error_code,
             origin=job.origin,

@@ -8,6 +8,7 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
@@ -73,7 +74,10 @@ def catalog() -> CatalogModule:
     )
     manifests = InMemoryManifestRepository(libraries)
     return CatalogModule.build(
-        repository=libraries, manifests=manifests, imported_tags=InMemoryImportedTags(manifests)
+        repository=libraries,
+        manifests=manifests,
+        imported_tags=InMemoryImportedTags(manifests),
+        stored_articles=InMemoryStoredArticles(manifests),
     )
 
 

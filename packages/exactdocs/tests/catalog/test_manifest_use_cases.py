@@ -11,6 +11,7 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
@@ -142,6 +143,7 @@ def world() -> World:
             manifests=manifests,
             clock=clock,
             imported_tags=InMemoryImportedTags(manifests),
+            stored_articles=InMemoryStoredArticles(manifests),
         ),
         manifests,
         clock,

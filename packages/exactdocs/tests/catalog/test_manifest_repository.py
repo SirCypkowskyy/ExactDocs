@@ -15,11 +15,13 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteImportedTags,
     SqliteLibraryRepository,
     SqliteManifestRepository,
+    SqliteStoredArticles,
     article_contents,
 )
 from exactdocs.catalog.errors import (
@@ -50,7 +52,12 @@ from exactdocs.catalog.models import (
     VersionOrigin,
     VersionRef,
 )
-from exactdocs.catalog.ports import ImportedTagWriter, LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports import (
+    ImportedTagWriter,
+    LibraryRepository,
+    ManifestRepository,
+    StoredArticleFinder,
+)
 
 PAYMENTS = Library(
     id=LibraryId("/acme/payments"),
@@ -114,6 +121,7 @@ class Stores:
     manifests: ManifestRepository
     count_contents: Callable[[], Awaitable[int]]
     imported_tags: ImportedTagWriter
+    stored_articles: StoredArticleFinder
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -125,7 +133,13 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
         async def count() -> int:
             return len(manifests.contents)
 
-        found = Stores(libraries, manifests, count, InMemoryImportedTags(manifests))
+        found = Stores(
+            libraries,
+            manifests,
+            count,
+            InMemoryImportedTags(manifests),
+            InMemoryStoredArticles(manifests),
+        )
     else:
         container = Container.build(Settings())
         async with container.running():
@@ -140,6 +154,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                 SqliteManifestRepository(container.engine),
                 count,
                 SqliteImportedTags(container.engine),
+                SqliteStoredArticles(container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -387,6 +402,54 @@ async def test_a_new_content_version_stores_a_fresh_text_next_to_the_old_one(
     )
     assert (old.entry.content_version, new.entry.content_version) == (1, 2)
     assert await stores.count_contents() == 2
+
+
+async def test_stored_articles_are_found_by_path_blob_and_content_version_in_any_manifest(
+    stores: Stores,
+) -> None:
+    other = replace(PAYMENTS, id=LibraryId("/acme/other"))
+    await stores.libraries.save(other)
+    install = entry(INSTALL, "b1", title="Install")
+    old = entry("old.md", "b2", title="Old", version=1)
+    await store(stores, manifest("m1", "v1.3.0", "aaa111", install, old, kind=RefKind.TAG))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "main", "bbb222", install))  # pending: counts too
+    await store(
+        stores, replace(manifest("m3", "main", "ccc333", entry("x.md", "b3")), library=other.id)
+    )
+
+    found = await stores.stored_articles.find_articles(
+        PAYMENTS.id,
+        1,
+        [
+            (INSTALL, sha("b1")),  # in two manifests: one answer
+            ("old.md", sha("b2")),
+            ("moved.md", sha("b1")),  # another path
+            (INSTALL, sha("b9")),  # another blob
+            ("x.md", sha("b3")),  # another library's
+        ],
+    )
+
+    by_path = {a.entry.path: a for a in found}
+    assert sorted(by_path) == [INSTALL, "old.md"]
+    assert len(found) == 2
+    assert by_path[INSTALL].content == body(install)
+    assert by_path[INSTALL].entry.title == "Install"
+    assert by_path[INSTALL].entry.front_matter == install.front_matter
+    assert await stores.stored_articles.find_articles(PAYMENTS.id, 2, [(INSTALL, sha("b1"))]) == []
+
+
+async def test_stored_articles_are_found_for_more_files_than_a_query_can_bind(
+    stores: Stores,
+) -> None:
+    many = [entry(f"d/{i}.md", f"b{i}") for i in range(1200)]
+    await store(stores, manifest("m1", "main", "aaa111", *many))
+
+    found = await stores.stored_articles.find_articles(
+        PAYMENTS.id, 1, [(e.path, e.blob_sha) for e in many]
+    )
+
+    assert sorted(a.entry.path for a in found) == sorted(e.path for e in many)
 
 
 async def test_an_article_that_is_not_in_the_active_manifest_is_none(stores: Stores) -> None:

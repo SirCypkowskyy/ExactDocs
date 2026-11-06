@@ -190,8 +190,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   *branch* version of the library is now and queues an import pinned to the new commit for each
   one that moved. The import reuses the chunks of every unchanged file (by git blob SHA); the
   job reports `chunked` (chunk sets cut: one per distinct new file content) and `reused`
-  (articles whose chunk set was stored before). Files are still fetched, read and parsed again
-  (#164 tracks skipping that). The new manifest is activated in place of the old one: the version
+  (articles whose chunk set was stored before). Files are still fetched and read, but only the
+  changed ones are parsed: a file stored before at the same path with the same parser (by git
+  blob SHA and parser version) takes its title, front matter and text from the catalog, and its
+  tags are derived again from the library's rules. The job reports `parsed` and `taken` (articles
+  taken from the catalog). The new manifest is activated in place of the old one: the version
   keeps its ID, and chunk IDs of changed sections answer `409 stale_chunk`. Its `detail` names the section's
   article and new chunk ID when they can be found: same headings and text, else same headings
   and occurrence (marked "text changed"), else same text elsewhere in the article; a tie names
@@ -263,7 +266,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `retag` or
   `collect`; state `queued`,
-  `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; problems).
+  `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; `parsed` / `taken`; problems).
   A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its
   `finished_at`. The code of an upstream problem is one of `repo_unreachable`, `auth_failed`,
   `ref_deleted` and `tag_moved`, the same for a sync and for an import that meets it; any other

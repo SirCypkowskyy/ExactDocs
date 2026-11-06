@@ -20,11 +20,12 @@ QUEUE = "exactdocs-jobs"
 SCHEDULE = "exactdocs-scheduled-checks"
 """The DBOS schedule that ticks the scheduled checks (the worker creates it)."""
 WORKFLOW = "exactdocs.run_job"
-STEPS_VERSION = "jobs-3"
+STEPS_VERSION = "jobs-5"
 """DBOS's application version: bump it when a job's steps change (names, order or results).
 
 ``jobs-2`` added the steps of ``reprocess`` and ``retag`` (#61); ``jobs-3`` gave
-``ImportedRef`` its ``origin`` and ``pinned`` (#81).
+``ImportedRef`` its ``origin`` and ``pinned`` (#81); ``jobs-5`` counted the articles parsed
+and taken as stored (#164; ``jobs-4`` is #67's).
 
 A workflow of another version is not resumed: its job starts over from the beginning.
 """

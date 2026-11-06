@@ -1450,6 +1450,18 @@ export interface components {
              * @description Articles whose chunk set an earlier import had stored (files, not blobs).
              */
             readonly reused: number;
+            /**
+             * Parsed
+             * @description Articles an import parsed.
+             * @default 0
+             */
+            readonly parsed: number;
+            /**
+             * Taken
+             * @description Articles an import did not parse: an earlier import had stored the same file at the same path with the same parser, so its title, front matter and text were taken from the catalog (tags are derived again).
+             * @default 0
+             */
+            readonly taken: number;
             /** Error */
             readonly error: string | null;
             /**

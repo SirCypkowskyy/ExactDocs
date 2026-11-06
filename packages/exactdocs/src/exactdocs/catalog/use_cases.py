@@ -26,6 +26,7 @@ from exactdocs.catalog.dtos import (
     DiscardedManifests,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
+    FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetArticleQuery,
     GetAssetQuery,
@@ -55,6 +56,8 @@ from exactdocs.catalog.dtos import (
     SetImportedTagsCommand,
     SetLibrarySettingsCommand,
     SetManualTagsCommand,
+    StoredArticleOut,
+    StoredArticles,
     StoredManifest,
     StoreManifestCommand,
     TagCount,
@@ -97,6 +100,7 @@ from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
     ManifestRepository,
+    StoredArticleFinder,
 )
 from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
 
@@ -508,6 +512,32 @@ class GetVersionTagsUseCase:
             ref=str(version.ref),
             manifest_id=None if manifest is None else manifest.id,
             articles=articles,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FindStoredArticlesUseCase:
+    """Implements ``ports.driving.FindStoredArticles``."""
+
+    finder: StoredArticleFinder
+
+    async def __call__(self, query: FindStoredArticlesQuery) -> StoredArticles:
+        """Look the files up in every manifest of the library."""
+        files = {(f.path, f.blob_sha) for f in query.files}
+        found = await self.finder.find_articles(
+            LibraryId(query.library), query.content_version, files
+        )
+        return StoredArticles(
+            articles=[
+                StoredArticleOut(
+                    path=a.entry.path,
+                    blob_sha=a.entry.blob_sha,
+                    title=a.entry.title,
+                    front_matter=a.entry.front_matter,
+                    content=a.content,
+                )
+                for a in found
+            ]
         )
 
 

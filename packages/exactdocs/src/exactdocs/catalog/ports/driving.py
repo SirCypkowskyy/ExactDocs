@@ -18,6 +18,7 @@ from exactdocs.catalog.dtos import (
     DiscardedManifests,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
+    FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetArticleQuery,
     GetAssetQuery,
@@ -47,6 +48,7 @@ from exactdocs.catalog.dtos import (
     SetImportedTagsCommand,
     SetLibrarySettingsCommand,
     SetManualTagsCommand,
+    StoredArticles,
     StoredManifest,
     StoreManifestCommand,
     TagList,
@@ -386,5 +388,18 @@ class SetImportedTags(Protocol):
     """
 
     async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:
+        """Run the use case."""
+        ...
+
+
+class FindStoredArticles(Protocol):
+    """Return what the library's manifests hold for these files: same path, blob and version.
+
+    For the importer: a file whose path, git blob SHA and content version (the parser version)
+    are stored already is not parsed again. Any manifest of the library counts, whatever its
+    state. An unknown library holds nothing (no error).
+    """
+
+    async def __call__(self, query: FindStoredArticlesQuery) -> StoredArticles:
         """Run the use case."""
         ...

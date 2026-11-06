@@ -10,6 +10,7 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.dtos import (
     ApplyReadmeCommand,
@@ -54,6 +55,7 @@ def build(*versions: Version, **fields: object) -> CatalogModule:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        stored_articles=InMemoryStoredArticles(written),
     )
     REPOSITORIES[id(catalog)] = repository
     return catalog
@@ -205,6 +207,7 @@ async def test_an_edit_between_the_import_read_and_write_survives() -> None:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        stored_articles=InMemoryStoredArticles(written),
     )
 
     await catalog.apply_readme(

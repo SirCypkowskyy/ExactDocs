@@ -178,22 +178,32 @@ def parse_article(path: str, source: str) -> ParsedArticle:
                 front_matter = loaded or {}
                 body = text[match.end() :]
 
+    declared_tags, declared_problems = _declared(front_matter)
+    return ParsedArticle(
+        path=path,
+        title=_title(front_matter.get("title"), body, path),
+        body=body,
+        tags=declared_tags,
+        description=_description(front_matter),
+        front_matter=front_matter,
+        problems=(*problems, *declared_problems),
+        images=image_paths(path, body),
+    )
+
+
+def _declared(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...], list[str]]:
+    """Return the tags a parsed front matter declares, and the notes on its title and tags."""
+    problems: list[str] = []
     declared = front_matter.get("title")
     if declared is not None and not isinstance(declared, str):
         problems.append("front matter title must be text")
-    declared_tags, tag_problems = front_matter_tags(front_matter)
-    problems.extend(tag_problems)
+    tags, tag_problems = front_matter_tags(front_matter)
+    return tags, [*problems, *tag_problems]
+
+
+def _description(front_matter: Mapping[str, Any]) -> str | None:
     description = front_matter.get("description")
-    return ParsedArticle(
-        path=path,
-        title=_title(declared, body, path),
-        body=body,
-        tags=declared_tags,
-        description=description if isinstance(description, str) else None,
-        front_matter=front_matter,
-        problems=tuple(problems),
-        images=image_paths(path, body),
-    )
+    return description if isinstance(description, str) else None
 
 
 def front_matter_tags(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...], list[str]]:
@@ -235,6 +245,8 @@ def image_paths(article_path: str, body: str) -> tuple[str, ...]:
     character, a backslash or a ``.git`` segment is ignored. At most ``MAX_IMAGES_PER_ARTICLE``.
     """
     found: dict[str, None] = {}
+    if "![" not in body:  # every image, inline or by reference, starts so: skip the parse
+        return ()
     for token in _MARKDOWN.parse(body):
         for child in token.children or ():
             if child.type != "image" or len(found) >= MAX_IMAGES_PER_ARTICLE:
@@ -489,7 +501,9 @@ class Job:
     """A long task for one library (optionally one version) and how far it got.
 
     ``total`` is 0 until the job knows its size. ``chunked`` and ``reused`` count the articles an
-    import cut into chunks and those whose chunks an earlier import had already stored.
+    import cut into chunks and those whose chunks an earlier import had already stored;
+    ``parsed`` and ``taken`` the articles it parsed and those it took as an earlier import had
+    stored them.
     ``commit_sha`` is the commit the job's ``version`` was pinned to when it was queued,
     ``ref_kind`` what ``version`` is (a tag, a branch or a bare commit) as resolved then.
     Every transition returns a new job.
@@ -509,6 +523,8 @@ class Job:
     """How many of ``problems`` are notes on imported files (derived, not stored)."""
     chunked: int = 0
     reused: int = 0
+    parsed: int = 0
+    taken: int = 0
     error: str | None = None
     error_code: str | None = None
     """The stable code of ``error``: a ``SyncErrorCode``, an error's own code or ``unexpected``."""
@@ -557,6 +573,10 @@ class Job:
     def chunking(self, *, chunked: int, reused: int) -> Self:
         """Record how many articles were chunked now and how many reused stored chunks."""
         return replace(self, chunked=chunked, reused=reused)
+
+    def parsing(self, *, parsed: int, taken: int) -> Self:
+        """Record how many articles were parsed now and how many taken as stored before."""
+        return replace(self, parsed=parsed, taken=taken)
 
     def with_problem(self, path: str, code: ProblemCode, reason: str) -> Self:
         """Record a problem with a file; the job goes on.
@@ -610,6 +630,8 @@ class Job:
             problems=(),
             chunked=0,
             reused=0,
+            parsed=0,
+            taken=0,
             notes=0,
             error=None,
             error_code=None,
@@ -1636,6 +1658,43 @@ class StoredArticleTags:
     def retagged(self, rules: Sequence[TagRule]) -> tuple[str, ...]:
         """Return the imported tags the article gets under ``rules`` (as an import would)."""
         return article_tags(self.path, front_matter_tags(self.front_matter)[0], rules)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoredArticle:
+    """What an import stored for a file: an import of the same file takes it instead of parsing.
+
+    Found by path, git blob SHA and ``PARSER_VERSION``: the title and the image links depend on
+    the path, everything else on the bytes and the parser. Tags are not stored here: they are
+    derived again (path rules are the library's settings, which may have changed).
+    """
+
+    path: str
+    blob_sha: str
+    title: str
+    front_matter: Mapping[str, Any]
+    content: str
+
+    def parsed(self) -> ParsedArticle | None:
+        """Return what ``parse_article`` gives the file, rebuilt without parsing it.
+
+        ``None`` when only a parse can tell: the text starts with a ``---`` block, which may be
+        front matter that did not parse (kept in the body, with a note to list again).
+        """
+        if _FRONT_MATTER.match(self.content):
+            return None
+        front_matter = dict(self.front_matter)
+        tags, problems = _declared(front_matter)
+        return ParsedArticle(
+            path=self.path,
+            title=self.title,
+            body=self.content,
+            tags=tags,
+            description=_description(front_matter),
+            front_matter=front_matter,
+            problems=tuple(problems),
+            images=image_paths(self.path, self.content),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
