@@ -39,6 +39,8 @@ extend-exclude = [
     "web",
     "packages/exactdocs/src/exactdocs/_web",
     "packages/exactdocs/tests/fixtures/docs-repo",
+    # Code that breaks the Python conventions on purpose, read (never imported) by test_conventions.py.
+    "packages/exactdocs/tests/architecture/fixtures",
 ]
 
 [tool.ruff.lint]
@@ -106,6 +108,11 @@ ignore = [
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
 
+[tool.ruff.lint.pydocstyle]
+# Google style: `Args:`, `Returns:`, `Raises:`. ruff skips private functions and has no rules for
+# constants, attribute docstrings or dataclass flags: tests/architecture/test_conventions.py does.
+convention = "google"
+
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
@@ -126,7 +133,7 @@ extra-paths = ["packages/exactdocs/tests/fixtures"]
 
 [tool.ty.src]
 include = ["packages"]
-exclude = ["packages/exactdocs/src/exactdocs/_web"]
+exclude = ["packages/exactdocs/src/exactdocs/_web", "packages/exactdocs/tests/architecture/fixtures"]
 
 [tool.ty.rules]
 possibly-unresolved-reference = "error"
