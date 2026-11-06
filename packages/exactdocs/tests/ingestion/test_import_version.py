@@ -1729,10 +1729,10 @@ async def test_a_taken_article_brings_its_images_and_notes_as_a_parse_would(
     assert world.progress.problems == plain.progress.problems != []
 
 
-async def test_a_file_whose_text_starts_with_a_dash_block_is_parsed_for_its_note(
+async def test_a_file_with_malformed_front_matter_is_taken_with_its_note(
     first: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Malformed front matter stays in the text: only a parse can list its note again."""
+    """Malformed front matter stays in the text; the blob SHA says the file was that text."""
     text = b"---\ntitle: [unclosed\n---\n# Install\n"
     before = await _imported(first, {"docs/install.md": text})
     world = build_world(first / "second", {"docs/install.md": text}, stored=Stored().keep(before))
@@ -1740,8 +1740,24 @@ async def test_a_file_whose_text_starts_with_a_dash_block_is_parsed_for_its_note
 
     await world.run(make_job(), world.progress)
 
-    assert parsed == ["docs/install.md"]
+    assert parsed == []
+    assert world.catalog.stored[0] == before
     assert [code for _, code, _ in world.progress.problems] == [ProblemCode.FRONT_MATTER]
+
+
+async def test_a_file_only_a_parse_can_tell_from_malformed_front_matter_is_parsed(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A front matter that loaded to nothing, then a block YAML refuses: that block is Markdown."""
+    text = b"---\n# a comment\n---\n---\ntitle: [unclosed\n---\n# Install\n"
+    before = await _imported(first, {"docs/install.md": text})
+    world = build_world(first / "second", {"docs/install.md": text}, stored=Stored().keep(before))
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/install.md"]
+    assert world.progress.problems == []
 
 
 async def test_stored_articles_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:

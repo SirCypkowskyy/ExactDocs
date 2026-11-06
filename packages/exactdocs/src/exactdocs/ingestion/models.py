@@ -132,6 +132,28 @@ def malformed_front_matter_length(body: str) -> int:
     return match.end() if match else 0
 
 
+def stored_front_matter_problems(
+    path: str, content: str, front_matter: Mapping[str, Any], blob_sha: str
+) -> tuple[str, ...] | None:
+    """Return the malformed-front-matter note a parse of the file gave, from what was stored.
+
+    ``content`` and ``front_matter`` are what ``parse_article`` gave the file whose git blob SHA
+    is ``blob_sha``. Whether its front matter was malformed (it is then the start of the body,
+    not Markdown to cut at) is not stored. It can be only when nothing was taken from the file
+    and ``content`` starts with a block the YAML loader refuses. Then the file either was that
+    text (its blob SHA says so: the front matter was malformed) or had a front matter that loaded
+    to nothing (blank lines or comments) before it, and that block is Markdown (#228). ``None``
+    when the blob SHA cannot tell them apart (the parser also strips invisible characters): only
+    a parse of the file can.
+    """
+    if front_matter or not malformed_front_matter_length(content):
+        return ()
+    reparsed = parse_article(path, content)
+    if reparsed.body != content or not reparsed.problems:
+        return ()  # a mapping (so taken from a file) or not YAML front matter at all: Markdown
+    return reparsed.problems if git_blob_sha(content.encode()) == blob_sha else None
+
+
 def strip_invisible(text: str) -> str:
     """Remove invisible and control characters (see ``_ALWAYS_INVISIBLE``); change nothing else."""
     return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub(lambda m: m["flag"] or "", text))
@@ -1716,10 +1738,13 @@ class StoredArticle:
     def parsed(self) -> ParsedArticle | None:
         """Return what ``parse_article`` gives the file, rebuilt without parsing it.
 
-        ``None`` when only a parse can tell: the text starts with a ``---`` block, which may be
-        front matter that did not parse (kept in the body, with a note to list again).
+        ``None`` when only a parse can tell whether the front matter was malformed (kept in the
+        body, with a note to list again; ``stored_front_matter_problems``).
         """
-        if malformed_front_matter_length(self.content):
+        kept = stored_front_matter_problems(
+            self.path, self.content, self.front_matter, self.blob_sha
+        )
+        if kept is None:
             return None
         front_matter = dict(self.front_matter)
         tags, problems = _declared(front_matter)
@@ -1730,7 +1755,7 @@ class StoredArticle:
             tags=tags,
             description=_description(front_matter),
             front_matter=front_matter,
-            problems=tuple(problems),
+            problems=(*kept, *problems),
             images=image_paths(self.path, self.content),
         )
 
@@ -1774,18 +1799,17 @@ class CopiedArticle:
     """Imported: path rules and front matter (manual tags are kept apart)."""
     content: str
 
-    def parsed(self) -> ParsedArticle:
+    def parsed(self) -> ParsedArticle | None:
         """Return the article as the parser gave it: what a chunker cuts.
 
-        Only whether the front matter was malformed (it is then still in the body, and not
-        Markdown to cut at) is not stored: it is when nothing was taken from a leading block
-        that the YAML loader refuses.
+        ``None`` when only a parse of the file can tell whether its front matter was malformed
+        (``stored_front_matter_problems``): the version is then re-imported.
         """
-        problems: tuple[str, ...] = ()
-        if not self.front_matter and malformed_front_matter_length(self.content):
-            reparsed = parse_article(self.path, self.content)
-            if reparsed.body == self.content:
-                problems = reparsed.problems
+        problems = stored_front_matter_problems(
+            self.path, self.content, self.front_matter, self.blob_sha
+        )
+        if problems is None:
+            return None
         return ParsedArticle(
             path=self.path,
             title=self.title,

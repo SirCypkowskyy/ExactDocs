@@ -313,6 +313,11 @@ def test_a_hostile_svg_prologue_cannot_stall_the_sniffer() -> None:
         ("odd.md", "---\ntitle: [1]\ntags: 7\nextra: {n: [1, null, x]}\n---\nBody\n"),
         ("many.md", "---\ntags: a, b, a, -bad tag-\n---\n\u200bInvisible\n"),
         ("empty.md", "---\n---\n# After empty front matter\n"),
+        ("broken.md", "---\ntitle: [unclosed\n---\n# Malformed\n"),  # the blob SHA tells
+        ("list.md", "---\n- a list\n---\nNot a mapping: body text\n"),
+        ("two.md", "---\ntitle: T\n---\n---\nsecond: block\n---\nBody\n"),
+        ("two-bad.md", "---\ntitle: T\n---\n---\nsecond: [\n---\nBody\n"),
+        ("blank-then-map.md", "---\n\n---\n---\nsecond: block\n---\nBody\n"),
     ],
 )
 def test_a_stored_article_rebuilds_what_the_parser_gives(path: str, text: str) -> None:
@@ -332,12 +337,15 @@ def test_a_stored_article_rebuilds_what_the_parser_gives(path: str, text: str) -
 @pytest.mark.parametrize(
     "text",
     [
-        "---\ntitle: [unclosed\n---\n# Malformed\n",  # the note is only known to a parse
-        "---\n- a list\n---\nNot a mapping: body text\n",
-        "---\ntitle: T\n---\n---\nsecond: block\n---\nBody\n",
+        # A front matter that loads to nothing, then a block YAML refuses: Markdown (#228).
+        "---\n# only a comment\n---\n---\ntitle: [unclosed\n# Inside\n---\n# Real\n",
+        "---\n\n---\n---\ntitle: [\n---\nBody\n",
+        "\u200b---\ntitle: [\n---\nBody\n",  # malformed, but the parser stripped a character
     ],
 )
-def test_a_stored_text_that_starts_with_a_dash_block_needs_a_parse(text: str) -> None:
+def test_a_stored_text_only_a_parse_can_tell_from_malformed_front_matter_needs_one(
+    text: str,
+) -> None:
     parsed = parse_article("a.md", text)
     stored = StoredArticle(
         path="a.md",

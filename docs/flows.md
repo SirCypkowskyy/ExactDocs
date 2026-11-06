@@ -60,7 +60,8 @@ each version at the commit it serves, so each version's new manifest replaces th
 once. Changed chunking: a `rechunk` job copies each version's active manifest into a pending one,
 re-derives its imported tags, cuts the stored text with the new chunking (reusing chunk sets
 already cut with it), indexes the copy and activates it, without fetching (a version stored by an
-older parser is re-imported at its commit instead). Only tag rules changed: a `retag` job
+older parser, or with an article only its file can rebuild exactly, is re-imported at its commit
+instead). Only tag rules changed: a `retag` job
 re-derives each stored article's imported tags (front matter plus rules) and writes them per
 version in one transaction, then copies them onto the chunks, without fetching. Until a version
 is done it serves its previous state; one that fails keeps it.
