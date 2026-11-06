@@ -27,15 +27,15 @@ export const saveDetails = (
   patch: { title?: string; description?: string },
 ) => sendJson<SettingsLibrary>("PATCH", lib(owner, repo), patch);
 
-/** How many of the library's newest jobs are read to find its last re-processing. */
+/** How many of the library's newest jobs are read to find its re-processings. */
 const RECENT_JOBS = 50;
 
 /**
- * The library's newest `reprocess`, `rechunk` or `retag` job, or null: one that failed is offered
- * again.
+ * The library's newest `reprocess`, `rechunk` and `retag` jobs, newest first: one that failed and
+ * was not redone since is offered again, and decides what an edit queues (`unhealedJob`).
  * Under the browse key, so every library refresh (and a finished job line) reloads it.
  */
-export const lastReprocessQueryOptions = (owner: string, repo: string) =>
+export const reprocessJobsQueryOptions = (owner: string, repo: string) =>
   queryOptions({
     queryKey: [...BROWSE_KEY, owner, repo, "reprocess"] as const,
     queryFn: async ({ signal }) => {
@@ -43,7 +43,7 @@ export const lastReprocessQueryOptions = (owner: string, repo: string) =>
         signal,
         query: { limit: RECENT_JOBS },
       });
-      return jobs.find((j) => LIBRARY_JOBS.has(j.kind)) ?? null;
+      return jobs.filter((j) => LIBRARY_JOBS.has(j.kind));
     },
   });
 

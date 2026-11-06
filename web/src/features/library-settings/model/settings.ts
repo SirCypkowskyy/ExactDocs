@@ -447,24 +447,56 @@ export function reprocessWarning(
   };
 }
 
+/** The job each change queues, by how much it redoes: a wider one does all a narrower one does. */
+const JOBS: Partial<Record<string, { change: SettingsChange; reach: number }>> = {
+  retag: { change: "tags", reach: 1 },
+  rechunk: { change: "chunking", reach: 2 },
+  reprocess: { change: "paths", reach: 3 },
+};
+const reachOf = (job: Pick<ReprocessJob, "kind"> | undefined) =>
+  (job && JOBS[job.kind]?.reach) ?? 0;
+
+type JobState = Pick<ReprocessJob, "kind" | "state">;
+
 /**
- * What the server will run for this change. While the newest `reprocess` failed, a tag-only edit
- * re-runs that full re-processing (it re-tags too), so it is warned about as one; while the
- * newest `rechunk` failed, a tag-only edit re-runs the re-chunking (it re-tags too).
+ * The widest re-processing that failed and was not redone since, as the server finds it
+ * (`UpdateLibrarySettings`): `jobs` newest first. A failed job is redone by a later job of the
+ * same or a greater reach that did not fail (it succeeded, or is queued or running), so a failed
+ * `reprocess` stays unhealed after a `retag` or a `rechunk`.
+ */
+export function unhealedJob<J extends JobState>(jobs: readonly J[] | null | undefined) {
+  let covered = 0;
+  let worst: J | undefined;
+  for (const job of jobs ?? []) {
+    const reach = reachOf(job);
+    if (reach === 0) continue;
+    if (job.state !== "failed") covered = Math.max(covered, reach);
+    else if (reach > covered && reach > reachOf(worst)) worst = job;
+  }
+  return worst;
+}
+
+/**
+ * What the server will run for this change: the change itself, or the widest failed
+ * re-processing not redone since when that is wider (a smaller job would hide the failure). A
+ * tag-only edit after a failed `reprocess` re-runs the full re-processing (it re-tags too), even
+ * when a `retag` or a `rechunk` succeeded in between; after a failed `rechunk`, the re-chunking.
  */
 export function effectiveChange(
   change: "paths" | "tags",
-  last: Pick<ReprocessJob, "kind" | "state"> | null | undefined,
+  jobs: readonly JobState[] | null | undefined,
 ): { change: SettingsChange; afterFailure: boolean } {
-  const failed = last?.state === "failed" ? last.kind : undefined;
-  if (failed === "reprocess") return { change: "paths", afterFailure: true };
-  if (failed === "rechunk" && change === "tags") return { change: "chunking", afterFailure: true };
-  return { change, afterFailure: failed === "rechunk" };
+  const failed = unhealedJob(jobs);
+  const pending = failed && JOBS[failed.kind];
+  const own = reachOf({ kind: change === "paths" ? "reprocess" : "retag" });
+  const runs = pending && pending.reach > own ? pending.change : change;
+  return {
+    change: runs,
+    // Only when this save runs that same failed re-chunk or re-process again: a paths edit after a
+    // failed re-chunk is a re-process of its own, and is not worded as a re-run.
+    afterFailure: pending !== undefined && pending.reach > 1 && pending.change === runs,
+  };
 }
-
-/** The newest re-processing, when it failed: it can be run again with the stored settings. */
-export const failedReprocess = (last: ReprocessJob | null | undefined) =>
-  last?.state === "failed" ? last : undefined;
 
 /** Why the paths and tag rules were not saved. Nothing is stored after a refusal. */
 export function explainSettings(error: unknown): Problem {
