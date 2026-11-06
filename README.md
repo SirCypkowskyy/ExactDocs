@@ -132,6 +132,11 @@ are and, past 1000, `truncated`; nothing is stored. `--id` and `--wait` have no 
 `--tag-rule` is only checked, so a malformed rule fails the dry run as it would fail `add`. There are no file sizes: knowing them would mean downloading every file. A server running
 as many previews as it allows answers "try again" (exit 1).
 
+In the web UI, **Preview** on the add-library form does the same: it shows the matching files as a
+folder tree with counts, what the repository's `context7.json` says (its paths fill the empty path
+boxes, still editable) and its `previousVersions` as checkboxes; the ticked tags are imported
+after the library is added.
+
 Setting a private repository's credential (`--git-token-file`, `--ssh-key`; a token or key is read
 from a file of at most 64 KB, never from the command line; group- or world-readable files get a
 warning) and all `token` commands need **your password**, not an
