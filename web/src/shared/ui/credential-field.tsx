@@ -1,5 +1,5 @@
 import { KeyRound } from "lucide-react";
-import { type ChangeEvent, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import type { CredentialDraft, CredentialKind } from "@/shared/lib/credentials";
 import { Button } from "./button";
 import { Field } from "./field";
@@ -27,6 +27,13 @@ interface Props {
  */
 export function CredentialField({ id, kind, draft, error, hint, onChange, onCommit }: Props) {
   const file = useRef<HTMLInputElement>(null);
+  // Uncontrolled: React would mirror a controlled value into the `value` attribute, where CSS
+  // selectors and DOM snapshots could read the secret. Only the property ever holds it.
+  const secret = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const input = secret.current;
+    if (input && input.value !== draft.secret) input.value = draft.secret;
+  }, [draft.secret]);
   const [loaded, setLoaded] = useState<string>();
   const [fileError, setFileError] = useState<string>();
   const token = kind === "token";
@@ -60,7 +67,7 @@ export function CredentialField({ id, kind, draft, error, hint, onChange, onComm
         data-lpignore="true"
         data-bwignore
         placeholder={token ? "Paste the token" : "Paste the private key"}
-        value={draft.secret}
+        ref={secret}
         error={error ?? fileError}
         hint={
           hint ??

@@ -74,6 +74,7 @@ interface Routes {
   gate?: Promise<unknown>;
   /** The library has a stored token or key. */
   private?: boolean;
+  refs?: () => Reply;
 }
 
 function serve(routes: Routes = {}) {
@@ -85,7 +86,9 @@ function serve(routes: Routes = {}) {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, url, body });
       const reply = (r: Reply) => Response.json(r.body, { status: r.status });
-      if (url.includes("/v1/repositories/refs")) return Response.json(REFS);
+      if (url.includes("/v1/repositories/refs")) {
+        return reply(routes.refs?.() ?? { status: 200, body: REFS });
+      }
       if (url.endsWith("/access") && routes.private !== undefined) {
         return Response.json({ private: routes.private });
       }
@@ -826,6 +829,8 @@ describe("adding a version of a private library", () => {
     expect(await screen.findByText(/can't be read any more/)).toBeInTheDocument();
     await waitFor(() => expect(box).toHaveFocus());
     await userEvent.type(box, TOKEN);
+    expect(box.getAttribute("value")).toBeNull();
+    expect(document.documentElement.outerHTML).not.toContain(TOKEN);
     await userEvent.click(screen.getByRole("button", { name: "Add version" }));
 
     expect(await screen.findByText("Importing v1.3.0")).toBeInTheDocument();
@@ -862,6 +867,16 @@ describe("adding a version of a private library", () => {
       },
     ]);
     expect(calls.some((c) => c.url.includes(TOKEN))).toBe(false);
+  });
+
+  it("says at once that a replacement token can't read the repository", async () => {
+    serve({ private: true, refs: () => failure(422, "repository_auth_required") });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    await userEvent.type(await screen.findByLabelText("Access token"), TOKEN);
+    await userEvent.tab();
+    expect(await screen.findByText(/refused this token/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load branches and tags/)).not.toBeInTheDocument();
   });
 
   it("explains a refused replacement and a changed host key", () => {

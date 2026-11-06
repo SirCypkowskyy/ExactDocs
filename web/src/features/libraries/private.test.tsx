@@ -155,7 +155,12 @@ describe("adding a private library", () => {
     expect(secret).toHaveAttribute("type", "password");
     expect(secret).toHaveAttribute("autocomplete", "off");
     await userEvent.type(secret, TOKEN);
+    // Typed, it is only the input's property: no attribute, nothing in the markup.
+    expect(secret).toHaveValue(TOKEN);
+    expect(secret.getAttribute("value")).toBeNull();
+    expect(document.documentElement.outerHTML).not.toContain(TOKEN);
     await check();
+    expect(document.documentElement.outerHTML).not.toContain(TOKEN);
 
     expect(await screen.findByLabelText("Library ID")).toHaveValue("/acme/private");
     const picker = await screen.findByLabelText("Version to import");

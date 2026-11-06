@@ -171,6 +171,11 @@ function AddVersionForm({
   }
 
   const unavailable = useCallback(() => setChoice({ kind: "other" }), []);
+  // A replacement that does not even list the refs would not import either: say so now.
+  const listRefused = (error: unknown) => {
+    const p = explainAddVersion(error, "", kind);
+    return p.field === "credential" ? p.message : undefined;
+  };
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -251,6 +256,7 @@ function AddVersionForm({
           <RefPicker
             url={library.source_url}
             credential={listedWith}
+            explainRefusal={listRefused}
             unlisted={
               access?.private
                 ? "Branches and tags of a private repository are listed with its token or key: enter it above to see them, or type a version below."

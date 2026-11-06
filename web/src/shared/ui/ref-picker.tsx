@@ -24,6 +24,8 @@ interface Props {
    * requested and this is shown instead, with the box to type a version.
    */
   unlisted?: ReactNode;
+  /** The words for a list asked for with `credential` that failed (a refused token, say). */
+  explainRefusal?: ((error: unknown) => ReactNode) | undefined;
   choice: RefChoice;
   typed: string;
   error: ReactNode;
@@ -190,6 +192,7 @@ export function RefPicker({
   url,
   credential,
   unlisted,
+  explainRefusal,
   choice,
   typed,
   error,
@@ -199,15 +202,19 @@ export function RefPicker({
   onUnavailable,
   onTyped,
 }: Props) {
-  const { data, isPending, isError, refetch, isFetching } = useRepositoryRefs(
-    url,
-    credential,
-    !unlisted,
-  );
+  const {
+    data,
+    isPending,
+    isError,
+    error: listError,
+    refetch,
+    isFetching,
+  } = useRepositoryRefs(url, credential, !unlisted);
   // Without a list the only way to name a version is to type it, so the typed value must count.
   useEffect(() => {
     if (isError) onUnavailable();
   }, [isError, onUnavailable]);
+
   const message = error ? (
     <p
       id="ref-error"
@@ -235,7 +242,7 @@ export function RefPicker({
       )}
       {isError && (
         <Unavailable
-          why={credential ? undefined : unlisted}
+          why={credential ? (listError ? explainRefusal?.(listError) : undefined) : unlisted}
           fetching={isFetching}
           onRetry={refetch}
         />

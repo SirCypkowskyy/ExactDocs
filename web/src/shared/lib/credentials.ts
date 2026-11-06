@@ -23,7 +23,11 @@ const MAX_KEY = 16 * 1024;
 const USERNAME = /^[A-Za-z0-9._-]{1,100}$/;
 const LOOPBACK = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//i;
 
-/** Which credential the address can carry: a token over https, a key over ssh, else none. */
+/**
+ * Which credential the address can carry: a token over https, a key over ssh, else none. Plain
+ * http to localhost takes a token too: it mirrors the server's `check_credential_fits`, which
+ * allows it for local mirrors (the token never crosses a network there).
+ */
 export function credentialKindFor(rawUrl: string): CredentialKind | undefined {
   const url = rawUrl.trim();
   if (/^https:\/\//i.test(url) || LOOPBACK.test(url)) return "token";
@@ -42,7 +46,8 @@ export function normalizeKey(raw: string): string {
   const match = KEY.exec(text);
   if (!match) return text;
   const [, label = "", body = ""] = match;
-  if (body.trim().includes("\n")) return text;
+  // Already wrapped, or PEM headers (an encrypted key): leave it as it is.
+  if (body.trim().includes("\n") || body.includes(":")) return text;
   const width = label === "OPENSSH PRIVATE KEY" ? 70 : 64;
   const rows = body.replace(/\s+/g, "").match(new RegExp(`.{1,${width}}`, "g")) ?? [];
   return [`-----BEGIN ${label}-----`, ...rows, `-----END ${label}-----`].join("\n");
@@ -65,14 +70,46 @@ export function validateCredential(kind: CredentialKind, draft: CredentialDraft)
   const key = normalizeKey(draft.secret);
   if (!key) return "Paste the private deploy key, or choose its file.";
   if (key.length > MAX_KEY) return "That key is too long for a deploy key.";
-  const first = key.split("\n")[0] ?? "";
   if (!KEY.test(key)) {
     return "That isn't a private key. Use the file without .pub (its first line names a PRIVATE KEY).";
   }
-  if (first.includes("ENCRYPTED") || key.includes("Proc-Type: 4,ENCRYPTED")) {
-    return "That key has a passphrase. Use a deploy key without one.";
-  }
+  if (hasPassphrase(draft.secret)) return PASSPHRASE;
   return undefined;
+}
+
+export const PASSPHRASE =
+  "This key has a passphrase, and ExactDocs can't type it. Use a deploy key without one.";
+
+const MAGIC = "openssh-key-v1\0";
+
+/**
+ * Whether a key is encrypted, read from what was typed (before any re-wrapping): the PEM armour
+ * or `Proc-Type` header says so, and an OpenSSH key names its cipher (`none` without a passphrase)
+ * right after its magic. The server makes the same check.
+ */
+export function hasPassphrase(raw: string): boolean {
+  if (/-----BEGIN [A-Z ]*ENCRYPTED/.test(raw) || /Proc-Type:\s*4,\s*ENCRYPTED/.test(raw)) {
+    return true;
+  }
+  const match = KEY.exec(raw.replace(/\r\n?/g, "\n").trim());
+  if (!match || match[1] !== "OPENSSH PRIVATE KEY") return false;
+  let blob: string;
+  try {
+    // Enough of the key for the magic and the cipher name; the rest is never decoded.
+    blob = atob((match[2] ?? "").replace(/\s+/g, "").slice(0, 64));
+  } catch {
+    return false;
+  }
+  if (!blob.startsWith(MAGIC)) return false;
+  const at = MAGIC.length;
+  const size =
+    ((blob.charCodeAt(at) << 24) |
+      (blob.charCodeAt(at + 1) << 16) |
+      (blob.charCodeAt(at + 2) << 8) |
+      blob.charCodeAt(at + 3)) >>>
+    0;
+  const cipher = blob.slice(at + 4, at + 4 + size);
+  return cipher !== "none" && cipher !== "";
 }
 
 /** The value to send, or nothing when the boxes are empty. Validate first. */
@@ -87,6 +124,7 @@ const SERVER_PREFIX = /^not a usable credential:\s*/i;
 
 /** `invalid_credential`: the server's sentence is fixed text (it never repeats the secret). */
 export function explainInvalidCredential(detail: string) {
+  if (/passphrase/i.test(detail)) return PASSPHRASE;
   const why = detail.replace(SERVER_PREFIX, "").replace(/\.$/, "");
   return `The server can't use it: ${why}.`;
 }

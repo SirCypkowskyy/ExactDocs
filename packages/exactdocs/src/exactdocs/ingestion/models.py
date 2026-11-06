@@ -5,6 +5,7 @@ touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX, ``
 ``export`` lines stay in the body as text and are never executed.
 """
 
+import base64
 import hashlib
 import ipaddress
 import json
@@ -864,11 +865,37 @@ class DeployKey:
         if (
             not (lines[0].startswith("-----BEGIN ") and lines[0].endswith("PRIVATE KEY-----"))
             or not lines[-1].startswith("-----END ")
-            or "ENCRYPTED" in lines[0]
             or any(not line.isprintable() for line in lines)
         ):
             raise InvalidCredentialError(CredentialProblem.KEY)
+        if _has_passphrase(lines):
+            raise InvalidCredentialError(CredentialProblem.ENCRYPTED_KEY)
         object.__setattr__(self, "private_key", key + "\n")  # ssh wants the final newline
+
+
+_OPENSSH_MAGIC = b"openssh-key-v1\0"
+
+
+def _has_passphrase(lines: Sequence[str]) -> bool:
+    """Whether the key is encrypted: said in a PEM armour or header, or an OpenSSH cipher.
+
+    ssh would only prompt for it (and, with no terminal, fail as if the repository refused the
+    key), so it is refused here with words that say why. An OpenSSH key names its cipher right
+    after the magic: ``none`` when there is no passphrase.
+    """
+    if "ENCRYPTED" in lines[0] or any(line.startswith("Proc-Type: 4,ENCRYPTED") for line in lines):
+        return True
+    if "OPENSSH" not in lines[0]:
+        return False
+    try:
+        blob = base64.b64decode("".join(lines[1:-1]), validate=True)
+    except ValueError:
+        return False
+    if not blob.startswith(_OPENSSH_MAGIC):
+        return False
+    rest = blob[len(_OPENSSH_MAGIC) :]
+    size = int.from_bytes(rest[:4])
+    return rest[4 : 4 + size] not in {b"none", b""}
 
 
 Credential = AccessToken | DeployKey

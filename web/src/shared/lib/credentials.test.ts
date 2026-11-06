@@ -3,12 +3,14 @@ import {
   credentialKindFor,
   credentialOf,
   explainInvalidCredential,
+  hasPassphrase,
   normalizeKey,
+  PASSPHRASE,
   validateCredential,
 } from "./credentials";
 
 // Not a real key: the shape is all that matters here.
-const BODY = "b3BlbnNzaC1rZXktdjEAAAAA".repeat(8);
+const BODY = "QUJDREVGR0hJSktMTU5PUFFS".repeat(8);
 const wrapped = (label: string, width: number) =>
   [
     `-----BEGIN ${label}-----`,
@@ -45,7 +47,6 @@ describe("credentials", () => {
     const key = (secret: string) => validateCredential("ssh_key", { secret, username: "" });
     expect(key("")).toMatch(/Paste/);
     expect(key("ssh-ed25519 AAAA public")).toMatch(/isn't a private key/);
-    expect(key(wrapped("ENCRYPTED PRIVATE KEY", 64))).toMatch(/passphrase/);
     expect(key(wrapped("OPENSSH PRIVATE KEY", 70))).toBeUndefined();
     for (const words of [token("ghp_a b"), key("not-a-key-secret")]) {
       expect(words).not.toMatch(/ghp_a|not-a-key-secret/);
@@ -78,5 +79,50 @@ describe("credentials", () => {
     ).toBe(
       "The server can't use it: an access token goes with an https:// URL (http:// only for localhost).",
     );
+  });
+});
+
+/** The start of an OpenSSH key blob naming `cipher`, padded like a real key's body. */
+const openssh = (cipher: string) => {
+  const size = String.fromCharCode(0, 0, 0, cipher.length);
+  const blob = `openssh-key-v1\0${size}${cipher}${String.fromCharCode(0, 0, 0, 4)}none`;
+  const body = btoa(blob + "x".repeat(120)).match(/.{1,70}/g) ?? [];
+  return ["-----BEGIN OPENSSH PRIVATE KEY-----", ...body, "-----END OPENSSH PRIVATE KEY-----"].join(
+    "\n",
+  );
+};
+
+describe("keys with a passphrase", () => {
+  const key = (secret: string) => validateCredential("ssh_key", { secret, username: "" });
+
+  it("reads an OpenSSH key's cipher, wrapped or pasted on one line", () => {
+    expect(hasPassphrase(openssh("none"))).toBe(false);
+    expect(hasPassphrase(openssh("aes256-ctr"))).toBe(true);
+    expect(key(openssh("aes256-ctr").replaceAll("\n", ""))).toBe(PASSPHRASE);
+    expect(key(openssh("none").replaceAll("\n", ""))).toBeUndefined();
+  });
+
+  it("sees a PEM key's Proc-Type header before anything re-wraps it", () => {
+    const pem = [
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "Proc-Type: 4,ENCRYPTED",
+      "DEK-Info: AES-128-CBC,0123456789ABCDEF0123456789ABCDEF",
+      "",
+      ...(BODY.match(/.{1,64}/g) ?? []),
+      "-----END RSA PRIVATE KEY-----",
+    ].join("\n");
+    expect(key(pem)).toBe(PASSPHRASE);
+    // A password box drops the line breaks: still found, and the key is not mangled.
+    expect(key(pem.replaceAll("\n", ""))).toBe(PASSPHRASE);
+    expect(normalizeKey(pem.replaceAll("\n", ""))).toBe(pem.replaceAll("\n", ""));
+    expect(key(wrapped("ENCRYPTED PRIVATE KEY", 64))).toBe(PASSPHRASE);
+  });
+
+  it("says so for the server's refusal too", () => {
+    expect(
+      explainInvalidCredential(
+        "not a usable credential: the deploy key has a passphrase: use a key without one",
+      ),
+    ).toBe(PASSPHRASE);
   });
 });

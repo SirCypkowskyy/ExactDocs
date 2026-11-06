@@ -8,6 +8,8 @@ interface Listed {
   data: RepositoryRefs | undefined;
   isPending: boolean;
   isError: boolean;
+  /** Why the listing failed (an `HttpError` from the server, or a network error). */
+  error: unknown;
   isFetching: boolean;
   refetch: () => unknown;
 }
@@ -17,7 +19,7 @@ function usePrivateRefs(url: string, credential: Credential | undefined): Listed
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
     data?: RepositoryRefs;
-    error?: boolean;
+    error?: unknown;
     fetching: boolean;
   }>({ fetching: true });
   useEffect(() => {
@@ -28,7 +30,7 @@ function usePrivateRefs(url: string, credential: Credential | undefined): Listed
     void attempt;
     sendJson<RepositoryRefs>("POST", "/v1/repositories/refs", { url, credential }).then(
       (data) => live && setState({ data, fetching: false }),
-      () => live && setState({ error: true, fetching: false }),
+      (error: unknown) => live && setState({ error: error ?? new Error("refs"), fetching: false }),
     );
     return () => {
       live = false;
@@ -38,6 +40,7 @@ function usePrivateRefs(url: string, credential: Credential | undefined): Listed
     data: state.data,
     isPending: !state.data && !state.error,
     isError: Boolean(state.error),
+    error: state.error,
     isFetching: state.fetching,
     refetch: () => setAttempt((n) => n + 1),
   };
@@ -64,6 +67,7 @@ const NOT_ASKED: Listed = {
   data: undefined,
   isPending: false,
   isError: true,
+  error: undefined,
   isFetching: false,
   refetch: () => undefined,
 };

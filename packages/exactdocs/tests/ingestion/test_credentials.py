@@ -1,6 +1,9 @@
 """Credentials: validation, use cases and the vault (encryption itself: test_secret_box)."""
 
+import asyncio
+import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +67,44 @@ def test_a_token_and_a_key_are_validated_and_never_shown() -> None:
     for bad in ("", "not a key", KEY.replace("OPENSSH", "ENCRYPTED PRIVATE KEY", 1)):
         with pytest.raises(InvalidCredentialError):
             DeployKey(private_key=bad)
+
+
+async def _keygen(tmp_path: Path, name: str, *args: str) -> str:
+    """A throwaway private key made by the real ssh-keygen."""
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        pytest.skip("needs OpenSSH's ssh-keygen")
+    key = tmp_path / name
+    process = await asyncio.create_subprocess_exec(
+        keygen, "-q", "-f", str(key), *args, stdin=asyncio.subprocess.DEVNULL
+    )
+    assert await process.wait() == 0
+    return key.read_text(encoding="ascii")
+
+
+@pytest.mark.parametrize(
+    ("args", "passphrase"),
+    [
+        (("-t", "ed25519", "-N", ""), False),
+        (("-t", "ed25519", "-N", "pass phrase"), True),
+        (("-t", "rsa", "-b", "2048", "-m", "PEM", "-N", ""), False),
+        (("-t", "rsa", "-b", "2048", "-m", "PEM", "-N", "pass phrase"), True),
+        (("-t", "ecdsa", "-m", "PKCS8", "-N", ""), False),
+        (("-t", "ecdsa", "-m", "PKCS8", "-N", "pass phrase"), True),
+    ],
+)
+async def test_a_deploy_key_with_a_passphrase_is_refused_with_words_that_say_so(
+    tmp_path: Path, args: tuple[str, ...], passphrase: bool
+) -> None:
+    key = await _keygen(tmp_path, "key", *args)
+
+    if not passphrase:
+        assert DeployKey(private_key=key).private_key == key
+        return
+    with pytest.raises(InvalidCredentialError, match="has a passphrase") as raised:
+        DeployKey(private_key=key)
+    body = key.splitlines()[2]
+    assert body not in str(raised.value)
 
 
 @pytest.mark.parametrize(
