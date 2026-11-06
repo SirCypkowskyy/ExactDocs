@@ -1041,6 +1041,12 @@ def _settings_change(
 _CHANGE_JOBS = {SettingsChange.PATHS: REPROCESS_JOB, SettingsChange.TAGS: RETAG_JOB}
 
 
+def _reprocess_failed(jobs: Sequence[Job]) -> bool:
+    """Whether the library's newest ``reprocess`` job (``jobs`` newest first) failed."""
+    newest = next((job for job in jobs if job.kind == REPROCESS_JOB), None)
+    return newest is not None and newest.state is JobState.FAILED
+
+
 @dataclass(frozen=True, slots=True)
 class UpdateLibrarySettingsUseCase:
     """Implements ``ports.driving.UpdateLibrarySettings``."""
@@ -1061,7 +1067,9 @@ class UpdateLibrarySettingsUseCase:
         (or a ``reprocess``, which re-tags too) still queued for the library is reused. If the
         job cannot be queued the old settings are put back, so a retry is not "unchanged".
         Settings equal to the stored ones queue the library's last re-processing job again when
-        it failed (same kind), so a retry with the same body re-runs it; else nothing.
+        it failed (same kind), so a retry with the same body re-runs it; else nothing. While the
+        newest ``reprocess`` failed, a retry or a tag-only edit queues a ``reprocess``: a
+        ``retag`` would not re-import the version that failed, and would hide the failure.
         Edits of one library take turns (``locks``): read, compare, store, queue and roll back
         are one step against another edit (one process serves the API).
         """
@@ -1092,6 +1100,8 @@ class UpdateLibrarySettingsUseCase:
         try:
             refs = [v.ref for v in await self.sources.imported_versions(library)]
             jobs = await self.jobs.list_for_library(library)
+            if change is SettingsChange.TAGS and _reprocess_failed(jobs):
+                change = SettingsChange.PATHS  # re-tagging alone would hide that failure
             job_id = await self._queue(library, change, jobs) if refs or _busy_refs(jobs) else None
         except BaseException:
             try:
@@ -1102,12 +1112,19 @@ class UpdateLibrarySettingsUseCase:
         return change, refs, job_id
 
     async def _retry(self, library: str) -> tuple[SettingsChange | None, list[str], str | None]:
-        """Queue the library's last re-processing job again if it failed; else do nothing."""
+        """Queue the library's last failed re-processing again; else do nothing.
+
+        A failed ``reprocess`` not yet followed by one that succeeded wins over a newer ``retag``
+        (which succeeded or not): only a re-import brings that version's paths in line.
+        """
         jobs = await self.jobs.list_for_library(library)  # newest first
         last = next((job for job in jobs if job.kind in LIBRARY_KINDS), None)
-        if last is None or last.state is not JobState.FAILED:
+        if _reprocess_failed(jobs):
+            change = SettingsChange.PATHS
+        elif last is not None and last.state is JobState.FAILED:
+            change = SettingsChange.TAGS
+        else:
             return None, [], None
-        change = SettingsChange.PATHS if last.kind == REPROCESS_JOB else SettingsChange.TAGS
         refs = [v.ref for v in await self.sources.imported_versions(library)]
         return change, refs, await self._queue(library, change, jobs)
 
@@ -1126,7 +1143,6 @@ class UpdateLibrarySettingsUseCase:
 class _VersionOutcome:
     """What re-processing one version did: the result of its durable step (plain data)."""
 
-    files: int = 0
     chunked: int = 0
     reused: int = 0
     problems: tuple[FileProblem, ...] = ()
@@ -1138,23 +1154,21 @@ class _VersionOutcome:
 class _OneVersion:
     """Implements ``ports.driven.JobProgress`` for one version's re-import, inside its step.
 
-    Files and chunk counters go on from the versions before, live. Problems are kept for the
-    step's result and reported after it, so a resumed job reports them again from the result.
+    The job counts versions, not files (as ``retag`` does), so a file report is not passed on.
+    Chunk counters go on from the versions before, live. Problems are kept for the step's
+    result and reported after it, so a resumed job reports them again from the result.
     """
 
     progress: JobProgress
     ref: str
-    files_before: int
     chunked_before: int
     reused_before: int
-    total: int = 0
     chunked: int = 0
     reused: int = 0
     problems: list[FileProblem] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
-        self.total = total
-        await self.progress.report(done=self.files_before + done, total=self.files_before + total)
+        del done, total
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
         self.problems.append(FileProblem(path, code, f"{self.ref}: {reason}"))
@@ -1167,7 +1181,6 @@ class _OneVersion:
 
     def outcome(self, failure: tuple[str, str] | None = None) -> _VersionOutcome:
         return _VersionOutcome(
-            files=self.total,
             chunked=self.chunked,
             reused=self.reused,
             problems=tuple(self.problems),
@@ -1183,7 +1196,8 @@ async def _versions(sources: LibrarySources, library: str) -> tuple[ImportedRef,
 class ReprocessLibraryUseCase:
     """Implements ``ports.driven.JobHandler`` for ``REPROCESS_JOB``.
 
-    Re-imports each version of the library at the commit it serves, with the library's settings
+    Re-imports each version of the library at the commit it serves (``done`` / ``total`` count
+    versions), with the library's settings
     as they are now: the refresh importer fetches the commit, reuses the chunks of every blob
     chunked before and activates the new manifest in place of the old one, so each version
     switches at once. A version that fails keeps what it served and the others go on; the job
@@ -1206,21 +1220,18 @@ class ReprocessLibraryUseCase:
         """Re-import every version; raising fails the job."""
         step = self.checkpoints.step
         versions = await step("list the versions", partial(_versions, self.sources, job.library))
-        files = chunked = reused = 0
+        await progress.report(done=0, total=len(versions))
+        chunked = reused = 0
         failures: list[tuple[str, str, str]] = []
-        for current in versions:
-            tracker = _OneVersion(progress, current.ref, files, chunked, reused)
+        for done, current in enumerate(versions, 1):
+            tracker = _OneVersion(progress, current.ref, chunked, reused)
             outcome = await step(
                 f"re-import {current.ref}", partial(self._one, job, current, tracker)
             )
-            files, chunked, reused = (
-                files + outcome.files,
-                chunked + outcome.chunked,
-                reused + outcome.reused,
-            )
+            chunked, reused = chunked + outcome.chunked, reused + outcome.reused
             for problem in outcome.problems:
                 await progress.problem(problem.path, problem.code, problem.reason)
-            await progress.report(done=files, total=files)
+            await progress.report(done=done, total=len(versions))
             await progress.chunking(chunked=chunked, reused=reused)
             if outcome.failure is not None:
                 failures.append((current.ref, *outcome.failure))

@@ -112,7 +112,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   copies following a moment later under the same lock (as for manual tags; a rerun of the job
   always brings them in line). A version that cannot be re-processed keeps what it had, the
   others go on, and the job fails naming it (`error_code` the failures' shared code, else
-  `reprocess_failed`); sending the same settings again then queues that job again. The answer is
+  `reprocess_failed`); sending the same settings again then queues that job again. While the newest `reprocess` failed, a retry or a tag-only edit queues a `reprocess` (it re-tags too), so a re-tag never hides that failure. Both jobs count `done` / `total` in versions. The answer is
   **202** with the job in `Location` and the body's `job_id`, `reprocess` (`paths` or `tags`) and
   `versions` (the library's refs, which the job re-processes), or **200** with `job_id: null`
   when nothing changed and the last re-processing did not fail, or the library has no version

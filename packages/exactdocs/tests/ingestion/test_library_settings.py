@@ -312,6 +312,55 @@ async def test_the_same_settings_re_run_a_failed_job(sources, jobs, clock, first
     assert len(settings.saved) == 1  # nothing changed: nothing stored again
 
 
+async def _fail_running(jobs: InMemoryJobRepository, clock) -> None:
+    running = await jobs.claim_next(clock.now())
+    assert running is not None
+    await jobs.save(running.failed("v1.0.0: down", clock.now(), code="repo_unreachable"))
+
+
+async def _succeed_running(jobs: InMemoryJobRepository, clock) -> None:
+    running = await jobs.claim_next(clock.now())
+    assert running is not None
+    await jobs.save(running.succeeded(clock.now()))
+
+
+async def test_a_tag_edit_after_a_failed_reprocess_queues_a_reprocess(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))
+    await _fail_running(jobs, clock)
+
+    tags = await module.update_library_settings(command(exclude=["a/"], rules=[("docs/**", "d")]))
+
+    assert tags.reprocess is SettingsChange.PATHS  # a retag alone would hide the failure
+    assert (await jobs.list_for_library(LIBRARY))[0].kind == REPROCESS_JOB
+
+
+async def test_a_failed_reprocess_is_retried_even_after_a_newer_retag(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))
+    await _fail_running(jobs, clock)
+    await module.enqueue_job(EnqueueJobCommand(kind=RETAG_JOB, library=LIBRARY))
+    await _succeed_running(jobs, clock)  # e.g. queued before this rule was in place
+
+    again = await module.update_library_settings(command(exclude=["a/"]))
+
+    assert again.reprocess is SettingsChange.PATHS
+    newest = (await jobs.list_for_library(LIBRARY))[0]
+    assert (newest.kind, newest.state) == (REPROCESS_JOB, JobState.QUEUED)
+
+
+async def test_a_reprocess_that_succeeded_since_lets_a_tag_edit_retag(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))
+    await _fail_running(jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))  # the retry
+    await _succeed_running(jobs, clock)
+
+    tags = await module.update_library_settings(command(exclude=["a/"], rules=[("docs/**", "d")]))
+
+    assert tags.reprocess is SettingsChange.TAGS
+
+
 async def test_the_same_settings_after_a_succeeded_job_queue_nothing(sources, jobs, clock):
     module, _ = make_module(sources, jobs, clock)
     await module.update_library_settings(command(exclude=["a/"]))
@@ -403,7 +452,7 @@ async def test_every_version_is_re_imported_at_its_recorded_commit(sources):
         (REFRESH_JOB, "v1.0.0", "a" * 40, RefKind.TAG),
         (REFRESH_JOB, "main", "b" * 40, RefKind.BRANCH),  # where it is, not a newer tip
     ]
-    assert progress.reports[-1] == (4, 4)  # files of both versions add up
+    assert progress.reports == [(0, 2), (1, 2), (2, 2)]  # versions: never 100% between them
     assert progress.counters[-1] == (2, 2)
     assert [p[2] for p in progress.problems] == ["v1.0.0: binary file", "main: binary file"]
 
@@ -456,7 +505,7 @@ async def test_a_resumed_reprocess_skips_the_versions_it_had_finished(sources):
         "re-import v1.0.0",
         "re-import main",
     ]
-    assert progress.reports[-1] == (4, 4)  # the finished version counts from its result
+    assert progress.reports == [(0, 2), (1, 2), (2, 2)]  # the finished one from its result
     assert progress.counters[-1] == (2, 2)
     assert [p[2] for p in progress.problems] == ["v1.0.0: binary file", "main: binary file"]
 

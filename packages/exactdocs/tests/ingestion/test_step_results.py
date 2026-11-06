@@ -37,7 +37,7 @@ ROOTS = (
 
 FINGERPRINTS = {
     "jobs-1": "9bf7464faeb9cb3f19bb905319608080e03d640c21227eaf3ff85aae740f1463",
-    "jobs-2": "887c324c815d1f90d7d2c36d1ba3feaad30eb1ae37c67be805069b8c7412dddc",
+    "jobs-2": "332748524fa2b742b1046783782c8e545c92949d0835ae0c6c4ebaf74159114a",
 }
 
 

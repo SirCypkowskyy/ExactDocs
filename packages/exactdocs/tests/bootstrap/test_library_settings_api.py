@@ -16,7 +16,7 @@ pytestmark = pytest.mark.usefixtures("demo_catalog")
 @pytest.fixture
 async def container() -> AsyncIterator[Container]:
     built = Container.build(Settings())
-    async with built.running():
+    async with built.running(jobs=False):  # jobs run by hand: no worker races them
         yield built
 
 
