@@ -100,8 +100,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   root README (LIB-07).
 - **Editing paths, tag rules and chunking** (LIB-09, TAG-02, IMP-03):
   `PUT /libraries/{owner}/{repo}/settings` with `{"include_paths", "exclude_paths", "tag_rules",
-  "chunking"}` replaces the whole set (what is left out is cleared, `chunking` back to its
-  defaults; `GET /libraries/{owner}/{repo}` has the current `settings`), validated like
+  "chunking"}` replaces the paths and tag rules as a whole set (what is left out is cleared;
+  `GET /libraries/{owner}/{repo}` has the current `settings`) and the chunking when it is sent:
+  `chunking` left out or `null` keeps the stored one, so a client that edits only paths and tag
+  rules (the web UI) never resets it, validated like
   `POST /libraries` (422 `invalid_path_pattern` / `invalid_tag` / `invalid_chunking_config` or a
   field error, nothing stored), 404 for an unknown library. `chunking` is
   `{"split_level": 1-6, "min_chars": 0, "max_chars": null, "chunker": "markdown"}` (the
@@ -109,7 +111,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   only); a chunk longer than `max_chars` is cut again at its deeper headings (never inside a code
   block or table, so a section without deeper headings stays whole); chunks shorter than
   `min_chars` are merged with the next one (the last with the one before) as long as the result
-  stays within `max_chars`, and the text before the first heading is never merged; `max_chars`
+  stays within `max_chars`, and the text before the first heading is never merged (a merged
+  chunk keeps the heading path and anchor of its first section, so a hit in a later section of
+  it links to that first heading); `max_chars`
   must not be smaller than `min_chars` (both at most 1,000,000). `markdown` (markdown-it-py) is
   the only chunker. Every version is then re-processed by **one** job, at the commit it serves (a
   branch is not synced): changed paths queue a `reprocess` job that fetches each version again

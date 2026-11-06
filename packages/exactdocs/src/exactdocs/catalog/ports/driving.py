@@ -356,7 +356,7 @@ class PinDefaultVersion(Protocol):
 
 
 class SetLibrarySettings(Protocol):
-    """Replace a library's paths and tag rules; its chunking settings stay.
+    """Replace a library's paths and tag rules, and its chunking unless it is left out.
 
     Nothing is re-imported here: the importer re-processes the versions. Raises
     ``LibraryNotFoundError`` and a validation error for a tag rule that cannot be one.

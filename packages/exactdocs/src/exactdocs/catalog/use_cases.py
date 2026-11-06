@@ -188,7 +188,7 @@ class SetLibrarySettingsUseCase:
     repository: LibraryRepository
 
     async def __call__(self, command: SetLibrarySettingsCommand) -> LibraryDetail:
-        """Replace paths, tag rules and chunking."""
+        """Replace paths and tag rules; the chunking too unless it is left out."""
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
@@ -198,7 +198,9 @@ class SetLibrarySettingsUseCase:
             include_paths=tuple(command.include_paths),
             exclude_paths=tuple(command.exclude_paths),
             tag_rules=tuple(TagRule(pattern=r.pattern, tag=r.tag) for r in command.tag_rules),
-            chunking=ChunkingConfig(
+            chunking=library.settings.chunking
+            if wanted is None
+            else ChunkingConfig(
                 split_level=wanted.split_level,
                 min_chars=wanted.min_chars,
                 max_chars=wanted.max_chars,

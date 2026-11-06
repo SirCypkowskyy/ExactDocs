@@ -663,7 +663,11 @@ class ChunkingIn(_Dto):
 
 
 class LibrarySettingsIn(_Dto):
-    """A library's paths, tag rules and chunking, as a whole: what is left out is cleared."""
+    """A library's paths and tag rules, as a whole (what is left out is cleared), and chunking.
+
+    Chunking left out (or null) keeps what is stored, so a client that edits only paths and tag
+    rules never resets it.
+    """
 
     include_paths: list[str] = Field(
         default_factory=list,
@@ -678,9 +682,9 @@ class LibrarySettingsIn(_Dto):
         max_length=MAX_TAG_RULES,
         description=AddLibraryCommand.model_fields["tag_rules"].description,
     )
-    chunking: ChunkingIn = Field(
-        default_factory=ChunkingIn,
-        description="Left out: the defaults (one chunk per heading, no size bounds).",
+    chunking: ChunkingIn | None = Field(
+        default=None,
+        description="Left out or null: the stored chunking is kept (unlike paths and tag rules).",
     )
 
 

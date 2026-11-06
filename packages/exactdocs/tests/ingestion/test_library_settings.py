@@ -150,7 +150,7 @@ def command(
         include_paths=list(include),
         exclude_paths=list(exclude),
         tag_rules=[TagRuleIn(pattern=p, tag=t) for p, t in rules],
-        chunking=ChunkingIn(**chunking),
+        chunking=ChunkingIn(**chunking) if chunking else None,
     )
 
 
@@ -201,6 +201,21 @@ async def test_chunking_and_tag_rules_changed_queue_one_rechunk_which_re_tags_to
 
     assert updated.reprocess is SettingsChange.CHUNKING
     assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RECHUNK_JOB]
+
+
+async def test_chunking_left_out_keeps_the_stored_one(sources, jobs, clock):
+    module, settings = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(split_level=2, max_chars=4000))
+    await _succeed_running(jobs, clock)
+
+    tags = await module.update_library_settings(command(rules=[("docs/**", "d")]))
+
+    assert tags.reprocess is SettingsChange.TAGS
+    assert tags.chunking == ChunkingIn(split_level=2, max_chars=4000)
+    assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RETAG_JOB, RECHUNK_JOB]
+    assert settings.saved[-1][2] == ChunkingConfig(split_depth=2, max_chars=4000)
+    unchanged = await module.update_library_settings(command(rules=[("docs/**", "d")]))
+    assert (unchanged.reprocess, unchanged.job_id) == (None, None)
 
 
 async def test_changed_paths_and_chunking_queue_a_reprocess(sources, jobs, clock):

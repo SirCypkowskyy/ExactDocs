@@ -430,8 +430,9 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
     ) -> UpdatedLibrarySettings:
         """Replace the library's paths, tag rules and chunking; every version is then re-processed.
 
-        Send the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is
-        left out is cleared (chunking back to its defaults). Changed paths queue a `reprocess`
+        Send the whole set of paths and tag rules (`GET /libraries/{owner}/{repo}` has the current
+        `settings`): what is left out is cleared. `chunking` left out (or null) keeps the stored
+        one. Changed paths queue a `reprocess`
         job that fetches every version again at the commit it serves (a branch is not synced)
         and re-imports it; a changed chunking queues a `rechunk` job that cuts the stored
         articles again (and re-tags them), fetching nothing unless a version was stored by an

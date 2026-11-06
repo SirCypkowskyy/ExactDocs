@@ -375,8 +375,9 @@ tag under where it comes from and adds or removes manual tags, which hold for ev
 (`PUT`/`DELETE /api/v1/libraries/{owner}/{repo}/tags?path=`). Listings and search filter by tag.
 Each library chooses its split level (`h1`...`h6`) and chunk sizes (`max_chars` cuts long
 sections again at deeper headings, `min_chars` merges tiny ones) with
-`PUT /api/v1/libraries/{owner}/{repo}/settings`; every version is then re-chunked from the stored
-text, without fetching, and keeps serving its old chunks until the new ones are in place.
+`PUT /api/v1/libraries/{owner}/{repo}/settings` (left out, the stored chunking is kept); every
+version is then re-chunked from the stored text, without fetching, and keeps serving its old
+chunks until the new ones are in place.
 
 ## Configuration
 

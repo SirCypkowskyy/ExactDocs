@@ -963,18 +963,21 @@ class ChunkingIn(_Dto):
 
     split_level: int = Field(default=6, ge=1, le=6)
     min_chars: int = Field(default=0, ge=0)
-    max_chars: int | None = Field(default=None, ge=0)
+    max_chars: int | None = Field(default=None, ge=1)
     chunker: str = Field(default="markdown", min_length=1, max_length=64)
 
 
 class SetLibrarySettingsCommand(_Dto):
-    """Replace a library's paths, tag rules and chunking (validated by the importer)."""
+    """Replace a library's paths and tag rules, and the chunking unless it is left out (None).
+
+    Validated and normalized by the importer.
+    """
 
     id: str = Field(min_length=1)
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
-    chunking: ChunkingIn = Field(default_factory=ChunkingIn)
+    chunking: ChunkingIn | None = None
 
 
 class GetVersionTagsQuery(_Dto):

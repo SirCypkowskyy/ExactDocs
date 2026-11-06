@@ -1114,14 +1114,18 @@ class UpdateLibrarySettingsUseCase:
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
         wanted = command.chunking
-        chunking = ChunkingConfig(
-            split_depth=wanted.split_level,
-            min_chars=wanted.min_chars,
-            max_chars=wanted.max_chars,
-            chunker=wanted.chunker,
+        sent = (
+            None
+            if wanted is None
+            else ChunkingConfig(
+                split_depth=wanted.split_level,
+                min_chars=wanted.min_chars,
+                max_chars=wanted.max_chars,
+                chunker=wanted.chunker,
+            )
         )
         async with self.locks.of(library):
-            change, refs, job_id = await self._update(library, selection, tag_rules, chunking)
+            change, chunking, refs, job_id = await self._update(library, selection, tag_rules, sent)
         return UpdatedLibrarySettings(
             library_id=library,
             include_paths=list(selection.include),
@@ -1138,12 +1142,15 @@ class UpdateLibrarySettingsUseCase:
         library: str,
         selection: PathSelection,
         tag_rules: Sequence[TagRule],
-        chunking: ChunkingConfig,
-    ) -> tuple[SettingsChange | None, list[str], str | None]:
+        sent: ChunkingConfig | None,
+    ) -> tuple[SettingsChange | None, ChunkingConfig, list[str], str | None]:
+        """Compare, store and queue; chunking left out (``None``) keeps the stored one."""
         current = await self.sources.get(library)
+        chunking = current.chunking if sent is None else sent
         change = _settings_change(current, selection, tag_rules, chunking)
         if change is None:
-            return await self._retry(library)
+            change, refs, job_id = await self._retry(library)
+            return change, chunking, refs, job_id
         await self.settings.save(library, selection, tag_rules, chunking)
         # BaseException on purpose: a cancelled request must put the old settings back too.
         try:
@@ -1159,7 +1166,7 @@ class UpdateLibrarySettingsUseCase:
             except Exception:
                 log.exception("could not restore the settings of %s", library)
             raise
-        return change, refs, job_id
+        return change, chunking, refs, job_id
 
     async def _retry(self, library: str) -> tuple[SettingsChange | None, list[str], str | None]:
         """Queue the library's widest failed re-processing not redone since; else do nothing."""

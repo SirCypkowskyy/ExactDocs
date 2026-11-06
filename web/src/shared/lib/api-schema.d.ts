@@ -426,8 +426,9 @@ export interface paths {
          * Update Library Settings
          * @description Replace the library's paths, tag rules and chunking; every version is then re-processed.
          *
-         *     Send the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is
-         *     left out is cleared (chunking back to its defaults). Changed paths queue a `reprocess`
+         *     Send the whole set of paths and tag rules (`GET /libraries/{owner}/{repo}` has the current
+         *     `settings`): what is left out is cleared. `chunking` left out (or null) keeps the stored
+         *     one. Changed paths queue a `reprocess`
          *     job that fetches every version again at the commit it serves (a branch is not synced)
          *     and re-imports it; a changed chunking queues a `rechunk` job that cuts the stored
          *     articles again (and re-tags them), fetching nothing unless a version was stored by an
@@ -1595,7 +1596,10 @@ export interface components {
         };
         /**
          * LibrarySettingsIn
-         * @description A library's paths, tag rules and chunking, as a whole: what is left out is cleared.
+         * @description A library's paths and tag rules, as a whole (what is left out is cleared), and chunking.
+         *
+         *     Chunking left out (or null) keeps what is stored, so a client that edits only paths and tag
+         *     rules never resets it.
          */
         readonly LibrarySettingsIn: {
             /**
@@ -1613,8 +1617,8 @@ export interface components {
              * @description Tags for articles by path; they are added to the front-matter tags.
              */
             readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][];
-            /** @description Left out: the defaults (one chunk per heading, no size bounds). */
-            readonly chunking?: components["schemas"]["ChunkingIn"];
+            /** @description Left out or null: the stored chunking is kept (unlike paths and tag rules). */
+            readonly chunking?: components["schemas"]["ChunkingIn"] | null;
         };
         /**
          * LibrarySettingsOut

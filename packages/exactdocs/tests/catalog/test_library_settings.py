@@ -233,3 +233,11 @@ async def test_a_copy_needs_a_known_version_and_text_of_this_parser(catalog):
         await catalog.copy_manifest(
             CopyManifestCommand(library="/acme/nope", ref="v1", content_version=1)
         )
+
+
+async def test_settings_without_chunking_keep_the_stored_one(catalog):
+    await catalog.set_library_settings(SetLibrarySettingsCommand(id=LIBRARY, include_paths=["a/"]))
+
+    stored = await catalog.get_library(GetLibraryQuery(id=LIBRARY))
+    assert stored.settings.include_paths == ["a/"]
+    assert stored.settings.chunking.split_level == CHUNKING.split_level

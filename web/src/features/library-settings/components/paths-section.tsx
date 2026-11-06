@@ -29,6 +29,7 @@ import {
   reprocessWarning,
   type SavedSettings,
   type SelectionDraft,
+  type SettingsChange,
   type SettingsLibrary,
   savedHeadline,
   saveHint,
@@ -50,7 +51,7 @@ interface Props {
 interface ConfirmProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  change: "paths" | "tags";
+  change: SettingsChange;
   /** The newest re-processing failed: this one runs in full. */
   afterFailure: boolean;
   refs: readonly string[];
@@ -179,7 +180,8 @@ interface RunAgainProps {
 
 /** The newest re-processing failed: its line, and a way to run it again with what is stored. */
 function RunAgain({ job, Line, lineShown, pending, onRun }: RunAgainProps) {
-  const what = job.kind === "retag" ? "re-tagging" : "re-processing";
+  const what =
+    job.kind === "retag" ? "re-tagging" : job.kind === "rechunk" ? "re-chunking" : "re-processing";
   return (
     <div className="fade-in mt-5 max-w-sm">
       {!lineShown && (

@@ -250,16 +250,18 @@ class TagArticle(Protocol):
 
 
 class UpdateLibrarySettings(Protocol):
-    """Replace a library's paths and tag rules, then re-process every version in one job.
+    """Replace a library's paths, tag rules and chunking, then re-process every version in one job.
 
-    Changed paths queue a ``reprocess`` job: each version is fetched again at the commit it
-    serves (a branch is not synced) and re-imported with the new settings; only tag rules
-    changed queue a ``retag`` job, which re-tags each version from its stored articles without
-    fetching. Either way each version switches to its new state at once and keeps serving the
-    old one until then, or for good when its re-processing fails. Settings equal to the stored
-    ones change nothing: they queue the library's last ``reprocess`` / ``retag`` job again when
-    it failed, else nothing. Raises a not-found error for an unknown library and
-    ``InvalidPathPatternError`` / ``InvalidTagError`` for invalid settings (nothing is stored).
+    Chunking left out keeps the stored one. Changed paths queue a ``reprocess`` job: each
+    version is fetched again at the commit it serves (a branch is not synced) and re-imported
+    with the new settings; a changed chunking queues a ``rechunk`` job, which cuts (and re-tags)
+    each version's stored text again without fetching; only tag rules changed queue a ``retag``
+    job, which re-tags each version from its stored articles without fetching. Either way each
+    version switches to its new state at once and keeps serving the old one until then, or for
+    good when its re-processing fails. Settings equal to the stored ones change nothing: they
+    queue the library's widest failed re-processing again, else nothing. Raises a not-found
+    error for an unknown library and ``InvalidPathPatternError`` / ``InvalidTagError`` /
+    ``InvalidChunkingConfigError`` for invalid settings (nothing is stored).
     """
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
