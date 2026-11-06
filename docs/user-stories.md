@@ -174,7 +174,7 @@ The CLI has only its local commands (`serve`, `admin create`, `admin reset-passw
 - **[BRW-01]** As a user, I want to browse a library as a file tree and read each article rendered (code highlighting, tables, admonitions, images), because reading the docs is the point.
     - Acceptance: the tree mirrors the repo paths and shows article titles; both admonition syntaxes render (MkDocs `!!! note` and GitHub `> [!NOTE]`); in MVP-1 images load from the git host's raw URL (alt text for private repos); *MVP-2:* from the imported copies.
 - **[BRW-02]** *(MVP-2)* As a user, I want relative links and images between articles to work inside ExactDocs, because docs written for GitHub link to each other with relative paths.
-    - Acceptance: `[setup](../setup.md#docker)` opens the imported article at that heading; links to files outside the selection open on the git host.
+    - Acceptance: `[setup](../setup.md#docker)` opens the imported article at that heading, also after git saw `setup.md` moved in that version (one hop); links to files outside the selection open on the git host.
 - **[BRW-03]** As a user, I want a "view on GitHub/Bitbucket/..." link on every article with the exact commit, because I sometimes need the surrounding code or history.
     - Acceptance: the link points at the file at the imported commit SHA, not at the branch head.
 - **[BRW-04]** As a user, I want to switch between imported versions of a library (e.g. `v1.3` and `v1.4`), because I work on projects pinned to different versions.

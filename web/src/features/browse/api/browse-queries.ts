@@ -127,6 +127,17 @@ const renamedPathQueryOptions = (
     staleTime: 60_000,
   });
 
+/**
+ * Where `path`, which this version does not have, went when the version was imported: the new
+ * path git saw it renamed to, or `null`. One hop, like the version switch; a failed lookup is
+ * no answer (the "not in this version" page stays). Same short timeout, no retry.
+ */
+export const renamedInVersionQueryOptions = (version: VersionArgs, path: string) =>
+  queryOptions({
+    ...renamedPathQueryOptions(version, path, "forward"),
+    select: (renamed) => (renamed && renamed.new_path !== path ? renamed.new_path : null),
+  });
+
 /** Where the open article is in another version (see `pathInVersionQueryOptions`). */
 interface PathInVersion {
   path: string;
