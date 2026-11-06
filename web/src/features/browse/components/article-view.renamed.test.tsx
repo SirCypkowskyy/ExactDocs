@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { createMemoryHistory, type RouterHistory, useRouterState } from "@tanstack/react-router";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
@@ -96,11 +96,16 @@ function Library() {
   );
 }
 
+let history: RouterHistory;
+
 function view(path: string) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const start = `/libraries/acme/payments?version=v2.0.0&path=${encodeURIComponent(path)}`;
-  return render(<TestRouter pages={{ "/libraries/$owner/$repo": Library }} start={start} />);
+  history = createMemoryHistory({ initialEntries: [start] });
+  return render(<TestRouter pages={{ "/libraries/$owner/$repo": Library }} history={history} />);
 }
+
+const at = () => new URLSearchParams(history.location.search).get("path");
 
 beforeAll(() => import("../render/markdown"));
 afterEach(() => vi.unstubAllGlobals());
@@ -117,6 +122,9 @@ describe("a relative link to a renamed article", () => {
     expect(docker).toHaveClass("doc-target");
     expect(scroll.mock.contexts).toContain(docker);
     expect(screen.queryByText(/Not in/)).toBeNull();
+    expect(screen.getByText(/Moved from/)).toHaveTextContent("Moved from docs/setup.md in v2.0.0");
+    expect(at()).toBe("docs/guide/setup.md");
+    expect(history.location.hash).toBe("#docker");
     const lookup = fetch.mock.calls
       .map(([u]) => new URL(u, "http://x"))
       .find((u) => u.pathname.endsWith("/renamed-path"));
@@ -130,7 +138,10 @@ describe("a relative link to a renamed article", () => {
 
   it.each([
     ["no rename is known", () => json({ renamed: null })],
-    ["the rename map is from another version", () => json({ renamed: { ...moved, ref: "v3" } })],
+    [
+      "the rename points back at the same path",
+      () => json({ renamed: { ...moved, new_path: "docs/setup.md" } }),
+    ],
     ["the lookup fails", () => json({ error: "internal", message: "boom" }, 500)],
   ])("%s: the page stays 'Not in this version', with the host link", async (_, answer) => {
     serve(answer);
@@ -144,10 +155,27 @@ describe("a relative link to a renamed article", () => {
     );
   });
 
-  it("does not ask for renames when the article is there", async () => {
+  it("Back from the redirected article returns to the linking one, not to the old path", async () => {
+    serve(() => json({ renamed: moved }));
+    view("docs/guide/intro.md");
+    await userEvent.click(await screen.findByRole("link", { name: "setup" }));
+    await screen.findByRole("heading", { name: /Docker/ });
+
+    act(() => history.back());
+    expect(await screen.findByRole("heading", { level: 2, name: "Intro" })).toBeInTheDocument();
+    expect(at()).toBe("docs/guide/intro.md");
+    expect(screen.queryByText(/Moved from/)).toBeNull();
+    // and it stays there: the old path is not in the history to bounce through
+    await new Promise((r) => setTimeout(r, 50));
+    expect(at()).toBe("docs/guide/intro.md");
+    expect(screen.getByRole("heading", { level: 2, name: "Intro" })).toBeInTheDocument();
+  });
+
+  it("does not ask for renames when the article is there, and says nothing about a move", async () => {
     const fetch = serve(() => json({ renamed: moved }));
     view("docs/guide/setup.md");
     await screen.findByRole("heading", { name: /Docker/ });
     expect(fetch.mock.calls.some(([u]) => u.includes("/renamed-path"))).toBe(false);
+    expect(screen.queryByText(/Moved from/)).toBeNull();
   });
 });

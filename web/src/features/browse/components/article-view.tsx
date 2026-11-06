@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, Navigate, useRouterState } from "@tanstack/react-router";
+import { type HistoryState, Link, Navigate, useRouterState } from "@tanstack/react-router";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
@@ -391,6 +391,7 @@ function Body({
   library,
   version,
   tags,
+  movedFrom,
 }: {
   article: Article;
   owner: string;
@@ -398,11 +399,22 @@ function Body({
   library: LibraryDetail;
   version: Version;
   tags: string | undefined;
+  /** The path a link asked for, when it led here through a rename. */
+  movedFrom: string | undefined;
 }) {
   const large = article.content.length > LARGE;
   const [view, setView] = useState<View>(large ? "source" : "rendered");
   return (
     <article className="min-w-0 max-w-3xl">
+      {movedFrom && (
+        <p className="mb-3 text-sm text-pretty text-muted-foreground">
+          Moved from{" "}
+          <code className="font-mono text-foreground [overflow-wrap:anywhere]">
+            <PathText path={movedFrom} />
+          </code>{" "}
+          in {version.ref}
+        </p>
+      )}
       <p className="font-mono text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         <PathText path={article.path} />
       </p>
@@ -444,6 +456,13 @@ export function ArticleView(props: ArticleViewProps) {
   const query = useQuery(articleQueryOptions(at, path));
   const missing = query.error instanceof HttpError && query.error.status === 404;
   const renamed = useQuery({ ...renamedInVersionQueryOptions(at, path), enabled: missing });
+  // Set by the redirect below; any other navigation drops it.
+  const movedFrom = useRouterState({
+    select: (s) => {
+      const from = (s.location.state as { movedFrom?: unknown }).movedFrom;
+      return typeof from === "string" && from !== path ? from : undefined;
+    },
+  });
   if (missing && renamed.data) {
     return (
       <Navigate
@@ -451,6 +470,7 @@ export function ArticleView(props: ArticleViewProps) {
         params={{ owner, repo }}
         search={{ version: version.ref, path: renamed.data, tags }}
         hash={true}
+        state={{ movedFrom: path } as HistoryState}
         replace
       />
     );
@@ -496,6 +516,7 @@ export function ArticleView(props: ArticleViewProps) {
       library={library}
       version={version}
       tags={props.tags}
+      movedFrom={movedFrom}
     />
   );
 }

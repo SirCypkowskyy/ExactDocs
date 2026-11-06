@@ -596,8 +596,9 @@ that last step, which is one transaction in the catalog.
   is not stored, so CSS bounds them (`max-width: 100%`) and no `width`/`height` is set. A path the
   version does not have is first looked up in the version's renames (`renamed-path`, forward,
   one hop, short timeout, no retry): an article git saw moved when the version was imported opens
-  at its new path, same version and `#anchor` (the URL is replaced). No rename, or a failed lookup,
-  keeps the "Not in this version" page.
+  at its new path, same version and `#anchor`. The URL is replaced, so Back skips the old path,
+  and a "Moved from" line above the article (carried in history state) names it. No rename, or a
+  failed lookup, keeps the "Not in this version" page.
 - **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
   bare commit, so the import never asks the remote again; a deleted tag does not break it.
 - **Replays.** A crash right after the activation commits, before the publish step's result is

@@ -135,8 +135,7 @@ const renamedPathQueryOptions = (
 export const renamedInVersionQueryOptions = (version: VersionArgs, path: string) =>
   queryOptions({
     ...renamedPathQueryOptions(version, path, "forward"),
-    select: (renamed) =>
-      renamed && renamed.ref === version.ref && renamed.new_path !== path ? renamed.new_path : null,
+    select: (renamed) => (renamed && renamed.new_path !== path ? renamed.new_path : null),
   });
 
 /** Where the open article is in another version (see `pathInVersionQueryOptions`). */
