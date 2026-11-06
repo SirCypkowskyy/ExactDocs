@@ -14,6 +14,7 @@ from exactdocs.catalog.dtos import (
     ApplyReadmeCommand,
     ArticleIn,
     CollectGarbageCommand,
+    CopyManifestCommand,
     CreateLibraryCommand,
     DiscardLibraryCommand,
     DiscardPendingManifestsCommand,
@@ -40,6 +41,9 @@ from exactdocs.catalog.dtos import (
     ArticleTags as CatalogArticleTags,
 )
 from exactdocs.catalog.dtos import (
+    ChunkingIn as CatalogChunkingIn,
+)
+from exactdocs.catalog.dtos import (
     RefKind as CatalogRefKind,
 )
 from exactdocs.catalog.dtos import (
@@ -48,12 +52,14 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.dtos import (
     VersionOrigin as CatalogVersionOrigin,
 )
+from exactdocs.catalog.errors import StoredContentOutdatedError
 from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
+    CopyManifest,
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
@@ -73,10 +79,14 @@ from exactdocs.catalog.ports.driving import (
     SetManualTags,
     StoreManifest,
 )
+from exactdocs.ingestion.errors import StoredTextOutdatedError
 from exactdocs.ingestion.models import (
     PARSER_VERSION,
     ArticleChunk,
+    ChunkingConfig,
     Collected,
+    CopiedArticle,
+    CopiedVersion,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -325,10 +335,17 @@ class CatalogLibrarySources:
         """Read the library's repository, selection and tag rules; ``NotFoundError`` if unknown."""
         detail = await self.get_library(GetLibraryQuery(id=library))
         settings = detail.settings
+        chunking = settings.chunking
         return ImportSource(
             url=RepositoryUrl.parse(detail.source_url),
             selection=PathSelection.of(settings.include_paths, settings.exclude_paths),
             tag_rules=TagRule.many([(r.pattern, r.tag) for r in settings.tag_rules]),
+            chunking=ChunkingConfig(
+                split_depth=chunking.split_level,
+                min_chars=chunking.min_chars,
+                max_chars=chunking.max_chars,
+                chunker=chunking.chunker,
+            ),
         )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
@@ -509,16 +526,60 @@ class CatalogLibrarySettings:
     set_library_settings: SetLibrarySettings
 
     async def save(
-        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+        self,
+        library: str,
+        selection: PathSelection,
+        tag_rules: Sequence[TagRule],
+        chunking: ChunkingConfig,
     ) -> None:
-        """Store the paths and tag rules on the library."""
+        """Store the paths, tag rules and chunking on the library."""
         await self.set_library_settings(
             SetLibrarySettingsCommand(
                 id=library,
                 include_paths=list(selection.include),
                 exclude_paths=list(selection.exclude),
                 tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in tag_rules],
+                chunking=CatalogChunkingIn(
+                    split_level=chunking.split_depth,
+                    min_chars=chunking.min_chars,
+                    max_chars=chunking.max_chars,
+                    chunker=chunking.chunker,
+                ),
             )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogVersionCopier:
+    """Implements ``ingestion.ports.driven.VersionCopier`` using the catalog."""
+
+    copy_manifest: CopyManifest
+
+    async def copy(self, library: str, ref: str, *, content_version: int) -> CopiedVersion | None:
+        """Copy the version's active manifest; ``None`` for an unknown or empty version."""
+        try:
+            copied = await self.copy_manifest(
+                CopyManifestCommand(library=library, ref=ref, content_version=content_version)
+            )
+        except StoredContentOutdatedError as error:
+            raise StoredTextOutdatedError(library, ref) from error
+        except NotFoundError:
+            return None
+        return CopiedVersion(
+            manifest_id=copied.manifest_id,
+            kind=RefKind(copied.kind.value),
+            commit_sha=copied.commit_sha,
+            articles=tuple(
+                CopiedArticle(
+                    path=a.path,
+                    blob_sha=a.blob_sha,
+                    title=a.title,
+                    front_matter=a.front_matter,
+                    tags=tuple(a.tags),
+                    content=a.content,
+                )
+                for a in copied.articles
+            ),
         )
 
 

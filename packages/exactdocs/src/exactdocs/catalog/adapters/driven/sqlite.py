@@ -41,6 +41,7 @@ from exactdocs.catalog.errors import (
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    StoredContentOutdatedError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
@@ -1046,3 +1047,94 @@ class SqliteImportedTags:
 
 
 _PATHS_PER_QUERY = 500  # bound variables per statement stay far below SQLite's limit
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteManifestCopier:
+    """Implements ``ports.driven.ManifestCopier`` on the catalog's SQLite tables."""
+
+    engine: AsyncEngine
+
+    async def copy_active(
+        self,
+        library_id: LibraryId,
+        ref: VersionRef,
+        new_id: ManifestId,
+        *,
+        at: datetime,
+        content_version: int,
+    ) -> tuple[Manifest, Sequence[StoredArticle]] | None:
+        """Copy the rows of the active manifest with ``INSERT ... SELECT``; one transaction."""
+        # BEGIN IMMEDIATE, as in ``SqliteManifestRepository._write``: it reads, then writes.
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            row = (
+                await connection.execute(
+                    select(manifests).where(
+                        manifests.c.library_id == library_id.value,
+                        manifests.c.ref == ref.value,
+                        manifests.c.state == ManifestState.ACTIVE.value,
+                    )
+                )
+            ).first()
+            if row is None:
+                return None
+            outdated = await connection.execute(
+                select(literal(1)).where(
+                    manifest_entries.c.manifest_id == row.id,
+                    manifest_entries.c.content_version != content_version,
+                )
+            )
+            if outdated.first() is not None:
+                raise StoredContentOutdatedError(str(library_id), str(ref))
+            await connection.execute(
+                insert(manifests).values(
+                    id=new_id,
+                    library_id=row.library_id,
+                    ref=row.ref,
+                    kind=row.kind,
+                    commit_sha=row.commit_sha,
+                    state=ManifestState.PENDING.value,
+                    created_at=_iso(at),
+                    origin=row.origin,
+                )
+            )
+            for table in (manifest_entries, manifest_images, manifest_renames):
+                columns = [c for c in table.c if c.name != "manifest_id"]
+                await connection.execute(
+                    insert(table).from_select(
+                        ["manifest_id", *(c.name for c in columns)],
+                        select(literal(new_id), *columns).where(table.c.manifest_id == row.id),
+                    )
+                )
+            rows = await connection.execute(
+                select(manifest_entries, article_contents.c.content)
+                .select_from(
+                    manifest_entries.join(
+                        article_contents,
+                        and_(
+                            article_contents.c.blob_sha == manifest_entries.c.blob_sha,
+                            article_contents.c.content_version
+                            == manifest_entries.c.content_version,
+                        ),
+                    )
+                )
+                .where(manifest_entries.c.manifest_id == new_id)
+                .order_by(manifest_entries.c.path)
+            )
+            articles = tuple(
+                StoredArticle(
+                    manifest_id=new_id,
+                    commit_sha=row.commit_sha,
+                    entry=_entry(r),
+                    content=r.content,
+                )
+                for r in rows
+            )
+        copy = replace(
+            _manifest(row),
+            id=new_id,
+            created_at=at,
+            state=ManifestState.PENDING,
+            superseded_at=None,
+        )
+        return copy, articles

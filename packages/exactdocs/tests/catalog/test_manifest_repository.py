@@ -14,11 +14,13 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteImportedTags,
     SqliteLibraryRepository,
+    SqliteManifestCopier,
     SqliteManifestRepository,
     article_contents,
 )
@@ -27,6 +29,7 @@ from exactdocs.catalog.errors import (
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    StoredContentOutdatedError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
@@ -50,7 +53,12 @@ from exactdocs.catalog.models import (
     VersionOrigin,
     VersionRef,
 )
-from exactdocs.catalog.ports import ImportedTagWriter, LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports import (
+    ImportedTagWriter,
+    LibraryRepository,
+    ManifestCopier,
+    ManifestRepository,
+)
 
 PAYMENTS = Library(
     id=LibraryId("/acme/payments"),
@@ -114,6 +122,7 @@ class Stores:
     manifests: ManifestRepository
     count_contents: Callable[[], Awaitable[int]]
     imported_tags: ImportedTagWriter
+    copier: ManifestCopier
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -125,7 +134,13 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
         async def count() -> int:
             return len(manifests.contents)
 
-        found = Stores(libraries, manifests, count, InMemoryImportedTags(manifests))
+        found = Stores(
+            libraries,
+            manifests,
+            count,
+            InMemoryImportedTags(manifests),
+            InMemoryManifestCopier(manifests),
+        )
     else:
         container = Container.build(Settings())
         async with container.running():
@@ -140,6 +155,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                 SqliteManifestRepository(container.engine),
                 count,
                 SqliteImportedTags(container.engine),
+                SqliteManifestCopier(container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -1157,4 +1173,73 @@ async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undo
     assert (
         await manifests.set_manual_tags(ManifestId("none"), {"a.md": (ManualTag("x", "a.md"),)})
         == {}
+    )
+
+
+async def test_a_copy_of_the_active_manifest_is_pending_with_everything_it_has(
+    stores: Stores,
+) -> None:
+    first, blobs = with_images(
+        replace(
+            manifest(
+                "m1",
+                "v1.4.0",
+                "aaa111",
+                entry("a.md", "a", tags=("api",)),
+                entry("b.md", "b", title="B"),
+                kind=RefKind.TAG,
+            ),
+            renames=(rename("old.md", "a.md"),),
+            origin=VersionOrigin.AUTO,
+        ),
+        {"img/a.png": PNG},
+    )
+    await stores.manifests.add(first, contents(*first.entries), images=blobs)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.set_manual_tags(ManifestId("m1"), {"a.md": (ManualTag("x", "a.md"),)})
+    later = T0 + timedelta(hours=1)
+
+    copied = await stores.copier.copy_active(
+        PAYMENTS.id, VersionRef("v1.4.0"), ManifestId("m2"), at=later, content_version=1
+    )
+
+    assert copied is not None
+    header, articles = copied
+    assert (header.id, header.state, header.created_at) == ("m2", ManifestState.PENDING, later)
+    assert (header.commit_sha, header.kind, header.origin) == (
+        first.commit_sha,
+        RefKind.TAG,
+        VersionOrigin.AUTO,
+    )
+    assert (await fetch(stores.manifests, "m2")).origin is VersionOrigin.AUTO
+    assert [(a.entry.path, a.entry.tags, a.entry.all_tags, a.content) for a in articles] == [
+        ("a.md", ("api",), ("api", "x"), body(first.entries[0])),
+        ("b.md", (), (), body(first.entries[1])),
+    ]
+    assert articles[1].entry == first.entries[1]
+    assert await stores.manifests.list_renames(ManifestId("m2"), limit=9) == (
+        rename("old.md", "a.md"),
+    )
+    assert (await fetch(stores.manifests, "m1")).state is ManifestState.ACTIVE  # still served
+    await stores.manifests.activate(ManifestId("m2"), at=later)
+    image = await stores.manifests.get_image(PAYMENTS.id, VersionRef("v1.4.0"), "img/a.png")
+    assert image == PNG
+    assert (await fetch(stores.manifests, "m1")).state is ManifestState.SUPERSEDED
+
+
+async def test_nothing_is_copied_from_text_another_parser_stored(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "a1", entry("a.md", "a", version=1)))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    with pytest.raises(StoredContentOutdatedError):
+        await stores.copier.copy_active(
+            PAYMENTS.id, VersionRef("main"), ManifestId("m2"), at=T0, content_version=2
+        )
+
+    assert await stores.manifests.get(ManifestId("m2")) is None
+    assert (
+        await stores.copier.copy_active(
+            PAYMENTS.id, VersionRef("v9"), ManifestId("m3"), at=T0, content_version=1
+        )
+        is None
     )

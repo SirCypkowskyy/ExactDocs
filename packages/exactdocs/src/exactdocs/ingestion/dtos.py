@@ -6,8 +6,11 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from exactdocs.ingestion.models import (
+    DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
+    MAX_CHUNK_CHARS,
+    MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
     MAX_KEEP_LAST,
     MAX_TAG_PATTERN,
@@ -15,6 +18,7 @@ from exactdocs.ingestion.models import (
     MIN_INTERVAL_MINUTES,
     AccessToken,
     AutoSync,
+    ChunkingConfig,
     Context7Config,
     Credential,
     DeployKey,
@@ -629,6 +633,52 @@ class SyncedLibrary(_Dto):
     versions: list[SyncedVersion]
 
 
+class ChunkingIn(_Dto):
+    """How a library's articles are cut into chunks (the defaults: one chunk per heading)."""
+
+    split_level: int = Field(
+        default=MAX_HEADING_LEVEL,
+        ge=1,
+        le=MAX_HEADING_LEVEL,
+        description="The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.",
+    )
+    min_chars: int = Field(
+        default=0,
+        ge=0,
+        le=MAX_CHUNK_CHARS,
+        description=(
+            "A chunk shorter than this is merged with the next one (the last with the one "
+            "before), within `max_chars`; the text before the first heading is never merged."
+        ),
+    )
+    max_chars: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_CHUNK_CHARS,
+        description=(
+            "A chunk longer than this is cut again at its deeper headings; never inside a code "
+            "block or table, so a section without deeper headings stays whole. Null: no bound. "
+            "At least `min_chars`."
+        ),
+    )
+    chunker: Literal["markdown"] = Field(
+        default=DEFAULT_CHUNKER,
+        description="`markdown`: cuts at headings with markdown-it-py (the only one supported).",
+    )
+
+    @classmethod
+    def of(cls, config: ChunkingConfig) -> Self:
+        """Map the domain value object."""
+        return cls.model_validate(
+            {
+                "split_level": config.split_depth,
+                "min_chars": config.min_chars,
+                "max_chars": config.max_chars,
+                "chunker": config.chunker,
+            }
+        )
+
+
 class AutoSyncIn(_Dto):
     """How a library is checked on its own; the whole set (what is left out takes its default)."""
 
@@ -718,7 +768,11 @@ class ScheduledChecks(_Dto):
 
 
 class LibrarySettingsIn(_Dto):
-    """A library's paths and tag rules, as a whole: what is left out is cleared."""
+    """A library's paths and tag rules, as a whole (what is left out is cleared), and chunking.
+
+    Chunking left out (or null) keeps what is stored, so a client that edits only paths and tag
+    rules never resets it.
+    """
 
     include_paths: list[str] = Field(
         default_factory=list,
@@ -732,6 +786,10 @@ class LibrarySettingsIn(_Dto):
         default_factory=list,
         max_length=MAX_TAG_RULES,
         description=AddLibraryCommand.model_fields["tag_rules"].description,
+    )
+    chunking: ChunkingIn | None = Field(
+        default=None,
+        description="Left out or null: the stored chunking is kept (unlike paths and tag rules).",
     )
 
 
@@ -748,9 +806,12 @@ class UpdatedLibrarySettings(_Dto):
     include_paths: list[str]
     exclude_paths: list[str]
     tag_rules: list[TagRuleIn]
+    chunking: ChunkingIn
     reprocess: SettingsChange | None = Field(
         description=(
             "`paths`: the selection changed, every version is fetched again at its commit; "
+            "`chunking`: the chunking changed (perhaps the tag rules too), every version is "
+            "re-chunked and re-tagged from what is stored; "
             "`tags`: only tag rules changed, every version is re-tagged from what is stored; "
             "null: nothing changed and nothing is re-run, nothing is re-processed."
         )

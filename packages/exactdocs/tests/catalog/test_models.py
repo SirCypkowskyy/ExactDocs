@@ -3,6 +3,7 @@
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -225,9 +226,15 @@ def test_an_ambiguous_short_sha_is_a_validation_error() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"split_level": 0}, {"split_level": 7}, {"min_chars": -1}, {"min_chars": 9, "max_chars": 8}],
+    [
+        {"split_level": 0},
+        {"split_level": 7},
+        {"min_chars": -1},
+        {"min_chars": 9, "max_chars": 8},
+        {"chunker": ""},
+    ],
 )
-def test_chunking_settings_must_be_in_range(kwargs: dict[str, int]) -> None:
+def test_chunking_settings_must_be_in_range(kwargs: dict[str, Any]) -> None:
     with pytest.raises(InvalidSettingsError):
         ChunkingConfig(**kwargs)
 

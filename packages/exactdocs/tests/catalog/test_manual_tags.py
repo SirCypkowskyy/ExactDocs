@@ -7,6 +7,7 @@ import pytest
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.dtos import (
@@ -75,6 +76,7 @@ def catalog() -> CatalogModule:
         repository=libraries,
         manifests=(written := InMemoryManifestRepository(libraries)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
 
 

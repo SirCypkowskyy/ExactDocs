@@ -4,7 +4,7 @@ import asyncio
 import tempfile
 import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
@@ -19,9 +19,10 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.dtos import EnqueueJobCommand
 from exactdocs.ingestion.errors import RepositoryUnreachableError
-from exactdocs.ingestion.models import RefKind
+from exactdocs.ingestion.models import ArticleChunk, ChunkingConfig, ParsedArticle, RefKind
 from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 
 LIBRARY = "/fixture/docs-repo"
@@ -75,6 +76,41 @@ class SwitchableGit:
             reason = "connection refused"
             raise RepositoryUnreachableError(reason)
         return self.git.fetch_files(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+
+class HeldChunker:
+    """The real chunker; ``held`` makes cutting wait until it is cleared (it runs in a thread).
+
+    Every chunker it hands out (one per chunking config) waits on the same switch.
+    """
+
+    def __init__(self, inner: MarkdownChunker, released: threading.Event | None = None) -> None:
+        self.inner = inner
+        self.released = released or threading.Event()
+        if released is None:
+            self.released.set()
+
+    @property
+    def held(self) -> bool:
+        return not self.released.is_set()
+
+    @held.setter
+    def held(self, value: bool) -> None:
+        if value:
+            self.released.clear()
+        else:
+            self.released.set()
+
+    @property
+    def config_hash(self) -> str:
+        return self.inner.config_hash
+
+    def configured(self, config: ChunkingConfig) -> HeldChunker:
+        return HeldChunker(self.inner.configured(config), self.released)
+
+    def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
+        self.released.wait(JOB_SECONDS)
+        return self.inner.chunk(article)
 
 
 class SwitchableRenames:
@@ -177,8 +213,13 @@ def start(
     git = GitCli.locate()
     context.git = SwitchableGit(git)
     context.renames = SwitchableRenames(git)
+    context.chunker = HeldChunker(MarkdownChunker())
     context.container = Container.build(
-        settings, remote=OfflineGit(git), gateway=context.git, renames=context.renames
+        settings,
+        remote=OfflineGit(git),
+        gateway=context.git,
+        renames=context.renames,
+        chunker=context.chunker,
     )
     context.library_added = False
     context.client = stack.enter_context(

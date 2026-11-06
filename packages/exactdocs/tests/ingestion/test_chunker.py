@@ -1,10 +1,12 @@
 """Guarantees every ``Chunker`` adapter must keep, checked on fixture articles and random ones."""
 
+import hashlib
 import itertools
 import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import markdown_it
 import pytest
@@ -17,6 +19,19 @@ from exactdocs.ingestion.models import ChunkingConfig, parse_article
 from exactdocs.ingestion.ports import Chunker
 
 ADAPTERS: list[Callable[[ChunkingConfig], Chunker]] = [MarkdownChunker]
+# Every kind of setting a library can choose (LIB-09): the guarantees hold for each of them.
+CONFIGS = [
+    ChunkingConfig(),
+    *(ChunkingConfig(split_depth=level) for level in range(1, models.MAX_HEADING_LEVEL)),
+    ChunkingConfig(min_chars=200),
+    ChunkingConfig(max_chars=300),
+    ChunkingConfig(max_chars=1),
+    ChunkingConfig(min_chars=100, max_chars=400),
+    ChunkingConfig(split_depth=1, max_chars=200),
+    ChunkingConfig(split_depth=2, min_chars=50, max_chars=120),
+    ChunkingConfig(min_chars=models.MAX_CHUNK_CHARS),
+]
+CONFIG_IDS = [f"h{c.split_depth}-min{c.min_chars}-max{c.max_chars}-{c.chunker}" for c in CONFIGS]
 TESTS = Path(__file__).parents[1]
 ARTICLES = sorted(
     [
@@ -30,6 +45,12 @@ _NEWLINE = re.compile(r"\r\n|\r|\n")  # what Markdown counts as a line end, noth
 @pytest.fixture(params=ADAPTERS, ids=["markdown"])
 def chunker(request: pytest.FixtureRequest) -> Chunker:
     return request.param(ChunkingConfig())
+
+
+@pytest.fixture(params=CONFIGS, ids=CONFIG_IDS)
+def any_chunker(chunker: Chunker, request: pytest.FixtureRequest) -> Chunker:
+    """The adapter configured with each supported setting in turn."""
+    return chunker.configured(request.param)
 
 
 def _parse(path: Path):
@@ -65,9 +86,9 @@ def _check_never_split(chunker: Chunker, body: str) -> None:
 
 @pytest.mark.parametrize("path", ARTICLES, ids=lambda p: str(p.relative_to(TESTS)))
 def test_fixture_articles_are_cut_losslessly_and_never_inside_code_or_tables(
-    chunker: Chunker, path: Path
+    any_chunker: Chunker, path: Path
 ) -> None:
-    _check_never_split(chunker, _parse(path).body)
+    _check_never_split(any_chunker, _parse(path).body)
 
 
 def test_heading_path_of_the_docker_section() -> None:
@@ -296,3 +317,137 @@ def test_the_web_copy_of_the_anchor_vectors_is_identical() -> None:
         "cp packages/exactdocs/tests/fixtures/heading_anchors.json "
         "web/src/features/browse/render/fixtures/ && (cd web && pnpm format)"
     )
+
+
+# ------------------------------------------------------------------ every supported setting
+
+INSTALL = TESTS / "fixtures/docs-repo/commits/v1.4.0/docs/guide/install.md"
+
+
+def _real_paths(body: str) -> set[tuple[str, ...]]:
+    """The full heading path of every top-level heading, whatever the split level."""
+    chunks = MarkdownChunker().chunk(parse_article("a.md", body))
+    return {c.heading_path for c in chunks}
+
+
+def test_every_setting_names_the_docker_section_within_its_heading_path(
+    any_chunker: Chunker,
+) -> None:
+    chunks = any_chunker.chunk(parse_article("guide/install.md", INSTALL.read_text()))
+
+    docker = next(c for c in chunks if "\n### Docker\n" in f"\n{c.content}")
+    assert docker.heading_path == ("Guide", "Install", "Docker")[: len(docker.heading_path)]
+    assert docker.heading_path  # never the text before the first heading
+    assert {c.heading_path for c in chunks} <= _real_paths(INSTALL.read_text())
+
+
+def test_every_setting_keeps_the_text_before_the_first_heading_apart(
+    any_chunker: Chunker,
+) -> None:
+    chunks = any_chunker.chunk(parse_article("a.md", "Intro text.\n\n# One\n\nBody\n"))
+
+    assert (chunks[0].heading_path, chunks[0].content) == ((), "Intro text.\n\n")
+
+
+def test_every_setting_keeps_every_invariant_of_small_documents(any_chunker: Chunker) -> None:
+    kinds = ("heading", "text", "fence", "table")
+    for size in range(1, 5):
+        for combination in itertools.product(kinds, repeat=size):
+            body, _ = _document(combination)
+            _check_never_split(any_chunker, body)
+            chunks = any_chunker.chunk(parse_article("a.md", body))
+            assert {c.heading_path for c in chunks} <= _real_paths(body) | {()}, body
+            assert [c.position for c in chunks] == list(range(len(chunks)))
+            seen: dict[tuple[str, ...], int] = {}
+            for chunk in chunks:  # occurrence indexes count up per heading path
+                assert chunk.occurrence_index == seen.get(chunk.heading_path, 0), body
+                seen[chunk.heading_path] = chunk.occurrence_index + 1
+
+
+TINY = "# A\n\na\n\n## B\n\nb\n\n## C\n\n" + "c" * 60 + "\n\n## D\n\nd\n"
+
+
+def _cut(config: ChunkingConfig, body: str) -> list[tuple[tuple[str, ...], int]]:
+    chunks = MarkdownChunker(config).chunk(parse_article("a.md", body))
+    return [(c.heading_path, len(c.content)) for c in chunks]
+
+
+def test_sections_shorter_than_min_chars_merge_into_the_next_and_the_last_into_the_one_before():
+    cut = _cut(ChunkingConfig(min_chars=20), TINY)
+
+    # A + B are still under 20 characters, so C joins them; D is too short and has no next.
+    assert [path for path, _ in cut] == [("A",)]
+    assert [path for path, _ in _cut(ChunkingConfig(min_chars=10), TINY)] == [
+        ("A",),  # A + B
+        ("A", "C"),  # C + D: D is the last and too short
+    ]
+
+
+def test_merging_never_makes_a_chunk_longer_than_max_chars() -> None:
+    cut = _cut(ChunkingConfig(min_chars=20, max_chars=40), TINY)
+
+    assert [path for path, _ in cut] == [("A",), ("A", "C"), ("A", "D")]
+    assert all(size <= 40 or path == ("A", "C") for path, size in cut)  # C alone is longer
+
+
+def test_the_text_before_the_first_heading_is_never_merged() -> None:
+    cut = _cut(ChunkingConfig(min_chars=500), "Intro.\n\n# A\n\na\n\n## B\n\nb\n")
+
+    assert [path for path, _ in cut] == [(), ("A",)]
+
+
+def test_a_chunk_longer_than_max_chars_is_cut_again_at_its_deeper_headings() -> None:
+    body = "# A\n\n" + "a" * 50 + "\n\n## B\n\n" + "b" * 50 + "\n\n## C\n\nc\n"
+
+    assert [path for path, _ in _cut(ChunkingConfig(split_depth=1), body)] == [("A",)]
+    assert [path for path, _ in _cut(ChunkingConfig(split_depth=1, max_chars=80), body)] == [
+        ("A",),
+        ("A", "B"),  # B and C fit together
+    ]
+
+
+def test_a_long_section_without_deeper_headings_stays_whole() -> None:
+    body = "# A\n\n```\n" + "x\n" * 100 + "```\n"
+
+    assert _cut(ChunkingConfig(max_chars=10), body) == [(("A",), len(body))]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"min_chars": -1},
+        {"max_chars": 0},
+        {"min_chars": 10, "max_chars": 9},
+        {"max_chars": models.MAX_CHUNK_CHARS + 1},
+        {"chunker": "chonkie"},
+    ],
+)
+def test_chunking_settings_out_of_range_are_a_domain_error(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(InvalidChunkingConfigError):
+        ChunkingConfig(**kwargs)
+
+
+def test_the_default_config_hash_is_the_one_stored_before_sizes_existed() -> None:
+    engine = f"markdown-it-py {markdown_it.__version__}"
+    payload = json.dumps(
+        [models.PARSER_VERSION, models.CHUNKER_VERSION, 6, engine], separators=(",", ":")
+    )
+
+    assert MarkdownChunker().config_hash == hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [ChunkingConfig(min_chars=1), ChunkingConfig(max_chars=500), ChunkingConfig(split_depth=3)],
+)
+def test_every_setting_changes_the_config_hash(config: ChunkingConfig) -> None:
+    assert MarkdownChunker().configured(config).config_hash != MarkdownChunker().config_hash
+
+
+def test_a_chunker_this_adapter_does_not_provide_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(models, "CHUNKERS", frozenset({"markdown", "other"}))
+
+    with pytest.raises(InvalidChunkingConfigError):
+        MarkdownChunker().configured(ChunkingConfig(chunker="other"))

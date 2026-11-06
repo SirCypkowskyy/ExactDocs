@@ -3503,7 +3503,7 @@
           "ingestion"
         ],
         "summary": "Update Library Settings",
-        "description": "Replace the library's paths and tag rules; every version is then re-processed.\n\nSend the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is\nleft out is cleared. Changed paths queue a `reprocess` job that fetches every version\nagain at the commit it serves (a branch is not synced) and re-imports it; only tag rules\nchanged queue a `retag` job that re-tags the stored articles, fetching nothing. Each\nversion keeps serving its old state until its new one is complete, then switches at\nonce (after a `retag`, search's tag filters follow the listings a moment later); one\nthat fails keeps the old state and the job fails naming it. Sending the same settings\nagain re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no\njob when the settings are unchanged and the last re-processing did not fail (or there\nis no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing\nis stored), 404 for an unknown library.",
+        "description": "Replace the library's paths, tag rules and chunking; every version is then re-processed.\n\nSend the whole set of paths and tag rules (`GET /libraries/{owner}/{repo}` has the current\n`settings`): what is left out is cleared. `chunking` left out (or null) keeps the stored\none. Changed paths queue a `reprocess`\njob that fetches every version again at the commit it serves (a branch is not synced)\nand re-imports it; a changed chunking queues a `rechunk` job that cuts the stored\narticles again (and re-tags them), fetching nothing unless a version was stored by an\nolder parser (that one is re-imported); only tag rules changed queue a `retag` job that\nre-tags the stored articles, fetching nothing. Each\nversion keeps serving its old state until its new one is complete, then switches at\nonce (after a `retag`, search's tag filters follow the listings a moment later); one\nthat fails keeps the old state and the job fails naming it. Sending the same settings\nagain re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no\njob when the settings are unchanged and the last re-processing did not fail (or there\nis no version yet: imports to come use them). 422 for an invalid pattern, tag or chunking\nsetting (nothing is stored), 404 for an unknown library.",
         "operationId": "ingestion-update_library_settings",
         "security": [
           {
@@ -6162,6 +6162,51 @@
         "title": "ChunkOut",
         "description": "A chunk verbatim, with its place in the article and where it came from."
       },
+      "ChunkingIn": {
+        "properties": {
+          "split_level": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Split Level",
+            "description": "The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.",
+            "default": 6
+          },
+          "min_chars": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Min Chars",
+            "description": "A chunk shorter than this is merged with the next one (the last with the one before), within `max_chars`; the text before the first heading is never merged.",
+            "default": 0
+          },
+          "max_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chars",
+            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or table, so a section without deeper headings stays whole. Null: no bound. At least `min_chars`."
+          },
+          "chunker": {
+            "type": "string",
+            "const": "markdown",
+            "title": "Chunker",
+            "description": "`markdown`: cuts at headings with markdown-it-py (the only one supported).",
+            "default": "markdown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ChunkingIn",
+        "description": "How a library's articles are cut into chunks (the defaults: one chunk per heading)."
+      },
       "ChunkingOut": {
         "properties": {
           "split_level": {
@@ -6182,6 +6227,10 @@
               }
             ],
             "title": "Max Chars"
+          },
+          "chunker": {
+            "type": "string",
+            "title": "Chunker"
           }
         },
         "additionalProperties": false,
@@ -6189,7 +6238,8 @@
         "required": [
           "split_level",
           "min_chars",
-          "max_chars"
+          "max_chars",
+          "chunker"
         ],
         "title": "ChunkingOut",
         "description": "How articles are cut into chunks."
@@ -7213,12 +7263,23 @@
             "maxItems": 64,
             "title": "Tag Rules",
             "description": "Tags for articles by path; they are added to the front-matter tags."
+          },
+          "chunking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChunkingIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Left out or null: the stored chunking is kept (unlike paths and tag rules)."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "LibrarySettingsIn",
-        "description": "A library's paths and tag rules, as a whole: what is left out is cleared."
+        "description": "A library's paths and tag rules, as a whole (what is left out is cleared), and chunking.\n\nChunking left out (or null) keeps what is stored, so a client that edits only paths and tag\nrules never resets it."
       },
       "LibrarySettingsOut": {
         "properties": {
@@ -8215,10 +8276,11 @@
         "type": "string",
         "enum": [
           "paths",
+          "chunking",
           "tags"
         ],
         "title": "SettingsChange",
-        "description": "What an edit of a library's settings asks of its versions."
+        "description": "What an edit of a library's settings asks of its versions; each does what follows it too.\n\n``PATHS`` re-imports with the new chunking and tag rules, ``CHUNKING`` re-tags as well."
       },
       "Span": {
         "properties": {
@@ -8650,6 +8712,9 @@
             "type": "array",
             "title": "Tag Rules"
           },
+          "chunking": {
+            "$ref": "#/components/schemas/ChunkingIn"
+          },
           "reprocess": {
             "anyOf": [
               {
@@ -8659,7 +8724,7 @@
                 "type": "null"
               }
             ],
-            "description": "`paths`: the selection changed, every version is fetched again at its commit; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed."
+            "description": "`paths`: the selection changed, every version is fetched again at its commit; `chunking`: the chunking changed (perhaps the tag rules too), every version is re-chunked and re-tagged from what is stored; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed."
           },
           "job_id": {
             "anyOf": [
@@ -8689,6 +8754,7 @@
           "include_paths",
           "exclude_paths",
           "tag_rules",
+          "chunking",
           "reprocess",
           "job_id",
           "versions"

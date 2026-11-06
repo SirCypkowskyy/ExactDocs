@@ -20,6 +20,9 @@ from exactdocs.catalog.dtos import (
     Asset,
     CollectGarbageCommand,
     CollectionResult,
+    CopiedArticle,
+    CopiedManifest,
+    CopyManifestCommand,
     CreateLibraryCommand,
     DefaultManifest,
     DefaultManifests,
@@ -74,6 +77,7 @@ from exactdocs.catalog.errors import (
 )
 from exactdocs.catalog.models import (
     MAX_RENAMES,
+    ChunkingConfig,
     ContentKey,
     HostKind,
     Library,
@@ -96,6 +100,7 @@ from exactdocs.catalog.models import (
 from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
+    ManifestCopier,
     ManifestRepository,
 )
 from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
@@ -183,15 +188,24 @@ class SetLibrarySettingsUseCase:
     repository: LibraryRepository
 
     async def __call__(self, command: SetLibrarySettingsCommand) -> LibraryDetail:
-        """Replace paths and tag rules, keep the chunking settings."""
+        """Replace paths and tag rules; the chunking too unless it is left out."""
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
+        wanted = command.chunking
         settings = replace(
             library.settings,
             include_paths=tuple(command.include_paths),
             exclude_paths=tuple(command.exclude_paths),
             tag_rules=tuple(TagRule(pattern=r.pattern, tag=r.tag) for r in command.tag_rules),
+            chunking=library.settings.chunking
+            if wanted is None
+            else ChunkingConfig(
+                split_level=wanted.split_level,
+                min_chars=wanted.min_chars,
+                max_chars=wanted.max_chars,
+                chunker=wanted.chunker,
+            ),
         )
         await self.repository.set_settings(library.id, settings)
         updated = await self.repository.get(library.id)
@@ -923,4 +937,50 @@ class RemoveLibraryUseCase:
         removed = await self.manifests.remove_library(library.id)
         return Removal(
             library=str(library.id), ref=None, manifest_ids=list(removed), default_ref=None
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CopyManifestUseCase:
+    """Implements ``ports.driving.CopyManifest``."""
+
+    repository: LibraryRepository
+    copier: ManifestCopier
+    clock: Clock
+
+    async def __call__(self, command: CopyManifestCommand) -> CopiedManifest:
+        """Copy the active manifest of the version as a pending one, created now."""
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        ref = VersionRef(command.ref)
+        if all(v.ref != ref for v in library.versions):
+            raise VersionNotFoundError(str(library.id), command.ref)
+        copied = await self.copier.copy_active(
+            library.id,
+            ref,
+            ManifestId(uuid4().hex),
+            at=self.clock.now(),
+            content_version=command.content_version,
+        )
+        if copied is None:
+            raise VersionNotFoundError(str(library.id), command.ref)
+        manifest, articles = copied
+        return CopiedManifest(
+            manifest_id=manifest.id,
+            library=str(library.id),
+            ref=str(ref),
+            kind=manifest.kind,
+            commit_sha=manifest.commit_sha,
+            articles=[
+                CopiedArticle(
+                    path=a.entry.path,
+                    blob_sha=a.entry.blob_sha,
+                    title=a.entry.title,
+                    front_matter=a.entry.front_matter,
+                    tags=list(a.entry.tags),
+                    content=a.content,
+                )
+                for a in articles
+            ],
         )

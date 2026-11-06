@@ -352,8 +352,11 @@ export const draftOf = (stored: StoredSelection): SelectionDraft => ({
   rules: stored.tag_rules.map((r, key) => ({ key, pattern: r.pattern, tag: r.tag })),
 });
 
-/** The whole set, as `PUT …/settings` takes it: what is left out is cleared. */
-export const settingsOf = (draft: SelectionDraft): Required<SettingsIn> => ({
+/**
+ * The paths and tag rules as a whole set, as `PUT …/settings` takes them: what is left out is
+ * cleared. `chunking` is left out on purpose: the server then keeps the stored one.
+ */
+export const settingsOf = (draft: SelectionDraft): Required<Omit<SettingsIn, "chunking">> => ({
   include_paths: lines(draft.include),
   exclude_paths: lines(draft.exclude),
   tag_rules: filledRules(draft.rules).map((r) => ({
@@ -376,7 +379,7 @@ const ruleKey = (r: { pattern: string; tag: string }) =>
 export function selectionChange(
   stored: StoredSelection,
   draft: SelectionDraft,
-): SavedSettings["reprocess"] {
+): "paths" | "tags" | null {
   const next = settingsOf(draft);
   if (!same(next.include_paths, stored.include_paths)) return "paths";
   if (!same(next.exclude_paths, stored.exclude_paths)) return "paths";
@@ -398,13 +401,22 @@ const listed = (refs: readonly string[], max = 5) =>
     ? `${refs.slice(0, max).join(", ")}, and ${refs.length - max} more`
     : refs.join(", ");
 
+/** What the server runs for an edit: re-import (`paths`), re-chunk (`chunking`) or re-tag (`tags`). */
+export type SettingsChange = "paths" | "chunking" | "tags";
+
+const VERBS: Record<SettingsChange, string> = {
+  paths: "re-processed",
+  chunking: "re-chunked",
+  tags: "re-tagged",
+};
+
 /** The warning before saving: every version is re-processed, and what that means for this change. */
 export function reprocessWarning(
-  change: "paths" | "tags",
+  change: SettingsChange,
   refs: readonly string[],
   afterFailure = false,
 ) {
-  const verb = change === "paths" ? "re-processed" : "re-tagged";
+  const verb = VERBS[change];
   const which =
     refs.length === 1
       ? `Its version (${listed(refs)}) will be ${verb}`
@@ -412,27 +424,42 @@ export function reprocessWarning(
   const what =
     change === "tags"
       ? `${which}. Only the tag rules changed, so each one's articles are tagged again from what is stored, and nothing is fetched. Tags added by hand stay.`
-      : afterFailure
-        ? `${which}. The last re-processing failed, so this runs it in full: each version is fetched again at the commit it serves and imported with these paths and tag rules; branches are not synced.`
-        : `${which}. Each one is fetched again at the commit it serves and imported with the new paths; branches are not synced.`;
+      : change === "chunking"
+        ? `${which}. The last re-chunking failed, so this runs it again: each one's stored articles are cut into chunks and tagged again, and nothing is fetched.`
+        : afterFailure
+          ? `${which}. The last re-processing failed, so this runs it in full: each version is fetched again at the commit it serves and imported with these paths and tag rules; branches are not synced.`
+          : `${which}. Each one is fetched again at the commit it serves and imported with the new paths; branches are not synced.`;
   return {
-    title: change === "paths" ? "Re-process every version?" : "Re-tag every version?",
+    title:
+      change === "paths"
+        ? "Re-process every version?"
+        : change === "chunking"
+          ? "Re-chunk every version?"
+          : "Re-tag every version?",
     what,
     safe: "Each version keeps serving what it has now until its new state is complete, then switches at once. A version that cannot be re-processed keeps what it had.",
-    confirm: change === "paths" ? "Save and re-process" : "Save and re-tag",
+    confirm:
+      change === "paths"
+        ? "Save and re-process"
+        : change === "chunking"
+          ? "Save and re-chunk"
+          : "Save and re-tag",
   };
 }
 
 /**
  * What the server will run for this change. While the newest `reprocess` failed, a tag-only edit
- * re-runs that full re-processing (it re-tags too), so it is warned about as one.
+ * re-runs that full re-processing (it re-tags too), so it is warned about as one; while the
+ * newest `rechunk` failed, a tag-only edit re-runs the re-chunking (it re-tags too).
  */
 export function effectiveChange(
   change: "paths" | "tags",
   last: Pick<ReprocessJob, "kind" | "state"> | null | undefined,
-): { change: "paths" | "tags"; afterFailure: boolean } {
-  const failedReprocess = last?.kind === "reprocess" && last.state === "failed";
-  return { change: failedReprocess ? "paths" : change, afterFailure: failedReprocess };
+): { change: SettingsChange; afterFailure: boolean } {
+  const failed = last?.state === "failed" ? last.kind : undefined;
+  if (failed === "reprocess") return { change: "paths", afterFailure: true };
+  if (failed === "rechunk" && change === "tags") return { change: "chunking", afterFailure: true };
+  return { change, afterFailure: failed === "rechunk" };
 }
 
 /** The newest re-processing, when it failed: it can be run again with the stored settings. */
@@ -472,9 +499,9 @@ export function savedHeadline(saved: SavedSettings): string {
       ? "Saved. The library has no version yet: versions imported from now on use these settings."
       : "Saved. Nothing changed, so nothing is re-processed.";
   }
-  return saved.reprocess === "tags"
-    ? "Saved. Every version is being re-tagged."
-    : "Saved. Every version is being re-processed.";
+  if (saved.reprocess === "tags") return "Saved. Every version is being re-tagged.";
+  if (saved.reprocess === "chunking") return "Saved. Every version is being re-chunked.";
+  return "Saved. Every version is being re-processed.";
 }
 
 /** Next to Save: what pressing it would do. */
