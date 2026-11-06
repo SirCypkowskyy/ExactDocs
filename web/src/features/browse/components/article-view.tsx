@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, Navigate, useRouterState } from "@tanstack/react-router";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
-import { accessQueryOptions, articleQueryOptions } from "../api/browse-queries";
+import {
+  accessQueryOptions,
+  articleQueryOptions,
+  renamedInVersionQueryOptions,
+} from "../api/browse-queries";
 import {
   type Article,
   commitUrl,
@@ -429,13 +433,29 @@ function Body({
   );
 }
 
-/** The article pane: loading, the text, "not in this version" with suggestions, or an error. */
+/**
+ * The article pane: loading, the text, "not in this version" with suggestions, or an error.
+ * A path the version does not have is first looked up in the version's renames: a link to an
+ * article git saw moved opens its new path instead, in the same version and at the same anchor.
+ */
 export function ArticleView(props: ArticleViewProps) {
-  const { owner, repo, library, version, path } = props;
-  const query = useQuery(
-    articleQueryOptions({ owner, repo, ref: version.ref, sha: version.commit_sha }, path),
-  );
-  if (query.isPending) {
+  const { owner, repo, library, version, path, tags } = props;
+  const at = { owner, repo, ref: version.ref, sha: version.commit_sha };
+  const query = useQuery(articleQueryOptions(at, path));
+  const missing = query.error instanceof HttpError && query.error.status === 404;
+  const renamed = useQuery({ ...renamedInVersionQueryOptions(at, path), enabled: missing });
+  if (missing && renamed.data) {
+    return (
+      <Navigate
+        to="/libraries/$owner/$repo"
+        params={{ owner, repo }}
+        search={{ version: version.ref, path: renamed.data, tags }}
+        hash={true}
+        replace
+      />
+    );
+  }
+  if (query.isPending || (missing && renamed.isPending)) {
     return (
       <div role="status" aria-busy="true">
         <span className="sr-only">Loading {path}</span>

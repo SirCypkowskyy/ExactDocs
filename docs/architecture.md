@@ -593,8 +593,11 @@ that last step, which is one transaction in the catalog.
   libraries alike); if that fails (404: a version imported before #64, or an image skipped as too
   large), a **public** library falls back to the host's raw URL at the commit, and a private one,
   or a failed fallback, shows the alt text. Images are `loading="lazy" decoding="async"`; their size
-  is not stored, so CSS bounds them (`max-width: 100%`) and no `width`/`height` is set. Links to
-  renamed articles (#66) are not followed yet (#191).
+  is not stored, so CSS bounds them (`max-width: 100%`) and no `width`/`height` is set. A path the
+  version does not have is first looked up in the version's renames (`renamed-path`, forward,
+  one hop, short timeout, no retry): an article git saw moved when the version was imported opens
+  at its new path, same version and `#anchor` (the URL is replaced). No rename, or a failed lookup,
+  keeps the "Not in this version" page.
 - **Kind of ref.** `AddLibrary` records on the job whether the version is a tag, a branch or a
   bare commit, so the import never asks the remote again; a deleted tag does not break it.
 - **Replays.** A crash right after the activation commits, before the publish step's result is
