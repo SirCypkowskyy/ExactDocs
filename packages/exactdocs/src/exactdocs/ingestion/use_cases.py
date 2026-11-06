@@ -102,6 +102,7 @@ from exactdocs.ingestion.models import (
     Context7Config,
     Credential,
     FetchedFile,
+    FileProblem,
     GitRename,
     ImportedArticle,
     ImportedImage,
@@ -1121,39 +1122,61 @@ class UpdateLibrarySettingsUseCase:
         return queued.id
 
 
-@dataclass(slots=True)
-class _VersionsProgress:
-    """Implements ``ports.driven.JobProgress`` for one import of many: adds the versions up.
+@dataclass(frozen=True, slots=True)
+class _VersionOutcome:
+    """What re-processing one version did: the result of its durable step (plain data)."""
 
-    Files and chunk counters run on across versions; a problem names its version.
+    files: int = 0
+    chunked: int = 0
+    reused: int = 0
+    problems: tuple[FileProblem, ...] = ()
+    failure: tuple[str, str] | None = None
+    """``(code, reason)`` when the version could not be re-processed and kept what it had."""
+
+
+@dataclass(slots=True)
+class _OneVersion:
+    """Implements ``ports.driven.JobProgress`` for one version's re-import, inside its step.
+
+    Files and chunk counters go on from the versions before, live. Problems are kept for the
+    step's result and reported after it, so a resumed job reports them again from the result.
     """
 
     progress: JobProgress
-    ref: str = ""
-    files: int = 0
+    ref: str
+    files_before: int
+    chunked_before: int
+    reused_before: int
     total: int = 0
-    chunked: tuple[int, int] = (0, 0)
-    counted: tuple[int, int] = (0, 0)
+    chunked: int = 0
+    reused: int = 0
+    problems: list[FileProblem] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
         self.total = total
-        await self.progress.report(done=self.files + done, total=self.files + total)
+        await self.progress.report(done=self.files_before + done, total=self.files_before + total)
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
-        await self.progress.problem(path, code, f"{self.ref}: {reason}")
+        self.problems.append(FileProblem(path, code, f"{self.ref}: {reason}"))
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
-        self.chunked = (chunked, reused)
-        before_chunked, before_reused = self.counted
+        self.chunked, self.reused = chunked, reused
         await self.progress.chunking(
-            chunked=before_chunked + chunked, reused=before_reused + reused
+            chunked=self.chunked_before + chunked, reused=self.reused_before + reused
         )
 
-    def next_version(self, ref: str) -> None:
-        """Count the finished version in; what follows is ``ref``'s."""
-        self.files += self.total
-        self.counted = (self.counted[0] + self.chunked[0], self.counted[1] + self.chunked[1])
-        self.ref, self.total, self.chunked = ref, 0, (0, 0)
+    def outcome(self, failure: tuple[str, str] | None = None) -> _VersionOutcome:
+        return _VersionOutcome(
+            files=self.total,
+            chunked=self.chunked,
+            reused=self.reused,
+            problems=tuple(self.problems),
+            failure=failure,
+        )
+
+
+async def _versions(sources: LibrarySources, library: str) -> tuple[ImportedRef, ...]:
+    return tuple(await sources.imported_versions(library))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1165,31 +1188,59 @@ class ReprocessLibraryUseCase:
     chunked before and activates the new manifest in place of the old one, so each version
     switches at once. A version that fails keeps what it served and the others go on; the job
     then fails with every failure (``ReprocessFailedError``).
+
+    Durable steps (``checkpoints``): the list of versions, then one step per version, in that
+    order, so a resumed job takes the same versions in the same order and skips those it had
+    finished (or failed). A version's re-import is one step, not the importer's own steps: the
+    importer reads the library and its credential before its first step, so a version that
+    failed there and succeeds on resume would take steps another version had recorded. A
+    version killed halfway starts over (the recovery hook discards its pending manifest).
+    ``importer`` must therefore not record steps of its own (give it no checkpoints).
     """
 
     sources: LibrarySources
     importer: JobHandler
+    checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Re-import every version; raising fails the job."""
+        step = self.checkpoints.step
+        versions = await step("list the versions", partial(_versions, self.sources, job.library))
+        files = chunked = reused = 0
         failures: list[tuple[str, str, str]] = []
-        tracker = _VersionsProgress(progress)
-        for current in await self.sources.imported_versions(job.library):
-            tracker.next_version(current.ref)
-            one = replace(
-                job,
-                kind=REFRESH_JOB,
-                version=current.ref,
-                commit_sha=current.commit_sha,  # where it is, never where its branch is now
-                ref_kind=current.kind,
+        for current in versions:
+            tracker = _OneVersion(progress, current.ref, files, chunked, reused)
+            outcome = await step(
+                f"re-import {current.ref}", partial(self._one, job, current, tracker)
             )
-            try:
-                await self.importer(one, tracker)
-            except Exception as error:
-                log.warning("re-processing %s %s failed", job.library, current.ref, exc_info=True)
-                failures.append((current.ref, failure_code(error), _describe(error)))
+            files, chunked, reused = (
+                files + outcome.files,
+                chunked + outcome.chunked,
+                reused + outcome.reused,
+            )
+            for problem in outcome.problems:
+                await progress.problem(problem.path, problem.code, problem.reason)
+            await progress.report(done=files, total=files)
+            await progress.chunking(chunked=chunked, reused=reused)
+            if outcome.failure is not None:
+                failures.append((current.ref, *outcome.failure))
         if failures:
             raise ReprocessFailedError(failures)
+
+    async def _one(self, job: Job, current: ImportedRef, tracker: _OneVersion) -> _VersionOutcome:
+        one = replace(
+            job,
+            kind=REFRESH_JOB,
+            version=current.ref,
+            commit_sha=current.commit_sha,  # where it is, never where its branch is now
+            ref_kind=current.kind,
+        )
+        try:
+            await self.importer(one, tracker)
+        except Exception as error:
+            log.warning("re-processing %s %s failed", job.library, current.ref, exc_info=True)
+            return tracker.outcome((failure_code(error), _describe(error)))
+        return tracker.outcome()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1203,33 +1254,47 @@ class RetagLibraryUseCase:
     to both every time (each side writes only what differs), so a rerun after a crash or a
     failure between the two writes brings the chunks in line. A version that fails keeps what
     it had and the others go on; the job then fails with every failure.
+
+    Durable steps (``checkpoints``): the list of versions, then one per version, so a resumed
+    job does not re-tag the versions it had finished. A version killed halfway is re-tagged
+    again, which is safe for the reason above.
     """
 
     sources: LibrarySources
     tags: ImportedTagStore
     index: ChunkIndex
     tag_locks: TagLocks
+    checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Re-tag every version; raising fails the job."""
-        rules = (await self.sources.get(job.library)).tag_rules
-        versions = await self.sources.imported_versions(job.library)
+        step = self.checkpoints.step
+        versions = await step("list the versions", partial(_versions, self.sources, job.library))
         await progress.report(done=0, total=len(versions))
         reused = 0
         failures: list[tuple[str, str, str]] = []
         for done, current in enumerate(versions, 1):
-            try:
-                reused += await self._retag(job.library, current.ref, rules)
-            except Exception as error:
-                log.warning("re-tagging %s %s failed", job.library, current.ref, exc_info=True)
-                failures.append((current.ref, failure_code(error), _describe(error)))
+            outcome = await step(
+                f"re-tag {current.ref}", partial(self._one, job.library, current.ref)
+            )
+            reused += outcome.reused
+            if outcome.failure is not None:
+                failures.append((current.ref, *outcome.failure))
             await progress.chunking(chunked=0, reused=reused)
             await progress.report(done=done, total=len(versions))
         if failures:
             raise ReprocessFailedError(failures)
 
-    async def _retag(self, library: str, ref: str, rules: Sequence[TagRule]) -> int:
-        """Re-tag one version; return how many stored articles it has."""
+    async def _one(self, library: str, ref: str) -> _VersionOutcome:
+        try:
+            return _VersionOutcome(reused=await self._retag(library, ref))
+        except Exception as error:
+            log.warning("re-tagging %s %s failed", library, ref, exc_info=True)
+            return _VersionOutcome(failure=(failure_code(error), _describe(error)))
+
+    async def _retag(self, library: str, ref: str) -> int:
+        """Re-tag one version with the rules as they are now; return its stored articles."""
+        rules = (await self.sources.get(library)).tag_rules
         async with self.tag_locks.of(library):
             stored = await self.tags.stored_tags(library, ref)
             if stored is None or not stored.articles:

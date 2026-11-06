@@ -483,6 +483,16 @@ that last step, which is one transaction in the catalog.
   text, its chunks, pickled and base64-encoded by DBOS), plus its images. The workflow is deleted
   when the job ends and the file is compacted (`VACUUM`) once no workflow is left in it, so it
   does not keep that size.
+- **Steps of `reprocess` and `retag`** (#61, `STEPS_VERSION` `jobs-2`): first the library's
+  versions (so a resumed job takes the same ones in the same order, even if one was added
+  meanwhile), then **one step per version**: `re-import <ref>` runs the refresh import inside it
+  without steps of its own, `re-tag <ref>` the version's re-tag. The import's own steps are not
+  used there: it reads the library and its credential before its first step, so a version that
+  failed there and succeeded on a resume would take steps another version recorded. A version's
+  result (files, chunk counters, problems, its failure) rebuilds the job's progress on a replay.
+  A version killed halfway starts over (the recovery hook discards its pending manifest; a re-tag
+  is safe to redo); the versions finished before are not done again, nor is a recorded failure
+  retried by that job.
 - **Undo.** Any failure after the store (an exception or a cancellation) discards the pending
   chunks and then the pending manifest. The order matters: retrieval asks the catalog and only
   removes a manifest it is told is still pending. After a crash the recovery hook does the same

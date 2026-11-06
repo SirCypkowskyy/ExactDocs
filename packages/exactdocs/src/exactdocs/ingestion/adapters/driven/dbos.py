@@ -17,8 +17,10 @@ log = logging.getLogger(__name__)
 
 QUEUE = "exactdocs-jobs"
 WORKFLOW = "exactdocs.run_job"
-STEPS_VERSION = "jobs-1"
+STEPS_VERSION = "jobs-2"
 """DBOS's application version: bump it when a job's steps change (names, order or results).
+
+``jobs-2`` added the steps of ``reprocess`` and ``retag`` (#61).
 
 A workflow of another version is not resumed: its job starts over from the beginning.
 """

@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
     InMemoryJobRepository,
     InMemoryLibrarySources,
     NoIndex,
@@ -371,11 +372,13 @@ class Progress:
 class Importer:
     """Stands in for the refresh importer: records each version, fails the ones told to."""
 
-    failures: dict[str, Exception] = field(default_factory=dict)
+    failures: dict[str, BaseException] = field(default_factory=dict)
     seen: list[Job] = field(default_factory=list)
 
     async def __call__(self, job: Job, progress, /) -> None:
         self.seen.append(job)
+        if isinstance(self.failures.get(str(job.version)), Killed):
+            raise self.failures.pop(str(job.version))  # the process dies; once
         await progress.report(done=0, total=2)
         await progress.problem("docs/a.md", ProblemCode.BINARY, "binary file")
         await progress.chunking(chunked=1, reused=1)
@@ -429,6 +432,49 @@ async def test_different_failures_share_a_generic_code(sources):
     assert raised.value.refs == ("v1.0.0", "main")
 
 
+class Killed(BaseException):
+    """The process dies mid-step: nothing catches it, the step is not recorded."""
+
+
+async def test_a_resumed_reprocess_skips_the_versions_it_had_finished(sources):
+    importer = Importer(failures={"main": Killed()})
+    steps = InMemoryCheckpoints()
+    with pytest.raises(Killed):
+        await ReprocessLibraryUseCase(sources, importer, steps)(library_job(), Progress())
+    sources.versions[LIBRARY].append(  # imported meanwhile: not in this job's recorded list
+        ImportedRef(ref="v2.0.0", kind=RefKind.TAG, commit_sha="c" * 40)
+    )
+    resumed = steps.resumed()
+    progress = Progress()  # the job's progress is rebuilt from scratch on a resume
+
+    await ReprocessLibraryUseCase(sources, importer, resumed)(library_job(), progress)
+
+    assert [j.version for j in importer.seen] == ["v1.0.0", "main", "main"]
+    assert resumed.ran == ["re-import main"]
+    assert [name for name, _ in resumed.completed] == [
+        "list the versions",
+        "re-import v1.0.0",
+        "re-import main",
+    ]
+    assert progress.reports[-1] == (4, 4)  # the finished version counts from its result
+    assert progress.counters[-1] == (2, 2)
+    assert [p[2] for p in progress.problems] == ["v1.0.0: binary file", "main: binary file"]
+
+
+async def test_a_replayed_failure_still_fails_the_job(sources):
+    importer = Importer(failures={"v1.0.0": NoArticlesError()})
+    steps = InMemoryCheckpoints()
+    with pytest.raises(ReprocessFailedError):
+        await ReprocessLibraryUseCase(sources, importer, steps)(library_job(), Progress())
+    importer.failures.clear()  # it would succeed now: the recorded outcome is what counts
+
+    with pytest.raises(ReprocessFailedError) as raised:
+        await ReprocessLibraryUseCase(sources, importer, steps.resumed())(library_job(), Progress())
+
+    assert raised.value.refs == ("v1.0.0",)
+    assert len(importer.seen) == 2
+
+
 # ------------------------------------------------------------------ RetagLibrary
 
 
@@ -464,8 +510,12 @@ class Index:
 
     retagged: list[tuple[str, dict[str, tuple[str, ...]]]] = field(default_factory=list)
     failures: int = 0
+    kill_on: str | None = None
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        if manifest_id == self.kill_on:
+            self.kill_on = None
+            raise Killed
         if self.failures:
             self.failures -= 1
             raise RepositoryUnreachableError(LOCKED)
@@ -563,6 +613,31 @@ async def test_a_version_without_articles_is_not_written(sources):
     await retag(sources, store, index)
 
     assert (store.writes, index.retagged) == ([], [])
+
+
+async def test_a_resumed_retag_skips_the_versions_it_had_finished(sources):
+    sources.sources[LIBRARY] = replace(SOURCE, tag_rules=TagRule.many([("docs/**", "d")]))
+    store = Store(
+        {
+            "v1.0.0": StoredTags(manifest_id="m1", articles=(article("docs/a.md"),)),
+            "main": StoredTags(manifest_id="m2", articles=(article("docs/b.md"),)),
+        }
+    )
+    index = Index(kill_on="m2")
+    steps = InMemoryCheckpoints()
+    with pytest.raises(Killed):
+        await RetagLibraryUseCase(sources, store, index, TagLocks(), steps)(
+            library_job(RETAG_JOB), Progress()
+        )
+    progress = Progress()
+
+    await RetagLibraryUseCase(sources, store, index, TagLocks(), steps.resumed())(
+        library_job(RETAG_JOB), progress
+    )
+
+    assert [m for m, _ in store.writes] == ["m1", "m2", "m2"]  # m1 is not re-tagged again
+    assert [m for m, _ in index.retagged] == ["m1", "m2"]
+    assert progress.counters[-1] == (0, 2)
 
 
 # ------------------------------------------------------------------ models

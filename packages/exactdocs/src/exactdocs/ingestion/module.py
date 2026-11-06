@@ -4,7 +4,7 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 together with the job kinds it supports. ``import_job`` builds the import's handler and hook.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Self
@@ -123,6 +123,14 @@ class _NoLibrarySources:
     async def renames_of(self, library: str, ref: str) -> list[GitRename]:
         del library, ref
         return []
+
+
+class _InlineSteps:
+    """``Checkpoints`` that only run each step: for work done inside another durable step."""
+
+    async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        del name
+        return await run()
 
 
 class _NoSettings:
@@ -334,13 +342,17 @@ def import_job(
         importer = replace(importer, checkpoints=checkpoints)
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)
+    steps = importer.checkpoints
     handlers: dict[JobKind, JobHandler] = {
         IMPORT_JOB: importer,
         REFRESH_JOB: refresher,
-        REPROCESS_JOB: ReprocessLibraryUseCase(sources, refresher),
-        RETAG_JOB: RetagLibraryUseCase(sources, imported_tags, index, tag_locks),
+        # One durable step per version: the re-import inside it records none of its own.
+        REPROCESS_JOB: ReprocessLibraryUseCase(
+            sources, replace(refresher, checkpoints=_InlineSteps()), steps
+        ),
+        RETAG_JOB: RetagLibraryUseCase(sources, imported_tags, index, tag_locks, steps),
     }
-    # A re-tag writes each version in one transaction and is idempotent: nothing to clean up.
+    # A re-tag writes each version in one transaction and is safe to redo: nothing to clean up.
     return handlers, {IMPORT_JOB: hook, REFRESH_JOB: hook, REPROCESS_JOB: hook}
 
 
