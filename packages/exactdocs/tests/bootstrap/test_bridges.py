@@ -469,12 +469,12 @@ async def test_stored_articles_are_found_through_the_catalog_by_parser_version()
     )
     files = [("a.md", "1" * 40), ("b.md", "2" * 40)]
 
-    found = await bridge.find("/acme/payments", PARSER_VERSION, files)
+    found = await bridge.find("/acme/payments", "v1.4.0", PARSER_VERSION, files)
 
     assert found == [
         StoredArticle(
             path="a.md", blob_sha="1" * 40, title="A", front_matter={"tags": ["x"]}, content="# A\n"
         )
     ]
-    assert await bridge.find("/acme/payments", PARSER_VERSION + 1, files) == []
-    assert await bridge.find("/acme/unknown", PARSER_VERSION, files) == []
+    assert await bridge.find("/acme/payments", "v1.4.0", PARSER_VERSION + 1, files) == []
+    assert await bridge.find("/acme/unknown", "v1.4.0", PARSER_VERSION, files) == []

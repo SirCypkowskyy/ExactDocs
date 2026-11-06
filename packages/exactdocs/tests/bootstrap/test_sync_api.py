@@ -87,6 +87,26 @@ async def test_sync_answers_200_202_and_409_and_re_chunks_only_what_changed(
     assert (await client.post(SYNC)).status_code == 200
 
 
+async def test_the_production_container_takes_unchanged_articles_from_the_catalog(
+    client: httpx.AsyncClient, container: Container, repo: Path
+) -> None:
+    """The container wires the stored-article lookup (it is optional in the importer, #164)."""
+    await add_and_import(client, container, repo, "next")
+    jobs = (await client.get("/api/v1/libraries/fixture/docs-repo/jobs")).json()["jobs"]
+    first = jobs[0]
+    assert (first["state"], first["taken"]) == ("succeeded", 0)
+    assert first["parsed"] > 1
+
+    move_next(repo)
+    moved = await client.post(SYNC)
+    assert moved.status_code == 202, moved.text
+    assert await container.ingestion.run_next_job()
+    job = (await client.get(moved.headers["location"])).json()
+
+    assert job["state"] == "succeeded", job
+    assert (job["parsed"], job["taken"]) == (1, first["parsed"] - 1)  # install.md only
+
+
 async def test_sync_of_an_unknown_library_is_a_404(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/v1/libraries/no/such/sync")
     assert (response.status_code, response.json()["error"]) == (404, "not_found")

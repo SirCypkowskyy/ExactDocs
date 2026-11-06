@@ -447,9 +447,14 @@ class InMemoryStoredArticles:
     repository: InMemoryManifestRepository
 
     async def find_articles(
-        self, library_id: LibraryId, content_version: int, files: Collection[tuple[str, str]]
+        self,
+        library_id: LibraryId,
+        ref: VersionRef | None,
+        content_version: int,
+        files: Collection[tuple[str, str]],
     ) -> Sequence[StoredArticle]:
         """Return the first entry of the library's manifests stored for each file."""
+        del ref  # an optimisation of the SQL lookup: any manifest gives the same article
         wanted, found = set(files), {}
         for manifest in self.repository.manifests.values():
             if manifest.library != library_id:

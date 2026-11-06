@@ -1038,6 +1038,9 @@ class FindStoredArticlesQuery(_Dto):
     """Ask what the catalog stored for these files, so an import need not parse them again."""
 
     library: str = Field(min_length=1)
+    ref: str | None = Field(
+        default=None, description="The version being imported: its active manifest is read first."
+    )
     content_version: int = Field(description="The importer's parser version: part of the key.")
     files: list[StoredFileIn] = Field(max_length=MAX_STORED_ARTICLE_FILES)
 

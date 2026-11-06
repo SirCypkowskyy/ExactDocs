@@ -1,6 +1,6 @@
 import json
 from collections import defaultdict
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -12,14 +12,17 @@ from sqlalchemy import (
     ColumnElement,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
     Row,
+    Select,
     Table,
     Text,
     and_,
     case,
+    column,
     delete,
     exists,
     insert,
@@ -29,6 +32,7 @@ from sqlalchemy import (
     text,
     tuple_,
     update,
+    values,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -146,6 +150,9 @@ manifest_entries = Table(
         ["blob_sha", "content_version"],
         ["catalog_article_contents.blob_sha", "catalog_article_contents.content_version"],
     ),
+    # Created by migration 5f87041a0ed2; named here so the metadata says what the queries use:
+    # garbage collection, and ``SqliteStoredArticles`` finding a file by its content.
+    Index("ix_catalog_manifest_entries_content", "blob_sha", "content_version"),
 )
 
 manifest_renames = Table(
@@ -1056,39 +1063,41 @@ class SqliteStoredArticles:
     engine: AsyncEngine
 
     async def find_articles(
-        self, library_id: LibraryId, content_version: int, files: Collection[tuple[str, str]]
+        self,
+        library_id: LibraryId,
+        ref: VersionRef | None,
+        content_version: int,
+        files: Collection[tuple[str, str]],
     ) -> Sequence[StoredArticle]:
-        """Read the matching entries in batches (one per file), then their texts once each."""
-        entries = manifest_entries.c
-        asked = list(files)
+        """Look in the version's active manifest first, then in the library's other manifests.
+
+        The first lookup goes by primary key (manifest, path): a re-sync finds most of its
+        unchanged files there. The rest go by blob SHA through
+        ``ix_catalog_manifest_entries_content`` (blob_sha, content_version; it exists for the
+        garbage collection), one manifest per file (``LIMIT 1``), never once per manifest that
+        holds them. Texts are read once per blob.
+        """
+        asked = set(files)
         found: dict[tuple[str, str], Row] = {}
         async with self.engine.connect() as connection:
-            for start in range(0, len(asked), _FILES_PER_QUERY):
-                query = (
-                    select(manifests.c.id, manifests.c.commit_sha, manifest_entries)
-                    .select_from(
-                        manifests.join(manifest_entries, entries.manifest_id == manifests.c.id)
-                    )
-                    .where(
+            if ref is not None:
+                active = await connection.scalar(
+                    select(manifests.c.id).where(
                         manifests.c.library_id == library_id.value,
-                        entries.content_version == content_version,
-                        tuple_(entries.path, entries.blob_sha).in_(
-                            asked[start : start + _FILES_PER_QUERY]
-                        ),
+                        manifests.c.ref == ref.value,
+                        manifests.c.state == ManifestState.ACTIVE.value,
                     )
                 )
-                for row in (await connection.execute(query)).all():
-                    found.setdefault((row.path, row.blob_sha), row)
-            shas = list({sha for _, sha in found})
-            texts: dict[str, str] = {}
-            for start in range(0, len(shas), _PATHS_PER_QUERY):
-                rows = await connection.execute(
-                    select(article_contents.c.blob_sha, article_contents.c.content).where(
-                        article_contents.c.content_version == content_version,
-                        article_contents.c.blob_sha.in_(shas[start : start + _PATHS_PER_QUERY]),
+                if active is not None:
+                    await self._collect(
+                        connection, found, list(asked), _in_manifest(active, content_version)
                     )
+            rest = [key for key in asked if key not in found]
+            if rest:
+                await self._collect(
+                    connection, found, rest, _in_library(library_id, content_version)
                 )
-                texts |= {row.blob_sha: row.content for row in rows.all()}
+            texts = await _texts(connection, {sha for _, sha in found}, content_version)
         return [
             StoredArticle(
                 manifest_id=ManifestId(row.id),
@@ -1099,8 +1108,100 @@ class SqliteStoredArticles:
             for row in found.values()
         ]
 
+    @staticmethod
+    async def _collect(
+        connection: AsyncConnection,
+        found: dict[tuple[str, str], Row],
+        files: Sequence[tuple[str, str]],
+        query: Callable[[Sequence[tuple[str, str]]], Select],
+    ) -> None:
+        for start in range(0, len(files), _FILES_PER_QUERY):
+            rows = await connection.execute(query(files[start : start + _FILES_PER_QUERY]))
+            for row in rows.all():
+                found.setdefault((row.path, row.blob_sha), row)
 
-_FILES_PER_QUERY = 250  # two bound variables per file
+
+def _in_manifest(
+    manifest_id: str, content_version: int
+) -> Callable[[Sequence[tuple[str, str]]], Select]:
+    """Entries of one manifest, by primary key: ``(manifest_id, path)``."""
+    entries = manifest_entries.c
+
+    def query(files: Sequence[tuple[str, str]]) -> Select:
+        return (
+            select(manifests.c.id, manifests.c.commit_sha, manifest_entries)
+            .select_from(manifests.join(manifest_entries, entries.manifest_id == manifests.c.id))
+            .where(
+                manifests.c.id == manifest_id,
+                entries.content_version == content_version,
+                entries.path.in_({path for path, _ in files}),
+                tuple_(entries.path, entries.blob_sha).in_(files),
+            )
+        )
+
+    return query
+
+
+def _in_library(
+    library_id: LibraryId, content_version: int
+) -> Callable[[Sequence[tuple[str, str]]], Select]:
+    """One entry per file among the library's manifests: the first one found by blob SHA.
+
+    Each file picks one manifest with a correlated ``LIMIT 1`` over
+    ``ix_catalog_manifest_entries_content``, so a file the library holds in hundreds of
+    manifests costs one index probe, not one row per manifest.
+    """
+    entries = manifest_entries.c
+
+    def query(files: Sequence[tuple[str, str]]) -> Select:
+        # A CTE: SQLite cannot name the columns of a VALUES subquery (``AS wanted (path, ...)``).
+        wanted = (
+            values(column("path", Text), column("blob_sha", Text), name="wanted")
+            .data(list(files))
+            .cte("wanted")
+        )
+        pick = (
+            select(entries.manifest_id)
+            .select_from(manifest_entries.join(manifests, manifests.c.id == entries.manifest_id))
+            .where(
+                entries.blob_sha == wanted.c.blob_sha,
+                entries.content_version == content_version,
+                entries.path == wanted.c.path,
+                manifests.c.library_id == library_id.value,
+            )
+            .limit(1)
+            .scalar_subquery()
+        )
+        first = select(wanted.c.path, wanted.c.blob_sha, pick.label("manifest_id")).subquery()
+        return select(manifests.c.id, manifests.c.commit_sha, manifest_entries).select_from(
+            first.join(
+                manifest_entries,
+                and_(
+                    entries.manifest_id == first.c.manifest_id,
+                    entries.path == first.c.path,
+                ),
+            ).join(manifests, manifests.c.id == entries.manifest_id)
+        )
+
+    return query
+
+
+async def _texts(
+    connection: AsyncConnection, shas: Collection[str], content_version: int
+) -> dict[str, str]:
+    asked, texts = list(shas), {}
+    for start in range(0, len(asked), _PATHS_PER_QUERY):
+        rows = await connection.execute(
+            select(article_contents.c.blob_sha, article_contents.c.content).where(
+                article_contents.c.content_version == content_version,
+                article_contents.c.blob_sha.in_(asked[start : start + _PATHS_PER_QUERY]),
+            )
+        )
+        texts |= {row.blob_sha: row.content for row in rows.all()}
+    return texts
+
+
+_FILES_PER_QUERY = 250  # three bound variables per file at most
 
 
 @dataclass(frozen=True, slots=True)

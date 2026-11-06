@@ -304,12 +304,18 @@ class StoredArticleFinder(Protocol):
     """
 
     async def find_articles(
-        self, library_id: LibraryId, content_version: int, files: Collection[tuple[str, str]]
+        self,
+        library_id: LibraryId,
+        ref: VersionRef | None,
+        content_version: int,
+        files: Collection[tuple[str, str]],
     ) -> Sequence[StoredArticle]:
         """Return one stored article per ``(path, blob SHA)`` stored with ``content_version``.
 
-        Any manifest of the library counts (pending, active or superseded); files no manifest
-        holds that way are left out. Batched, so a caller may pass thousands of files.
+        The active manifest of ``ref`` (the version being refreshed) is looked in first, then
+        any manifest of the library (pending, active or superseded); files no manifest holds
+        that way are left out. Batched and indexed, so a caller may pass thousands of files
+        whatever the size of the catalog.
         """
         ...
 

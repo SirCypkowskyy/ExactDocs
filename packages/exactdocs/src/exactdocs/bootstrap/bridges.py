@@ -630,12 +630,13 @@ class CatalogStoredArticles:
     find_stored_articles: FindStoredArticles
 
     async def find(
-        self, library: str, parser_version: int, files: Sequence[tuple[str, str]]
+        self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
     ) -> list[StoredArticle]:
         """Ask the catalog; the parser version is its content version (see ``_store_command``)."""
         found = await self.find_stored_articles(
             FindStoredArticlesQuery(
                 library=library,
+                ref=ref,
                 content_version=parser_version,
                 files=[StoredFileIn(path=path, blob_sha=sha) for path, sha in files],
             )

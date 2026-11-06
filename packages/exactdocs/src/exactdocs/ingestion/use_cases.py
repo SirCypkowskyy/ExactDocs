@@ -1648,7 +1648,7 @@ class ImportVersionUseCase:
                 )
                 paths = await step("list the selected files", lambda: _list(checkout, source))
                 articles, wanted = await self._articles(
-                    checkout, job.library, paths, source, chunker, progress
+                    checkout, job.library, job.version, paths, source, chunker, progress
                 )
                 readme, context7, taken = await step(
                     "read the README, context7.json and the images",
@@ -1920,6 +1920,7 @@ class ImportVersionUseCase:
         self,
         checkout: _Checkout,
         library: str,
+        ref: str,
         paths: Sequence[str],
         source: ImportSource,
         chunker: Chunker,
@@ -1953,6 +1954,7 @@ class ImportVersionUseCase:
                         config_hash,
                         chunker,
                         library,
+                        ref,
                     ),
                     progress,
                 ),
@@ -1986,7 +1988,7 @@ class ImportVersionUseCase:
         """
         read, used = await self._read(await checkout.folder(), given, progress)
         files = [(path, sha) for path, sha, _ in (r for r in read if not isinstance(r, Skip))]
-        found = await self._stored(given.library, files)
+        found = await self._stored(given.library, given.ref, files)
         loaded: list[tuple[str, str, ParsedArticle]] = []
         problems: list[tuple[str, ProblemCode, str]] = []
         for path, result in zip(given.paths, read, strict=True):
@@ -2054,7 +2056,7 @@ class ImportVersionUseCase:
         return read, used
 
     async def _stored(
-        self, library: str, files: Sequence[tuple[str, str]]
+        self, library: str, ref: str, files: Sequence[tuple[str, str]]
     ) -> dict[tuple[str, str], ParsedArticle]:
         """Rebuild the articles earlier imports stored for these files, by ``(path, blob SHA)``.
 
@@ -2065,7 +2067,7 @@ class ImportVersionUseCase:
         found: dict[tuple[str, str], ParsedArticle] = {}
         for start in range(0, len(files), KNOWN_BATCH):
             batch = files[start : start + KNOWN_BATCH]
-            for article in await self.stored.find(library, PARSER_VERSION, batch):
+            for article in await self.stored.find(library, ref, PARSER_VERSION, batch):
                 if (parsed := article.parsed()) is not None:
                     found[article.path, article.blob_sha] = parsed
         return found
@@ -2170,6 +2172,7 @@ class _BatchInput:
     config_hash: str
     chunker: Chunker
     library: str
+    ref: str
 
 
 @dataclass(frozen=True, slots=True)

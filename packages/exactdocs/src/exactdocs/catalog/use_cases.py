@@ -539,7 +539,10 @@ class FindStoredArticlesUseCase:
         """Look the files up in every manifest of the library."""
         files = {(f.path, f.blob_sha) for f in query.files}
         found = await self.finder.find_articles(
-            LibraryId(query.library), query.content_version, files
+            LibraryId(query.library),
+            None if query.ref is None else VersionRef(query.ref),
+            query.content_version,
+            files,
         )
         return StoredArticles(
             articles=[

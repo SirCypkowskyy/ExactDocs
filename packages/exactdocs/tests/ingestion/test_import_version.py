@@ -300,9 +300,9 @@ class Stored:
         return self
 
     async def find(
-        self, library: str, parser_version: int, files: Sequence[tuple[str, str]]
+        self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
     ) -> list[StoredArticle]:
-        assert library == "/a/b"
+        assert (library, ref) == ("/a/b", "v1")
         self.asked.append(len(files))
         keys = [(path, sha, parser_version) for path, sha in files]
         return [self.articles[key] for key in keys if key in self.articles]

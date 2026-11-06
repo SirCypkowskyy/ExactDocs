@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from exactdocs.bootstrap.container import Container
@@ -24,6 +24,8 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteManifestCopier,
     SqliteManifestRepository,
     SqliteStoredArticles,
+    _in_library,
+    _in_manifest,
     article_contents,
 )
 from exactdocs.catalog.errors import (
@@ -427,6 +429,7 @@ async def test_stored_articles_are_found_by_path_blob_and_content_version_in_any
 
     found = await stores.stored_articles.find_articles(
         PAYMENTS.id,
+        VersionRef("v1.3.0"),
         1,
         [
             (INSTALL, sha("b1")),  # in two manifests: one answer
@@ -443,7 +446,10 @@ async def test_stored_articles_are_found_by_path_blob_and_content_version_in_any
     assert by_path[INSTALL].content == body(install)
     assert by_path[INSTALL].entry.title == "Install"
     assert by_path[INSTALL].entry.front_matter == install.front_matter
-    assert await stores.stored_articles.find_articles(PAYMENTS.id, 2, [(INSTALL, sha("b1"))]) == []
+    assert (
+        await stores.stored_articles.find_articles(PAYMENTS.id, None, 2, [(INSTALL, sha("b1"))])
+        == []
+    )
 
 
 async def test_stored_articles_are_found_for_more_files_than_a_query_can_bind(
@@ -453,7 +459,7 @@ async def test_stored_articles_are_found_for_more_files_than_a_query_can_bind(
     await store(stores, manifest("m1", "main", "aaa111", *many))
 
     found = await stores.stored_articles.find_articles(
-        PAYMENTS.id, 1, [(e.path, e.blob_sha) for e in many]
+        PAYMENTS.id, VersionRef("main"), 1, [(e.path, e.blob_sha) for e in many]
     )
 
     assert sorted(a.entry.path for a in found) == sorted(e.path for e in many)
@@ -1297,3 +1303,47 @@ async def test_nothing_is_copied_from_text_another_parser_stored(stores: Stores)
         )
         is None
     )
+
+
+async def _plan(sqlite: Container, query: Select) -> list[str]:
+    compiled = query.compile(sqlite.engine.sync_engine, compile_kwargs={"literal_binds": True})
+    async with sqlite.engine.connect() as connection:
+        rows = await connection.execute(text(f"EXPLAIN QUERY PLAN {compiled}"))
+        return [row[-1] for row in rows.all()]
+
+
+async def test_sqlite_stored_articles_are_looked_up_by_index_never_by_a_scan(
+    sqlite: Container,
+) -> None:
+    """The lookup must not grow with the catalog: no full scan of the entries (#164 review)."""
+    files = [(INSTALL, sha("b1")), ("new.md", sha("b2"))]
+
+    plans = [
+        await _plan(sqlite, _in_manifest("m1", 1)(files)),
+        await _plan(sqlite, _in_library(PAYMENTS.id, 1)(files)),
+    ]
+
+    for plan in plans:
+        entries = [step for step in plan if "catalog_manifest_entries" in step]
+        assert entries, plan
+        assert all(step.startswith("SEARCH") for step in entries), plan
+    assert any("ix_catalog_manifest_entries_content" in step for step in plans[1]), plans[1]
+
+
+async def test_sqlite_a_file_many_manifests_hold_is_read_once(sqlite: Container) -> None:
+    manifests = SqliteManifestRepository(sqlite.engine)
+    install = entry(INSTALL, "b1")
+    for i in range(30):
+        await manifests.add(
+            manifest(f"m{i}", f"v{i}", "aaa111", install, kind=RefKind.TAG), contents(install)
+        )
+    query = _in_library(PAYMENTS.id, 1)([(INSTALL, sha("b1"))])
+
+    async with sqlite.engine.connect() as connection:
+        rows = (await connection.execute(query)).all()
+
+    assert len(rows) == 1  # deduplicated in SQL, not 30 rows dropped in Python
+    found = await SqliteStoredArticles(sqlite.engine).find_articles(
+        PAYMENTS.id, VersionRef("v3"), 1, [(INSTALL, sha("b1"))]
+    )
+    assert [a.entry.path for a in found] == [INSTALL]

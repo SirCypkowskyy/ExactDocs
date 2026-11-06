@@ -413,9 +413,11 @@ class StoredArticleSource(Protocol):
     """What earlier imports stored for a file (the catalog, in ingestion's words)."""
 
     async def find(
-        self, library: str, parser_version: int, files: Sequence[tuple[str, str]]
+        self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
     ) -> Sequence[StoredArticle]:
         """Return what the library stored for these ``(path, blob SHA)`` files with this parser.
+
+        ``ref`` is the version being imported: what it serves now is the likeliest match.
 
         Files nothing was stored for that way are left out. The importer asks for at most 500
         files per call.
