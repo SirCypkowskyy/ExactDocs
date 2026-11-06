@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type Ref, useRef, useState } from "react";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
@@ -11,13 +11,21 @@ import {
 } from "@/shared/ui/dialog";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { PathFields, TagRules } from "@/shared/ui/path-selection";
-import { refreshLibraries, saveSelection } from "../api/settings";
+import {
+  accessQueryOptions,
+  lastReprocessQueryOptions,
+  refreshLibraries,
+  saveSelection,
+} from "../api/settings";
 import {
   type Activity,
   draftOf,
+  effectiveChange,
   explainSettings,
+  failedReprocess,
   type JobViews,
   type Problem,
+  type ReprocessJob,
   reprocessWarning,
   type SavedSettings,
   type SelectionDraft,
@@ -27,7 +35,7 @@ import {
   selectionChange,
   validateSelection,
 } from "../model/settings";
-import { sectionHeading } from "./styles";
+import { secondary, sectionHeading } from "./styles";
 
 interface Props {
   owner: string;
@@ -43,6 +51,8 @@ interface ConfirmProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   change: "paths" | "tags";
+  /** The newest re-processing failed: this one runs in full. */
+  afterFailure: boolean;
   refs: readonly string[];
   pending: boolean;
   onConfirm: () => void;
@@ -50,8 +60,16 @@ interface ConfirmProps {
 }
 
 /** The warning saving waits for: every version is re-processed. It cannot close mid-request. */
-function ReprocessConfirm({ open, onOpenChange, change, refs, pending, ...p }: ConfirmProps) {
-  const words = reprocessWarning(change, refs);
+function ReprocessConfirm({
+  open,
+  onOpenChange,
+  change,
+  afterFailure,
+  refs,
+  pending,
+  ...p
+}: ConfirmProps) {
+  const words = reprocessWarning(change, refs, afterFailure);
   return (
     <ConfirmRoot
       open={open}
@@ -151,6 +169,43 @@ function SavedStatus({
   );
 }
 
+interface RunAgainProps {
+  job: ReprocessJob;
+  Line: JobViews["Line"];
+  lineShown: boolean;
+  pending: boolean;
+  onRun: () => void;
+}
+
+/** The newest re-processing failed: its line, and a way to run it again with what is stored. */
+function RunAgain({ job, Line, lineShown, pending, onRun }: RunAgainProps) {
+  const what = job.kind === "retag" ? "re-tagging" : "re-processing";
+  return (
+    <div className="fade-in mt-5 max-w-sm">
+      {!lineShown && (
+        <>
+          <p className="font-medium">The last {what} failed. Every version keeps what it served.</p>
+          <div className="mt-2">
+            <Line jobId={job.id} label="every version" />
+          </div>
+        </>
+      )}
+      <Button
+        type="button"
+        aria-disabled={pending}
+        aria-busy={pending}
+        onClick={() => {
+          if (!pending) onRun();
+        }}
+        className={`${secondary} mt-3 min-w-32`}
+      >
+        {pending ? "Queueing" : "Run again"}
+        <span className="sr-only"> the {what} with the saved paths and tag rules</span>
+      </Button>
+    </div>
+  );
+}
+
 /**
  * Which files the library takes and the tags its articles get by path. Saving sends the whole
  * set and, once a version exists, re-processes every version: the warning says so first.
@@ -169,23 +224,29 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
   const [problem, setProblem] = useState<Problem>();
   const [confirming, setConfirming] = useState(false);
   // What the open warning is about; kept while it closes, after the form has been reset.
-  const [warned, setWarned] = useState<"paths" | "tags">("paths");
+  const [warned, setWarned] = useState(() => effectiveChange("paths", null));
   const save = useRef<HTMLButtonElement>(null);
   // Where focus goes once the warning closes: back to Save, or to what the server refused.
   const after = useRef<() => HTMLElement | null | undefined>(() => save.current);
+
+  const { data: last } = useQuery(lastReprocessQueryOptions(owner, repo));
+  const { data: access } = useQuery(accessQueryOptions(owner, repo));
+  const failed = failedReprocess(last);
 
   const change = selectionChange(base, draft);
   const refs = library.versions.map((v) => v.ref);
   const current = activity.by === "paths";
 
   const mutation = useMutation({
-    mutationFn: () => saveSelection(owner, repo, draft),
+    mutationFn: (settings: SelectionDraft) => saveSelection(owner, repo, settings),
     onSuccess: (data) => {
       setStored(data);
       setEdits(undefined);
       setShowRuleErrors(false);
       setProblem(undefined);
       after.current = () => document.getElementById("paths-status");
+      // Without the warning (Run again, or no version yet) nothing closes to move focus: do it here.
+      if (!confirming) focusAfterRender(after.current);
       setConfirming(false);
       refreshLibraries(queryClient);
     },
@@ -231,9 +292,9 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
     onStart();
     mutation.reset();
     // With no version yet nothing is re-processed: there is nothing to warn about.
-    if (refs.length === 0) mutation.mutate();
+    if (refs.length === 0) mutation.mutate(draft);
     else {
-      setWarned(change);
+      setWarned(effectiveChange(change, last));
       setConfirming(true);
     }
   }
@@ -259,12 +320,19 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
           onInclude={(include) => edit({ include })}
           onExclude={(exclude) => edit({ exclude })}
         />
-        <Preview
-          url={library.source_url}
-          version={library.default_version}
-          include={draft.include}
-          exclude={draft.exclude}
-        />
+        {access?.private ? (
+          <p className="text-sm text-muted-foreground">
+            Preview isn't available for a private repository yet: it can't use the library's stored
+            credential. Saving still re-processes every version with it.
+          </p>
+        ) : (
+          <Preview
+            url={library.source_url}
+            version={library.default_version}
+            include={draft.include}
+            exclude={draft.exclude}
+          />
+        )}
         <TagRules
           rules={draft.rules}
           showErrors={showRuleErrors}
@@ -279,15 +347,31 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
         />
       </form>
       <SavedStatus saved={shown} Line={Line} />
+      {failed && (
+        <RunAgain
+          job={failed}
+          Line={Line}
+          // The line of a job this page started is on screen already.
+          lineShown={shown?.job_id === failed.id}
+          pending={mutation.isPending}
+          onRun={() => {
+            onStart();
+            setProblem(undefined);
+            mutation.reset();
+            mutation.mutate(draftOf(base));
+          }}
+        />
+      )}
       <ReprocessConfirm
         open={confirming}
         onOpenChange={setConfirming}
-        change={warned}
+        change={warned.change}
+        afterFailure={warned.afterFailure}
         refs={refs}
         pending={mutation.isPending}
         onConfirm={() => {
           after.current = () => save.current;
-          mutation.mutate();
+          mutation.mutate(draft);
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();

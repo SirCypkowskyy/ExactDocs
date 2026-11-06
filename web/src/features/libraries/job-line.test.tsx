@@ -92,6 +92,23 @@ describe("a re-processing job line", () => {
     expect(await screen.findByText(/Stopped after 1 of 2 versions/)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Re-processing failed. v1.3.0");
   });
+
+  it("says a re-processing that tried every version failed, without saying it stopped", async () => {
+    renderLine(
+      job({
+        kind: "reprocess",
+        state: "failed",
+        done: 2,
+        total: 2,
+        error: "x",
+        finished_at: "2026-11-01T10:01:00Z",
+      }),
+    );
+    expect(
+      await screen.findByText("Failed: all 2 versions tried, not every one could be re-processed"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Stopped after/)).not.toBeInTheDocument();
+  });
 });
 
 describe("an import inside another page", () => {

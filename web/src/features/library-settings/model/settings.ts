@@ -20,6 +20,9 @@ export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
 export type RemovalResult = components["schemas"]["RemovalResult"];
 export type SavedSettings = components["schemas"]["UpdatedLibrarySettings"];
 type SettingsIn = components["schemas"]["LibrarySettingsIn"];
+export type JobList = components["schemas"]["JobList"];
+export type ReprocessJob = components["schemas"]["JobSummary"];
+export type LibraryAccess = components["schemas"]["LibraryAccess"];
 
 const MAX_TITLE = 200;
 export const MAX_DESCRIPTION = 1000;
@@ -396,21 +399,45 @@ const listed = (refs: readonly string[], max = 5) =>
     : refs.join(", ");
 
 /** The warning before saving: every version is re-processed, and what that means for this change. */
-export function reprocessWarning(change: "paths" | "tags", refs: readonly string[]) {
+export function reprocessWarning(
+  change: "paths" | "tags",
+  refs: readonly string[],
+  afterFailure = false,
+) {
+  const verb = change === "paths" ? "re-processed" : "re-tagged";
   const which =
     refs.length === 1
-      ? `Its version (${listed(refs)}) will be re-processed`
-      : `Every version will be re-processed: all ${refs.length} of them (${listed(refs)})`;
+      ? `Its version (${listed(refs)}) will be ${verb}`
+      : `Every version will be ${verb}: all ${refs.length} of them (${listed(refs)})`;
+  const what =
+    change === "tags"
+      ? `${which}. Only the tag rules changed, so each one's articles are tagged again from what is stored, and nothing is fetched. Tags added by hand stay.`
+      : afterFailure
+        ? `${which}. The last re-processing failed, so this runs it in full: each version is fetched again at the commit it serves and imported with these paths and tag rules; branches are not synced.`
+        : `${which}. Each one is fetched again at the commit it serves and imported with the new paths; branches are not synced.`;
   return {
     title: change === "paths" ? "Re-process every version?" : "Re-tag every version?",
-    what:
-      change === "paths"
-        ? `${which}. Each one is fetched again at the commit it serves and imported with the new paths; branches are not synced.`
-        : `${which}. Only the tag rules changed, so each one's articles are tagged again from what is stored, and nothing is fetched. Tags added by hand stay.`,
+    what,
     safe: "Each version keeps serving what it has now until its new state is complete, then switches at once. A version that cannot be re-processed keeps what it had.",
     confirm: change === "paths" ? "Save and re-process" : "Save and re-tag",
   };
 }
+
+/**
+ * What the server will run for this change. While the newest `reprocess` failed, a tag-only edit
+ * re-runs that full re-processing (it re-tags too), so it is warned about as one.
+ */
+export function effectiveChange(
+  change: "paths" | "tags",
+  last: Pick<ReprocessJob, "kind" | "state"> | null | undefined,
+): { change: "paths" | "tags"; afterFailure: boolean } {
+  const failedReprocess = last?.kind === "reprocess" && last.state === "failed";
+  return { change: failedReprocess ? "paths" : change, afterFailure: failedReprocess };
+}
+
+/** The newest re-processing, when it failed: it can be run again with the stored settings. */
+export const failedReprocess = (last: ReprocessJob | null | undefined) =>
+  last?.state === "failed" ? last : undefined;
 
 /** Why the paths and tag rules were not saved. Nothing is stored after a refusal. */
 export function explainSettings(error: unknown): Problem {

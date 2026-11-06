@@ -316,6 +316,8 @@ export function SelectionPreview({ url, version, include, exclude }: SelectionPr
         <FilePreview
           preview={shown.result}
           tree={preview.tree}
+          // `form` has `**` in place of empty boxes, as it was sent: clearing the boxes after an
+          // empty-box preview keeps it current, because it asked for exactly that.
           stale={shown.key !== previewKey(form)}
           prefilled={false}
           selected={preview.selected}

@@ -7,6 +7,7 @@ import { TestRouter } from "@/shared/lib/test-router";
 import { LibrarySettingsPage } from "./index";
 import {
   draftOf,
+  effectiveChange,
   explainSettings,
   reprocessWarning,
   savedHeadline,
@@ -41,7 +42,31 @@ const library = {
 
 type Reply = { status: number; body: unknown };
 
-function serve(put?: (body: Record<string, unknown>) => Reply) {
+interface Extra {
+  /** The library's jobs, newest first (`GET …/jobs`). */
+  jobs?: unknown[];
+  private?: boolean;
+}
+
+const reprocessJob = (over: Record<string, unknown> = {}) => ({
+  id: "f1",
+  kind: "reprocess",
+  library: "/acme/payments",
+  version: null,
+  commit_sha: null,
+  state: "failed",
+  done: 2,
+  total: 2,
+  problems: [],
+  error: "2 version(s) could not be re-processed",
+  error_code: "no_articles",
+  created_at: "2026-11-01T10:00:00Z",
+  started_at: "2026-11-01T10:00:01Z",
+  finished_at: "2026-11-01T10:01:00Z",
+  ...over,
+});
+
+function serve(put?: (body: Record<string, unknown>) => Reply, extra: Extra = {}) {
   const sent: Record<string, unknown>[] = [];
   vi.stubGlobal(
     "fetch",
@@ -63,6 +88,12 @@ function serve(put?: (body: Record<string, unknown>) => Reply) {
       }
       if (url.includes("/v1/repositories/refs")) {
         return Response.json({ default_branch: "main", branches: [], tags: [], truncated: false });
+      }
+      if (url.includes("/v1/libraries/acme/payments/jobs")) {
+        return Response.json({ jobs: extra.jobs ?? [], next_cursor: null });
+      }
+      if (url.endsWith("/v1/libraries/acme/payments/access")) {
+        return Response.json({ private: extra.private ?? false });
       }
       return new Response("{}", { status: 404 });
     }),
@@ -164,10 +195,24 @@ describe("paths and tag rules model", () => {
     expect(paths.safe).toMatch(/keeps serving what it has now/);
     const tags = reprocessWarning("tags", ["v1.2.0"]);
     expect(tags.title).toBe("Re-tag every version?");
-    expect(tags.what).toMatch(/^Its version \(v1\.2\.0\) will be re-processed/);
+    expect(tags.what).toMatch(/^Its version \(v1\.2\.0\) will be re-tagged/);
+    expect(tags.what).not.toMatch(/re-processed/);
+    const rerun = reprocessWarning("paths", ["v1.2.0"], true);
+    expect(rerun.what).toMatch(/last re-processing failed, so this runs it in full/);
     expect(tags.what).toMatch(/nothing is fetched/);
     const many = reprocessWarning("paths", ["a", "b", "c", "d", "e", "f", "g"]);
     expect(many.what).toMatch(/a, b, c, d, e, and 2 more/);
+  });
+
+  it("warns a tag-only change as a full re-process while the last re-process failed", () => {
+    const failed = { kind: "reprocess", state: "failed" } as const;
+    expect(effectiveChange("tags", null)).toEqual({ change: "tags", afterFailure: false });
+    expect(effectiveChange("tags", failed)).toEqual({ change: "paths", afterFailure: true });
+    expect(effectiveChange("tags", { ...failed, kind: "retag" })).toEqual({
+      change: "tags",
+      afterFailure: false,
+    });
+    expect(effectiveChange("tags", { ...failed, state: "succeeded" }).change).toBe("tags");
   });
 
   it("maps refusals to the field they are about", () => {
@@ -336,5 +381,76 @@ describe("editing paths and tag rules", () => {
     const s = await section();
     await userEvent.type(s.getByLabelText("Leave out"), "docs/archive/**");
     expect(s.getByTestId("preview")).toHaveTextContent("preview v1.2.0 [docs/] [docs/archive/**]");
+  });
+
+  it("runs a failed re-processing again with the stored settings, without asking", async () => {
+    const sent = serve(
+      (body) => ({
+        status: 202,
+        body: {
+          library_id: "/acme/payments",
+          ...body,
+          reprocess: "paths",
+          job_id: "r2",
+          versions: ["v1.2.0", "main"],
+        },
+      }),
+      {
+        jobs: [{ ...reprocessJob(), kind: "import", id: "i9", state: "succeeded" }, reprocessJob()],
+      },
+    );
+    renderPage();
+    const s = await section();
+    expect(await s.findByText(/The last re-processing failed/)).toBeInTheDocument();
+    expect(s.getByText("job f1 for every version")).toBeInTheDocument();
+    // An unsaved edit is not what runs again: the stored settings are.
+    await userEvent.type(s.getByLabelText("Leave out"), "docs/new/**");
+    await userEvent.click(s.getByRole("button", { name: /Run again/ }));
+    expect(await s.findByText("job r2 for every version")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(sent).toEqual([
+      {
+        include_paths: ["docs/"],
+        exclude_paths: [],
+        tag_rules: [{ pattern: "docs/api/**", tag: "api" }],
+      },
+    ]);
+    await waitFor(() => expect(document.getElementById("paths-status")).toHaveFocus());
+  });
+
+  it("offers nothing to run again after a re-processing that succeeded", async () => {
+    serve(undefined, { jobs: [reprocessJob({ state: "succeeded" })] });
+    renderPage();
+    const s = await section();
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/jobs?"),
+        expect.anything(),
+      ),
+    );
+    expect(s.queryByRole("button", { name: /Run again/ })).not.toBeInTheDocument();
+  });
+
+  it("warns that a tag-only change runs the failed re-processing in full", async () => {
+    serve(undefined, { jobs: [reprocessJob()] });
+    renderPage();
+    const s = await section();
+    await s.findByText(/The last re-processing failed/);
+    await userEvent.clear(s.getByLabelText("Tag for rule 1"));
+    await userEvent.type(s.getByLabelText("Tag for rule 1"), "reference");
+    await userEvent.click(saveButton());
+    const dialog = await screen.findByRole("alertdialog", { name: "Re-process every version?" });
+    expect(dialog).toHaveTextContent("runs it in full");
+    expect(dialog).not.toHaveTextContent("nothing is fetched");
+  });
+
+  it("explains that a private library cannot be previewed, instead of offering a preview", async () => {
+    serve(undefined, { private: true });
+    renderPage();
+    const s = await section();
+    expect(
+      await s.findByText(/Preview isn't available for a private repository yet/),
+    ).toBeInTheDocument();
+    expect(s.queryByTestId("preview")).not.toBeInTheDocument();
   });
 });

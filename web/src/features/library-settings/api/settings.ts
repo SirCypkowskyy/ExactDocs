@@ -1,8 +1,10 @@
-import type { QueryClient } from "@tanstack/react-query";
-import { sendJson } from "@/shared/lib/http";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { getJson, sendJson } from "@/shared/lib/http";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import type {
   AddedVersion,
+  JobList,
+  LibraryAccess,
   ReimportedVersion,
   RemovalResult,
   SavedSettings,
@@ -22,6 +24,33 @@ export const saveDetails = (
   repo: string,
   patch: { title?: string; description?: string },
 ) => sendJson<SettingsLibrary>("PATCH", lib(owner, repo), patch);
+
+/** How many of the library's newest jobs are read to find its last re-processing. */
+const RECENT_JOBS = 50;
+
+/**
+ * The library's newest `reprocess` or `retag` job, or null: one that failed is offered again.
+ * Under the browse key, so every library refresh (and a finished job line) reloads it.
+ */
+export const lastReprocessQueryOptions = (owner: string, repo: string) =>
+  queryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, "reprocess"] as const,
+    queryFn: async ({ signal }) => {
+      const { jobs } = await getJson<JobList>(`${lib(owner, repo)}/jobs`, {
+        signal,
+        query: { limit: RECENT_JOBS },
+      });
+      return jobs.find((j) => j.kind === "reprocess" || j.kind === "retag") ?? null;
+    },
+  });
+
+/** Whether the library has a stored credential: a preview cannot use it yet. */
+export const accessQueryOptions = (owner: string, repo: string) =>
+  queryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, "access"] as const,
+    queryFn: ({ signal }) => getJson<LibraryAccess>(`${lib(owner, repo)}/access`, { signal }),
+    staleTime: 60_000,
+  });
 
 /** Replace the paths and tag rules as a whole; a 202 carries the job re-processing every version. */
 export const saveSelection = (owner: string, repo: string, draft: SelectionDraft) =>

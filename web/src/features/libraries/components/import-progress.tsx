@@ -108,11 +108,28 @@ function Status({ job, state, known, skipped, words: w = IMPORT_WORDS }: StatusP
       </p>
     );
   }
+  return <Failed done={done} total={total} known={known} w={w} />;
+}
+
+/** How a failed job ended. A version-counted job goes on past a failed version: at its end, it did not stop. */
+function Failed({
+  done,
+  total,
+  known,
+  w,
+}: {
+  done: number;
+  total: number;
+  known: boolean;
+  w: JobWords;
+}) {
+  const triedAll = w.unit === "version" && known && done >= total;
   return (
     <p className="inline-flex items-center gap-1.5 text-base font-medium text-destructive">
       <CircleAlert aria-hidden="true" className="size-4" />
-      Stopped after {done}
-      {known ? ` of ${total}` : ""} {units(w, known ? total : done)}
+      {triedAll
+        ? `Failed: all ${total} ${units(w, total)} tried, not every one could be ${w.done}`
+        : `Stopped after ${done}${known ? ` of ${total}` : ""} ${units(w, known ? total : done)}`}
     </p>
   );
 }
