@@ -539,7 +539,11 @@ that last step, which is one transaction in the catalog.
   recovered from it and the blob SHA (`CopiedArticle.parsed`: the file was exactly that text).
   When they cannot tell (a front matter that loaded to nothing, then a block YAML refuses; or
   invisible characters the parser stripped), the version is re-imported at its commit instead
-  (#228), so a re-chunk never cuts a blob differently from its import. A version whose text was stored by another parser
+  (#228), so a re-chunk never cuts a blob differently from its import. The cost: a version
+  holding such a file is fetched again by every re-chunk to a config its blob has no chunk set
+  for yet, and that re-chunk fails while the repository is unreachable. Recording at import
+  whether the front matter was malformed (with the manifest entry) would remove this; that is
+  a possible follow-up. A version whose text was stored by another parser
   version (`content_version`) is refused by the copy and re-imported at its commit instead: a
   chunk set keyed with the current parser must not be cut from older text. The copy is pending,
   so readers keep the old chunks until the activation; the recovery hook discards it after a

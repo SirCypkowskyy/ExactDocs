@@ -122,7 +122,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   its tags and cuts the **stored** text again, fetching nothing (a blob already cut with that
   chunking reuses its chunks; a version stored by an older parser, or holding a rare article
   whose stored text cannot be cut exactly as its import cut it, is re-imported at its commit
-  instead); only tag rules changed queue a `retag` job that derives each stored article's tags
+  instead, so such a version needs the repository to be reachable whenever its chunking
+  changes); only tag rules changed queue a `retag` job that derives each stored article's tags
   again from its stored front matter and the new rules, fetching and chunking nothing (manual
   tags stay). Each version keeps serving its old state (its old chunks too) until its new one is
   complete and then switches at once: a new manifest activated, or, for a `retag`, the version's
