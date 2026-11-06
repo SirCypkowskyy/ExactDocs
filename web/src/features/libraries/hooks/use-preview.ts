@@ -1,14 +1,13 @@
 import { useMemo, useRef, useState } from "react";
+import { lines, validatePatterns } from "@/shared/lib/path-selection";
 import { addVersion, previewRepository } from "../api/add-library";
 import {
   type AddProblem,
   buildFileTree,
   explainOlderVersionError,
   explainPreviewError,
-  lines,
   previewKey,
   type RepositoryPreview,
-  validatePatterns,
 } from "../model/add-library";
 
 export interface PreviewForm {

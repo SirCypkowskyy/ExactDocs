@@ -19,17 +19,45 @@ import { SkippedList } from "./skipped-list";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** What a job counts and what it is called: an import counts files; re-processing a library counts versions. */
+interface JobWords {
+  unit: "file" | "version";
+  /** “Import”, “Re-processing”: the start of each phase sentence. */
+  noun: string;
+  /** “imported”: what a counted item is once done. */
+  done: string;
+}
+
+const IMPORT_WORDS: JobWords = { unit: "file", noun: "Import", done: "imported" };
+
+/** A `reprocess` or `retag` job (a library's paths or tag rules were edited) counts versions. */
+function wordsOf(kind: string | undefined): JobWords {
+  if (kind === "reprocess") return { unit: "version", noun: "Re-processing", done: "re-processed" };
+  if (kind === "retag") return { unit: "version", noun: "Re-tagging", done: "re-tagged" };
+  return IMPORT_WORDS;
+}
+
+const units = (w: JobWords, n: number) => (n === 1 ? w.unit : `${w.unit}s`);
+
 /** One sentence per phase, so a screen reader hears the import start and end, never every file. */
-function phaseText(state: string | undefined, done: number, skipped: string, error: string | null) {
+function phaseText(
+  state: string | undefined,
+  done: number,
+  skipped: string,
+  error: string | null,
+  w: JobWords = IMPORT_WORDS,
+) {
   switch (state) {
     case "queued":
-      return "Import queued.";
+      return `${w.noun} queued.`;
     case "running":
-      return "Importing.";
+      return w === IMPORT_WORDS ? "Importing." : `${w.noun}.`;
     case "succeeded":
-      return `Import finished. ${plural(done, "file", "files")} imported, ${skipped} skipped.`;
+      return w.unit === "file"
+        ? `${w.noun} finished. ${plural(done, "file", "files")} ${w.done}, ${skipped} skipped.`
+        : `${w.noun} finished. ${done} ${units(w, done)} ${w.done}.`;
     case "failed":
-      return `Import failed. ${error ?? ""}`.trim();
+      return `${w.noun} failed. ${error ?? ""}`.trim();
     default:
       return "";
   }
@@ -53,15 +81,21 @@ interface StatusProps {
   state: string;
   known: boolean;
   skipped: string;
+  words?: JobWords;
 }
 
-function Status({ job, state, known, skipped }: StatusProps) {
+function Status({ job, state, known, skipped, words: w = IMPORT_WORDS }: StatusProps) {
   const done = job?.done ?? 0;
+  const total = job?.total ?? 0;
   if (state === "queued") return <p>Waiting for a free worker</p>;
   if (state === "running") {
     return (
       <p className="tabular-nums">
-        {known ? `${done} of ${job?.total} files` : "Reading the repository"}
+        {known
+          ? `${done} of ${total} ${units(w, total)}`
+          : w.unit === "file"
+            ? "Reading the repository"
+            : "Starting"}
       </p>
     );
   }
@@ -69,8 +103,8 @@ function Status({ job, state, known, skipped }: StatusProps) {
     return (
       <p className="inline-flex items-center gap-1.5 text-base font-medium">
         <Check aria-hidden="true" className="size-4 text-mark" />
-        {plural(done, "file", "files")} imported
-        {skipped !== "0" && `, ${skipped} skipped`}
+        {done} {units(w, done)} {w.done}
+        {w.unit === "file" && skipped !== "0" && `, ${skipped} skipped`}
       </p>
     );
   }
@@ -78,25 +112,27 @@ function Status({ job, state, known, skipped }: StatusProps) {
     <p className="inline-flex items-center gap-1.5 text-base font-medium text-destructive">
       <CircleAlert aria-hidden="true" className="size-4" />
       Stopped after {done}
-      {known ? ` of ${job?.total}` : ""} files
+      {known ? ` of ${total}` : ""} {units(w, known ? total : done)}
     </p>
   );
 }
 
 interface MeterProps {
   id: string;
+  /** “Import”, “Re-processing”: names the bar. */
+  noun?: string;
   job: Job | undefined;
   state: string;
   known: boolean;
 }
 
 /** The bar is for waiting; once the import is over the status line says everything. */
-function Meter({ id, job, state, known }: MeterProps) {
+function Meter({ id, job, state, known, noun = "Import" }: MeterProps) {
   const pct = known && job ? Math.min(1, job.done / job.total) : 0;
   return (
     <div
       role="progressbar"
-      aria-label={`Import progress for ${id}`}
+      aria-label={`${noun} progress for ${id}`}
       aria-valuemin={0}
       aria-valuemax={known ? job?.total : undefined}
       aria-valuenow={known ? job?.done : undefined}
@@ -360,7 +396,7 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
   );
 }
 
-/** One import job as a single quiet line with its bar, for a list of jobs (a re-sync queues one per branch). */
+/** One job (an import, or a library re-processed) as a single quiet line with its bar, for a list of jobs (a re-sync queues one per branch). */
 export function JobLine({ jobId, label }: { jobId: string; label: string }) {
   const { data: job, error } = useQuery(importJobQueryOptions(jobId));
   const state = job?.state ?? "queued";
@@ -368,16 +404,18 @@ export function JobLine({ jobId, label }: { jobId: string; label: string }) {
   const gone = error instanceof HttpError && error.status < 500 && !job;
   const known = (job?.total ?? 0) > 0;
   const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
+  const words = wordsOf(job?.kind);
   useRefreshListsWhen(finished);
   if (gone) return <p className="text-sm text-muted-foreground">Progress for {label} is gone.</p>;
   return (
     <div className="text-sm">
       {/* Heard once per phase, never per file. */}
       <p role="status" className="sr-only">
-        {finished && `${label}: ${phaseText(state, job?.done ?? 0, skipped, job?.error ?? null)}`}
+        {finished &&
+          `${label}: ${phaseText(state, job?.done ?? 0, skipped, job?.error ?? null, words)}`}
       </p>
-      <Status job={job} state={state} known={known} skipped={skipped} />
-      {!finished && <Meter id={label} job={job} state={state} known={known} />}
+      <Status job={job} state={state} known={known} skipped={skipped} words={words} />
+      {!finished && <Meter id={label} job={job} state={state} known={known} noun={words.noun} />}
       {state === "failed" && job?.error && (
         <p className="mt-1 text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
           {job.error}

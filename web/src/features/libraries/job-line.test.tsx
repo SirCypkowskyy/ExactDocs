@@ -59,6 +59,41 @@ describe("a re-sync job line", () => {
   });
 });
 
+describe("a re-processing job line", () => {
+  it("counts versions, not files, while a library is re-processed", async () => {
+    renderLine(job({ kind: "reprocess", done: 1, total: 2 }));
+    expect(await screen.findByText("1 of 2 versions")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Re-processing progress for main" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says how a re-tag ended, in versions", async () => {
+    renderLine(
+      job({ kind: "retag", state: "succeeded", done: 2, finished_at: "2026-11-01T10:01:00Z" }),
+    );
+    expect(await screen.findByText("2 versions re-tagged")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "main: Re-tagging finished. 2 versions re-tagged.",
+    );
+  });
+
+  it("names the versions a failed re-processing stopped at", async () => {
+    renderLine(
+      job({
+        kind: "reprocess",
+        state: "failed",
+        done: 1,
+        total: 2,
+        error: "v1.3.0 could not be fetched",
+        finished_at: "2026-11-01T10:01:00Z",
+      }),
+    );
+    expect(await screen.findByText(/Stopped after 1 of 2 versions/)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Re-processing failed. v1.3.0");
+  });
+});
+
 describe("an import inside another page", () => {
   it("names the version, offers the page's own exit at once, and leaves the list link out", async () => {
     vi.stubGlobal(

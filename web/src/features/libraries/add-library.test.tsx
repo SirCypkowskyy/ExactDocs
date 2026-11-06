@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { validatePatterns, validateRule } from "@/shared/lib/path-selection";
 import { TestRouter } from "@/shared/lib/test-router";
 import { AddLibraryPage, LibrariesPage } from "./index";
 import {
@@ -10,8 +11,6 @@ import {
   explainCheckError,
   summarizeProblems,
   validateLibraryId,
-  validatePatterns,
-  validateRule,
   validateUrl,
 } from "./model/add-library";
 

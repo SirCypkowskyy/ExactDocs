@@ -5,9 +5,12 @@ import type {
   AddedVersion,
   ReimportedVersion,
   RemovalResult,
+  SavedSettings,
+  SelectionDraft,
   SettingsLibrary,
   SyncedLibrary,
 } from "../model/settings";
+import { settingsOf } from "../model/settings";
 
 const seg = encodeURIComponent;
 const lib = (owner: string, repo: string) => `/v1/libraries/${seg(owner)}/${seg(repo)}` as const;
@@ -19,6 +22,10 @@ export const saveDetails = (
   repo: string,
   patch: { title?: string; description?: string },
 ) => sendJson<SettingsLibrary>("PATCH", lib(owner, repo), patch);
+
+/** Replace the paths and tag rules as a whole; a 202 carries the job re-processing every version. */
+export const saveSelection = (owner: string, repo: string, draft: SelectionDraft) =>
+  sendJson<SavedSettings>("PUT", `${lib(owner, repo)}/settings`, settingsOf(draft));
 
 export const addVersion = (owner: string, repo: string, ref: string) =>
   sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, { ref });
