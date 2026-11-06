@@ -34,6 +34,7 @@ from exactdocs.ingestion.models import (
     RepositoryHost,
     RepositoryUrl,
     TagRule,
+    git_blob_sha,
     parse_article,
 )
 from exactdocs.ingestion.use_cases import RechunkLibraryUseCase, TagLocks
@@ -58,13 +59,17 @@ VERSIONS = [
 GUIDE = "# Guide\n\nIntro.\n\n## Install\n\nNeeds Python.\n\n### Docker\n\nRun it.\n"
 API = "---\ntags: [auth]\n---\n# Auth\n\n## Tokens\n\nBearer.\n"
 BROKEN = "---\ntitle: [\n---\n# Broken\n\n## Part\n\nx\n"
+# A front matter that loads to nothing, then a block YAML refuses: the import keeps that block
+# as Markdown (no note) and cuts at the heading inside it (#228).
+ODD = "---\n# only a comment\n---\n---\ntitle: [unclosed\n# Heading inside\n---\n# Real\n\nBody.\n"
 
 
-def stored(path: str, source: str, blob: str, tags: tuple[str, ...] = ()) -> CopiedArticle:
+def stored(path: str, source: str, tags: tuple[str, ...] = ()) -> CopiedArticle:
+    """What an import of ``source`` stores for it: its blob SHA, metadata and body."""
     parsed = parse_article(path, source)
     return CopiedArticle(
         path=path,
-        blob_sha=blob * 40,
+        blob_sha=git_blob_sha(source.encode()),
         title=parsed.title,
         front_matter=parsed.front_matter,
         tags=tags,
@@ -73,9 +78,9 @@ def stored(path: str, source: str, blob: str, tags: tuple[str, ...] = ()) -> Cop
 
 
 ARTICLES = (
-    stored("docs/guide.md", GUIDE, "1", ("old",)),
-    stored("docs/api/auth.md", API, "2", ("auth",)),
-    stored("docs/broken.md", BROKEN, "3"),
+    stored("docs/guide.md", GUIDE, ("old",)),
+    stored("docs/api/auth.md", API, ("auth",)),
+    stored("docs/broken.md", BROKEN),
 )
 
 
@@ -386,3 +391,54 @@ async def test_a_resumed_rechunk_skips_the_versions_it_had_finished(world):
     assert world.copier.copies == 3  # v1.0.0 is not copied again
     assert world.publisher.active == {"v1.0.0": "v1.0.0-copy1", "main": "main-copy3"}
     assert world.progress.reports[-1] == (2, 2)
+
+
+async def test_an_article_only_its_file_can_rebuild_has_its_version_re_imported(world):
+    world.copier.articles["main"] = (*ARTICLES[:1], stored("docs/odd.md", ODD))
+
+    await world.run()
+
+    assert [(j.kind, j.version, j.commit_sha) for j in world.importer.seen] == [
+        (REFRESH_JOB, "main", "b" * 40)
+    ]
+    assert "main-copy2" not in world.index.indexed  # nothing cut from a guess
+    assert "discard manifest main-copy2" in world.log
+    assert "activate main-copy2" not in world.log
+    assert world.publisher.active["v1.0.0"] == "v1.0.0-copy1"  # the others are cut from the copy
+    assert world.progress.counters[-1] == (8, 0)  # 3 cut from v1.0.0's copy, 5 by the re-import
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        GUIDE,
+        API,
+        BROKEN,  # malformed front matter: the block is not cut at
+        ODD,
+        "---\n\n---\n---\ntitle: [\n# Inside\n---\n# Real\n",  # an empty front matter
+        "---\ntitle: T\n---\n---\ntitle: [\n# Inside\n---\n# Real\n",
+        "---\n# a comment\n---\n---\nnext: block\n---\n# Real\n",  # a second mapping
+        "---\nJust prose.\n---\n# Real\n",  # a thematic break around prose, no front matter
+        "---\n# a comment\n---\n---\nJust prose.\n---\n# Real\n",
+        "\u200b---\ntitle: [\n---\n# Real\n",  # an invisible character the parser strips
+    ],
+)
+def test_a_copied_article_is_cut_as_its_import_cut_it_or_left_to_a_re_import(source):
+    imported = parse_article("docs/a.md", source)
+    rebuilt = stored("docs/a.md", source).parsed()
+
+    if rebuilt is None:  # only a parse of the file can tell: the version is re-imported
+        return
+    chunker = MarkdownChunker()
+    assert rebuilt.problems == imported.problems
+    assert chunker.chunk(rebuilt) == chunker.chunk(imported)
+
+
+@pytest.mark.parametrize("source", [GUIDE, API, BROKEN, "---\nJust prose.\n---\n# Real\n"])
+def test_an_article_with_ordinary_front_matter_is_rebuilt_without_its_file(source):
+    assert stored("docs/a.md", source).parsed() is not None
+
+
+@pytest.mark.parametrize("source", [ODD, "---\n\n---\n---\ntitle: [\n# Inside\n---\n# Real\n"])
+def test_a_blank_front_matter_before_an_invalid_block_needs_the_file(source):
+    assert stored("docs/a.md", source).parsed() is None

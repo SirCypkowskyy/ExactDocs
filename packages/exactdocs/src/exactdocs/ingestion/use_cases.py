@@ -1444,8 +1444,10 @@ class RechunkLibraryUseCase:
     until then. A version whose text was stored by another parser version is re-imported at its
     commit instead (``importer``, a refresh importer without steps of its own): its text is not
     what the parser gives now, and chunks keyed with the current parser must not be cut from
-    it. A version that fails keeps what it served and the others go on; the job then fails with
-    every failure. ``done`` / ``total`` count versions.
+    it. So is a version with an article whose stored text only a parse of its file can turn
+    back into what the parser gave (``CopiedArticle.parsed``, rare). A version that fails keeps
+    what it served and the others go on; the job then fails with every failure. ``done`` /
+    ``total`` count versions.
 
     Durable steps (``checkpoints``): the list of versions, then one per version, as for
     ``ReprocessLibraryUseCase``. A version killed halfway starts over (the recovery hook
@@ -1500,7 +1502,9 @@ class RechunkLibraryUseCase:
         if copied is None:  # removed since the versions were listed: nothing to serve
             return tracker.outcome()
         try:
-            await self._publish(job.library, current.ref, copied, source, chunker, tracker)
+            published = await self._publish(
+                job.library, current.ref, copied, source, chunker, tracker
+            )
         except Exception as error:
             await _discard_shielded(self.versions, self.index, job.library, copied.manifest_id)
             log.warning("re-chunking %s %s failed", job.library, current.ref, exc_info=True)
@@ -1508,6 +1512,9 @@ class RechunkLibraryUseCase:
         except BaseException:
             await _discard_shielded(self.versions, self.index, job.library, copied.manifest_id)
             raise
+        if not published:
+            await _discard_shielded(self.versions, self.index, job.library, copied.manifest_id)
+            return await _reimport(self.importer, job, current, tracker)
         return tracker.outcome()
 
     async def _publish(
@@ -1518,8 +1525,23 @@ class RechunkLibraryUseCase:
         source: ImportSource,
         chunker: Chunker,
         tracker: _OneVersion,
-    ) -> None:
-        """Re-tag and re-chunk the copy, index it, then activate it."""
+    ) -> bool:
+        """Re-tag and re-chunk the copy, index it, then activate it.
+
+        ``False``, with nothing written, when an article to cut is one only its file can
+        rebuild (``CopiedArticle.parsed``): the version is then re-imported instead.
+        """
+        blobs = list(dict.fromkeys(a.blob_sha for a in copied.articles))
+        found: dict[str, tuple[ArticleChunk, ...]] = {}
+        for start in range(0, len(blobs), KNOWN_BATCH):
+            found |= await self.index.known(chunker.config_hash, blobs[start : start + KNOWN_BATCH])
+        unknown: dict[str, ParsedArticle] = {}
+        for article in copied.articles:
+            if article.blob_sha not in found and article.blob_sha not in unknown:
+                parsed = article.parsed()
+                if parsed is None:
+                    return False
+                unknown[article.blob_sha] = parsed
         wanted = {
             a.path: StoredArticleTags(
                 path=a.path, front_matter=a.front_matter, tags=a.tags
@@ -1527,14 +1549,6 @@ class RechunkLibraryUseCase:
             for a in copied.articles
         }
         tagged = await self.tags.set_imported_tags(copied.manifest_id, wanted)
-        blobs = list(dict.fromkeys(a.blob_sha for a in copied.articles))
-        found: dict[str, tuple[ArticleChunk, ...]] = {}
-        for start in range(0, len(blobs), KNOWN_BATCH):
-            found |= await self.index.known(chunker.config_hash, blobs[start : start + KNOWN_BATCH])
-        unknown: dict[str, ParsedArticle] = {}
-        for article in copied.articles:
-            if article.blob_sha not in found:
-                unknown.setdefault(article.blob_sha, article.parsed())
         cut = await asyncio.to_thread(_cut, chunker, unknown)
         every = found | cut
         version = ImportedVersion(
@@ -1563,6 +1577,7 @@ class RechunkLibraryUseCase:
         await tracker.parsing(parsed=0, taken=len(copied.articles))  # nothing parsed: all stored
         await self.index.index(copied.manifest_id, version)
         await _activate(self.versions, self.index, self.tag_locks, library, copied.manifest_id)
+        return True
 
 
 @dataclass(frozen=True, slots=True)
