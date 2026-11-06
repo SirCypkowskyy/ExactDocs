@@ -6,6 +6,8 @@ import pytest
 
 from exactdocs.ingestion.models import (
     PARSER_VERSION,
+    StoredArticle,
+    git_blob_sha,
     parse_article,
     sniff_image,
     strip_invisible,
@@ -300,3 +302,53 @@ def test_a_hostile_svg_prologue_cannot_stall_the_sniffer() -> None:
     for data in (b"<!---->" * 600 + b"x", b"<!--" * 1000, b"<?xml ?>" * 500 + b"x"):
         assert sniff_image(data) is None
     assert time.perf_counter() - started < 0.1
+
+
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        ("guide/install.md", "---\ntitle: Install\ntags: [a, B]\ndescription: How\n---\n# H\n"),
+        ("guide/auth.md", "# Authentication\n\n![logo](../img/a.png) ![x][ref]\n\n[ref]: b.svg\n"),
+        ("notes.md", "No heading, no front matter.\n"),
+        ("odd.md", "---\ntitle: [1]\ntags: 7\nextra: {n: [1, null, x]}\n---\nBody\n"),
+        ("many.md", "---\ntags: a, b, a, -bad tag-\n---\n\u200bInvisible\n"),
+        ("empty.md", "---\n---\n# After empty front matter\n"),
+    ],
+)
+def test_a_stored_article_rebuilds_what_the_parser_gives(path: str, text: str) -> None:
+    """What the importer takes from the catalog instead of parsing the file again (#164)."""
+    parsed = parse_article(path, text)
+    stored = StoredArticle(
+        path=path,
+        blob_sha=git_blob_sha(text.encode()),
+        title=parsed.title,
+        front_matter=json.loads(json.dumps(parsed.front_matter)),  # as the catalog keeps it
+        content=parsed.body,
+    )
+
+    assert stored.parsed() == parsed
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "---\ntitle: [unclosed\n---\n# Malformed\n",  # the note is only known to a parse
+        "---\n- a list\n---\nNot a mapping: body text\n",
+        "---\ntitle: T\n---\n---\nsecond: block\n---\nBody\n",
+    ],
+)
+def test_a_stored_text_that_starts_with_a_dash_block_needs_a_parse(text: str) -> None:
+    parsed = parse_article("a.md", text)
+    stored = StoredArticle(
+        path="a.md",
+        blob_sha=git_blob_sha(text.encode()),
+        title=parsed.title,
+        front_matter=parsed.front_matter,
+        content=parsed.body,
+    )
+
+    assert stored.parsed() is None
+
+
+def test_an_article_without_an_image_marker_has_no_images() -> None:
+    assert parse_article("a.md", "# A\n\n[link](b.png) <img src='c.png'>\n").images == ()

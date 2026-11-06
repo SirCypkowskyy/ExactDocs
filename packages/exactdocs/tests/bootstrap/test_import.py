@@ -83,6 +83,8 @@ class Progress:
 
     async def chunking(self, *, chunked: int, reused: int) -> None: ...
 
+    async def parsing(self, *, parsed: int, taken: int) -> None: ...
+
 
 class CrashError(Exception):
     pass

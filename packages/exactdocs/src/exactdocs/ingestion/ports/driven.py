@@ -29,6 +29,7 @@ from exactdocs.ingestion.models import (
     RemoteRefs,
     Removed,
     RepositoryUrl,
+    StoredArticle,
     StoredTags,
     TaggedPath,
     TagRule,
@@ -96,6 +97,10 @@ class JobProgress(Protocol):
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         """``chunked`` articles were cut into chunks, ``reused`` took the chunks stored before."""
+        ...
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        """Record how many articles were parsed and how many taken as an import stored them."""
         ...
 
 
@@ -400,6 +405,22 @@ class ImportedTagStore(Protocol):
         Only what differs is written; manual tags are kept. Returns every tag (imported and
         manual) of each given article the manifest has, changed or not: the chunk index must
         get the same.
+        """
+        ...
+
+
+class StoredArticleSource(Protocol):
+    """What earlier imports stored for a file (the catalog, in ingestion's words)."""
+
+    async def find(
+        self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
+    ) -> Sequence[StoredArticle]:
+        """Return what the library stored for these ``(path, blob SHA)`` files with this parser.
+
+        ``ref`` is the version being imported: what it serves now is the likeliest match.
+
+        Files nothing was stored for that way are left out. The importer asks for at most 500
+        files per call.
         """
         ...
 

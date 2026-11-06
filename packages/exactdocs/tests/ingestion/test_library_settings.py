@@ -505,6 +505,7 @@ class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
     problems: list[tuple[str, ProblemCode, str]] = field(default_factory=list)
     counters: list[tuple[int, int]] = field(default_factory=list)
+    parses: list[tuple[int, int]] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
@@ -514,6 +515,9 @@ class Progress:
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.counters.append((chunked, reused))
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        self.parses.append((parsed, taken))
 
 
 @dataclass
@@ -530,6 +534,7 @@ class Importer:
         await progress.report(done=0, total=2)
         await progress.problem("docs/a.md", ProblemCode.BINARY, "binary file")
         await progress.chunking(chunked=1, reused=1)
+        await progress.parsing(parsed=1, taken=3)
         await progress.report(done=2, total=2)
         if job.version in self.failures:
             raise self.failures[job.version]
@@ -553,6 +558,7 @@ async def test_every_version_is_re_imported_at_its_recorded_commit(sources):
     ]
     assert progress.reports == [(0, 2), (1, 2), (2, 2)]  # versions: never 100% between them
     assert progress.counters[-1] == (2, 2)
+    assert progress.parses == [(1, 3), (1, 3), (2, 6), (2, 6)]  # live, then after each version
     assert [p[2] for p in progress.problems] == ["v1.0.0: binary file", "main: binary file"]
 
 

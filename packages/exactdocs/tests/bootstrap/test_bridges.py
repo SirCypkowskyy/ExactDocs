@@ -11,6 +11,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibrarySettings,
     CatalogLibrarySources,
     CatalogSearchableVersions,
+    CatalogStoredArticles,
     CatalogVersionCopier,
 )
 from exactdocs.catalog.adapters.driven.memory import (
@@ -18,6 +19,7 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryLibraryRepository,
     InMemoryManifestCopier,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
@@ -45,6 +47,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     PathSelection,
     ProposedId,
+    StoredArticle,
     StoredArticleTags,
     StoredTags,
     TagRule,
@@ -82,6 +85,7 @@ CATALOG = CatalogModule.build(
     manifests=(written := InMemoryManifestRepository(_LIBRARIES)),
     imported_tags=InMemoryImportedTags(written),
     copier=InMemoryManifestCopier(written),
+    stored_articles=InMemoryStoredArticles(written),
 )
 ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
 
@@ -93,6 +97,7 @@ LIBRARY_IDS = CatalogLibraryIds(
         manifests=(written := InMemoryManifestRepository(_TAKEN)),
         imported_tags=InMemoryImportedTags(written),
         copier=InMemoryManifestCopier(written),
+        stored_articles=InMemoryStoredArticles(written),
     ).get_library
 )
 
@@ -199,6 +204,7 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
         copier=InMemoryManifestCopier(written),
+        stored_articles=InMemoryStoredArticles(written),
     )
 
     found = await CatalogLibraries(catalog.list_libraries).all()
@@ -223,6 +229,7 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
         copier=InMemoryManifestCopier(written),
+        stored_articles=InMemoryStoredArticles(written),
     )
     stored = await catalog.store_manifest(
         StoreManifestCommand(
@@ -282,6 +289,7 @@ async def test_library_sources_report_each_versions_origin_and_the_pinned_defaul
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
         copier=InMemoryManifestCopier(written),
+        stored_articles=InMemoryStoredArticles(written),
     )
     sources = CatalogLibrarySources(catalog.get_library, catalog.list_renames)
 
@@ -313,6 +321,7 @@ def _tagging_catalog() -> CatalogModule:
         manifests=manifests,
         imported_tags=InMemoryImportedTags(manifests),
         copier=InMemoryManifestCopier(manifests),
+        stored_articles=InMemoryStoredArticles(manifests),
     )
 
 
@@ -434,3 +443,38 @@ async def test_the_chunking_settings_reach_the_importer() -> None:
     )
 
     assert source.chunking == ChunkingConfig(split_depth=3, min_chars=5)
+
+
+async def test_stored_articles_are_found_through_the_catalog_by_parser_version() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogStoredArticles(catalog.find_stored_articles)
+    await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/payments",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="1" * 40,
+                    content_version=PARSER_VERSION,
+                    title="A",
+                    tags=["api", "x"],
+                    front_matter={"tags": ["x"]},
+                    content="# A\n",
+                )
+            ],
+        )
+    )
+    files = [("a.md", "1" * 40), ("b.md", "2" * 40)]
+
+    found = await bridge.find("/acme/payments", "v1.4.0", PARSER_VERSION, files)
+
+    assert found == [
+        StoredArticle(
+            path="a.md", blob_sha="1" * 40, title="A", front_matter={"tags": ["x"]}, content="# A\n"
+        )
+    ]
+    assert await bridge.find("/acme/payments", "v1.4.0", PARSER_VERSION + 1, files) == []
+    assert await bridge.find("/acme/unknown", "v1.4.0", PARSER_VERSION, files) == []

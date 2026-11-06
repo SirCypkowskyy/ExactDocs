@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Self
 
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
@@ -182,6 +182,7 @@ from exactdocs.ingestion.ports.driven import (
     RenameSource,
     RepositoryTree,
     ScheduleSwitch,
+    StoredArticleSource,
     VersionCopier,
     VersionPublisher,
 )
@@ -464,6 +465,10 @@ class _Progress:
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.job = self.job.chunking(chunked=chunked, reused=reused)
+        await self._save_if_due()
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        self.job = self.job.parsing(parsed=parsed, taken=taken)
         await self._save_if_due()
 
     async def report(self, *, done: int, total: int) -> None:
@@ -1218,9 +1223,23 @@ class _VersionOutcome:
 
     chunked: int = 0
     reused: int = 0
+    parsed: int = 0
+    taken: int = 0
     problems: tuple[FileProblem, ...] = ()
     failure: tuple[str, str] | None = None
     """``(code, reason)`` when the version could not be re-processed and kept what it had."""
+
+    def plus(self, other: Self) -> Self:
+        """Return the counters of both added up (problems and failure are left out)."""
+        return replace(
+            self,
+            chunked=self.chunked + other.chunked,
+            reused=self.reused + other.reused,
+            parsed=self.parsed + other.parsed,
+            taken=self.taken + other.taken,
+            problems=(),
+            failure=None,
+        )
 
 
 @dataclass(slots=True)
@@ -1228,16 +1247,18 @@ class _OneVersion:
     """Implements ``ports.driven.JobProgress`` for one version's re-import, inside its step.
 
     The job counts versions, not files (as ``retag`` does), so a file report is not passed on.
-    Chunk counters go on from the versions before, live. Problems are kept for the step's
+    Chunk and parse counters go on from the versions before, live. Problems are kept for the step's
     result and reported after it, so a resumed job reports them again from the result.
     """
 
     progress: JobProgress
     ref: str
-    chunked_before: int
-    reused_before: int
+    before: _VersionOutcome
+    """The counters of the versions before this one."""
     chunked: int = 0
     reused: int = 0
+    parsed: int = 0
+    taken: int = 0
     problems: list[FileProblem] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
@@ -1249,13 +1270,21 @@ class _OneVersion:
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.chunked, self.reused = chunked, reused
         await self.progress.chunking(
-            chunked=self.chunked_before + chunked, reused=self.reused_before + reused
+            chunked=self.before.chunked + chunked, reused=self.before.reused + reused
+        )
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        self.parsed, self.taken = parsed, taken
+        await self.progress.parsing(
+            parsed=self.before.parsed + parsed, taken=self.before.taken + taken
         )
 
     def outcome(self, failure: tuple[str, str] | None = None) -> _VersionOutcome:
         return _VersionOutcome(
             chunked=self.chunked,
             reused=self.reused,
+            parsed=self.parsed,
+            taken=self.taken,
             problems=tuple(self.problems),
             failure=failure,
         )
@@ -1294,18 +1323,19 @@ class ReprocessLibraryUseCase:
         step = self.checkpoints.step
         versions = await step("list the versions", partial(_versions, self.sources, job.library))
         await progress.report(done=0, total=len(versions))
-        chunked = reused = 0
+        total = _VersionOutcome()
         failures: list[tuple[str, str, str]] = []
         for done, current in enumerate(versions, 1):
-            tracker = _OneVersion(progress, current.ref, chunked, reused)
+            tracker = _OneVersion(progress, current.ref, total)
             outcome = await step(
                 f"re-import {current.ref}", partial(self._one, job, current, tracker)
             )
-            chunked, reused = chunked + outcome.chunked, reused + outcome.reused
+            total = total.plus(outcome)
             for problem in outcome.problems:
                 await progress.problem(problem.path, problem.code, problem.reason)
             await progress.report(done=done, total=len(versions))
-            await progress.chunking(chunked=chunked, reused=reused)
+            await progress.chunking(chunked=total.chunked, reused=total.reused)
+            await progress.parsing(parsed=total.parsed, taken=total.taken)
             if outcome.failure is not None:
                 failures.append((current.ref, *outcome.failure))
         if failures:
@@ -1432,18 +1462,19 @@ class RechunkLibraryUseCase:
         step = self.checkpoints.step
         versions = await step("list the versions", partial(_versions, self.sources, job.library))
         await progress.report(done=0, total=len(versions))
-        chunked = reused = 0
+        total = _VersionOutcome()
         failures: list[tuple[str, str, str]] = []
         for done, current in enumerate(versions, 1):
-            tracker = _OneVersion(progress, current.ref, chunked, reused)
+            tracker = _OneVersion(progress, current.ref, total)
             outcome = await step(
                 f"re-chunk {current.ref}", partial(self._one, job, current, tracker)
             )
-            chunked, reused = chunked + outcome.chunked, reused + outcome.reused
+            total = total.plus(outcome)
             for problem in outcome.problems:
                 await progress.problem(problem.path, problem.code, problem.reason)
             await progress.report(done=done, total=len(versions))
-            await progress.chunking(chunked=chunked, reused=reused)
+            await progress.chunking(chunked=total.chunked, reused=total.reused)
+            await progress.parsing(parsed=total.parsed, taken=total.taken)
             if outcome.failure is not None:
                 failures.append((current.ref, *outcome.failure))
         if failures:
@@ -1524,6 +1555,7 @@ class RechunkLibraryUseCase:
         await tracker.chunking(
             chunked=len(cut), reused=sum(a.blob_sha in found for a in copied.articles)
         )
+        await tracker.parsing(parsed=0, taken=len(copied.articles))  # nothing parsed: all stored
         await self.index.index(copied.manifest_id, version)
         await _activate(self.versions, self.index, self.tag_locks, library, copied.manifest_id)
 
@@ -1532,8 +1564,10 @@ class RechunkLibraryUseCase:
 class ImportVersionUseCase:
     """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
 
-    Fetch the pinned commit, read and parse every selected file, chunk the blobs no earlier
-    import chunked, store everything as a pending manifest, index its chunks, then activate it.
+    Fetch the pinned commit, read every selected file, parse those no earlier import stored (the
+    same path, blob and ``PARSER_VERSION``: the others are taken from ``stored``, their tags
+    derived again), chunk the blobs no earlier import chunked, store everything as a pending
+    manifest, index its chunks, then activate it.
     Readers see the previous state until the last step; any failure (also a cancellation)
     discards what was stored, so a version never shows half of its articles.
 
@@ -1568,6 +1602,8 @@ class ImportVersionUseCase:
     refresh: bool = False
     renames: RenameSource | None = None
     """Where renames come from; without it none are detected. Never a reason to fail."""
+    stored: StoredArticleSource | None = None
+    """What earlier imports stored; without it every file is parsed."""
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
     """Makes the steps durable: a resumed import skips the files it had parsed and chunked."""
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES
@@ -1611,7 +1647,9 @@ class ImportVersionUseCase:
                     stack,
                 )
                 paths = await step("list the selected files", lambda: _list(checkout, source))
-                articles, wanted = await self._articles(checkout, paths, source, chunker, progress)
+                articles, wanted = await self._articles(
+                    checkout, job.library, job.version, paths, source, chunker, progress
+                )
                 readme, context7, taken = await step(
                     "read the README, context7.json and the images",
                     lambda: self._assets(checkout, wanted),
@@ -1881,6 +1919,8 @@ class ImportVersionUseCase:
     async def _articles(
         self,
         checkout: _Checkout,
+        library: str,
+        ref: str,
         paths: Sequence[str],
         source: ImportSource,
         chunker: Chunker,
@@ -1896,7 +1936,7 @@ class ImportVersionUseCase:
         articles: list[_Article] = []
         chunks: dict[str, tuple[ArticleChunk, ...]] = {}
         stored: set[str] = set()
-        used = 0
+        used = taken = 0
         for start in range(0, total, self.batch_files):
             files = paths[start : start + self.batch_files]
             batch = await self.checkpoints.step(
@@ -1905,7 +1945,16 @@ class ImportVersionUseCase:
                     self._batch,
                     checkout,
                     _BatchInput(
-                        files, start, total, used, dict(chunks), source, config_hash, chunker
+                        files,
+                        start,
+                        total,
+                        used,
+                        dict(chunks),
+                        source,
+                        config_hash,
+                        chunker,
+                        library,
+                        ref,
                     ),
                     progress,
                 ),
@@ -1916,11 +1965,13 @@ class ImportVersionUseCase:
             articles.extend(batch.articles)
             chunks |= {a.imported.blob_sha: a.imported.chunks for a in batch.articles}
             stored |= batch.stored
+            taken += batch.taken
             await progress.report(done=start + len(files), total=total)
             await progress.chunking(
                 chunked=len(chunks.keys() - stored),
                 reused=sum(article.imported.blob_sha in stored for article in articles),
             )
+            await progress.parsing(parsed=len(articles) - taken, taken=taken)
         wanted = list(dict.fromkeys(image for article in articles for image in article.images))
         if len(wanted) > MAX_WANTED_IMAGES:
             reason = f"{len(wanted) - MAX_WANTED_IMAGES} more images are referenced; not looked at"
@@ -1930,38 +1981,37 @@ class ImportVersionUseCase:
     async def _batch(
         self, checkout: _Checkout, given: _BatchInput, progress: JobProgress
     ) -> _Batch:
-        """Read, parse and chunk some files; reuse the chunks stored or cut for the same blob."""
-        folder = await checkout.folder()
+        """Read some files; parse the ones not stored before, chunk the blobs not chunked before.
+
+        A file an earlier import stored at the same path with the same parser is not parsed: its
+        title, front matter and text are taken as stored, its tags derived again.
+        """
+        read, used = await self._read(await checkout.folder(), given, progress)
+        files = [(path, sha) for path, sha, _ in (r for r in read if not isinstance(r, Skip))]
+        found = await self._stored(given.library, given.ref, files)
         loaded: list[tuple[str, str, ParsedArticle]] = []
         problems: list[tuple[str, ProblemCode, str]] = []
-        used = given.used
-        for offset, path in enumerate(given.paths, 1):
-            result = await asyncio.to_thread(_load, folder, path, self.max_article_bytes)
+        for path, result in zip(given.paths, read, strict=True):
             shown = path.encode(errors="replace").decode()
             if isinstance(result, Skip):
                 problems.append((shown, result.code, result.reason))
-            else:
-                blob_sha, parsed, size = result
-                used += size
-                if used > self.max_import_bytes:
-                    raise ImportTooLargeError(self.max_import_bytes)
-                loaded.append((path, blob_sha, parsed))
-                # The article is imported; the note is listed.
-                problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
-            if offset < len(given.paths):  # the caller reports the last one, also on a replay
-                await progress.report(done=given.first + offset, total=given.total)
-        # ponytail: every file is parsed again on a re-sync, only chunking is reused; see #164.
+                continue
+            _, blob_sha, text = result
+            parsed = found.get((path, blob_sha)) or parse_article(path, text)
+            loaded.append((path, blob_sha, parsed))
+            # The article is imported; the note is listed.
+            problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
         known = given.known
         asked = [sha for sha in dict.fromkeys(sha for _, sha, _ in loaded) if sha not in known]
-        found: dict[str, tuple[ArticleChunk, ...]] = {}
+        chunked: dict[str, tuple[ArticleChunk, ...]] = {}
         for start in range(0, len(asked), KNOWN_BATCH):
-            found |= await self.index.known(given.config_hash, asked[start : start + KNOWN_BATCH])
+            chunked |= await self.index.known(given.config_hash, asked[start : start + KNOWN_BATCH])
         unknown: dict[str, ParsedArticle] = {}
         for _, blob_sha, parsed in loaded:
-            if blob_sha not in known and blob_sha not in found:
+            if blob_sha not in known and blob_sha not in chunked:
                 unknown.setdefault(blob_sha, parsed)
         cut = await asyncio.to_thread(_cut, given.chunker, unknown)
-        every = {**known, **found, **cut}
+        every = {**known, **chunked, **cut}
         rules = given.source.tag_rules
         return _Batch(
             articles=tuple(
@@ -1980,9 +2030,47 @@ class ImportVersionUseCase:
                 for path, blob_sha, parsed in loaded
             ),
             problems=tuple(problems),
-            stored=frozenset(found),
+            stored=frozenset(chunked),
             used=used,
+            taken=sum((path, sha) in found for path, sha, _ in loaded),
         )
+
+    async def _read(
+        self, folder: Path, given: _BatchInput, progress: JobProgress
+    ) -> tuple[list[tuple[str, str, str] | Skip], int]:
+        """Read the batch's files: ``(path, blob SHA, text)`` or why skipped; the bytes used."""
+        read: list[tuple[str, str, str] | Skip] = []
+        used = given.used
+        for offset, path in enumerate(given.paths, 1):
+            result = await asyncio.to_thread(_load, folder, path, self.max_article_bytes)
+            if isinstance(result, Skip):
+                read.append(result)
+            else:
+                blob_sha, text, size = result
+                used += size
+                if used > self.max_import_bytes:
+                    raise ImportTooLargeError(self.max_import_bytes)
+                read.append((path, blob_sha, text))
+            if offset < len(given.paths):  # the caller reports the last one, also on a replay
+                await progress.report(done=given.first + offset, total=given.total)
+        return read, used
+
+    async def _stored(
+        self, library: str, ref: str, files: Sequence[tuple[str, str]]
+    ) -> dict[tuple[str, str], ParsedArticle]:
+        """Rebuild the articles earlier imports stored for these files, by ``(path, blob SHA)``.
+
+        A file the store cannot answer for, or whose rebuild needs a parse, is left out.
+        """
+        if self.stored is None:
+            return {}
+        found: dict[tuple[str, str], ParsedArticle] = {}
+        for start in range(0, len(files), KNOWN_BATCH):
+            batch = files[start : start + KNOWN_BATCH]
+            for article in await self.stored.find(library, ref, PARSER_VERSION, batch):
+                if (parsed := article.parsed()) is not None:
+                    found[article.path, article.blob_sha] = parsed
+        return found
 
 
 async def _same[T](value: T) -> T:
@@ -2083,6 +2171,8 @@ class _BatchInput:
     source: ImportSource
     config_hash: str
     chunker: Chunker
+    library: str
+    ref: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -2100,6 +2190,8 @@ class _Batch:
     stored: frozenset[str]
     """Blobs whose chunks an earlier import had stored."""
     used: int
+    taken: int = 0
+    """Articles not parsed: taken as an earlier import had stored them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2352,10 +2444,10 @@ class Skip:
     path: str = ""
 
 
-def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int] | Skip:
-    """Read, decode and parse one file, or say why it is skipped.
+def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:
+    """Read and decode one file, or say why it is skipped.
 
-    Returns the blob SHA, the article and the byte size. A file over ``limit`` bytes is not read
+    Returns the blob SHA, the text and the byte size. A file over ``limit`` bytes is not read
     at all. Anything that is not a plain file (a symlink could point outside the checkout) or not
     readable is skipped, as is text that no supported encoding decodes.
     The blob SHA is hashed from the checked-out bytes, which equals git's because the
@@ -2377,7 +2469,7 @@ def _load(folder: Path, path: str, limit: int) -> tuple[str, ParsedArticle, int]
     text = _decode(data)
     if isinstance(text, Skip):
         return text
-    return git_blob_sha(data), parse_article(path, text), len(data)
+    return git_blob_sha(data), text, len(data)
 
 
 # FF FE 00 00 is also a UTF-16-LE file starting with U+0000; UTF-32 is tried first, and a file
