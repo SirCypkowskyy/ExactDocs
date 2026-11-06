@@ -734,7 +734,6 @@ PENDING = {
     "docstring-missing-args",
     "docstring-missing-returns",
     "field-without-docstring",
-    "model-without-attribute-docstrings",
 }
 
 

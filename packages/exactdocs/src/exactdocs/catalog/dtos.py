@@ -47,13 +47,15 @@ from exactdocs_kernel import (
 
 
 class _Dto(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
 class _FromModel(BaseModel):
     """Boundary copy of a domain value object with the same field names."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", from_attributes=True)
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", from_attributes=True, use_attribute_docstrings=True
+    )
 
 
 class TagRuleOut(_FromModel):

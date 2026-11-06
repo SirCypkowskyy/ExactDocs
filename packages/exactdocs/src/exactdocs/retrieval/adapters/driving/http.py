@@ -49,6 +49,7 @@ class _Camel(BaseModel):
     """context7's field names (camelCase) on the wire."""
 
     model_config = ConfigDict(
+        use_attribute_docstrings=True,
         alias_generator=to_camel,
         populate_by_name=True,
         json_schema_serialization_defaults_required=True,

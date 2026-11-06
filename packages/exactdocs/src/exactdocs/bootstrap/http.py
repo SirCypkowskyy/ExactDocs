@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -37,6 +37,8 @@ MCP_PATH = "/mcp"
 
 class Health(BaseModel):
     """Liveness payload."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True)
 
     status: str
     version: str

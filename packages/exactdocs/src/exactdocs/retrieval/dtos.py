@@ -35,7 +35,7 @@ from exactdocs_kernel import (
 
 
 class _Dto(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
 MAX_QUERY = 1000

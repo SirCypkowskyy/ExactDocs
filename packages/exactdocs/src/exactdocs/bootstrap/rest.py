@@ -43,6 +43,8 @@ _STATUS_BY_ERROR: dict[type[DomainError], int] = {
 class FieldError(BaseModel):
     """One invalid request field."""
 
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
     loc: list[str | int]
     msg: str
     type: str
@@ -51,7 +53,9 @@ class FieldError(BaseModel):
 class ErrorResponse(BaseModel):
     """The one error shape of the API: a stable machine ``error`` code and a human ``detail``."""
 
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+    model_config = ConfigDict(
+        json_schema_serialization_defaults_required=True, use_attribute_docstrings=True
+    )
 
     error: str
     detail: str

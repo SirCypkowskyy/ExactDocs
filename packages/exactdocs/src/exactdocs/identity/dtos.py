@@ -12,7 +12,7 @@ MAX_PASSWORD_LENGTH = 1024  # bounds the work a request can make the hasher do
 
 
 class _Dto(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
 class AccountSummary(_Dto):
