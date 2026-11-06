@@ -217,6 +217,32 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   versions keep what they served, and a failed job with that code is recorded per branch and tag
   (once per distinct reason) and named in the message. A later sync that finds the version fine
   again records a succeeded no-op job, so the error no longer shows.
+- **Scheduled check** (SYNC-02): `PUT /libraries/{owner}/{repo}/auto-sync` with
+  `{"tag_pattern", "keep_last", "interval_minutes", "sync_branches"}` (what is left out takes its
+  default: no pattern, 5, 60, false) checks the library on its own every `interval_minutes`
+  (1 to 10080), starting at the next tick of the server's schedule (`EXACTDOCS_AUTO_SYNC_SCHEDULE`,
+  every minute). Each check asks the repository for its refs once. Tags matching `tag_pattern`
+  (a case-sensitive glob, `v*`) that have a version order (`v1.4.0`, `2.1`; pre-releases and other
+  names do not) are imported as versions with `origin: "auto"`, oldest first, and only the newest
+  `keep_last` (1 to 100) `auto` versions are kept: older ones are removed as by `DELETE
+  .../versions/{ref}`, at the first check after their replacements are versions (so a failed
+  import never leaves the library short; one being imported is left for the next check).
+  Versions added by hand (`origin: "manual"`, in `GET /libraries/{owner}/{repo}`) and the pinned
+  default version (`PUT .../default-version`) are never removed and do not count. A tag whose
+  import failed for good (`no_articles`, `import_too_large`) is tried again only once it names
+  another commit. One that failed `unexpected` (a bug) backs off: after the n-th such failure
+  in a row at the same commit it waits 2^(n-1) - 1 more intervals, at most a day. Any other
+  failure (an unreachable repository, a refused credential, a full disk...) is tried again at
+  the next check. An `auto` version removed by hand
+  comes back at the next check while it is among the newest `keep_last` matching tags: narrow
+  the pattern or lower `keep_last` to keep it out. With `sync_branches`, every branch version is
+  then re-synced as `POST .../sync` does, from the same list of refs (its failures are recorded
+  on the versions' jobs the same way). The import jobs it queues carry `origin: "auto"`. While no
+  library has a schedule, the server's tick is paused and writes nothing. `GET .../auto-sync` reads it (`enabled` false when the library is never checked on its
+  own) with `checked_at`, `next_check_at` and `last_error` (what the last check could not do);
+  `DELETE .../auto-sync` turns it off and keeps every version. 404 for an unknown library, 422
+  for a value out of range. Saving it again makes the library due at the next tick; removing the
+  library removes its schedule.
 - **Re-importing a moved tag**: `POST /libraries/{owner}/{repo}/versions/reimport` (`{"ref"}`;
   the ref is in the body because a ref may hold slashes, so nothing could follow it in the path)
   is the confirmation a `tag_moved` asks for. The tag is checked against the remote again and a

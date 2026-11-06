@@ -332,6 +332,7 @@ class StoreManifestUseCase:
             kind=command.kind,
             commit_sha=command.commit_sha,
             created_at=self.clock.now(),
+            origin=command.origin,
             renames=tuple(
                 ManifestRename(
                     from_ref=VersionRef(r.from_ref),

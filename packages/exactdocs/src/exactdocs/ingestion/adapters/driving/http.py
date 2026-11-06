@@ -11,8 +11,12 @@ from exactdocs.ingestion.dtos import (
     AddLibraryCommand,
     AddVersionBody,
     AddVersionCommand,
+    AutoSyncIn,
+    AutoSyncOut,
     CheckedRepository,
     CheckRepositoryCommand,
+    DisableAutoSyncCommand,
+    GetAutoSyncQuery,
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
@@ -32,6 +36,7 @@ from exactdocs.ingestion.dtos import (
     RemoveVersionCommand,
     RepositoryPreview,
     RepositoryRefs,
+    SetAutoSyncCommand,
     SyncedLibrary,
     SyncLibraryCommand,
     TagArticleCommand,
@@ -44,6 +49,8 @@ from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
     CheckRepository,
+    DisableAutoSync,
+    GetAutoSync,
     GetJob,
     GetLibraryAccess,
     ListLatestJobs,
@@ -53,6 +60,7 @@ from exactdocs.ingestion.ports.driving import (
     ReimportVersion,
     RemoveLibrary,
     RemoveVersion,
+    SetAutoSync,
     SyncLibrary,
     TagArticle,
     UpdateLibrarySettings,
@@ -399,6 +407,46 @@ def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
     async def remove_path_tags(owner: str, repo: str, path: _ArticlePath) -> None:
         """Remove every manual tag of an article path; the imported tags stay."""
         await tag_article(TagArticleCommand(library=f"/{owner}/{repo}", path=path, tags=[]))
+
+    return router
+
+
+def build_auto_sync_router(
+    *, get_auto_sync: GetAutoSync, set_auto_sync: SetAutoSync, disable_auto_sync: DisableAutoSync
+) -> APIRouter:
+    """Build the routes of a library's scheduled check (SYNC-02)."""
+    router = APIRouter(tags=["ingestion"])
+    path = "/libraries/{owner}/{repo}/auto-sync"
+
+    @router.get(path, name="get_auto_sync")
+    async def get_schedule(owner: str, repo: str) -> AutoSyncOut:
+        """Say how the library is checked on its own (`enabled` false: never) and how it went."""
+        return await get_auto_sync(GetAutoSyncQuery(library=f"/{owner}/{repo}"))
+
+    @router.put(path, name="set_auto_sync")
+    async def set_schedule(owner: str, repo: str, body: AutoSyncIn) -> AutoSyncOut:
+        """Check the library on its own every `interval_minutes`, starting at the next tick.
+
+        Each check asks the repository for its refs once. Tags matching `tag_pattern` that have
+        a version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions,
+        oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are
+        removed once their replacements are versions. Versions added by hand (`manual`) and the
+        pinned default are never removed and do not count. A tag whose import failed for good
+        (`no_articles`, `import_too_large`) is tried again only once it moves; after repeated
+        `unexpected` failures it backs off (doubling, at most a day); other failures are tried at
+        the next check. An `auto` version removed by hand comes back
+        while it is among the newest `keep_last`. With `sync_branches`, every branch version is
+        re-synced as `POST .../sync` would. Send the whole set: what is left out takes its
+        default. What a check could not do is its `last_error`.
+        """
+        return await set_auto_sync(
+            SetAutoSyncCommand(library=f"/{owner}/{repo}", **body.model_dump())
+        )
+
+    @router.delete(path, name="disable_auto_sync")
+    async def disable_schedule(owner: str, repo: str) -> AutoSyncOut:
+        """Stop checking the library on its own; every version, `auto` ones too, stays."""
+        return await disable_auto_sync(DisableAutoSyncCommand(library=f"/{owner}/{repo}"))
 
     return router
 

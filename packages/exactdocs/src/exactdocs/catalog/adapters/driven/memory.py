@@ -311,8 +311,13 @@ class InMemoryManifestRepository:
         current = self._active(manifest.library, manifest.ref)
         if current is not None and current.created_at > manifest.created_at:
             raise ManifestOutdatedError(manifest_id)
+        earlier = next((v for v in library.versions if v.ref == manifest.ref), None)
         version = Version(
-            ref=manifest.ref, kind=manifest.kind, commit_sha=manifest.commit_sha, imported_at=at
+            ref=manifest.ref,
+            kind=manifest.kind,
+            commit_sha=manifest.commit_sha,
+            imported_at=at,
+            origin=manifest.origin if earlier is None else earlier.origin,
         )
         changed = {manifest_id: replace(manifest, state=ManifestState.ACTIVE)}
         if current is not None:

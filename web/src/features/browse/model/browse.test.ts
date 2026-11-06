@@ -30,6 +30,7 @@ const v = (ref: string, kind: Version["kind"] = "tag", is_default = false): Vers
   commit_sha: "a".repeat(40),
   imported_at: "2026-11-01T10:00:00Z",
   is_default,
+  origin: "manual",
 });
 const lib = (versions: Version[], default_version: string | null): LibraryDetail =>
   ({ id: "/a/b", versions, default_version }) as unknown as LibraryDetail;

@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
+from croniter import croniter
 from platformdirs import user_data_path
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -38,6 +39,10 @@ class Settings(BaseSettings):
     # How often the job worker looks for a queued job to start; an idle server polls no more
     # often than this. Tests lower it.
     job_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+    # When the scheduled check ticks (a DBOS cron expression, seconds first): each tick checks the
+    # libraries whose own interval is up (new tags imported, branches re-synced). Tests tick every
+    # second.
+    auto_sync_schedule: str = "0 * * * * *"
     # Images the articles reference: one above `max_image_bytes` is skipped unread, and a version
     # keeps images until they add up to `max_images_bytes` (they are held in memory and in the
     # database, about 8 times over at the peak; later ones are skipped and listed as problems).
@@ -66,6 +71,17 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     # Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`).
     forwarded_allow_ips: str = "127.0.0.1,::1"
+
+    @field_validator("auto_sync_schedule")
+    @classmethod
+    def _schedule_is_a_cron_expression(cls, value: str) -> str:
+        if not croniter.is_valid(value, second_at_beginning=True):
+            message = (
+                "EXACTDOCS_AUTO_SYNC_SCHEDULE must be a cron expression with 5 fields, or 6 with "
+                "the seconds first (e.g. '0 * * * * *', every minute)"
+            )
+            raise ValueError(message)
+        return value
 
     @field_validator("secret_key", "secret_key_previous", mode="before")
     @classmethod

@@ -9,6 +9,7 @@ from exactdocs.ingestion.models import (
     ACTIVE_JOB_STATES,
     IMPORT_KINDS,
     ArticleChunk,
+    AutoSync,
     Credential,
     GitRename,
     ImportedRef,
@@ -232,3 +233,37 @@ class InMemoryCheckpoints:
     def resumed(self) -> Self:
         """Return the checkpoints of the job's next run, after a crash."""
         return type(self)(completed=list(self.completed))
+
+
+@dataclass(slots=True)
+class InMemoryAutoSyncStore:
+    """Implements ``ports.driven.AutoSyncStore``. For tests."""
+
+    schedules: dict[str, AutoSync] = field(default_factory=dict)
+
+    async def get(self, library: str) -> AutoSync | None:
+        """Return the library's schedule, or ``None``."""
+        return self.schedules.get(library)
+
+    async def save(self, auto_sync: AutoSync) -> None:
+        """Store the schedule."""
+        self.schedules[auto_sync.library] = auto_sync
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's schedule."""
+        self.schedules.pop(library, None)
+
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Store the check if the schedule is still the one it read."""
+        stored = self.schedules.get(read.library)
+        if stored is None or (stored.revision, stored.checked_at) != (
+            read.revision,
+            read.checked_at,
+        ):
+            return False
+        self.schedules[read.library] = checked
+        return True
+
+    async def list_all(self) -> Sequence[AutoSync]:
+        """Return every schedule, by library."""
+        return [self.schedules[k] for k in sorted(self.schedules)]

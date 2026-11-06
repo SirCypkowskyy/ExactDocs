@@ -413,6 +413,15 @@ class SyncFailedError(ValidationError):
         self.job_ids = tuple(job_ids)
 
 
+class InvalidAutoSyncError(ValidationError):
+    """A library's schedule (tag pattern, retention or interval) cannot be used."""
+
+    code = "invalid_auto_sync"
+
+    def __init__(self, problem: str) -> None:
+        super().__init__(f"invalid schedule: {problem}")
+
+
 class ReprocessFailedError(DomainError):
     """Some versions could not be re-processed after a settings edit; they serve what they had.
 
