@@ -146,6 +146,34 @@ def _followed_by_docstring(body: list[ast.stmt]) -> Iterator[tuple[ast.stmt, boo
         yield node, _is_docstring(following)
 
 
+def _assignments(tree: ast.Module) -> Iterator[tuple[ast.stmt, bool, str, bool, bool]]:
+    """Module-level assignments to names, one per assigned name.
+
+    ``A, B = 1, 2`` yields both names (as untyped). Type definitions (``NewType``, ``TypeVar``)
+    are not values and are skipped.
+
+    Args:
+        tree: The parsed module.
+
+    Yields:
+        The statement, whether a docstring follows it, the name, whether it is annotated
+        ``Final`` and whether that annotation names the type (``Final[int]``).
+    """
+    for node, documented in _followed_by_docstring(tree.body):
+        match node:
+            case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation):
+                final = _name(annotation) == "Final"
+                yield node, documented, name, final, final and isinstance(annotation, ast.Subscript)
+            case ast.Assign(value=ast.Call(func=func)) if _name(func) in {"NewType", "TypeVar"}:
+                continue
+            case ast.Assign(targets=[ast.Name(id=name)]):
+                yield node, documented, name, False, False
+            case ast.Assign(targets=[ast.Tuple(elts=names)]):
+                for target in names:
+                    if isinstance(target, ast.Name):
+                        yield node, documented, target.id, False, False
+
+
 def _check_constants(path: PurePosixPath, tree: ast.Module) -> Iterator[Violation]:
     """Constants live in constants modules, are ``Final[...]`` and have a docstring.
 
@@ -157,15 +185,7 @@ def _check_constants(path: PurePosixPath, tree: ast.Module) -> Iterator[Violatio
         Every broken constants rule.
     """
     in_constants = _is_constants_module(path)
-    for node, documented in _followed_by_docstring(tree.body):
-        match node:
-            case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation):
-                final = _name(annotation) == "Final"
-                typed = final and isinstance(annotation, ast.Subscript)
-            case ast.Assign(targets=[ast.Name(id=name)]):
-                final = typed = False
-            case _:
-                continue
+    for node, documented, name, final, typed in _assignments(tree):
         if name == "__all__" or not (final or in_constants or CONSTANT_NAME.match(name)):
             continue
         where = {"path": str(path), "line": node.lineno}
@@ -505,38 +525,112 @@ class _Module:
     """The parsed file."""
 
 
-def _models(modules: list[_Module]) -> tuple[set[str], set[str]]:
-    """Find the pydantic models of a code base by name, following project-local bases.
+def _dotted(path: PurePosixPath) -> str:
+    """Import name of a module from its path.
+
+    Args:
+        path: ``packages/<dist>/src/<package>/.../<module>.py``, or a bare fixture file name.
+
+    Returns:
+        ``exactdocs.catalog.dtos`` for ``.../src/exactdocs/catalog/dtos.py``; a package's
+        ``__init__.py`` is the package itself.
+    """
+    parts = list(path.with_suffix("").parts)
+    if "src" in parts:
+        parts = parts[parts.index("src") + 1 :]
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+type _ClassKey = tuple[str, str]
+"""A class by module import name and class name."""
+
+
+def _index(
+    modules: list[_Module],
+) -> tuple[dict[_ClassKey, ast.ClassDef], dict[_ClassKey, _ClassKey]]:
+    """Index the classes of a code base and the names its modules import.
 
     Args:
         modules: Every parsed module of the code base.
 
     Returns:
-        The names of all models, and of those that get ``use_attribute_docstrings`` (from their
-        own config or a base).
+        Every class by key, and every ``from x import y [as z]`` as ``(module, z) -> (x, y)``.
     """
-    classes = [
-        node
-        for module in modules
-        for node in ast.walk(module.tree)
-        if isinstance(node, ast.ClassDef)
-    ]
-    models: set[str] = set()
-    configured: set[str] = set()
+    classes: dict[_ClassKey, ast.ClassDef] = {}
+    imported: dict[_ClassKey, _ClassKey] = {}
+    for module in modules:
+        name = _dotted(module.path)
+        for node in ast.walk(module.tree):
+            if isinstance(node, ast.ClassDef):
+                classes.setdefault((name, node.name), node)
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                for alias in node.names:
+                    imported[name, alias.asname or alias.name] = (node.module, alias.name)
+    return classes, imported
+
+
+def _resolve(
+    key: _ClassKey, classes: dict[_ClassKey, ast.ClassDef], imported: dict[_ClassKey, _ClassKey]
+) -> _ClassKey:
+    """Follow imports (and re-exports) to where a name is defined.
+
+    Args:
+        key: A name as seen from a module.
+        classes: Every class of the code base.
+        imported: Every imported name of the code base.
+
+    Returns:
+        The key of the defining module, or the last key reached when it is not a known class.
+    """
+    seen = set()
+    while key in imported and key not in classes and key not in seen:
+        seen.add(key)
+        key = imported[key]
+    return key
+
+
+def _models(modules: list[_Module]) -> tuple[set[_ClassKey], set[_ClassKey]]:
+    """Find the pydantic models of a code base, following bases through imports.
+
+    A base resolves to a class of the same module or to the class an ``import from`` names
+    (through re-exports in ``__init__.py``); ``BaseModel``, ``BaseSettings`` and ``RootModel``
+    are the roots.
+
+    Args:
+        modules: Every parsed module of the code base.
+
+    Returns:
+        The models, and those that get ``use_attribute_docstrings`` from their own config or a
+        base.
+    """
+    classes, imported = _index(modules)
+    bases = {
+        key: [
+            (_name(base), _resolve((key[0], _name(base)), classes, imported)) for base in node.bases
+        ]
+        for key, node in classes.items()
+    }
+    models: set[_ClassKey] = set()
+    configured: set[_ClassKey] = set()
     changed = True
     while changed:
         changed = False
-        for node in classes:
-            bases = {_name(base) for base in node.bases}
-            if node.name not in models and bases & (MODEL_BASES | models):
-                models.add(node.name)
+        for key, node in classes.items():
+            parents = {target for _, target in bases[key]}
+            is_root = any(
+                name in MODEL_BASES and target not in classes for name, target in bases[key]
+            )
+            if key not in models and (is_root or parents & models):
+                models.add(key)
                 changed = True
             if (
-                node.name in models
-                and node.name not in configured
-                and (_sets_attribute_docstrings(node) or bases & configured)
+                key in models
+                and key not in configured
+                and (_sets_attribute_docstrings(node) or parents & configured)
             ):
-                configured.add(node.name)
+                configured.add(key)
                 changed = True
     return models, configured
 
@@ -557,15 +651,17 @@ def check(modules: list[_Module]) -> list[Violation]:
         found.extend(_check_constants(module.path, module.tree))
         for function, method in _functions(module.tree, in_class=False):
             found.extend(_check_function(module.path, function, method=method))
+        dotted = _dotted(module.path)
         for node in ast.walk(module.tree):
             if not isinstance(node, ast.ClassDef):
                 continue
+            key = (dotted, node.name)
             decorator = _dataclass_decorator(node)
             if decorator is not None:
                 found.extend(_check_dataclass(module.path, lines, node, decorator))
-            if decorator is not None or node.name in models:
+            if decorator is not None or key in models:
                 found.extend(_check_fields(module.path, node))
-            if node.name in models and node.name not in configured:
+            if key in models and key not in configured:
                 found.append(
                     Violation(
                         path=str(module.path),
@@ -639,7 +735,6 @@ PENDING = {
     "docstring-missing-returns",
     "field-without-docstring",
     "model-without-attribute-docstrings",
-    "dataclass-flags",
 }
 
 
@@ -711,8 +806,8 @@ BAD = [
 def test_bad_code_is_reported(name: str, as_path: str | None, rule: str) -> None:
     expected = _lines_marked(name, rule)
     assert expected, f"{name} marks no line with `# expect: {rule}`"
-    reported = [v for v in _check_fixture(name, as_path=as_path) if v.startswith(f"{rule}@")]
-    assert reported == expected
+    reported = {v for v in _check_fixture(name, as_path=as_path) if v.startswith(f"{rule}@")}
+    assert sorted(reported) == sorted(expected)  # one per line, however many names it assigns
 
 
 @pytest.mark.parametrize(
