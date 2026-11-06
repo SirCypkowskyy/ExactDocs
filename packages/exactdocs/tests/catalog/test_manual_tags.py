@@ -5,6 +5,7 @@ import hashlib
 import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
@@ -71,7 +72,9 @@ def catalog() -> CatalogModule:
         ]
     )
     return CatalogModule.build(
-        repository=libraries, manifests=InMemoryManifestRepository(libraries)
+        repository=libraries,
+        manifests=(written := InMemoryManifestRepository(libraries)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
 

@@ -5,18 +5,22 @@ import pytest
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogDefaultVersions,
+    CatalogImportedTags,
     CatalogLibraries,
     CatalogLibraryIds,
+    CatalogLibrarySettings,
     CatalogLibrarySources,
     CatalogSearchableVersions,
 )
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
+    GetLibraryQuery,
     GetManifestStatesQuery,
     ManifestStates,
     StoreManifestCommand,
@@ -31,7 +35,14 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
-from exactdocs.ingestion.models import ImportedRef, ProposedId
+from exactdocs.ingestion.models import (
+    ImportedRef,
+    PathSelection,
+    ProposedId,
+    StoredArticleTags,
+    StoredTags,
+    TagRule,
+)
 from exactdocs.ingestion.models import RefKind as IngestionRefKind
 from exactdocs.ingestion.models import VersionOrigin as IngestionOrigin
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
@@ -61,14 +72,20 @@ PAYMENTS = Library(
 )
 _LIBRARIES = InMemoryLibraryRepository.of([PAYMENTS])
 CATALOG = CatalogModule.build(
-    repository=_LIBRARIES, manifests=InMemoryManifestRepository(_LIBRARIES)
+    repository=_LIBRARIES,
+    manifests=(written := InMemoryManifestRepository(_LIBRARIES)),
+    imported_tags=InMemoryImportedTags(written),
 )
 ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
 
 
 _TAKEN = InMemoryLibraryRepository.of([PAYMENTS])
 LIBRARY_IDS = CatalogLibraryIds(
-    CatalogModule.build(repository=_TAKEN, manifests=InMemoryManifestRepository(_TAKEN)).get_library
+    CatalogModule.build(
+        repository=_TAKEN,
+        manifests=(written := InMemoryManifestRepository(_TAKEN)),
+        imported_tags=InMemoryImportedTags(written),
+    ).get_library
 )
 
 
@@ -170,7 +187,9 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
     ]
     repository = InMemoryLibraryRepository.of(many)
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
     found = await CatalogLibraries(catalog.list_libraries).all()
@@ -191,7 +210,9 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
     )
     repository = InMemoryLibraryRepository.of([PAYMENTS, other])
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
     stored = await catalog.store_manifest(
         StoreManifestCommand(
@@ -247,7 +268,9 @@ async def test_library_sources_report_each_versions_origin_and_the_pinned_defaul
     )
     repository = InMemoryLibraryRepository.of([library])
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
     sources = CatalogLibrarySources(catalog.get_library, catalog.list_renames)
 
@@ -269,3 +292,63 @@ async def test_library_sources_report_each_versions_origin_and_the_pinned_defaul
             pinned=False,
         ),
     ]
+
+
+def _tagging_catalog() -> CatalogModule:
+    libraries = InMemoryLibraryRepository.of([PAYMENTS])
+    manifests = InMemoryManifestRepository(libraries)
+    return CatalogModule.build(
+        repository=libraries, manifests=manifests, imported_tags=InMemoryImportedTags(manifests)
+    )
+
+
+async def test_imported_tags_are_read_and_written_through_the_catalog() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogImportedTags(catalog.get_version_tags, catalog.set_imported_tags)
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/payments",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="1" * 40,
+                    content_version=1,
+                    title="A",
+                    tags=["x"],
+                    front_matter={"tags": ["x"]},
+                    content="a",
+                )
+            ],
+        )
+    )
+    assert await bridge.stored_tags("/acme/payments", "v1.4.0") is None  # nothing active yet
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    found = await bridge.stored_tags("/acme/payments", "v1.4.0")
+    written = await bridge.set_imported_tags(stored.manifest_id, {"a.md": ("api", "x")})
+
+    assert found == StoredTags(
+        manifest_id=stored.manifest_id,
+        articles=(StoredArticleTags(path="a.md", front_matter={"tags": ["x"]}, tags=("x",)),),
+    )
+    assert written == {"a.md": ("api", "x")}
+    assert await bridge.stored_tags("/acme/payments", "nope") is None
+    assert await bridge.stored_tags("/acme/nope", "v1.4.0") is None
+
+
+async def test_settings_are_stored_on_the_catalog_library() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogLibrarySettings(catalog.set_library_settings)
+
+    await bridge.save(
+        "/acme/payments",
+        PathSelection.of(["docs/"], ["docs/old/"]),
+        TagRule.many([("docs/api/**", "api")]),
+    )
+
+    settings = (await catalog.get_library(GetLibraryQuery(id="/acme/payments"))).settings
+    assert (settings.include_paths, settings.exclude_paths) == (["docs/"], ["docs/old/"])
+    assert [(r.pattern, r.tag) for r in settings.tag_rules] == [("docs/api/**", "api")]

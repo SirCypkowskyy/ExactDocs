@@ -25,6 +25,7 @@ from exactdocs.ingestion.models import (
     RefKind,
     RepositoryHost,
     ResolvedRef,
+    SettingsChange,
     SyncStatus,
     VersionOrigin,
 )
@@ -714,3 +715,56 @@ class ScheduledChecks(_Dto):
     checked: list[str] = Field(description="The libraries that were due and were checked.")
     imports: list[str] = Field(description="IDs of the `auto` import jobs queued.")
     removed: list[str] = Field(description="The `auto` versions removed, `/owner/repo/ref`.")
+
+
+class LibrarySettingsIn(_Dto):
+    """A library's paths and tag rules, as a whole: what is left out is cleared."""
+
+    include_paths: list[str] = Field(
+        default_factory=list,
+        description=AddLibraryCommand.model_fields["include_paths"].description,
+    )
+    exclude_paths: list[str] = Field(
+        default_factory=list,
+        description=AddLibraryCommand.model_fields["exclude_paths"].description,
+    )
+    tag_rules: list[TagRuleIn] = Field(
+        default_factory=list,
+        max_length=MAX_TAG_RULES,
+        description=AddLibraryCommand.model_fields["tag_rules"].description,
+    )
+
+
+class UpdateLibrarySettingsCommand(LibrarySettingsIn):
+    """Replace a library's paths and tag rules and re-process every version with them."""
+
+    library: str = Field(min_length=1, max_length=200, description="`/owner/repo`, any case.")
+
+
+class UpdatedLibrarySettings(_Dto):
+    """The settings as stored (normalized) and the job that brings every version in line."""
+
+    library_id: str
+    include_paths: list[str]
+    exclude_paths: list[str]
+    tag_rules: list[TagRuleIn]
+    reprocess: SettingsChange | None = Field(
+        description=(
+            "`paths`: the selection changed, every version is fetched again at its commit; "
+            "`tags`: only tag rules changed, every version is re-tagged from what is stored; "
+            "null: nothing changed and nothing is re-run, nothing is re-processed."
+        )
+    )
+    job_id: str | None = Field(
+        description=(
+            "The job re-processing every version (`/jobs/{id}`); one already queued for the "
+            "library is reused. Unchanged settings re-run the library's last re-processing job "
+            "when it failed. Null when nothing is to do or the library has no versions yet."
+        )
+    )
+    versions: list[str] = Field(
+        description=(
+            "The library's refs now, at the commits they serve: what the job re-processes (it "
+            "reads the versions again when it runs). Listed also when a queued job is reused."
+        )
+    )

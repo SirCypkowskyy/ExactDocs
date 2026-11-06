@@ -3496,6 +3496,138 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/settings": {
+      "put": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Update Library Settings",
+        "description": "Replace the library's paths and tag rules; every version is then re-processed.\n\nSend the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is\nleft out is cleared. Changed paths queue a `reprocess` job that fetches every version\nagain at the commit it serves (a branch is not synced) and re-imports it; only tag rules\nchanged queue a `retag` job that re-tags the stored articles, fetching nothing. Each\nversion keeps serving its old state until its new one is complete, then switches at\nonce (after a `retag`, search's tag filters follow the listings a moment later); one\nthat fails keeps the old state and the job fails naming it. Sending the same settings\nagain re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no\njob when the settings are unchanged and the last re-processing did not fail (or there\nis no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing\nis stored), 404 for an unknown library.",
+        "operationId": "ingestion-update_library_settings",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibrarySettingsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Nothing changed and nothing failed: nothing is re-processed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedLibrarySettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Stored; a job re-processes every version.",
+            "headers": {
+              "Location": {
+                "description": "The job: `/api/v1/jobs/{job_id}`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/repositories/check": {
       "post": {
         "tags": [
@@ -7055,6 +7187,39 @@
         "title": "LibrarySearchResultOut",
         "description": "A result of a search across libraries: also names the library and version it came from."
       },
+      "LibrarySettingsIn": {
+        "properties": {
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths",
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths",
+            "description": "Folders, files or globs to leave out; they win."
+          },
+          "tag_rules": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleIn"
+            },
+            "type": "array",
+            "maxItems": 64,
+            "title": "Tag Rules",
+            "description": "Tags for articles by path; they are added to the front-matter tags."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LibrarySettingsIn",
+        "description": "A library's paths and tag rules, as a whole: what is left out is cleared."
+      },
       "LibrarySettingsOut": {
         "properties": {
           "include_paths": {
@@ -8046,6 +8211,15 @@
         "title": "SessionState",
         "description": "What the UI needs to know first: is setup due, is anyone signed in, and who."
       },
+      "SettingsChange": {
+        "type": "string",
+        "enum": [
+          "paths",
+          "tags"
+        ],
+        "title": "SettingsChange",
+        "description": "What an edit of a library's settings asks of its versions."
+      },
       "Span": {
         "properties": {
           "start": {
@@ -8448,6 +8622,79 @@
         ],
         "title": "TokenSummary",
         "description": "A token as listed: everything but the secret."
+      },
+      "UpdatedLibrarySettings": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "include_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Include Paths"
+          },
+          "exclude_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Paths"
+          },
+          "tag_rules": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleIn"
+            },
+            "type": "array",
+            "title": "Tag Rules"
+          },
+          "reprocess": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SettingsChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`paths`: the selection changed, every version is fetched again at its commit; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed."
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id",
+            "description": "The job re-processing every version (`/jobs/{id}`); one already queued for the library is reused. Unchanged settings re-run the library's last re-processing job when it failed. Null when nothing is to do or the library has no versions yet."
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Versions",
+            "description": "The library's refs now, at the commits they serve: what the job re-processes (it reads the versions again when it runs). Listed also when a queued job is reused."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "include_paths",
+          "exclude_paths",
+          "tag_rules",
+          "reprocess",
+          "job_id",
+          "versions"
+        ],
+        "title": "UpdatedLibrarySettings",
+        "description": "The settings as stored (normalized) and the job that brings every version in line."
       },
       "VersionOut": {
         "properties": {

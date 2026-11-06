@@ -2,8 +2,10 @@
 
 import asyncio
 import tempfile
+import threading
 import time
-from contextlib import ExitStack
+from collections.abc import AsyncGenerator
+from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
 
@@ -33,17 +35,40 @@ JOB_SECONDS = 60
 
 
 class SwitchableGit:
-    """The real git, until a scenario makes fetching fail (a server that went away)."""
+    """The real git, until a scenario makes fetching fail (a server that went away).
+
+    ``held`` makes a fetch wait until it is cleared, so a scenario can look at what is served
+    while a job is under way.
+    """
 
     def __init__(self, git: GitCli) -> None:
         self.git = git
         self.failing = False
+        self.released = threading.Event()
+        self.released.set()
+
+    @property
+    def held(self) -> bool:
+        return not self.released.is_set()
+
+    @held.setter
+    def held(self, value: bool) -> None:
+        if value:
+            self.released.clear()
+        else:
+            self.released.set()
 
     def fetch(self, *args: object, **kwargs: object):
         if self.failing:
             reason = "connection refused"
             raise RepositoryUnreachableError(reason)
-        return self.git.fetch(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return self._after_hold(self.git.fetch(*args, **kwargs))  # ty: ignore[invalid-argument-type]
+
+    @asynccontextmanager
+    async def _after_hold(self, fetch: AbstractAsyncContextManager[Path]) -> AsyncGenerator[Path]:
+        await asyncio.to_thread(self.released.wait, JOB_SECONDS)
+        async with fetch as folder:
+            yield folder
 
     def fetch_files(self, *args: object, **kwargs: object):
         if self.failing:

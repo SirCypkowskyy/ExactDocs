@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
@@ -21,6 +22,7 @@ from exactdocs.catalog.models import (
     HostKind,
     Library,
     LibraryId,
+    LibrarySettings,
     ManualTags,
     RefKind,
     Version,
@@ -58,7 +60,9 @@ def build(*versions: Version) -> CatalogModule:
         ]
     )
     return CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
 
@@ -156,6 +160,9 @@ class LibraryRemovedWhilePinning:
     ) -> None:
         await self.inner.set_text(library_id, title=title, description=description)
 
+    async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
+        await self.inner.set_settings(library_id, settings)
+
     async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
         await self.inner.delete(library_id)
         return await self.inner.pin_default(library_id, ref)
@@ -188,7 +195,9 @@ async def test_a_library_removed_while_pinning_is_reported_as_missing() -> None:
     )
     repository = LibraryRemovedWhilePinning(inner)
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(inner)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(inner)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
     with pytest.raises(LibraryNotFoundError):

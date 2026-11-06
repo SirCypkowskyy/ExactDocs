@@ -968,3 +968,43 @@ class Removal(_Dto):
     ref: str | None
     manifest_ids: list[str]
     default_ref: str | None
+
+
+class SetLibrarySettingsCommand(_Dto):
+    """Replace a library's paths and tag rules (validated and normalized by the importer)."""
+
+    id: str = Field(min_length=1)
+    include_paths: list[str] = Field(default_factory=list)
+    exclude_paths: list[str] = Field(default_factory=list)
+    tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+
+
+class GetVersionTagsQuery(_Dto):
+    """Ask for what the imported tags of a version's articles are derived from."""
+
+    library: str = Field(min_length=1)
+    ref: str = Field(min_length=1)
+
+
+class ArticleTagSource(_Dto):
+    """An article's path, front matter and imported tags (manual ones are kept apart)."""
+
+    path: str
+    front_matter: dict[str, Any]
+    tags: list[str]
+
+
+class VersionTags(_Dto):
+    """The active manifest of a version and its articles' tag sources (none while it has none)."""
+
+    library: str
+    ref: str
+    manifest_id: str | None
+    articles: list[ArticleTagSource]
+
+
+class SetImportedTagsCommand(_Dto):
+    """Replace the imported tags of some articles of a manifest."""
+
+    manifest_id: str = Field(min_length=1)
+    articles: list[ArticleTags]

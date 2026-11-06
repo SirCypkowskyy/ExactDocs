@@ -23,6 +23,7 @@ from exactdocs.ingestion.dtos import (
     JobSummary,
     LatestJobs,
     LibraryAccess,
+    LibrarySettingsIn,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     ManualTagsIn,
@@ -40,6 +41,8 @@ from exactdocs.ingestion.dtos import (
     SyncLibraryCommand,
     TagArticleCommand,
     TaggedArticle,
+    UpdatedLibrarySettings,
+    UpdateLibrarySettingsCommand,
 )
 from exactdocs.ingestion.models import SyncStatus
 from exactdocs.ingestion.ports.driving import (
@@ -60,6 +63,7 @@ from exactdocs.ingestion.ports.driving import (
     SetAutoSync,
     SyncLibrary,
     TagArticle,
+    UpdateLibrarySettings,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH
 
@@ -88,6 +92,7 @@ def build_router(
     sync_library: SyncLibrary,
     reimport_version: ReimportVersion,
     tag_article: TagArticle,
+    update_library_settings: UpdateLibrarySettings,
     require_session: Callable[[Request], Awaitable[object]],
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side.
@@ -98,6 +103,7 @@ def build_router(
     """
     router = APIRouter(tags=["ingestion"])
     router.include_router(_manual_tags_router(tag_article))
+    router.include_router(_settings_router(update_library_settings))
 
     @router.post("/repositories/check")
     async def check(command: CheckRepositoryCommand, request: Request) -> CheckedRepository:
@@ -440,5 +446,60 @@ def build_auto_sync_router(
     async def disable_schedule(owner: str, repo: str) -> AutoSyncOut:
         """Stop checking the library on its own; every version, `auto` ones too, stays."""
         return await disable_auto_sync(DisableAutoSyncCommand(library=f"/{owner}/{repo}"))
+
+    return router
+
+
+def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRouter:
+    """Build the route that edits a library's paths and tag rules."""
+    router = APIRouter(tags=["ingestion"])
+
+    @router.put(
+        "/libraries/{owner}/{repo}/settings",
+        name="update_library_settings",
+        responses={
+            status.HTTP_200_OK: {
+                "description": "Nothing changed and nothing failed: nothing is re-processed."
+            },
+            status.HTTP_202_ACCEPTED: {
+                "description": "Stored; a job re-processes every version.",
+                "headers": {
+                    "Location": {
+                        "description": "The job: `/api/v1/jobs/{job_id}`.",
+                        "schema": {"type": "string"},
+                    }
+                },
+            },
+        },
+    )
+    async def update_settings(
+        owner: str, repo: str, body: LibrarySettingsIn, request: Request, response: Response
+    ) -> UpdatedLibrarySettings:
+        """Replace the library's paths and tag rules; every version is then re-processed.
+
+        Send the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is
+        left out is cleared. Changed paths queue a `reprocess` job that fetches every version
+        again at the commit it serves (a branch is not synced) and re-imports it; only tag rules
+        changed queue a `retag` job that re-tags the stored articles, fetching nothing. Each
+        version keeps serving its old state until its new one is complete, then switches at
+        once (after a `retag`, search's tag filters follow the listings a moment later); one
+        that fails keeps the old state and the job fails naming it. Sending the same settings
+        again re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no
+        job when the settings are unchanged and the last re-processing did not fail (or there
+        is no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing
+        is stored), 404 for an unknown library.
+        """
+        updated = await update_library_settings(
+            UpdateLibrarySettingsCommand(
+                library=f"/{owner}/{repo}",
+                include_paths=body.include_paths,
+                exclude_paths=body.exclude_paths,
+                tag_rules=body.tag_rules,
+            )
+        )
+        if updated.job_id is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Location"] = request.url_for("get_job", job_id=updated.job_id).path
+        return updated
 
     return router

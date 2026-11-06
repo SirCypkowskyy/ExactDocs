@@ -16,6 +16,7 @@ from exactdocs.catalog.dtos import (
     ArticleInfo,
     ArticleList,
     ArticleSummary,
+    ArticleTagSource,
     Asset,
     CollectGarbageCommand,
     CollectionResult,
@@ -30,6 +31,7 @@ from exactdocs.catalog.dtos import (
     GetAssetQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
+    GetVersionTagsQuery,
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
@@ -50,12 +52,15 @@ from exactdocs.catalog.dtos import (
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
     RetaggedManifest,
+    SetImportedTagsCommand,
+    SetLibrarySettingsCommand,
     SetManualTagsCommand,
     StoredManifest,
     StoreManifestCommand,
     TagCount,
     TagList,
     UpdateLibraryCommand,
+    VersionTags,
 )
 from exactdocs.catalog.errors import (
     ArticleNotFoundError,
@@ -83,11 +88,16 @@ from exactdocs.catalog.models import (
     ParsedId,
     StoredImage,
     TagRule,
+    TagSelection,
     Version,
     VersionRef,
     close_paths,
 )
-from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports.driven import (
+    ImportedTagWriter,
+    LibraryRepository,
+    ManifestRepository,
+)
 from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
 
 # A missing article lists at most this many paths to look for close matches.
@@ -160,6 +170,30 @@ class UpdateLibraryUseCase:
         await self.repository.set_text(
             library.id, title=command.title, description=command.description
         )
+        updated = await self.repository.get(library.id)
+        if updated is None:  # deleted in between
+            raise LibraryNotFoundError(command.id)
+        return LibraryDetail.from_model(updated)
+
+
+@dataclass(frozen=True, slots=True)
+class SetLibrarySettingsUseCase:
+    """Implements ``ports.driving.SetLibrarySettings``."""
+
+    repository: LibraryRepository
+
+    async def __call__(self, command: SetLibrarySettingsCommand) -> LibraryDetail:
+        """Replace paths and tag rules, keep the chunking settings."""
+        library = await self.repository.get(LibraryId(command.id))
+        if library is None:
+            raise LibraryNotFoundError(command.id)
+        settings = replace(
+            library.settings,
+            include_paths=tuple(command.include_paths),
+            exclude_paths=tuple(command.exclude_paths),
+            tag_rules=tuple(TagRule(pattern=r.pattern, tag=r.tag) for r in command.tag_rules),
+        )
+        await self.repository.set_settings(library.id, settings)
         updated = await self.repository.get(library.id)
         if updated is None:  # deleted in between
             raise LibraryNotFoundError(command.id)
@@ -434,6 +468,64 @@ class SetManualTagsUseCase:
             tags=list(tags.tags),
             retagged=[r for r in retagged if r.articles],
         )
+
+
+# Entries read per page when a whole manifest's tag sources are collected.
+TAG_SOURCE_PAGE = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class GetVersionTagsUseCase:
+    """Implements ``ports.driving.GetVersionTags``."""
+
+    repository: LibraryRepository
+    manifests: ManifestRepository
+
+    async def __call__(self, query: GetVersionTagsQuery) -> VersionTags:
+        """Read every entry of the version's active manifest, page by page."""
+        library = await self.repository.get(LibraryId(query.library))
+        if library is None:
+            raise LibraryNotFoundError(query.library)
+        version = next((v for v in library.versions if v.ref == VersionRef(query.ref)), None)
+        if version is None:
+            raise VersionNotFoundError(str(library.id), query.ref)
+        manifest = await self.manifests.get_active(library.id, version.ref)
+        articles: list[ArticleTagSource] = []
+        after: str | None = None
+        while manifest is not None:
+            page = await self.manifests.list_entries(
+                manifest.id, prefix="", tags=TagSelection(), after=after, limit=TAG_SOURCE_PAGE
+            )
+            articles += [
+                ArticleTagSource(path=e.path, front_matter=e.front_matter, tags=list(e.tags))
+                for e in page
+            ]
+            if len(page) < TAG_SOURCE_PAGE:
+                break
+            after = page[-1].path
+        return VersionTags(
+            library=str(library.id),
+            ref=str(version.ref),
+            manifest_id=None if manifest is None else manifest.id,
+            articles=articles,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SetImportedTagsUseCase:
+    """Implements ``ports.driving.SetImportedTags``."""
+
+    manifests: ManifestRepository
+    writer: ImportedTagWriter
+
+    async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:
+        """Write the new imported tags; report every given article with every tag it carries."""
+        manifest_id = ManifestId(command.manifest_id)
+        if await self.manifests.get(manifest_id) is None:
+            raise ManifestNotFoundError(command.manifest_id)
+        tags = {a.path: tuple(dict.fromkeys(a.tags)) for a in command.articles}
+        touched = await self.writer.set_imported_tags(manifest_id, tags)
+        return RetaggedManifest.of(command.manifest_id, touched)
 
 
 @dataclass(frozen=True, slots=True)

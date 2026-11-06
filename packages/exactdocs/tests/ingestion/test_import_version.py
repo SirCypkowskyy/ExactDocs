@@ -17,6 +17,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
+    NoStoredTags,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
@@ -357,6 +358,7 @@ def build_world(
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
         tag_locks=TagLocks(),
+        imported_tags=NoStoredTags(),
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]

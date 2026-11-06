@@ -6,7 +6,11 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports.driven import (
+    ImportedTagWriter,
+    LibraryRepository,
+    ManifestRepository,
+)
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     ApplyManualTags,
@@ -20,6 +24,7 @@ from exactdocs.catalog.ports.driving import (
     GetAsset,
     GetLibrary,
     GetManifestStates,
+    GetVersionTags,
     ListArticles,
     ListDefaultManifests,
     ListLibraries,
@@ -31,6 +36,8 @@ from exactdocs.catalog.ports.driving import (
     ReplaceRenames,
     ResolveRenamedPath,
     ResolveVersion,
+    SetImportedTags,
+    SetLibrarySettings,
     SetManualTags,
     StoreManifest,
     UpdateLibrary,
@@ -48,6 +55,7 @@ from exactdocs.catalog.use_cases import (
     GetAssetUseCase,
     GetLibraryUseCase,
     GetManifestStatesUseCase,
+    GetVersionTagsUseCase,
     ListArticlesUseCase,
     ListDefaultManifestsUseCase,
     ListLibrariesUseCase,
@@ -60,6 +68,8 @@ from exactdocs.catalog.use_cases import (
     ReplaceRenamesUseCase,
     ResolveRenamedPathUseCase,
     ResolveVersionUseCase,
+    SetImportedTagsUseCase,
+    SetLibrarySettingsUseCase,
     SetManualTagsUseCase,
     StoreManifestUseCase,
     UpdateLibraryUseCase,
@@ -96,6 +106,9 @@ class CatalogModule:
     remove_library: RemoveLibrary
     set_manual_tags: SetManualTags
     apply_manual_tags: ApplyManualTags
+    set_library_settings: SetLibrarySettings
+    get_version_tags: GetVersionTags
+    set_imported_tags: SetImportedTags
     replace_renames: ReplaceRenames
 
     @classmethod
@@ -104,9 +117,13 @@ class CatalogModule:
         *,
         repository: LibraryRepository,
         manifests: ManifestRepository,
+        imported_tags: ImportedTagWriter,
         clock: Clock | None = None,
     ) -> Self:
-        """Assemble the use cases around the given driven adapters."""
+        """Assemble the use cases around the given driven adapters.
+
+        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores.
+        """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository, manifests)
         return cls(
@@ -135,5 +152,8 @@ class CatalogModule:
             remove_library=RemoveLibraryUseCase(repository, manifests),
             set_manual_tags=SetManualTagsUseCase(repository, tagger),
             apply_manual_tags=ApplyManualTagsUseCase(manifests, tagger),
+            set_library_settings=SetLibrarySettingsUseCase(repository),
+            get_version_tags=GetVersionTagsUseCase(repository, manifests),
+            set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags),
             replace_renames=ReplaceRenamesUseCase(repository, manifests, tagger),
         )
