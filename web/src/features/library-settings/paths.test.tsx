@@ -215,6 +215,22 @@ describe("paths and tag rules model", () => {
     expect(effectiveChange("tags", { ...failed, state: "succeeded" }).change).toBe("tags");
   });
 
+  it("warns a tag-only change as a re-chunk while the last re-chunk failed", () => {
+    const failed = { kind: "rechunk", state: "failed" } as const;
+    expect(effectiveChange("tags", failed)).toEqual({ change: "chunking", afterFailure: true });
+    expect(effectiveChange("paths", failed)).toEqual({ change: "paths", afterFailure: true });
+    const warning = reprocessWarning("chunking", ["v1.2.0"], true);
+    expect(warning.title).toBe("Re-chunk every version?");
+    expect(warning.what).toMatch(/^Its version \(v1\.2\.0\) will be re-chunked/);
+    expect(warning.what).toMatch(/nothing is fetched/);
+    expect(warning.confirm).toBe("Save and re-chunk");
+  });
+
+  it("leaves the chunking out of what is saved, so the server keeps it", () => {
+    const sent = settingsOf({ include: "docs/", exclude: "", rules: [] });
+    expect(sent).not.toHaveProperty("chunking");
+  });
+
   it("maps refusals to the field they are about", () => {
     const e = (status: number, code: string) =>
       new HttpError(status, "/v1/x", { error: code, detail: "d", fields: [] });
@@ -231,6 +247,7 @@ describe("paths and tag rules model", () => {
       include_paths: [],
       exclude_paths: [],
       tag_rules: [],
+      chunking: { split_level: 6, min_chars: 0, max_chars: null, chunker: "markdown" as const },
       reprocess: null,
       job_id: null,
       versions: ["v1"],
@@ -239,6 +256,7 @@ describe("paths and tag rules model", () => {
     expect(savedHeadline({ ...saved, versions: [] })).toMatch(/no version yet/);
     expect(savedHeadline({ ...saved, reprocess: "tags", job_id: "j" })).toMatch(/re-tagged/);
     expect(savedHeadline({ ...saved, reprocess: "paths", job_id: "j" })).toMatch(/re-processed/);
+    expect(savedHeadline({ ...saved, reprocess: "chunking", job_id: "j" })).toMatch(/re-chunked/);
   });
 });
 

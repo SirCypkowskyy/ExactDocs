@@ -5,6 +5,7 @@ import pytest
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
     InMemoryStoredArticles,
 )
@@ -77,6 +78,7 @@ def catalog() -> CatalogModule:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
         stored_articles=InMemoryStoredArticles(written),
     )
 
@@ -200,6 +202,7 @@ async def test_a_library_is_created_without_versions_and_not_twice() -> None:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
         stored_articles=InMemoryStoredArticles(written),
     ).create_library
     command = CreateLibraryCommand(

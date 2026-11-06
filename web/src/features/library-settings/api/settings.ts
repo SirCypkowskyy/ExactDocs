@@ -15,6 +15,8 @@ import type {
 import { settingsOf } from "../model/settings";
 
 const seg = encodeURIComponent;
+/** Jobs that re-process every version of a library after its settings were edited. */
+const LIBRARY_JOBS = new Set(["reprocess", "rechunk", "retag"]);
 const lib = (owner: string, repo: string) => `/v1/libraries/${seg(owner)}/${seg(repo)}` as const;
 /** A ref may hold slashes (`release/2`): the route takes the rest of the path, so keep them. */
 const refPath = (ref: string) => ref.split("/").map(seg).join("/");
@@ -29,7 +31,8 @@ export const saveDetails = (
 const RECENT_JOBS = 50;
 
 /**
- * The library's newest `reprocess` or `retag` job, or null: one that failed is offered again.
+ * The library's newest `reprocess`, `rechunk` or `retag` job, or null: one that failed is offered
+ * again.
  * Under the browse key, so every library refresh (and a finished job line) reloads it.
  */
 export const lastReprocessQueryOptions = (owner: string, repo: string) =>
@@ -40,7 +43,7 @@ export const lastReprocessQueryOptions = (owner: string, repo: string) =>
         signal,
         query: { limit: RECENT_JOBS },
       });
-      return jobs.find((j) => j.kind === "reprocess" || j.kind === "retag") ?? null;
+      return jobs.find((j) => LIBRARY_JOBS.has(j.kind)) ?? null;
     },
   });
 

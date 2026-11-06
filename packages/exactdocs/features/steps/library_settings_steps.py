@@ -9,6 +9,7 @@ from steps.import_steps import LIBRARY, articles_of, import_version, version_com
 
 VERSIONS = ("v1.3.0", "v1.4.0")
 ARCHIVE = "docs/archive/"
+SPLIT_LEVEL = 2  # what the re-chunking scenario sets
 
 
 def _settings(context: Context) -> dict:
@@ -23,6 +24,7 @@ def _put(context: Context, **changes: object) -> None:
         "include_paths": current["include_paths"],
         "exclude_paths": current["exclude_paths"],
         "tag_rules": current["tag_rules"],
+        "chunking": current["chunking"],
     } | changes
     context.response = context.client.put(f"/api/v1/libraries{LIBRARY}/settings", json=body)
 
@@ -174,3 +176,66 @@ def step_no_job_needed(context: Context) -> None:
     assert context.response.status_code == HTTPStatus.OK, context.response.text
     assert context.response.json()["job_id"] is None, context.response.text
     assert len(_jobs(context)) == context.jobs_before
+
+
+@given("re-chunking waits until it is released")
+def step_hold_chunking(context: Context) -> None:
+    context.chunker.held = True
+    context.add_cleanup(setattr, context.chunker, "held", False)
+
+
+@when('the user sets the split level to "{level}"')
+def step_split_level(context: Context, level: str) -> None:
+    chunking = _settings(context)["chunking"] | {"split_level": int(level.removeprefix("h"))}
+    _put(context, chunking=chunking)
+
+
+@then("a job re-chunks both versions")
+def step_rechunk_job(context: Context) -> None:
+    response = context.response
+    assert response.status_code == HTTPStatus.ACCEPTED, response.text
+    body = response.json()
+    assert body["reprocess"] == "chunking", body
+    assert body["chunking"]["split_level"] == SPLIT_LEVEL, body
+    assert sorted(body["versions"]) == list(VERSIONS), body
+    job = context.client.get(response.headers["Location"]).json()
+    assert job["kind"] == "rechunk", job
+    context.job_id = body["job_id"]
+
+
+def _sections(context: Context, ref: str, query: str) -> list[list[str]]:
+    response = context.client.get(
+        f"/api/v1/libraries{LIBRARY}/search", params={"q": query, "ref": ref, "limit": 50}
+    )
+    assert response.status_code == HTTPStatus.OK, response.text
+    found = [r["heading_path"] for r in response.json()["results"]]
+    assert found, (ref, query)
+    return found
+
+
+@then('until it finishes, searching "{query}" finds sections three headings deep in both versions')
+def step_old_chunks(context: Context, query: str) -> None:
+    assert context.client.get(f"/api/v1/jobs/{context.job_id}").json()["state"] in {
+        "queued",
+        "running",
+    }
+    context.query = query
+    for ref in VERSIONS:
+        assert any(len(path) > SPLIT_LEVEL for path in _sections(context, ref, query)), ref
+
+
+@then("afterwards every section found has at most two headings in both versions")
+def step_new_chunks(context: Context) -> None:
+    context.chunker.held = False
+    context.job = wait_for_job(context, context.job_id)
+    assert context.job["state"] == "succeeded", context.job
+    for ref in VERSIONS:
+        paths = _sections(context, ref, context.query)
+        assert all(len(path) <= SPLIT_LEVEL for path in paths), (ref, paths)
+
+
+@then("the re-chunking job succeeded without fetching")
+def step_rechunked_offline(context: Context) -> None:
+    assert context.git.failing
+    assert context.job["kind"] == "rechunk", context.job
+    assert context.job["chunked"] > 0, context.job

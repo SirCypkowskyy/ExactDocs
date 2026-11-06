@@ -30,3 +30,18 @@ Feature: Editing a library's paths or tag rules re-processes every version safel
   Scenario: Unchanged settings re-process nothing
     When the user saves the library's settings unchanged
     Then the settings are accepted without a job
+
+  Scenario: Changing the split level re-chunks without fetching
+    Given the repository can no longer be fetched
+    And re-chunking waits until it is released
+    When the user sets the split level to "h2"
+    Then a job re-chunks both versions
+    And until it finishes, searching "docker" finds sections three headings deep in both versions
+    And afterwards every section found has at most two headings in both versions
+    And the re-chunking job succeeded without fetching
+    And both versions keep their commits
+
+  Scenario: Chunking settings out of range are refused
+    When the user sets the split level to "h7"
+    Then the settings are refused as invalid
+    And no re-processing job is queued

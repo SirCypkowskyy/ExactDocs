@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import pytest
 from sqlalchemy import func, select, text, update
@@ -38,6 +38,7 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     PARSER_VERSION,
     ArticleChunk,
+    ChunkingConfig,
     ImportedVersion,
     Job,
     JobId,
@@ -64,6 +65,11 @@ class CountingChunker:
         self.inner = MarkdownChunker()
         self.config_hash = self.inner.config_hash
         self.chunked: list[str] = []
+
+    def configured(self, config: ChunkingConfig) -> Self:
+        self.inner = self.inner.configured(config)
+        self.config_hash = self.inner.config_hash
+        return self
 
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.chunked.append(article.path)

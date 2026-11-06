@@ -222,7 +222,7 @@ erDiagram
         text id PK "/owner/repo"
         text title
         text source_url
-        json settings "paths, tag rules"
+        json settings "paths, tag rules, chunking"
     }
     catalog_library_versions {
         text library_id PK, FK
@@ -308,7 +308,7 @@ erDiagram
 
     ingestion_jobs {
         text id PK
-        text kind "import, refresh, reprocess, retag, collect"
+        text kind "import, refresh, reprocess, rechunk, retag, collect"
         text library "by value"
         text version "ref, by value"
         text state "queued, running, succeeded, failed"
@@ -415,7 +415,7 @@ request. A `Job` has a kind, a library (and optionally a version), a state (`que
 `succeeded`, `failed`), `done`/`total` files, per-file problems (path, reason), an error and
 timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jobs` read them.
 
-- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, or the confirmed re-import of a moved tag, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile), `reprocess` (every version of a library re-imported at its commit after its paths were edited; `version` is null), `retag` (every version re-tagged from its stored articles after only its tag rules were edited: the catalog switches each version in one transaction and the search index's tag copies follow right after, as for manual tags) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
+- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, or the confirmed re-import of a moved tag, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile), `reprocess` (every version of a library re-imported at its commit after its paths were edited; `version` is null), `rechunk` (every version cut again from its stored text after its chunking was edited, see below), `retag` (every version re-tagged from its stored articles after only its tag rules were edited: the catalog switches each version in one transaction and the search index's tag copies follow right after, as for manual tags) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
   maps a kind to the `JobHandler` that runs it and, optionally, a `RecoveryHook`. Handlers report
   through a `JobProgress` port; every report is stored at once. Raising fails the job: a domain
   error's message is shown to users, anything else only as `unexpected <ErrorType>` (details go
@@ -495,7 +495,9 @@ selected file, tag, chunk, then **store** the articles as a pending catalog mani
 their chunks in retrieval and **activate** the manifest. Readers see the previous state until
 that last step, which is one transaction in the catalog.
 
-- **Steps (resumable, E3-11).** The import is a sequence of durable steps: list the selected
+- **Steps (resumable, E3-11).** The import is a sequence of durable steps: read the library's
+  chunking settings (so a resumed import cuts and labels its chunks with the config its first run
+  read, even if they were edited in between, `STEPS_VERSION` `jobs-4`); list the selected
   files; parse and chunk them `EXACTDOCS_IMPORT_BATCH_FILES` (100) at a time; read the README and
   the images; fetch the images outside the selection; detect renames; publish (store, index,
   activate). What follows the publish (renewing a newer version's rename map, #216, and the
@@ -513,16 +515,33 @@ that last step, which is one transaction in the catalog.
   text, its chunks, pickled and base64-encoded by DBOS), plus its images. The workflow is deleted
   when the job ends and the file is compacted (`VACUUM`) once no workflow is left in it, so it
   does not keep that size.
-- **Steps of `reprocess` and `retag`** (#61, `STEPS_VERSION` `jobs-2`): first the library's
+- **Steps of `reprocess`, `rechunk` and `retag`** (#61, #67, `STEPS_VERSION` `jobs-2`, then
+  `jobs-4`): first the library's
   versions (so a resumed job takes the same ones in the same order, even if one was added
   meanwhile), then **one step per version**: `re-import <ref>` runs the refresh import inside it
-  without steps of its own, `re-tag <ref>` the version's re-tag. The import's own steps are not
+  without steps of its own, `re-chunk <ref>` the version's re-chunk, `re-tag <ref>` its re-tag. The import's own steps are not
   used there: it reads the library and its credential before its first step, so a version that
   failed there and succeeded on a resume would take steps another version recorded. A version's
   result (files, chunk counters, problems, its failure) rebuilds the job's progress on a replay.
   A version killed halfway starts over (the recovery hook discards its pending manifest; a re-tag
   is safe to redo); the versions finished before are not done again, nor is a recorded failure
   retried by that job.
+- **Per-library chunking (E4-05).** A library's settings hold its chunking (`split_level`,
+  `min_chars`, `max_chars`, `chunker`; `ChunkingConfig`), and `Chunker.configured(config)` gives
+  the chunker an import cuts with; the config hash keys its chunk sets (the default config keeps
+  the hash it had before the sizes existed). Editing it queues a `rechunk` job: per version, the
+  catalog's `CopyManifest` copies the active manifest into a pending one in one transaction
+  (entries with their tags, images, renames; `INSERT ... SELECT`) and returns the stored text;
+  ingestion re-derives the imported tags (`SetImportedTags` on the copy), takes the chunk sets
+  retrieval already has for the new hash (`GetChunkSets`), cuts the other blobs, indexes the copy
+  and activates it like an import (manual tags last, under the tag lock). Nothing is fetched:
+  the stored text is what the parser gave, and whether its front matter was malformed is
+  recovered from it (`CopiedArticle.parsed`). A version whose text was stored by another parser
+  version (`content_version`) is refused by the copy and re-imported at its commit instead: a
+  chunk set keyed with the current parser must not be cut from older text. The copy is pending,
+  so readers keep the old chunks until the activation; the recovery hook discards it after a
+  crash. `reprocess` re-imports with the new chunking too, and `rechunk` re-tags, so one job of
+  the widest kind needed is queued.
 - **Undo.** Any failure after the store (an exception or a cancellation) discards the pending
   chunks and then the pending manifest. The order matters: retrieval asks the catalog and only
   removes a manifest it is told is still pending. After a crash the recovery hook does the same
@@ -584,8 +603,9 @@ that last step, which is one transaction in the catalog.
   unreadable one or one with a file name that is not UTF-8) is recorded as a job problem (the
   first 1000) and counted as processed. A folder that cannot be listed fails the import. `done`/`total` count the selected files.
 - **Bridges** (`bootstrap/bridges.py`): `CatalogLibrarySources`, `CatalogVersionPublisher`
-  (`StoreManifest`, `ActivateManifest`, `DiscardPendingManifests`) and `RetrievalChunkIndex`
-  (`IndexManifest`, `GetChunkSets`, `DiscardPendingChunks`).
+  (`StoreManifest`, `ActivateManifest`, `DiscardPendingManifests`), `CatalogVersionCopier`
+  (`CopyManifest`) and `RetrievalChunkIndex` (`IndexManifest`, `GetChunkSets`,
+  `DiscardPendingChunks`).
 
 ## Python conventions
 

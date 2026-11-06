@@ -312,3 +312,30 @@ class StoredArticleFinder(Protocol):
         holds that way are left out. Batched, so a caller may pass thousands of files.
         """
         ...
+
+
+class ManifestCopier(Protocol):
+    """Copies a version's active manifest into a new pending one (re-chunking what it serves).
+
+    Split from ``ManifestRepository`` for the same reason as ``ImportedTagWriter`` (PLR0904):
+    same tables, same transaction rules.
+    """
+
+    async def copy_active(
+        self,
+        library_id: LibraryId,
+        ref: VersionRef,
+        new_id: ManifestId,
+        *,
+        at: datetime,
+        content_version: int,
+    ) -> tuple[Manifest, Sequence[StoredArticle]] | None:
+        """Store a pending copy of the version's active manifest, in one transaction.
+
+        The copy, ``new_id`` created ``at``, has the same commit, entries (tags, manual tags and
+        front matter included), images and renames. Returns it (without entries) with each
+        article as a reader gets it, by path; ``None`` when the version has no active
+        manifest. Raises ``StoredContentOutdatedError`` and copies nothing when an entry was
+        stored by another parser version than ``content_version``.
+        """
+        ...

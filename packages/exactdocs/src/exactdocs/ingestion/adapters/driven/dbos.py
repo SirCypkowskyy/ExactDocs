@@ -24,8 +24,9 @@ STEPS_VERSION = "jobs-5"
 """DBOS's application version: bump it when a job's steps change (names, order or results).
 
 ``jobs-2`` added the steps of ``reprocess`` and ``retag`` (#61); ``jobs-3`` gave
-``ImportedRef`` its ``origin`` and ``pinned`` (#81); ``jobs-5`` counted the articles parsed
-and taken as stored (#164; ``jobs-4`` is #67's).
+``ImportedRef`` its ``origin`` and ``pinned`` (#81); ``jobs-4`` starts the import with "read
+the chunking settings" and added the steps of ``rechunk`` (#67); ``jobs-5`` counted the
+articles parsed and taken as stored (#164).
 
 A workflow of another version is not resumed: its job starts over from the beginning.
 """

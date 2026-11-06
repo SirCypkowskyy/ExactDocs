@@ -16,6 +16,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoRemovals,
 )
 from exactdocs.ingestion.dtos import (
+    ChunkingIn,
     EnqueueJobCommand,
     JobSummary,
     RemoveVersionCommand,
@@ -24,6 +25,7 @@ from exactdocs.ingestion.dtos import (
 )
 from exactdocs.ingestion.errors import (
     ImportInProgressError,
+    InvalidChunkingConfigError,
     InvalidPathPatternError,
     InvalidTagError,
     NoArticlesError,
@@ -32,9 +34,11 @@ from exactdocs.ingestion.errors import (
 )
 from exactdocs.ingestion.models import (
     IMPORT_JOB,
+    RECHUNK_JOB,
     REFRESH_JOB,
     REPROCESS_JOB,
     RETAG_JOB,
+    ChunkingConfig,
     ImportedRef,
     ImportSource,
     Job,
@@ -80,19 +84,27 @@ class Settings:
     """Stores settings into the sources the use cases read, like the catalog does."""
 
     sources: InMemoryLibrarySources
-    saved: list[tuple[PathSelection, tuple[TagRule, ...]]] = field(default_factory=list)
+    saved: list[tuple[PathSelection, tuple[TagRule, ...], ChunkingConfig]] = field(
+        default_factory=list
+    )
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event | None = None
     """When set, a save waits for it: an edit stays under way."""
 
-    async def save(self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]):
+    async def save(
+        self,
+        library: str,
+        selection: PathSelection,
+        tag_rules: Sequence[TagRule],
+        chunking: ChunkingConfig,
+    ):
         self.entered.set()
         if self.release is not None:
             await self.release.wait()
-        self.saved.append((selection, tuple(tag_rules)))
+        self.saved.append((selection, tuple(tag_rules), chunking))
         current = await self.sources.get(library)
         self.sources.sources[library] = replace(
-            current, selection=selection, tag_rules=tuple(tag_rules)
+            current, selection=selection, tag_rules=tuple(tag_rules), chunking=chunking
         )
 
 
@@ -120,7 +132,7 @@ def make_module(
         index=NoIndex(),
         handlers=handlers
         if handlers is not None
-        else {REPROCESS_JOB: _noop, RETAG_JOB: _noop, IMPORT_JOB: _noop},
+        else {REPROCESS_JOB: _noop, RECHUNK_JOB: _noop, RETAG_JOB: _noop, IMPORT_JOB: _noop},
         settings=settings,
     )
     return module, settings
@@ -131,12 +143,14 @@ def command(
     exclude: Sequence[str] = (),
     rules: Sequence[tuple[str, str]] = (),
     library: str = LIBRARY,
+    **chunking: Any,
 ) -> UpdateLibrarySettingsCommand:
     return UpdateLibrarySettingsCommand(
         library=library,
         include_paths=list(include),
         exclude_paths=list(exclude),
         tag_rules=[TagRuleIn(pattern=p, tag=t) for p, t in rules],
+        chunking=ChunkingIn(**chunking) if chunking else None,
     )
 
 
@@ -166,6 +180,87 @@ async def test_only_tag_rules_changed_queue_a_retag_job(sources, jobs, clock):
     assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RETAG_JOB]
 
 
+async def test_a_changed_chunking_queues_a_rechunk_job(sources, jobs, clock):
+    module, settings = make_module(sources, jobs, clock)
+
+    updated = await module.update_library_settings(command(split_level=2, max_chars=4000))
+
+    assert updated.reprocess is SettingsChange.CHUNKING
+    assert updated.chunking == ChunkingIn(split_level=2, max_chars=4000)
+    assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RECHUNK_JOB]
+    assert settings.saved[-1][2] == ChunkingConfig(split_depth=2, max_chars=4000)
+    assert (await sources.get(LIBRARY)).chunking == ChunkingConfig(split_depth=2, max_chars=4000)
+
+
+async def test_chunking_and_tag_rules_changed_queue_one_rechunk_which_re_tags_too(
+    sources, jobs, clock
+):
+    module, _ = make_module(sources, jobs, clock)
+
+    updated = await module.update_library_settings(command(rules=[("docs/**", "d")], split_level=3))
+
+    assert updated.reprocess is SettingsChange.CHUNKING
+    assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RECHUNK_JOB]
+
+
+async def test_chunking_left_out_keeps_the_stored_one(sources, jobs, clock):
+    module, settings = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(split_level=2, max_chars=4000))
+    await _succeed_running(jobs, clock)
+
+    tags = await module.update_library_settings(command(rules=[("docs/**", "d")]))
+
+    assert tags.reprocess is SettingsChange.TAGS
+    assert tags.chunking == ChunkingIn(split_level=2, max_chars=4000)
+    assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RETAG_JOB, RECHUNK_JOB]
+    assert settings.saved[-1][2] == ChunkingConfig(split_depth=2, max_chars=4000)
+    unchanged = await module.update_library_settings(command(rules=[("docs/**", "d")]))
+    assert (unchanged.reprocess, unchanged.job_id) == (None, None)
+
+
+async def test_changed_paths_and_chunking_queue_a_reprocess(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+
+    updated = await module.update_library_settings(command(exclude=["a/"], split_level=3))
+
+    assert updated.reprocess is SettingsChange.PATHS  # a re-import chunks with the new config
+    assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [REPROCESS_JOB]
+
+
+async def test_a_tag_edit_while_a_rechunk_is_queued_reuses_it(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    first = await module.update_library_settings(command(split_level=3))
+
+    tags = await module.update_library_settings(command(rules=[("docs/**", "d")], split_level=3))
+
+    assert tags.reprocess is SettingsChange.TAGS
+    assert tags.job_id == first.job_id
+    assert len(await jobs.list_for_library(LIBRARY)) == 1
+
+
+async def test_after_a_failed_rechunk_a_tag_edit_or_a_retry_re_chunks(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(split_level=3))
+    await _fail_running(jobs, clock)
+
+    retry = await module.update_library_settings(command(split_level=3))
+    await _fail_running(jobs, clock)
+    tags = await module.update_library_settings(command(rules=[("docs/**", "d")], split_level=3))
+
+    assert (retry.reprocess, tags.reprocess) == (SettingsChange.CHUNKING, SettingsChange.CHUNKING)
+    assert [j.kind for j in await jobs.list_for_library(LIBRARY)] == [RECHUNK_JOB] * 3
+
+
+async def test_a_failed_reprocess_wins_over_a_chunking_edit(sources, jobs, clock):
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))
+    await _fail_running(jobs, clock)
+
+    chunking = await module.update_library_settings(command(exclude=["a/"], split_level=2))
+
+    assert chunking.reprocess is SettingsChange.PATHS
+
+
 async def test_unchanged_settings_store_and_queue_nothing(sources, jobs, clock):
     module, settings = make_module(sources, jobs, clock)
 
@@ -181,6 +276,7 @@ async def test_unchanged_settings_store_and_queue_nothing(sources, jobs, clock):
     [
         (command(exclude=["../outside"]), InvalidPathPatternError),
         (command(rules=[("docs/**", "!!")]), InvalidTagError),
+        (command(min_chars=500, max_chars=100), InvalidChunkingConfigError),
     ],
 )
 async def test_invalid_settings_are_refused_before_anything_is_stored(
@@ -281,11 +377,14 @@ async def test_settings_are_put_back_when_the_job_cannot_be_queued(sources, jobs
         await update(command(exclude=["a/"]))
 
     assert await sources.get(LIBRARY) == SOURCE
-    assert [s for s, _ in settings.saved] == [PathSelection.of(["docs/"], ["a/"]), SOURCE.selection]
+    assert [s for s, _, _ in settings.saved] == [
+        PathSelection.of(["docs/"], ["a/"]),
+        SOURCE.selection,
+    ]
 
 
 async def test_settings_need_the_re_processing_handlers(sources, jobs, clock):
-    with pytest.raises(TypeError, match="reprocess and retag"):
+    with pytest.raises(TypeError, match="reprocess, rechunk and retag"):
         make_module(sources, jobs, clock, handlers={REPROCESS_JOB: _noop})
 
 

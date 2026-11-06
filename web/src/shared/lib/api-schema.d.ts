@@ -424,19 +424,23 @@ export interface paths {
         readonly get?: never;
         /**
          * Update Library Settings
-         * @description Replace the library's paths and tag rules; every version is then re-processed.
+         * @description Replace the library's paths, tag rules and chunking; every version is then re-processed.
          *
-         *     Send the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is
-         *     left out is cleared. Changed paths queue a `reprocess` job that fetches every version
-         *     again at the commit it serves (a branch is not synced) and re-imports it; only tag rules
-         *     changed queue a `retag` job that re-tags the stored articles, fetching nothing. Each
+         *     Send the whole set of paths and tag rules (`GET /libraries/{owner}/{repo}` has the current
+         *     `settings`): what is left out is cleared. `chunking` left out (or null) keeps the stored
+         *     one. Changed paths queue a `reprocess`
+         *     job that fetches every version again at the commit it serves (a branch is not synced)
+         *     and re-imports it; a changed chunking queues a `rechunk` job that cuts the stored
+         *     articles again (and re-tags them), fetching nothing unless a version was stored by an
+         *     older parser (that one is re-imported); only tag rules changed queue a `retag` job that
+         *     re-tags the stored articles, fetching nothing. Each
          *     version keeps serving its old state until its new one is complete, then switches at
          *     once (after a `retag`, search's tag filters follow the listings a moment later); one
          *     that fails keeps the old state and the job fails naming it. Sending the same settings
          *     again re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no
          *     job when the settings are unchanged and the last re-processing did not fail (or there
-         *     is no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing
-         *     is stored), 404 for an unknown library.
+         *     is no version yet: imports to come use them). 422 for an invalid pattern, tag or chunking
+         *     setting (nothing is stored), 404 for an unknown library.
          */
         readonly put: operations["ingestion-update_library_settings"];
         readonly post?: never;
@@ -1213,6 +1217,36 @@ export interface components {
             readonly code_languages: readonly string[];
         };
         /**
+         * ChunkingIn
+         * @description How a library's articles are cut into chunks (the defaults: one chunk per heading).
+         */
+        readonly ChunkingIn: {
+            /**
+             * Split Level
+             * @description The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.
+             * @default 6
+             */
+            readonly split_level: number;
+            /**
+             * Min Chars
+             * @description A chunk shorter than this is merged with the next one (the last with the one before), within `max_chars`; the text before the first heading is never merged.
+             * @default 0
+             */
+            readonly min_chars: number;
+            /**
+             * Max Chars
+             * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or table, so a section without deeper headings stays whole. Null: no bound. At least `min_chars`.
+             */
+            readonly max_chars?: number | null;
+            /**
+             * Chunker
+             * @description `markdown`: cuts at headings with markdown-it-py (the only one supported).
+             * @default markdown
+             * @constant
+             */
+            readonly chunker: "markdown";
+        };
+        /**
          * ChunkingOut
          * @description How articles are cut into chunks.
          */
@@ -1223,6 +1257,8 @@ export interface components {
             readonly min_chars: number;
             /** Max Chars */
             readonly max_chars: number | null;
+            /** Chunker */
+            readonly chunker: string;
         };
         /**
          * Context7Out
@@ -1682,7 +1718,10 @@ export interface components {
         };
         /**
          * LibrarySettingsIn
-         * @description A library's paths and tag rules, as a whole: what is left out is cleared.
+         * @description A library's paths and tag rules, as a whole (what is left out is cleared), and chunking.
+         *
+         *     Chunking left out (or null) keeps what is stored, so a client that edits only paths and tag
+         *     rules never resets it.
          */
         readonly LibrarySettingsIn: {
             /**
@@ -1700,6 +1739,8 @@ export interface components {
              * @description Tags for articles by path; they are added to the front-matter tags.
              */
             readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][];
+            /** @description Left out or null: the stored chunking is kept (unlike paths and tag rules). */
+            readonly chunking?: components["schemas"]["ChunkingIn"] | null;
         };
         /**
          * LibrarySettingsOut
@@ -2175,10 +2216,12 @@ export interface components {
         };
         /**
          * SettingsChange
-         * @description What an edit of a library's settings asks of its versions.
+         * @description What an edit of a library's settings asks of its versions; each does what follows it too.
+         *
+         *     ``PATHS`` re-imports with the new chunking and tag rules, ``CHUNKING`` re-tags as well.
          * @enum {string}
          */
-        readonly SettingsChange: "paths" | "tags";
+        readonly SettingsChange: "paths" | "chunking" | "tags";
         /**
          * Span
          * @description A `[start, end)` range of characters.
@@ -2377,7 +2420,8 @@ export interface components {
             readonly exclude_paths: readonly string[];
             /** Tag Rules */
             readonly tag_rules: readonly components["schemas"]["TagRuleIn"][];
-            /** @description `paths`: the selection changed, every version is fetched again at its commit; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed. */
+            readonly chunking: components["schemas"]["ChunkingIn"];
+            /** @description `paths`: the selection changed, every version is fetched again at its commit; `chunking`: the chunking changed (perhaps the tag rules too), every version is re-chunked and re-tagged from what is stored; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed. */
             readonly reprocess: components["schemas"]["SettingsChange"] | null;
             /**
              * Job Id

@@ -30,9 +30,10 @@ interface JobWords {
 
 const IMPORT_WORDS: JobWords = { unit: "file", noun: "Import", done: "imported" };
 
-/** A `reprocess` or `retag` job (a library's paths or tag rules were edited) counts versions. */
+/** A `reprocess`, `rechunk` or `retag` job (a library's settings were edited) counts versions. */
 function wordsOf(kind: string | undefined): JobWords {
   if (kind === "reprocess") return { unit: "version", noun: "Re-processing", done: "re-processed" };
+  if (kind === "rechunk") return { unit: "version", noun: "Re-chunking", done: "re-chunked" };
   if (kind === "retag") return { unit: "version", noun: "Re-tagging", done: "re-tagged" };
   return IMPORT_WORDS;
 }

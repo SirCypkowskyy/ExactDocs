@@ -7,6 +7,7 @@ import pytest
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
     InMemoryStoredArticles,
 )
@@ -14,8 +15,11 @@ from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
     ArticleTags,
+    ChunkingIn,
+    CopyManifestCommand,
     GetArticleQuery,
     GetLibraryQuery,
+    GetManifestStatesQuery,
     GetVersionTagsQuery,
     SetImportedTagsCommand,
     SetLibrarySettingsCommand,
@@ -27,6 +31,7 @@ from exactdocs.catalog.errors import (
     InvalidSettingsError,
     LibraryNotFoundError,
     ManifestNotFoundError,
+    StoredContentOutdatedError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
@@ -77,6 +82,7 @@ def catalog() -> CatalogModule:
         repository=libraries,
         manifests=manifests,
         imported_tags=InMemoryImportedTags(manifests),
+        copier=InMemoryManifestCopier(manifests),
         stored_articles=InMemoryStoredArticles(manifests),
     )
 
@@ -91,13 +97,14 @@ async def publish(catalog: CatalogModule, ref: str, *articles: ArticleIn) -> str
     return stored.manifest_id
 
 
-async def test_settings_replace_paths_and_tag_rules_and_keep_chunking(catalog):
+async def test_settings_replace_paths_tag_rules_and_chunking(catalog):
     detail = await catalog.set_library_settings(
         SetLibrarySettingsCommand(
             id=LIBRARY,
             include_paths=["guide/"],
             exclude_paths=["guide/old/**"],
             tag_rules=[TagRuleIn(pattern="guide/api/**", tag="api")],
+            chunking=ChunkingIn(split_level=2, min_chars=100, max_chars=3000),
         )
     )
 
@@ -106,7 +113,13 @@ async def test_settings_replace_paths_and_tag_rules_and_keep_chunking(catalog):
     assert stored.settings.include_paths == ["guide/"]
     assert stored.settings.exclude_paths == ["guide/old/**"]
     assert [(r.pattern, r.tag) for r in stored.settings.tag_rules] == [("guide/api/**", "api")]
-    assert stored.settings.chunking.split_level == CHUNKING.split_level
+    assert stored.settings.chunking.model_dump() == {
+        "split_level": 2,
+        "min_chars": 100,
+        "max_chars": 3000,
+        "chunker": "markdown",
+    }
+    assert stored.settings.chunking.split_level != CHUNKING.split_level  # the one before
 
 
 async def test_settings_of_an_unknown_library_are_refused(catalog):
@@ -177,3 +190,56 @@ async def test_imported_tags_are_replaced_and_listings_see_them_with_manual_ones
 async def test_imported_tags_of_an_unknown_manifest_are_refused(catalog):
     with pytest.raises(ManifestNotFoundError):
         await catalog.set_imported_tags(SetImportedTagsCommand(manifest_id="nope", articles=[]))
+
+
+async def test_a_copied_manifest_stays_pending_until_it_is_activated(catalog):
+    await publish(catalog, "v1", article("docs/a.md", "api", front_matter={"tags": ["api"]}))
+    await catalog.set_manual_tags(
+        SetManualTagsCommand(library=LIBRARY, path="docs/a.md", tags=["m"])
+    )
+
+    copied = await catalog.copy_manifest(
+        CopyManifestCommand(library=LIBRARY, ref="v1", content_version=1)
+    )
+
+    assert (copied.library, copied.ref, copied.kind, copied.commit_sha) == (
+        LIBRARY,
+        "v1",
+        RefKind.TAG,
+        sha("v1"),
+    )
+    assert [(a.path, a.tags, a.front_matter, a.content) for a in copied.articles] == [
+        ("docs/a.md", ["api"], {"tags": ["api"]}, "# docs/a.md")  # imported tags only
+    ]
+    states = await catalog.get_manifest_states(
+        GetManifestStatesQuery(manifest_ids=[copied.manifest_id])
+    )
+    assert states.states[copied.manifest_id] == "pending"
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=copied.manifest_id))
+    shown = await catalog.get_article(GetArticleQuery(library=LIBRARY, ref="v1", path="docs/a.md"))
+    assert (shown.manifest_id, shown.tags) == (copied.manifest_id, ["api", "m"])
+
+
+async def test_a_copy_needs_a_known_version_and_text_of_this_parser(catalog):
+    await publish(catalog, "v1", article("docs/a.md"))
+
+    with pytest.raises(StoredContentOutdatedError):
+        await catalog.copy_manifest(
+            CopyManifestCommand(library=LIBRARY, ref="v1", content_version=2)
+        )
+    with pytest.raises(VersionNotFoundError):
+        await catalog.copy_manifest(
+            CopyManifestCommand(library=LIBRARY, ref="v2", content_version=1)
+        )
+    with pytest.raises(LibraryNotFoundError):
+        await catalog.copy_manifest(
+            CopyManifestCommand(library="/acme/nope", ref="v1", content_version=1)
+        )
+
+
+async def test_settings_without_chunking_keep_the_stored_one(catalog):
+    await catalog.set_library_settings(SetLibrarySettingsCommand(id=LIBRARY, include_paths=["a/"]))
+
+    stored = await catalog.get_library(GetLibraryQuery(id=LIBRARY))
+    assert stored.settings.include_paths == ["a/"]
+    assert stored.settings.chunking.split_level == CHUNKING.split_level

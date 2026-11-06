@@ -69,6 +69,7 @@ class ChunkingOut(_FromModel):
     split_level: int
     min_chars: int
     max_chars: int | None
+    chunker: str
 
 
 class LibrarySettingsOut(_FromModel):
@@ -970,13 +971,26 @@ class Removal(_Dto):
     default_ref: str | None
 
 
+class ChunkingIn(_Dto):
+    """How articles are cut (validated by the importer, which knows the chunkers)."""
+
+    split_level: int = Field(default=6, ge=1, le=6)
+    min_chars: int = Field(default=0, ge=0)
+    max_chars: int | None = Field(default=None, ge=1)
+    chunker: str = Field(default="markdown", min_length=1, max_length=64)
+
+
 class SetLibrarySettingsCommand(_Dto):
-    """Replace a library's paths and tag rules (validated and normalized by the importer)."""
+    """Replace a library's paths and tag rules, and the chunking unless it is left out (None).
+
+    Validated and normalized by the importer.
+    """
 
     id: str = Field(min_length=1)
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+    chunking: ChunkingIn | None = None
 
 
 class GetVersionTagsQuery(_Dto):
@@ -1042,3 +1056,35 @@ class StoredArticles(_Dto):
     """The asked files the catalog holds; the others are left out."""
 
     articles: list[StoredArticleOut]
+
+
+class CopyManifestCommand(_Dto):
+    """Copy a version's active manifest into a new pending one (to re-chunk what it serves)."""
+
+    library: str = Field(min_length=1)
+    ref: str = Field(min_length=1)
+    content_version: int = Field(
+        description="The parser version the articles must be stored by, else nothing is copied."
+    )
+
+
+class CopiedArticle(_Dto):
+    """An article of the copy with its stored text; `tags` are the imported ones."""
+
+    path: str
+    blob_sha: str
+    title: str
+    front_matter: dict[str, Any]
+    tags: list[str]
+    content: str
+
+
+class CopiedManifest(_Dto):
+    """The pending copy: activate it with `ActivateManifest`, or discard it."""
+
+    manifest_id: str
+    library: str
+    ref: str
+    kind: RefKind
+    commit_sha: str
+    articles: list[CopiedArticle]

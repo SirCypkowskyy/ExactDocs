@@ -19,6 +19,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
+    NoCopier,
     NoStoredTags,
 )
 from exactdocs.ingestion.errors import (
@@ -39,6 +40,7 @@ from exactdocs.ingestion.models import (
     REFRESH_JOB,
     AccessToken,
     ArticleChunk,
+    ChunkingConfig,
     Credential,
     GitRename,
     ImportedRef,
@@ -269,6 +271,11 @@ class CountingChunker:
         self.chunked: list[str] = []
         self.config_hash = self.inner.config_hash
 
+    def configured(self, config: ChunkingConfig) -> Self:
+        self.inner = self.inner.configured(config)
+        self.config_hash = self.inner.config_hash
+        return self
+
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.chunked.append(article.path)
         return self.inner.chunk(article)
@@ -396,6 +403,7 @@ def build_world(
         max_images_bytes=max_images_bytes,
         tag_locks=TagLocks(),
         imported_tags=NoStoredTags(),
+        copier=NoCopier(),
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]

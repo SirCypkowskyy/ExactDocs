@@ -9,6 +9,7 @@ from typing import Self
 from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
+    ManifestCopier,
     ManifestRepository,
     StoredArticleFinder,
 )
@@ -17,6 +18,7 @@ from exactdocs.catalog.ports.driving import (
     ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
+    CopyManifest,
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
@@ -49,6 +51,7 @@ from exactdocs.catalog.use_cases import (
     ApplyManualTagsUseCase,
     ApplyReadmeUseCase,
     CollectGarbageUseCase,
+    CopyManifestUseCase,
     CreateLibraryUseCase,
     DiscardLibraryUseCase,
     DiscardPendingManifestsUseCase,
@@ -114,6 +117,7 @@ class CatalogModule:
     set_imported_tags: SetImportedTags
     find_stored_articles: FindStoredArticles
     replace_renames: ReplaceRenames
+    copy_manifest: CopyManifest
 
     @classmethod
     def build(
@@ -123,12 +127,14 @@ class CatalogModule:
         manifests: ManifestRepository,
         imported_tags: ImportedTagWriter,
         stored_articles: StoredArticleFinder,
+        copier: ManifestCopier,
         clock: Clock | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
-        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores;
-        ``stored_articles`` finds their articles by what they were imported from.
+        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores,
+        ``copier`` copies them and ``stored_articles`` finds their articles by what they were
+        imported from.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository, manifests)
@@ -163,4 +169,5 @@ class CatalogModule:
             set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags),
             find_stored_articles=FindStoredArticlesUseCase(stored_articles),
             replace_renames=ReplaceRenamesUseCase(repository, manifests, tagger),
+            copy_manifest=CopyManifestUseCase(repository, copier, clock),
         )

@@ -10,6 +10,7 @@ import pytest
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
     InMemoryStoredArticles,
 )
@@ -143,6 +144,7 @@ def world() -> World:
             manifests=manifests,
             clock=clock,
             imported_tags=InMemoryImportedTags(manifests),
+            copier=InMemoryManifestCopier(manifests),
             stored_articles=InMemoryStoredArticles(manifests),
         ),
         manifests,

@@ -144,6 +144,17 @@ class ManifestNotFoundError(NotFoundError):
         self.manifest_id = manifest_id
 
 
+class StoredContentOutdatedError(ConflictError):
+    """A manifest's articles were stored by another parser version than the one asked for."""
+
+    code = "stored_content_outdated"
+
+    def __init__(self, library: str, ref: str) -> None:
+        super().__init__(f"the articles of {library} {ref} were stored by another parser version")
+        self.library = library
+        self.ref = ref
+
+
 class ManifestNotPendingError(ConflictError):
     """Only a pending manifest can be activated; this one is already active or superseded."""
 

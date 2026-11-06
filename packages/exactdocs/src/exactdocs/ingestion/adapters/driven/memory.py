@@ -10,6 +10,7 @@ from exactdocs.ingestion.models import (
     IMPORT_KINDS,
     ArticleChunk,
     AutoSync,
+    CopiedVersion,
     Credential,
     GitRename,
     ImportedRef,
@@ -154,6 +155,14 @@ class NoIndex:
         raise NotImplementedError
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        """Not expected to be called."""
+        raise NotImplementedError
+
+
+class NoCopier:
+    """Implements ``ports.driven.VersionCopier``; any call is a test bug. For tests."""
+
+    async def copy(self, library: str, ref: str, *, content_version: int) -> CopiedVersion | None:
         """Not expected to be called."""
         raise NotImplementedError
 

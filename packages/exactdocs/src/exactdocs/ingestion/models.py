@@ -403,7 +403,9 @@ REPROCESS_JOB = JobKind("reprocess")
 """Re-imports every version of a library at its commit after its paths changed (one job)."""
 RETAG_JOB = JobKind("retag")
 """Re-tags every version of a library from its stored articles after its tag rules changed."""
-LIBRARY_KINDS = frozenset({REPROCESS_JOB, RETAG_JOB})
+RECHUNK_JOB = JobKind("rechunk")
+"""Re-chunks (and re-tags) every version from its stored articles after its chunking changed."""
+LIBRARY_KINDS = frozenset({REPROCESS_JOB, RECHUNK_JOB, RETAG_JOB})
 """Kinds of job that touch every version of the library (their ``version`` is ``None``)."""
 COLLECT_JOB = JobKind("collect")
 """The kind of job that frees what removed or replaced versions left on disk."""
@@ -932,15 +934,47 @@ def branch_name(raw: str) -> str | None:
     return raw if ok else None
 
 
+DEFAULT_CHUNKER = "markdown"
+CHUNKERS = frozenset({DEFAULT_CHUNKER})
+"""The chunkers a library can choose: ``markdown`` cuts at headings with markdown-it-py.
+
+Chonkie was dropped (#27: its Markdown recipe needs the Hugging Face Hub and the network).
+"""
+MAX_CHUNK_CHARS = 1_000_000
+"""Upper bound of ``min_chars`` and ``max_chars``: bigger is no bound at all (a whole article)."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ChunkingConfig:
-    """How articles are cut. ``split_depth`` is the deepest heading level that starts a chunk."""
+    """How articles are cut (per library, LIB-09).
+
+    ``split_depth`` is the deepest heading level that starts a chunk (``h1``...``h6``). A section
+    longer than ``max_chars`` is cut again at its deeper headings, and sections shorter than
+    ``min_chars`` are merged with the next one (the last with the one before) while the merged
+    chunk stays within ``max_chars``: never inside a block, never with the text before the first
+    heading. ``None`` means no upper bound. ``chunker`` is one of ``CHUNKERS``.
+    """
 
     split_depth: int = MAX_HEADING_LEVEL
+    min_chars: int = 0
+    max_chars: int | None = None
+    chunker: str = DEFAULT_CHUNKER
 
     def __post_init__(self) -> None:
         if not 1 <= self.split_depth <= MAX_HEADING_LEVEL:
             raise InvalidChunkingConfigError
+        if not 0 <= self.min_chars <= MAX_CHUNK_CHARS:
+            reason = f"min_chars must be between 0 and {MAX_CHUNK_CHARS}"
+            raise InvalidChunkingConfigError(reason)
+        if self.max_chars is not None and not 1 <= self.max_chars <= MAX_CHUNK_CHARS:
+            reason = f"max_chars must be between 1 and {MAX_CHUNK_CHARS}"
+            raise InvalidChunkingConfigError(reason)
+        if self.max_chars is not None and self.max_chars < self.min_chars:
+            reason = "max_chars must not be smaller than min_chars"
+            raise InvalidChunkingConfigError(reason)
+        if self.chunker not in CHUNKERS:
+            reason = f"chunker must be one of {', '.join(sorted(CHUNKERS))}"
+            raise InvalidChunkingConfigError(reason)
 
 
 def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
@@ -949,11 +983,14 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     ``engine`` names the library an adapter cuts with and its version, so upgrading it re-chunks.
 
     A fix to the parser or the chunker changes it, so stored articles are re-chunked instead of
-    reusing a chunk set made by older code.
+    reusing a chunk set made by older code. The size bounds and the chunker are added only when
+    they differ from the defaults, so the chunk sets stored before they existed stay valid.
     """
-    payload = json.dumps(
-        [PARSER_VERSION, CHUNKER_VERSION, config.split_depth, engine], separators=(",", ":")
-    )
+    fields: list[object] = [PARSER_VERSION, CHUNKER_VERSION, config.split_depth, engine]
+    extra = (config.min_chars, config.max_chars, config.chunker)
+    if extra != (0, None, DEFAULT_CHUNKER):
+        fields.extend(extra)
+    payload = json.dumps(fields, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
@@ -1523,6 +1560,7 @@ class ImportSource:
     url: RepositoryUrl
     selection: PathSelection
     tag_rules: tuple[TagRule, ...] = ()
+    chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1681,7 +1719,7 @@ class StoredArticle:
         ``None`` when only a parse can tell: the text starts with a ``---`` block, which may be
         front matter that did not parse (kept in the body, with a note to list again).
         """
-        if _FRONT_MATTER.match(self.content):
+        if malformed_front_matter_length(self.content):
             return None
         front_matter = dict(self.front_matter)
         tags, problems = _declared(front_matter)
@@ -1706,12 +1744,66 @@ class StoredTags:
 
 
 class SettingsChange(StrEnum):
-    """What an edit of a library's settings asks of its versions."""
+    """What an edit of a library's settings asks of its versions; each does what follows it too.
+
+    ``PATHS`` re-imports with the new chunking and tag rules, ``CHUNKING`` re-tags as well.
+    """
 
     PATHS = "paths"
     """The selection changed: every version is fetched again at its commit and re-imported."""
+    CHUNKING = "chunking"
+    """The chunking changed: every version is re-chunked from what is stored, nothing fetched."""
     TAGS = "tags"
     """Only tag rules changed: every version is re-tagged from what is stored, nothing fetched."""
+
+    @property
+    def reach(self) -> int:
+        """How much it redoes: a change of greater reach does all that one of smaller reach does."""
+        return {SettingsChange.TAGS: 1, SettingsChange.CHUNKING: 2, SettingsChange.PATHS: 3}[self]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CopiedArticle:
+    """An article of a version's copied manifest, with its stored text (re-chunking)."""
+
+    path: str
+    blob_sha: str
+    title: str
+    front_matter: Mapping[str, Any]
+    tags: tuple[str, ...]
+    """Imported: path rules and front matter (manual tags are kept apart)."""
+    content: str
+
+    def parsed(self) -> ParsedArticle:
+        """Return the article as the parser gave it: what a chunker cuts.
+
+        Only whether the front matter was malformed (it is then still in the body, and not
+        Markdown to cut at) is not stored: it is when nothing was taken from a leading block
+        that the YAML loader refuses.
+        """
+        problems: tuple[str, ...] = ()
+        if not self.front_matter and malformed_front_matter_length(self.content):
+            reparsed = parse_article(self.path, self.content)
+            if reparsed.body == self.content:
+                problems = reparsed.problems
+        return ParsedArticle(
+            path=self.path,
+            title=self.title,
+            body=self.content,
+            front_matter=dict(self.front_matter),
+            problems=problems,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CopiedVersion:
+    """A version's active manifest copied into a new pending one, to be re-chunked."""
+
+    manifest_id: str
+    """The copy: pending, with the same entries, images and renames."""
+    kind: RefKind
+    commit_sha: str
+    articles: tuple[CopiedArticle, ...]
 
 
 @dataclass(frozen=True, slots=True)
