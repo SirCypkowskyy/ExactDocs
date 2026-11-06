@@ -1,7 +1,11 @@
 import { FileText, Folder, Info } from "lucide-react";
+import { useState } from "react";
+import { lines } from "@/shared/lib/path-selection";
 import { Button } from "@/shared/ui/button";
-import type { Extra, PreviewForm, usePreview } from "../hooks/use-preview";
+import { FormAlert } from "@/shared/ui/form-alert";
+import { type Extra, type PreviewForm, usePreview } from "../hooks/use-preview";
 import {
+  type AddProblem,
   type Context7,
   type PreviewFolder,
   previewCountText,
@@ -143,18 +147,30 @@ interface Props {
   onSelect: (tag: string, on: boolean) => void;
   /** The ref the form will add now. */
   current: string | null;
+  /** Inside another page's section (library settings): a sub-heading, and only the files. */
+  compact?: boolean;
 }
 
 /** The files an import would take, as a tree with counts, and what `context7.json` adds. */
-function FilePreview({ preview, tree, stale, prefilled, selected, onSelect, current }: Props) {
+function FilePreview({
+  preview,
+  tree,
+  stale,
+  prefilled,
+  selected,
+  onSelect,
+  current,
+  compact = false,
+}: Props) {
+  const Heading = compact ? "h3" : "h2";
   return (
     <section
       aria-labelledby="preview-title"
       className="fade-in rounded-lg border border-border px-4 py-4"
     >
-      <h2 id="preview-title" className="text-base font-semibold">
-        Files to import
-      </h2>
+      <Heading id="preview-title" className="text-base font-semibold">
+        {compact ? "Files these paths take" : "Files to import"}
+      </Heading>
       <p className="mt-0.5 text-sm text-muted-foreground">
         <span className="font-mono text-[13px] [overflow-wrap:anywhere]">{preview.ref}</span>
         <span aria-hidden="true"> · </span>
@@ -178,17 +194,21 @@ function FilePreview({ preview, tree, stale, prefilled, selected, onSelect, curr
           <Entries folder={tree} root />
         </section>
       )}
-      <Context7Note
-        context7={preview.context7}
-        warning={preview.context7_warning}
-        prefilled={prefilled}
-      />
-      <OlderVersions
-        versions={preview.context7?.previous_versions ?? []}
-        current={current}
-        selected={selected}
-        onSelect={onSelect}
-      />
+      {!compact && (
+        <>
+          <Context7Note
+            context7={preview.context7}
+            warning={preview.context7_warning}
+            prefilled={prefilled}
+          />
+          <OlderVersions
+            versions={preview.context7?.previous_versions ?? []}
+            current={current}
+            selected={selected}
+            onSelect={onSelect}
+          />
+        </>
+      )}
     </section>
   );
 }
@@ -246,6 +266,67 @@ export function PreviewPanel({
         />
       )}
     </>
+  );
+}
+
+interface SelectionPreviewProps {
+  /** The library's repository. */
+  url: string;
+  /** The version to look at (the default one); null: the default branch. */
+  version: string | null;
+  include: string;
+  exclude: string;
+}
+
+/**
+ * The Preview button and its files for a library that exists already (its settings page): which
+ * files the paths as typed take in one version, before they are saved. No paths means every
+ * Markdown file there, so `**` is sent: an empty selection would take the repository's
+ * context7.json paths instead, which a stored library no longer follows.
+ */
+export function SelectionPreview({ url, version, include, exclude }: SelectionPreviewProps) {
+  const [problem, setProblem] = useState<AddProblem>();
+  const preview = usePreview({
+    onFail: setProblem,
+    onPrefill: () => undefined,
+    onStart: () => setProblem(undefined),
+  });
+  const empty = lines(include).length + lines(exclude).length === 0;
+  const form: PreviewForm = { url, ref: version, include: empty ? "**" : include, exclude };
+  const shown = preview.preview;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <PreviewButton pending={preview.pending} onClick={() => void preview.start(form)} />
+        <p id="preview-hint" className="text-sm text-muted-foreground">
+          See which files these paths take in{" "}
+          {version ? (
+            <span className="font-mono text-[13px]">{version}</span>
+          ) : (
+            "the default branch"
+          )}
+          , before saving.
+        </p>
+      </div>
+      <FormAlert id="preview-alert" message={problem?.message} link={problem?.link} />
+      <p role="status" className="sr-only">
+        {shown && !preview.pending ? previewCountText(shown.result) : ""}
+      </p>
+      {shown && preview.tree && (
+        <FilePreview
+          preview={shown.result}
+          tree={preview.tree}
+          // `form` has `**` in place of empty boxes, as it was sent: clearing the boxes after an
+          // empty-box preview keeps it current, because it asked for exactly that.
+          stale={shown.key !== previewKey(form)}
+          prefilled={false}
+          selected={preview.selected}
+          onSelect={preview.select}
+          current={version}
+          compact
+        />
+      )}
+    </div>
   );
 }
 

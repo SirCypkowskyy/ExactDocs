@@ -1,6 +1,13 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
-import { normalizeTag } from "@/shared/lib/tags";
+import {
+  filledRules,
+  lines,
+  TAG_RULE_HINT,
+  type TagRuleDraft,
+  validatePatterns,
+  validateRule,
+} from "@/shared/lib/path-selection";
 
 export type CheckedRepository = components["schemas"]["CheckedRepository"];
 export type AddedLibrary = components["schemas"]["AddedLibrary"];
@@ -11,8 +18,6 @@ export type RepositoryPreview = components["schemas"]["RepositoryPreview"];
 export type Context7 = components["schemas"]["Context7Out"];
 export type PreviewCommand = components["schemas"]["PreviewRepositoryCommand"];
 export type AddedVersion = components["schemas"]["AddedVersion"];
-
-export const MAX_TAG_RULES = 64;
 
 /** Where a failed request belongs in the form: next to the field it is about, else the alert. */
 export type AddField = "url" | "id" | "ref" | "paths" | "tags";
@@ -47,52 +52,6 @@ export function validateLibraryId(raw: string): string | undefined {
   }
   return undefined;
 }
-
-export const lines = (text: string) =>
-  text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-/** Patterns are repo-relative: never absolute, never `..`. Returns the first bad line. */
-export function validatePatterns(text: string): string | undefined {
-  for (const pattern of lines(text)) {
-    if (pattern.startsWith("/"))
-      return `“${pattern}” starts with /. Paths are relative to the repository root, like docs/.`;
-    if (pattern.split("/").includes(".."))
-      return `“${pattern}” uses “..”. Paths stay inside the repository.`;
-  }
-  return undefined;
-}
-
-export interface TagRuleDraft {
-  key: number;
-  pattern: string;
-  tag: string;
-}
-
-/** What a tag may look like; the server stores it normalized (`Getting Started` is `getting-started`). */
-const TAG_RULE =
-  "Start with a letter or digit, then letters, digits, spaces and . + - _ (40 characters at most).";
-
-export function validateRule(rule: TagRuleDraft): { pattern?: string; tag?: string } {
-  const problems: { pattern?: string; tag?: string } = {};
-  const pattern = rule.pattern.trim();
-  const tag = rule.tag.trim();
-  if (!pattern) problems.pattern = "Add a path, like docs/api/**.";
-  else if (pattern.startsWith("/") || pattern.split("/").includes("..")) {
-    problems.pattern = "Use a path inside the repository, like docs/api/**.";
-  }
-  if (!tag) problems.tag = "Add a tag, like api.";
-  else if (!normalizeTag(tag)) {
-    problems.tag = TAG_RULE;
-  }
-  return problems;
-}
-
-/** Rules the user left completely empty are ignored rather than reported. */
-export const filledRules = (rules: readonly TagRuleDraft[]) =>
-  rules.filter((r) => r.pattern.trim() || r.tag.trim());
 
 const session = (error: HttpError): AddProblem | undefined => {
   if (error.status === 401) {
@@ -198,7 +157,7 @@ export function explainAddError(error: unknown, ref: string | null): AddProblem 
     case "invalid_tag":
       return {
         field: "tags",
-        message: `A tag isn't valid. ${TAG_RULE}`,
+        message: `A tag isn't valid. ${TAG_RULE_HINT}`,
       };
     case "invalid_repository_url":
     case "not_a_git_repository":
@@ -290,13 +249,6 @@ export function validateForm(form: {
     return Boolean(p.pattern || p.tag);
   });
   return { id, paths, badRule, ok: !id && !paths && !badRule };
-}
-
-/** Which path box holds a local mistake (the first one), if any. */
-export function badPathBox(include: string, exclude: string): "include" | "exclude" | undefined {
-  if (validatePatterns(include)) return "include";
-  if (validatePatterns(exclude)) return "exclude";
-  return undefined;
 }
 
 /** `1000` listed and a truncation marker: the real count is higher, so say "1000+". */

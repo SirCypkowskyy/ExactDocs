@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check } from "lucide-react";
 import { type FormEvent, useCallback, useRef, useState } from "react";
+import { filledRules, lines, type TagRuleDraft } from "@/shared/lib/path-selection";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { usePageTitle } from "@/shared/lib/use-page-title";
@@ -19,9 +20,6 @@ import {
   type CheckedRepository,
   explainAddError,
   explainCheckError,
-  filledRules,
-  lines,
-  type TagRuleDraft,
   validateForm,
   validateUrl,
 } from "../model/add-library";

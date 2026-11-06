@@ -64,6 +64,12 @@ older parser is re-imported at its commit instead). Only tag rules changed: a `r
 re-derives each stored article's imported tags (front matter plus rules) and writes them per
 version in one transaction, then copies them onto the chunks, without fetching. Until a version
 is done it serves its previous state; one that fails keeps it.
+In the web UI, paths and tag rules are edited in *Files and tags* on the library's settings page
+(it leaves the chunking as stored): saving a change first warns that every version is
+re-processed (naming them), then follows the job's progress; a Preview shows which files the
+typed paths take in the default version (not for a private library yet: a preview cannot use its
+stored credential). When the newest re-processing failed, the section shows it with *Run again*,
+which sends the stored settings back.
 
 ### Re-sync
 

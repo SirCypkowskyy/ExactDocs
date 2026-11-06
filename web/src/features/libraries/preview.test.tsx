@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { TestRouter } from "@/shared/lib/test-router";
-import { AddLibraryPage } from "./index";
+import { AddLibraryPage, SelectionPreview } from "./index";
 import {
   buildFileTree,
   explainAddError,
@@ -513,5 +513,56 @@ describe("add library preview", () => {
     await screen.findByRole("region", { name: "Files to import" });
     await userEvent.type(screen.getByLabelText("Repository address"), "-x");
     expect(screen.queryByRole("region", { name: "Files to import" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the preview of a stored library's paths", () => {
+  function renderSelection(include: string, exclude: string) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SelectionPreview url={URL_} version="v1.4.0" include={include} exclude={exclude} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("previews the typed paths in the version, with only the files and no context7 offers", async () => {
+    const { preview } = serve({
+      preview: () => ({
+        status: 200,
+        body: { ...PREVIEW, ref: "v1.4.0", context7: CONTEXT7, files: ["docs/index.md"], total: 1 },
+      }),
+    });
+    renderSelection("docs/", "docs/archive/**");
+    await userEvent.click(previewButton());
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Files these paths take" }),
+    ).toBeInTheDocument();
+    expect(preview).toHaveBeenCalledWith({
+      url: URL_,
+      ref: "v1.4.0",
+      include_paths: ["docs/"],
+      exclude_paths: ["docs/archive/**"],
+    });
+    expect(screen.getByRole("region", { name: "Matching files" })).toHaveTextContent("index.md");
+    expect(screen.queryByText(/context7\.json/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Also import older versions")).not.toBeInTheDocument();
+  });
+
+  it("sends every Markdown file for empty boxes, so the repository's context7.json paths do not apply", async () => {
+    const { preview } = serve();
+    renderSelection("", "");
+    await userEvent.click(previewButton());
+    await screen.findByRole("heading", { name: "Files these paths take" });
+    expect(preview.mock.calls[0]?.[0]).toMatchObject({ include_paths: ["**"], exclude_paths: [] });
+  });
+
+  it("says why a preview was refused", async () => {
+    serve({
+      preview: () => ({ status: 422, body: { error: "unknown_ref", detail: "x", fields: [] } }),
+    });
+    renderSelection("docs/", "");
+    await userEvent.click(previewButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/no branch, tag or commit “v1.4.0”/);
   });
 });

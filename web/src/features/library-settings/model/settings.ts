@@ -1,6 +1,15 @@
 import type { ComponentType, ReactNode } from "react";
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import {
+  filledRules,
+  lines,
+  TAG_RULE_HINT,
+  type TagRuleDraft,
+  validatePatterns,
+  validateRule,
+} from "@/shared/lib/path-selection";
+import { normalizeTag } from "@/shared/lib/tags";
 
 export type SettingsLibrary = components["schemas"]["LibraryDetail"];
 export type SettingsVersion = components["schemas"]["VersionOut"];
@@ -9,13 +18,18 @@ export type SyncedLibrary = components["schemas"]["SyncedLibrary"];
 export type SyncedVersion = components["schemas"]["SyncedVersion"];
 export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
 export type RemovalResult = components["schemas"]["RemovalResult"];
+export type SavedSettings = components["schemas"]["UpdatedLibrarySettings"];
+type SettingsIn = components["schemas"]["LibrarySettingsIn"];
+export type JobList = components["schemas"]["JobList"];
+export type ReprocessJob = components["schemas"]["JobSummary"];
+export type LibraryAccess = components["schemas"]["LibraryAccess"];
 
 const MAX_TITLE = 200;
 export const MAX_DESCRIPTION = 1000;
 
 /** What went wrong, and where it belongs: next to a field, or in the section's alert. */
 export interface Problem {
-  field?: "title" | "description" | "ref";
+  field?: "title" | "description" | "ref" | "paths" | "tags";
   message: string;
   /** A wait state, not a mistake: shown neutral instead of red. */
   tone?: "info";
@@ -301,16 +315,172 @@ export function syncHeadline(result: SyncedLibrary): string {
 
 export const shortSha = (sha: string) => sha.slice(0, 7);
 
-/** The job views of the libraries slice, handed in by the route (a feature never imports another). */
+/** The views of the libraries slice, handed in by the route (a feature never imports another). */
 export interface JobViews {
   /** The full import view: heading, progress, skipped files; `finish` replaces its buttons. */
   Import: ComponentType<{ added: AddedVersion; finish: ReactNode }>;
   /** One job as a compact line with its bar. */
   Line: ComponentType<{ jobId: string; label: string }>;
+  /** The Preview button and the files these paths take in one version of the repository. */
+  Preview: ComponentType<{
+    url: string;
+    version: string | null;
+    include: string;
+    exclude: string;
+  }>;
 }
 
 /** The last action a section started; the others clear their own notices when it is not theirs. */
 export interface Activity {
   by: string;
   n: number;
+}
+
+/** A library's paths and tag rules as the settings form holds them. */
+export interface SelectionDraft {
+  include: string;
+  exclude: string;
+  rules: TagRuleDraft[];
+}
+
+type StoredSelection = Pick<SavedSettings, "include_paths" | "exclude_paths" | "tag_rules">;
+
+/** The form for what is stored: one pattern per line, one row per rule. */
+export const draftOf = (stored: StoredSelection): SelectionDraft => ({
+  include: stored.include_paths.join("\n"),
+  exclude: stored.exclude_paths.join("\n"),
+  rules: stored.tag_rules.map((r, key) => ({ key, pattern: r.pattern, tag: r.tag })),
+});
+
+/** The whole set, as `PUT …/settings` takes it: what is left out is cleared. */
+export const settingsOf = (draft: SelectionDraft): Required<SettingsIn> => ({
+  include_paths: lines(draft.include),
+  exclude_paths: lines(draft.exclude),
+  tag_rules: filledRules(draft.rules).map((r) => ({
+    pattern: r.pattern.trim(),
+    tag: r.tag.trim(),
+  })),
+});
+
+const same = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** `API` and `api` are one tag: compare rules the way the server stores them. */
+const ruleKey = (r: { pattern: string; tag: string }) =>
+  `${r.pattern.trim()}\u0000${normalizeTag(r.tag) ?? r.tag.trim()}`;
+
+/**
+ * What saving the form would ask of every version: `paths` (fetched and imported again), `tags`
+ * (only re-tagged from what is stored) or null (nothing changed, nothing to save).
+ */
+export function selectionChange(
+  stored: StoredSelection,
+  draft: SelectionDraft,
+): SavedSettings["reprocess"] {
+  const next = settingsOf(draft);
+  if (!same(next.include_paths, stored.include_paths)) return "paths";
+  if (!same(next.exclude_paths, stored.exclude_paths)) return "paths";
+  return same(next.tag_rules.map(ruleKey), stored.tag_rules.map(ruleKey)) ? null : "tags";
+}
+
+/** The checks that need no server: a bad path line, and whether some rule is wrong. */
+export function validateSelection(draft: SelectionDraft) {
+  const paths = validatePatterns(draft.include) ?? validatePatterns(draft.exclude);
+  const badRule = filledRules(draft.rules).find((r) => {
+    const p = validateRule(r);
+    return Boolean(p.pattern || p.tag);
+  });
+  return { paths, badRule };
+}
+
+const listed = (refs: readonly string[], max = 5) =>
+  refs.length > max
+    ? `${refs.slice(0, max).join(", ")}, and ${refs.length - max} more`
+    : refs.join(", ");
+
+/** The warning before saving: every version is re-processed, and what that means for this change. */
+export function reprocessWarning(
+  change: "paths" | "tags",
+  refs: readonly string[],
+  afterFailure = false,
+) {
+  const verb = change === "paths" ? "re-processed" : "re-tagged";
+  const which =
+    refs.length === 1
+      ? `Its version (${listed(refs)}) will be ${verb}`
+      : `Every version will be ${verb}: all ${refs.length} of them (${listed(refs)})`;
+  const what =
+    change === "tags"
+      ? `${which}. Only the tag rules changed, so each one's articles are tagged again from what is stored, and nothing is fetched. Tags added by hand stay.`
+      : afterFailure
+        ? `${which}. The last re-processing failed, so this runs it in full: each version is fetched again at the commit it serves and imported with these paths and tag rules; branches are not synced.`
+        : `${which}. Each one is fetched again at the commit it serves and imported with the new paths; branches are not synced.`;
+  return {
+    title: change === "paths" ? "Re-process every version?" : "Re-tag every version?",
+    what,
+    safe: "Each version keeps serving what it has now until its new state is complete, then switches at once. A version that cannot be re-processed keeps what it had.",
+    confirm: change === "paths" ? "Save and re-process" : "Save and re-tag",
+  };
+}
+
+/**
+ * What the server will run for this change. While the newest `reprocess` failed, a tag-only edit
+ * re-runs that full re-processing (it re-tags too), so it is warned about as one.
+ */
+export function effectiveChange(
+  change: "paths" | "tags",
+  last: Pick<ReprocessJob, "kind" | "state"> | null | undefined,
+): { change: "paths" | "tags"; afterFailure: boolean } {
+  const failedReprocess = last?.kind === "reprocess" && last.state === "failed";
+  return { change: failedReprocess ? "paths" : change, afterFailure: failedReprocess };
+}
+
+/** The newest re-processing, when it failed: it can be run again with the stored settings. */
+export const failedReprocess = (last: ReprocessJob | null | undefined) =>
+  last?.state === "failed" ? last : undefined;
+
+/** Why the paths and tag rules were not saved. Nothing is stored after a refusal. */
+export function explainSettings(error: unknown): Problem {
+  if (!(error instanceof HttpError)) return OFFLINE;
+  const gone = session(error);
+  if (gone) return gone;
+  switch (error.code) {
+    case "not_found":
+      return { message: GONE };
+    case "invalid_path_pattern":
+      return {
+        field: "paths",
+        message:
+          "One of the paths isn't valid. Use folders, files or globs like docs/ or docs/**/*.md.",
+      };
+    case "invalid_tag":
+      return { field: "tags", message: `A tag isn't valid. ${TAG_RULE_HINT}` };
+    default:
+      return error.status === 422
+        ? {
+            message:
+              "The server refused something in the paths or tag rules. Check them and try again.",
+          }
+        : generic(error);
+  }
+}
+
+/** One sentence for what saving did, so it reads before the job's own line. */
+export function savedHeadline(saved: SavedSettings): string {
+  if (saved.job_id === null) {
+    return saved.versions.length === 0
+      ? "Saved. The library has no version yet: versions imported from now on use these settings."
+      : "Saved. Nothing changed, so nothing is re-processed.";
+  }
+  return saved.reprocess === "tags"
+    ? "Saved. Every version is being re-tagged."
+    : "Saved. Every version is being re-processed.";
+}
+
+/** Next to Save: what pressing it would do. */
+export function saveHint(change: SavedSettings["reprocess"], versions: number): string {
+  if (change === null) return "Nothing changed yet.";
+  return versions === 0
+    ? "No version is imported yet, so nothing is re-processed."
+    : "You'll be asked to confirm: every version is re-processed.";
 }
