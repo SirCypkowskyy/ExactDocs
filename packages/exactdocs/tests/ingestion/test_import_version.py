@@ -2,6 +2,7 @@
 
 import asyncio
 import codecs
+import errno
 import os
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -816,6 +817,20 @@ async def test_a_folder_that_cannot_be_listed_fails_the_import_before_anything_i
     finally:
         (tmp_path / "checkout/docs/secret").chmod(0o700)
 
+    assert world.log == []
+
+
+async def test_a_fetch_that_fails_on_the_disk_is_not_an_unreadable_checkout(
+    tmp_path: Path,
+) -> None:
+    """A full disk while fetching is the machine's state, not the commit's: not permanent."""
+    world = build_world(tmp_path, {"docs/ok.md": INSTALL.encode()})
+    world.gateway.error = OSError(errno.ENOSPC, "No space left on device")
+
+    with pytest.raises(OSError, match="No space left") as raised:
+        await world.run(make_job(), world.progress)
+
+    assert not isinstance(raised.value, CheckoutUnreadableError)
     assert world.log == []
 
 

@@ -425,7 +425,11 @@ async def test_a_tick_imports_new_tags_as_auto_and_prunes_old_auto_versions(
 
 
 async def _fail_import(
-    module: IngestionModule, jobs: InMemoryJobRepository, clock: HandClock, code: str
+    module: IngestionModule,
+    jobs: InMemoryJobRepository,
+    clock: HandClock,
+    code: str,
+    commit: str = SHA["v1.4.0"],
 ) -> None:
     """Queue an import of v1.4.0 and fail it with ``code``."""
     job = await module.enqueue_job(
@@ -433,7 +437,7 @@ async def _fail_import(
             kind=IMPORT_JOB,
             library=LIBRARY,
             version="v1.4.0",
-            commit_sha=SHA["v1.4.0"],
+            commit_sha=commit,
             ref_kind=RefKind.TAG,
             origin=VersionOrigin.AUTO,
         )
@@ -447,6 +451,7 @@ async def _fail_import(
     [
         ("no_articles", False),
         ("import_too_large", False),
+        ("checkout_unreadable", True),  # the disk's state (full, permissions), not the commit's
         ("repo_unreachable", True),
         ("auth_failed", True),
         ("unexpected", True),
@@ -629,3 +634,47 @@ async def test_an_unknown_library_has_no_schedule(module: IngestionModule) -> No
         await module.set_auto_sync(schedule(library="/acme/unknown"))
     with pytest.raises(NotFoundError):
         await module.get_auto_sync(GetAutoSyncQuery(library="/acme/unknown"))
+
+
+async def _queues_v140(module: IngestionModule, jobs: InMemoryJobRepository) -> bool:
+    """Save the schedule (due at once), tick, and tell whether v1.4.0 was queued."""
+    await module.set_auto_sync(schedule(interval_minutes=60))
+    result = await module.run_scheduled_checks()
+    queued = [jobs.jobs[JobId(i)] for i in result.imports]
+    for job in queued:  # not to stand in the next check's way
+        del jobs.jobs[job.id]
+    return "v1.4.0" in {j.version for j in queued}
+
+
+async def test_an_unexpected_failure_again_and_again_backs_off_up_to_a_day(
+    module: IngestionModule, jobs: InMemoryJobRepository, clock: HandClock
+) -> None:
+    await _fail_import(module, jobs, clock, "unexpected")
+    assert await _queues_v140(module, jobs)  # once: tried at the next check
+
+    for _ in range(2):
+        await _fail_import(module, jobs, clock, "unexpected")
+    # Three in a row: 2**2 - 1 = 3 more intervals of 60 minutes.
+    clock.advance(minutes=179)
+    assert not await _queues_v140(module, jobs)
+    clock.advance(minutes=1)
+    assert await _queues_v140(module, jobs)
+
+    for _ in range(20):
+        await _fail_import(module, jobs, clock, "unexpected")
+    clock.advance(hours=23, minutes=59)
+    assert not await _queues_v140(module, jobs)  # capped at a day, not 2**22 intervals
+    clock.advance(minutes=1)
+    assert await _queues_v140(module, jobs)
+
+
+async def test_a_tag_that_moved_is_tried_at_once_whatever_failed_before(
+    module: IngestionModule, remote: Remote, jobs: InMemoryJobRepository, clock: HandClock
+) -> None:
+    for _ in range(5):
+        await _fail_import(module, jobs, clock, "unexpected")
+    assert not await _queues_v140(module, jobs)
+
+    remote.tags["v1.4.0"] = NEW
+
+    assert await _queues_v140(module, jobs)

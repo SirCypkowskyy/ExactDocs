@@ -694,8 +694,9 @@ export interface paths {
          *     oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are
          *     removed once their replacements are versions. Versions added by hand (`manual`) and the
          *     pinned default are never removed and do not count. A tag whose import failed for good
-         *     (`no_articles`, `import_too_large`, `checkout_unreadable`) is tried again only once it
-         *     moves; other failures at the next check. An `auto` version removed by hand comes back
+         *     (`no_articles`, `import_too_large`) is tried again only once it moves; after repeated
+         *     `unexpected` failures it backs off (doubling, at most a day); other failures are tried at
+         *     the next check. An `auto` version removed by hand comes back
          *     while it is among the newest `keep_last`. With `sync_branches`, every branch version is
          *     re-synced as `POST .../sync` would. Send the whole set: what is left out takes its
          *     default. What a check could not do is its `last_error`.

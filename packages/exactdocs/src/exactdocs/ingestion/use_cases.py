@@ -11,7 +11,7 @@ import weakref
 from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager, suppress
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import BinaryIO
@@ -103,6 +103,7 @@ from exactdocs.ingestion.models import (
     REFRESH_JOB,
     REPROCESS_JOB,
     RETAG_JOB,
+    UNEXPECTED_BACKOFF_CAP,
     UNEXPECTED_ERROR,
     ArticleChunk,
     AutoSync,
@@ -176,7 +177,7 @@ from exactdocs.ingestion.ports.driven import (
     ScheduleSwitch,
     VersionPublisher,
 )
-from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion
+from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibraryFromRefs
 from exactdocs_kernel import Clock, DomainError, NotFoundError, paginate
 
 log = logging.getLogger(__name__)
@@ -784,11 +785,7 @@ class SyncLibraryUseCase:
     enqueue_job: EnqueueJob
     vault: CredentialVault
 
-    async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
-        """Sync the library; see ``sync``."""
-        return await self.sync(command)
-
-    async def sync(
+    async def __call__(
         self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
     ) -> SyncedLibrary:
         """Ask the remote where each branch and tag is now, queue an import for moved branches.
@@ -1838,8 +1835,11 @@ class _Checkout:
 
 
 async def _list(checkout: _Checkout, source: ImportSource) -> list[str]:
+    # Only the walk of the checkout is `checkout_unreadable`; a fetch that fails on the disk
+    # (full, out of file handles) fails as itself.
+    folder = await checkout.folder()
     try:
-        return await asyncio.to_thread(_selected_files, await checkout.folder(), source.selection)
+        return await asyncio.to_thread(_selected_files, folder, source.selection)
     except OSError as error:
         raise CheckoutUnreadableError from error
 
@@ -2488,7 +2488,7 @@ class RunScheduledChecksUseCase:
     jobs: JobRepository
     clock: Clock
     enqueue_job: EnqueueJob
-    sync_library: SyncLibraryUseCase
+    sync_library: SyncLibraryFromRefs
     remove_version: RemoveVersion
     switch: ScheduleSwitch
     _running: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -2538,7 +2538,7 @@ class RunScheduledChecksUseCase:
             try:
                 # The refs listed for the tags; without them (none, or the remote failed) the
                 # sync asks itself, and records a failure on the versions' jobs.
-                await self.sync_library.sync(SyncLibraryCommand(library=library), refs=refs)
+                await self.sync_library(SyncLibraryCommand(library=library), refs=refs)
             except VersionImportingError:
                 pass  # the branch is being imported already
             except DomainError as raised:  # also recorded on the versions' jobs
@@ -2551,7 +2551,13 @@ class RunScheduledChecksUseCase:
         library = auto_sync.library
         versions = await self.sources.imported_versions(library)
         jobs = await self.jobs.list_for_library(library)  # newest first
-        plan = plan_auto_imports(auto_sync, tips, versions, failed=_failed_tags(jobs, versions))
+        held = _failed_tags(
+            jobs,
+            versions,
+            now=self.clock.now(),
+            interval=timedelta(minutes=auto_sync.interval_minutes),
+        )
+        plan = plan_auto_imports(auto_sync, tips, versions, failed=held)
         busy = _busy_refs(jobs)
         errors: list[str] = []
         for tip in plan.imports:
@@ -2577,23 +2583,51 @@ class RunScheduledChecksUseCase:
         return errors
 
 
-def _failed_tags(jobs: Sequence[Job], versions: Sequence[ImportedRef]) -> set[tuple[str, str]]:
-    """Return (ref, commit) of refs that are no version and whose newest import failed for good.
+def _failed_tags(
+    jobs: Sequence[Job], versions: Sequence[ImportedRef], *, now: datetime, interval: timedelta
+) -> set[tuple[str, str]]:
+    """Return (ref, commit) of the refs that are no version and are not to be imported now.
 
-    Only a failure that the same commit would meet again (``PERMANENT_IMPORT_FAILURES``) holds
-    a tag back; an unreachable remote, a refused credential or a bug is tried at the next check.
+    A failure the same commit would meet again (``PERMANENT_IMPORT_FAILURES``) holds the tag
+    back until it moves. An ``unexpected`` one (a bug, perhaps at that commit) backs off: after
+    the n-th in a row at the same commit, the tag waits 2**(n-1) - 1 more check intervals, at
+    most ``UNEXPECTED_BACKOFF_CAP``. Any other failure (an unreachable repository, a refused
+    credential...) is tried at the next check.
     """
     have = {v.ref for v in versions}
-    newest: dict[str, Job] = {}
+    imports: dict[str, list[Job]] = {}
     for job in jobs:  # newest first
-        if job.version:
-            newest.setdefault(job.version, job)
-    return {
-        (ref, job.commit_sha)
-        for ref, job in newest.items()
-        if ref not in have
-        and job.kind in IMPORT_KINDS
-        and job.state is JobState.FAILED
-        and job.error_code in PERMANENT_IMPORT_FAILURES
-        and job.commit_sha
-    }
+        if job.version and job.kind in IMPORT_KINDS:
+            imports.setdefault(job.version, []).append(job)
+    held: set[tuple[str, str]] = set()
+    for ref, tried in imports.items():
+        last = tried[0]
+        if ref in have or last.state is not JobState.FAILED or not last.commit_sha:
+            continue
+        backing_off = (
+            last.error_code == UNEXPECTED_ERROR
+            and last.finished_at is not None
+            and now < last.finished_at + _backoff(tried, interval)
+        )
+        if last.error_code in PERMANENT_IMPORT_FAILURES or backing_off:
+            held.add((ref, last.commit_sha))
+    return held
+
+
+_MAX_DOUBLINGS = 16
+
+
+def _backoff(tried: Sequence[Job], interval: timedelta) -> timedelta:
+    """How long after its last failure a tag that keeps failing ``unexpected`` waits."""
+    last = tried[0]
+    in_a_row = 0
+    for job in tried:  # newest first
+        if (job.state, job.error_code, job.commit_sha) != (
+            JobState.FAILED,
+            UNEXPECTED_ERROR,
+            last.commit_sha,
+        ):
+            break
+        in_a_row += 1
+    doublings = min(in_a_row - 1, _MAX_DOUBLINGS)
+    return min(interval * (2**doublings - 1), UNEXPECTED_BACKOFF_CAP)

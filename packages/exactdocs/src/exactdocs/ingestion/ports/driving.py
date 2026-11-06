@@ -39,6 +39,7 @@ from exactdocs.ingestion.dtos import (
     UpdatedLibrarySettings,
     UpdateLibrarySettingsCommand,
 )
+from exactdocs.ingestion.models import RemoteRefs
 
 
 class EnqueueJob(Protocol):
@@ -233,6 +234,20 @@ class SyncLibrary(Protocol):
     """
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
+        """Run the use case."""
+        ...
+
+
+class SyncLibraryFromRefs(Protocol):
+    """``SyncLibrary``, optionally from the refs the remote advertised a moment ago.
+
+    The scheduled check lists the refs for its tags and hands them on, so the remote is asked
+    once; ``None`` asks it. ``SyncLibraryUseCase`` implements both ports.
+    """
+
+    async def __call__(
+        self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
+    ) -> SyncedLibrary:
         """Run the use case."""
         ...
 

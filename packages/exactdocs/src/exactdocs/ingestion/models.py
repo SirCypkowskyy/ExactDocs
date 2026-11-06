@@ -462,8 +462,14 @@ class SyncErrorCode(StrEnum):
     """The tag now points at another commit; it is reported, never re-imported by a sync."""
 
 
-PERMANENT_IMPORT_FAILURES = frozenset({"no_articles", "import_too_large", "checkout_unreadable"})
-"""Codes of an import that fails again at the same commit; anything else may pass next time."""
+PERMANENT_IMPORT_FAILURES = frozenset({"no_articles", "import_too_large"})
+"""Codes of an import that fails again at the same commit; anything else may pass next time.
+
+Not ``checkout_unreadable``: a folder that cannot be listed is the disk's state (full, out of
+file handles, permissions), not the commit's.
+"""
+UNEXPECTED_BACKOFF_CAP = timedelta(days=1)
+"""The longest wait before an auto import that failed ``unexpected`` again is retried."""
 
 UNEXPECTED_ERROR = "unexpected"
 """The ``error_code`` of a job that failed on something no domain error describes (a bug)."""

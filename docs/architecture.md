@@ -473,7 +473,9 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   newest `keep_last` of (those tags plus the `auto` versions), and removes only the `auto`
   versions outside the newest `keep_last` *versions*, so an old one goes after its replacement
   is imported; manual versions and the pinned default never count. Only a permanent import
-  failure (`PERMANENT_IMPORT_FAILURES`) holds a tag back until it moves. The schedule is paused
+  failure (`PERMANENT_IMPORT_FAILURES`: `no_articles`, `import_too_large`) holds a tag back
+  until it moves; repeated `unexpected` failures at one commit back off (2^(n-1) - 1 more
+  intervals after the n-th, at most a day), and anything else is tried at the next check. The schedule is paused
   while no library has one (`ScheduleSwitch`, `DbosScheduleSwitch` pauses or resumes it by
   name; the worker sets it from the stored schedules at start), so an idle server writes no
   tick workflow. A version's `origin` (`manual`/`auto`) travels from the job through the import's

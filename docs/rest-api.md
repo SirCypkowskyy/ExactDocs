@@ -229,9 +229,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   import never leaves the library short; one being imported is left for the next check).
   Versions added by hand (`origin: "manual"`, in `GET /libraries/{owner}/{repo}`) and the pinned
   default version (`PUT .../default-version`) are never removed and do not count. A tag whose
-  import failed for good (`no_articles`, `import_too_large`, `checkout_unreadable`) is tried
-  again only once it names another commit; any other failure (an unreachable repository, a
-  refused credential...) is tried again at the next check. An `auto` version removed by hand
+  import failed for good (`no_articles`, `import_too_large`) is tried again only once it names
+  another commit. One that failed `unexpected` (a bug) backs off: after the n-th such failure
+  in a row at the same commit it waits 2^(n-1) - 1 more intervals, at most a day. Any other
+  failure (an unreachable repository, a refused credential, a full disk...) is tried again at
+  the next check. An `auto` version removed by hand
   comes back at the next check while it is among the newest `keep_last` matching tags: narrow
   the pattern or lower `keep_last` to keep it out. With `sync_branches`, every branch version is
   then re-synced as `POST .../sync` does, from the same list of refs (its failures are recorded
