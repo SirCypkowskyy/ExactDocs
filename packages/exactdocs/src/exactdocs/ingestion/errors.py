@@ -35,12 +35,12 @@ class InvalidRepositoryUrlError(ValidationError):
 
 
 class InvalidChunkingConfigError(ValidationError):
-    """The chunking settings are out of range."""
+    """The chunking settings are out of range, or name a chunker that is not supported."""
 
     code = "invalid_chunking_config"
 
-    def __init__(self) -> None:
-        super().__init__("split_depth must be between 1 and 6")
+    def __init__(self, reason: str = "split_depth must be between 1 and 6") -> None:
+        super().__init__(f"invalid chunking settings: {reason}")
 
 
 class NotAGitRepositoryError(ValidationError):
@@ -432,3 +432,14 @@ class ReprocessFailedError(DomainError):
         if len(codes) == 1:
             self.code = codes.pop()
         self.refs = tuple(ref for ref, _, _ in failures)
+
+
+class StoredTextOutdatedError(DomainError):
+    """A version's articles were stored by an older parser: re-chunking needs them re-imported."""
+
+    code = "stored_text_outdated"
+
+    def __init__(self, library: str, ref: str) -> None:
+        super().__init__(
+            f"{library} {ref} was stored by another parser version; it is re-imported instead"
+        )

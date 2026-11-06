@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.dtos import (
@@ -54,6 +55,7 @@ def build(*versions: Version, **fields: object) -> CatalogModule:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
     REPOSITORIES[id(catalog)] = repository
     return catalog
@@ -205,6 +207,7 @@ async def test_an_edit_between_the_import_read_and_write_survives() -> None:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
 
     await catalog.apply_readme(

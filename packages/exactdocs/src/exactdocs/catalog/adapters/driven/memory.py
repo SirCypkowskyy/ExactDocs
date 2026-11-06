@@ -10,6 +10,7 @@ from exactdocs.catalog.errors import (
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    StoredContentOutdatedError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
@@ -432,3 +433,46 @@ class InMemoryImportedTags:
         entries = tuple(replace(e, tags=tags.get(e.path, e.tags)) for e in found.entries)
         self.repository.manifests[manifest_id] = replace(found, entries=entries)
         return {e.path: e.all_tags for e in entries if e.path in tags}
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryManifestCopier:
+    """Implements ``ports.driven.ManifestCopier`` on an ``InMemoryManifestRepository``."""
+
+    repository: InMemoryManifestRepository
+
+    async def copy_active(
+        self,
+        library_id: LibraryId,
+        ref: VersionRef,
+        new_id: ManifestId,
+        *,
+        at: datetime,
+        content_version: int,
+    ) -> tuple[Manifest, Sequence[StoredArticle]] | None:
+        """Store a pending copy of the active manifest; see the port."""
+        found = next(
+            (
+                m
+                for m in self.repository.manifests.values()
+                if (m.library, m.ref, m.state) == (library_id, ref, ManifestState.ACTIVE)
+            ),
+            None,
+        )
+        if found is None:
+            return None
+        if any(e.content_version != content_version for e in found.entries):
+            raise StoredContentOutdatedError(str(library_id), str(ref))
+        copy = replace(
+            found, id=new_id, created_at=at, state=ManifestState.PENDING, superseded_at=None
+        )
+        self.repository.manifests[new_id] = copy
+        return _light(copy), tuple(
+            StoredArticle(
+                manifest_id=new_id,
+                commit_sha=copy.commit_sha,
+                entry=e,
+                content=self.repository.contents[e.content_key],
+            )
+            for e in copy.entries
+        )

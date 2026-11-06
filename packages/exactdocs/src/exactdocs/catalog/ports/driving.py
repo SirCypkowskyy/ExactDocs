@@ -13,6 +13,8 @@ from exactdocs.catalog.dtos import (
     Asset,
     CollectGarbageCommand,
     CollectionResult,
+    CopiedManifest,
+    CopyManifestCommand,
     CreateLibraryCommand,
     DefaultManifests,
     DiscardedManifests,
@@ -386,5 +388,20 @@ class SetImportedTags(Protocol):
     """
 
     async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:
+        """Run the use case."""
+        ...
+
+
+class CopyManifest(Protocol):
+    """Copy a version's active manifest into a new pending one, with its articles' stored text.
+
+    For the importer, which re-chunks what a version serves after its chunking changed: it
+    indexes the copy and activates it (or discards it), and readers see the old manifest until
+    then. The ref must match exactly. Raises ``LibraryNotFoundError`` /
+    ``VersionNotFoundError`` (also when the version serves nothing) and, copying nothing,
+    ``StoredContentOutdatedError`` when the articles were stored by another parser version.
+    """
+
+    async def __call__(self, command: CopyManifestCommand) -> CopiedManifest:
         """Run the use case."""
         ...

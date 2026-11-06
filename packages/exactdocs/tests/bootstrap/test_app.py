@@ -133,7 +133,12 @@ async def test_a_library_is_shown_with_its_default_version(client: httpx.AsyncCl
         "v1.3.0": False,
         "v1.4.0": True,
     }
-    assert body["settings"]["chunking"] == {"split_level": 6, "min_chars": 0, "max_chars": None}
+    assert body["settings"]["chunking"] == {
+        "split_level": 6,
+        "min_chars": 0,
+        "max_chars": None,
+        "chunker": "markdown",
+    }
 
 
 @pytest.mark.parametrize("ref", ["v1.3.0", "v1.4.0", "main"])

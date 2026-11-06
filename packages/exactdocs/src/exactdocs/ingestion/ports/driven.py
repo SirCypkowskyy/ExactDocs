@@ -9,7 +9,9 @@ from typing import Protocol
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ArticleTags,
+    ChunkingConfig,
     Collected,
+    CopiedVersion,
     Credential,
     FetchedFile,
     GitRename,
@@ -299,11 +301,19 @@ class Chunker(Protocol):
         """Key for chunk sets: changes with the chunker's config, its version and the parser's."""
         ...
 
+    def configured(self, config: ChunkingConfig) -> Chunker:
+        """Return a chunker that cuts with a library's ``config`` (its own ``config_hash``).
+
+        Raises ``InvalidChunkingConfigError`` for a ``config.chunker`` it does not provide.
+        """
+        ...
+
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         """Return the chunks in reading order; their contents joined are ``article.body``.
 
         An empty body has no chunks. This is CPU-bound and synchronous: the import use case
-        should call it through ``asyncio.to_thread``. There is no size cap yet.
+        should call it through ``asyncio.to_thread``. ``max_chars`` bounds a chunk only where
+        a heading allows a cut: a section without deeper headings stays whole, however long.
         """
         ...
 
@@ -346,11 +356,29 @@ class LibrarySettingsStore(Protocol):
     """Where a library's paths and tag rules are kept (the catalog, in ingestion's words)."""
 
     async def save(
-        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+        self,
+        library: str,
+        selection: PathSelection,
+        tag_rules: Sequence[TagRule],
+        chunking: ChunkingConfig,
     ) -> None:
-        """Replace the library's paths and tag rules (other settings stay); raises if unknown.
+        """Replace the library's paths, tag rules and chunking; raises if it is unknown.
 
         Imports read them when they run, so every import queued or running after this uses them.
+        """
+        ...
+
+
+class VersionCopier(Protocol):
+    """Copies what a version serves into a new pending manifest (the catalog, in its words)."""
+
+    async def copy(self, library: str, ref: str, *, content_version: int) -> CopiedVersion | None:
+        """Copy the version's active manifest (entries, tags, images, renames) as a pending one.
+
+        Returns the copy with each article's stored text; ``None`` when the library or the
+        version is unknown or serves nothing. Raises ``StoredTextOutdatedError``, copying
+        nothing, when the articles were stored by another parser version than
+        ``content_version``: their text is not what the parser gives now.
         """
         ...
 

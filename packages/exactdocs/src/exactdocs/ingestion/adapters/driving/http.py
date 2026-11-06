@@ -404,7 +404,7 @@ def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
 
 
 def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRouter:
-    """Build the route that edits a library's paths and tag rules."""
+    """Build the route that edits a library's paths, tag rules and chunking."""
     router = APIRouter(tags=["ingestion"])
 
     @router.put(
@@ -428,19 +428,22 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
     async def update_settings(
         owner: str, repo: str, body: LibrarySettingsIn, request: Request, response: Response
     ) -> UpdatedLibrarySettings:
-        """Replace the library's paths and tag rules; every version is then re-processed.
+        """Replace the library's paths, tag rules and chunking; every version is then re-processed.
 
         Send the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is
-        left out is cleared. Changed paths queue a `reprocess` job that fetches every version
-        again at the commit it serves (a branch is not synced) and re-imports it; only tag rules
-        changed queue a `retag` job that re-tags the stored articles, fetching nothing. Each
+        left out is cleared (chunking back to its defaults). Changed paths queue a `reprocess`
+        job that fetches every version again at the commit it serves (a branch is not synced)
+        and re-imports it; a changed chunking queues a `rechunk` job that cuts the stored
+        articles again (and re-tags them), fetching nothing unless a version was stored by an
+        older parser (that one is re-imported); only tag rules changed queue a `retag` job that
+        re-tags the stored articles, fetching nothing. Each
         version keeps serving its old state until its new one is complete, then switches at
         once (after a `retag`, search's tag filters follow the listings a moment later); one
         that fails keeps the old state and the job fails naming it. Sending the same settings
         again re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no
         job when the settings are unchanged and the last re-processing did not fail (or there
-        is no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing
-        is stored), 404 for an unknown library.
+        is no version yet: imports to come use them). 422 for an invalid pattern, tag or chunking
+        setting (nothing is stored), 404 for an unknown library.
         """
         updated = await update_library_settings(
             UpdateLibrarySettingsCommand(
@@ -448,6 +451,7 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
                 include_paths=body.include_paths,
                 exclude_paths=body.exclude_paths,
                 tag_rules=body.tag_rules,
+                chunking=body.chunking,
             )
         )
         if updated.job_id is not None:

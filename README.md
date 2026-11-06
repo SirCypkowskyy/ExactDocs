@@ -373,7 +373,10 @@ Face Hub and the network, which a model-free, offline-capable image cannot have)
 tagged from front matter and path rules, and by hand: the article page of the web UI shows each
 tag under where it comes from and adds or removes manual tags, which hold for every version
 (`PUT`/`DELETE /api/v1/libraries/{owner}/{repo}/tags?path=`). Listings and search filter by tag.
-Per-library split level and chunk sizes are planned (MVP-2).
+Each library chooses its split level (`h1`...`h6`) and chunk sizes (`max_chars` cuts long
+sections again at deeper headings, `min_chars` merges tiny ones) with
+`PUT /api/v1/libraries/{owner}/{repo}/settings`; every version is then re-chunked from the stored
+text, without fetching, and keeps serving its old chunks until the new ones are in place.
 
 ## Configuration
 

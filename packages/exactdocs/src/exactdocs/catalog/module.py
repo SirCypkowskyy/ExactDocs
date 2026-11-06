@@ -9,6 +9,7 @@ from typing import Self
 from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
+    ManifestCopier,
     ManifestRepository,
 )
 from exactdocs.catalog.ports.driving import (
@@ -16,6 +17,7 @@ from exactdocs.catalog.ports.driving import (
     ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
+    CopyManifest,
     CreateLibrary,
     DiscardLibrary,
     DiscardPendingManifests,
@@ -47,6 +49,7 @@ from exactdocs.catalog.use_cases import (
     ApplyManualTagsUseCase,
     ApplyReadmeUseCase,
     CollectGarbageUseCase,
+    CopyManifestUseCase,
     CreateLibraryUseCase,
     DiscardLibraryUseCase,
     DiscardPendingManifestsUseCase,
@@ -110,6 +113,7 @@ class CatalogModule:
     get_version_tags: GetVersionTags
     set_imported_tags: SetImportedTags
     replace_renames: ReplaceRenames
+    copy_manifest: CopyManifest
 
     @classmethod
     def build(
@@ -118,11 +122,13 @@ class CatalogModule:
         repository: LibraryRepository,
         manifests: ManifestRepository,
         imported_tags: ImportedTagWriter,
+        copier: ManifestCopier,
         clock: Clock | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
-        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores.
+        ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores, and
+        ``copier`` copies them.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository, manifests)
@@ -156,4 +162,5 @@ class CatalogModule:
             get_version_tags=GetVersionTagsUseCase(repository, manifests),
             set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags),
             replace_renames=ReplaceRenamesUseCase(repository, manifests, tagger),
+            copy_manifest=CopyManifestUseCase(repository, copier, clock),
         )

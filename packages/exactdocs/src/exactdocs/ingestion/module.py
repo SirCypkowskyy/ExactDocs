@@ -19,9 +19,12 @@ from exactdocs.ingestion.models import (
     DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
     IMPORT_JOB,
+    LIBRARY_KINDS,
+    RECHUNK_JOB,
     REFRESH_JOB,
     REPROCESS_JOB,
     RETAG_JOB,
+    ChunkingConfig,
     Credential,
     FetchedFile,
     GitRename,
@@ -54,6 +57,7 @@ from exactdocs.ingestion.ports.driven import (
     Removals,
     RenameSource,
     RepositoryTree,
+    VersionCopier,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -92,6 +96,7 @@ from exactdocs.ingestion.use_cases import (
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     PreviewRepositoryUseCase,
+    RechunkLibraryUseCase,
     RecoverJobsUseCase,
     ReimportVersionUseCase,
     RemoveLibraryUseCase,
@@ -137,9 +142,13 @@ class _NoSettings:
     """The default ``settings`` of ``build``: no library is known, so none can be edited."""
 
     async def save(
-        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+        self,
+        library: str,
+        selection: PathSelection,
+        tag_rules: Sequence[TagRule],
+        chunking: ChunkingConfig,
     ) -> None:
-        del selection, tag_rules
+        del selection, tag_rules, chunking
         message = f"library {library!r} not found"
         raise NotFoundError(message)
 
@@ -253,8 +262,8 @@ class IngestionModule:
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
             raise TypeError(message)
-        if settings is not None and not {REPROCESS_JOB, RETAG_JOB} <= handlers.keys():
-            message = "settings needs the reprocess and retag handlers of import_job"
+        if settings is not None and not handlers.keys() >= LIBRARY_KINDS:
+            message = "settings needs the reprocess, rechunk and retag handlers of import_job"
             raise TypeError(message)
         runner = runner or _NoRunner()
         enqueue_job = EnqueueJobUseCase(jobs, clock, handlers, runner)
@@ -312,6 +321,7 @@ def import_job(
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
     tag_locks: TagLocks,
     imported_tags: ImportedTagStore,
+    copier: VersionCopier,
     checkpoints: Checkpoints | None = None,
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
@@ -319,7 +329,8 @@ def import_job(
 
     Pass the same ``tag_locks`` to ``IngestionModule.build`` (see ``TagArticleUseCase``).
     The handlers re-process a library after a settings edit too: ``reprocess`` re-imports every
-    version; ``retag`` re-tags them from what ``imported_tags`` has stored.
+    version; ``rechunk`` re-chunks (and re-tags) the copies ``copier`` makes of what each
+    version serves; ``retag`` re-tags them from what ``imported_tags`` has stored.
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
     chunked); without it an interrupted import starts over.
     """
@@ -343,17 +354,20 @@ def import_job(
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions, index)
     steps = importer.checkpoints
+    # One durable step per version: the re-import inside it records none of its own.
+    inline = replace(refresher, checkpoints=_InlineSteps())
     handlers: dict[JobKind, JobHandler] = {
         IMPORT_JOB: importer,
         REFRESH_JOB: refresher,
-        # One durable step per version: the re-import inside it records none of its own.
-        REPROCESS_JOB: ReprocessLibraryUseCase(
-            sources, replace(refresher, checkpoints=_InlineSteps()), steps
+        REPROCESS_JOB: ReprocessLibraryUseCase(sources, inline, steps),
+        RECHUNK_JOB: RechunkLibraryUseCase(
+            sources, copier, chunker, imported_tags, versions, index, tag_locks, inline, steps
         ),
         RETAG_JOB: RetagLibraryUseCase(sources, imported_tags, index, tag_locks, steps),
     }
     # A re-tag writes each version in one transaction and is safe to redo: nothing to clean up.
-    return handlers, {IMPORT_JOB: hook, REFRESH_JOB: hook, REPROCESS_JOB: hook}
+    hooks = {IMPORT_JOB: hook, REFRESH_JOB: hook, REPROCESS_JOB: hook, RECHUNK_JOB: hook}
+    return handlers, hooks
 
 
 def collect_job(

@@ -23,6 +23,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogRemovals,
     CatalogRenamedPaths,
     CatalogSearchableVersions,
+    CatalogVersionCopier,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
     RetrievalCollector,
@@ -38,6 +39,7 @@ from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteImportedTags,
     SqliteLibraryRepository,
+    SqliteManifestCopier,
     SqliteManifestRepository,
 )
 from exactdocs.identity import IdentityModule
@@ -64,6 +66,7 @@ from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault, Sq
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
+    Chunker,
     GitGateway,
     GitRemote,
     RenameSource,
@@ -88,6 +91,7 @@ def _build_read_side(
         repository=SqliteLibraryRepository(engine),
         manifests=SqliteManifestRepository(engine),
         imported_tags=SqliteImportedTags(engine),
+        copier=SqliteManifestCopier(engine),
     )
     search = SqliteSearchIndex(engine)
     retrieval = RetrievalModule.build(
@@ -166,6 +170,7 @@ class Container:
         gateway: GitGateway | None = None,
         renames: RenameSource | None = None,
         tree: RepositoryTree | None = None,
+        chunker: Chunker | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -173,8 +178,9 @@ class Container:
         connection; ``running()`` migrates the schema and releases the engine afterwards.
         ``remote``, ``gateway`` and ``renames`` replace the system ``git`` for listing refs, for
         fetching and for detecting renames (tests; a given ``gateway`` detects none unless
-        ``renames`` is given too). A missing ``git`` is logged here and
-        reported as ``git_not_installed`` by everything that needs it, so the rest still runs.
+        ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests). A missing
+        ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
+        it, so the rest still runs.
         """
         engine = open_database(settings)  # creates the data dir first (or says why not)
         if remote is None or gateway is None or tree is None:
@@ -218,7 +224,7 @@ class Container:
         tag_locks = TagLocks()  # per library: tagging and an import's activation take turns
         handlers, recovery_hooks = import_job(
             gateway=gateway,
-            chunker=MarkdownChunker(),
+            chunker=chunker or MarkdownChunker(),
             sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),
             versions=CatalogVersionPublisher(
                 catalog.store_manifest,
@@ -239,6 +245,7 @@ class Container:
             batch_files=settings.import_batch_files,
             tag_locks=tag_locks,
             imported_tags=CatalogImportedTags(catalog.get_version_tags, catalog.set_imported_tags),
+            copier=CatalogVersionCopier(catalog.copy_manifest),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine),

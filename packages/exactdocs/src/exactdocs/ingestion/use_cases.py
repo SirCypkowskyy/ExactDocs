@@ -23,6 +23,7 @@ from exactdocs.ingestion.dtos import (
     AddVersionCommand,
     CheckedRepository,
     CheckRepositoryCommand,
+    ChunkingIn,
     Context7Out,
     CredentialIn,
     EnqueueJobCommand,
@@ -71,6 +72,7 @@ from exactdocs.ingestion.errors import (
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
     ReprocessFailedError,
+    StoredTextOutdatedError,
     SyncFailedError,
     TagNotMovedError,
     UnknownJobKindError,
@@ -94,12 +96,16 @@ from exactdocs.ingestion.models import (
     IMPORT_KINDS,
     LIBRARY_KINDS,
     MAX_IMAGES,
+    PARSER_VERSION,
+    RECHUNK_JOB,
     REFRESH_JOB,
     REPROCESS_JOB,
     RETAG_JOB,
     UNEXPECTED_ERROR,
     ArticleChunk,
+    ChunkingConfig,
     Context7Config,
+    CopiedVersion,
     Credential,
     FetchedFile,
     FileProblem,
@@ -124,6 +130,7 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
     ResolvedRef,
     SettingsChange,
+    StoredArticleTags,
     SyncErrorCode,
     SyncStatus,
     TagRule,
@@ -162,6 +169,7 @@ from exactdocs.ingestion.ports.driven import (
     Removals,
     RenameSource,
     RepositoryTree,
+    VersionCopier,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob
@@ -1028,23 +1036,52 @@ class TagLocks:
 
 
 def _settings_change(
-    current: ImportSource, selection: PathSelection, tag_rules: Sequence[TagRule]
+    current: ImportSource,
+    selection: PathSelection,
+    tag_rules: Sequence[TagRule],
+    chunking: ChunkingConfig,
 ) -> SettingsChange | None:
-    """Say what new settings ask of the versions: re-import, re-tag, or nothing."""
+    """Say what new settings ask of the versions: re-import, re-chunk, re-tag, or nothing."""
     if selection != current.selection:
         return SettingsChange.PATHS
+    if chunking != current.chunking:
+        return SettingsChange.CHUNKING
     if tuple(tag_rules) != tuple(current.tag_rules):
         return SettingsChange.TAGS
     return None
 
 
-_CHANGE_JOBS = {SettingsChange.PATHS: REPROCESS_JOB, SettingsChange.TAGS: RETAG_JOB}
+_CHANGE_JOBS = {
+    SettingsChange.PATHS: REPROCESS_JOB,
+    SettingsChange.CHUNKING: RECHUNK_JOB,
+    SettingsChange.TAGS: RETAG_JOB,
+}
+_JOB_CHANGES = {kind: change for change, kind in _CHANGE_JOBS.items()}
 
 
-def _reprocess_failed(jobs: Sequence[Job]) -> bool:
-    """Whether the library's newest ``reprocess`` job (``jobs`` newest first) failed."""
-    newest = next((job for job in jobs if job.kind == REPROCESS_JOB), None)
-    return newest is not None and newest.state is JobState.FAILED
+def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
+    """Return the widest re-processing that failed and was not redone since (newest first).
+
+    A failed job is redone by any later job of the same or a greater reach that succeeded, or
+    is still queued or running (it reads the settings when it runs): a failed ``reprocess``
+    stays unhealed after a ``retag`` or a ``rechunk``, which do not re-import.
+    """
+    covered = 0
+    worst: SettingsChange | None = None
+    for job in jobs:
+        change = _JOB_CHANGES.get(job.kind)
+        if change is None:
+            continue
+        if job.state is JobState.FAILED:
+            if change.reach > covered and (worst is None or change.reach > worst.reach):
+                worst = change
+        else:
+            covered = max(covered, change.reach)
+    return worst
+
+
+def _wider(one: SettingsChange, other: SettingsChange | None) -> SettingsChange:
+    return one if other is None or one.reach >= other.reach else other
 
 
 @dataclass(frozen=True, slots=True)
@@ -1063,73 +1100,78 @@ class UpdateLibrarySettingsUseCase:
 
         The job reads the settings and the versions when it runs, and a library's jobs run one
         at a time in queue order: an import queued or running before the edit is re-processed
-        after it, one queued after it reads the new settings itself. A job of the needed kind
-        (or a ``reprocess``, which re-tags too) still queued for the library is reused. If the
-        job cannot be queued the old settings are put back, so a retry is not "unchanged".
-        Settings equal to the stored ones queue the library's last re-processing job again when
-        it failed (same kind), so a retry with the same body re-runs it; else nothing. While the
-        newest ``reprocess`` failed, a retry or a tag-only edit queues a ``reprocess``: a
-        ``retag`` would not re-import the version that failed, and would hide the failure.
+        after it, one queued after it reads the new settings itself. A queued job that does at
+        least what is needed (``reprocess`` > ``rechunk`` > ``retag``) is reused. If the job
+        cannot be queued the old settings are put back, so a retry is not "unchanged".
+        Settings equal to the stored ones queue the library's last failed re-processing again
+        (``_unhealed``), so a retry with the same body re-runs it; else nothing. A smaller edit
+        while a wider re-processing is unhealed queues the wider one: a ``retag`` would not
+        re-import the version that failed, and would hide the failure.
         Edits of one library take turns (``locks``): read, compare, store, queue and roll back
         are one step against another edit (one process serves the API).
         """
         library = command.library.lower()
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
+        wanted = command.chunking
+        chunking = ChunkingConfig(
+            split_depth=wanted.split_level,
+            min_chars=wanted.min_chars,
+            max_chars=wanted.max_chars,
+            chunker=wanted.chunker,
+        )
         async with self.locks.of(library):
-            change, refs, job_id = await self._update(library, selection, tag_rules)
+            change, refs, job_id = await self._update(library, selection, tag_rules, chunking)
         return UpdatedLibrarySettings(
             library_id=library,
             include_paths=list(selection.include),
             exclude_paths=list(selection.exclude),
             tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in tag_rules],
+            chunking=ChunkingIn.of(chunking),
             reprocess=change,
             job_id=job_id,
             versions=refs,
         )
 
     async def _update(
-        self, library: str, selection: PathSelection, tag_rules: Sequence[TagRule]
+        self,
+        library: str,
+        selection: PathSelection,
+        tag_rules: Sequence[TagRule],
+        chunking: ChunkingConfig,
     ) -> tuple[SettingsChange | None, list[str], str | None]:
         current = await self.sources.get(library)
-        change = _settings_change(current, selection, tag_rules)
+        change = _settings_change(current, selection, tag_rules, chunking)
         if change is None:
             return await self._retry(library)
-        await self.settings.save(library, selection, tag_rules)
+        await self.settings.save(library, selection, tag_rules, chunking)
         # BaseException on purpose: a cancelled request must put the old settings back too.
         try:
             refs = [v.ref for v in await self.sources.imported_versions(library)]
             jobs = await self.jobs.list_for_library(library)
-            if change is SettingsChange.TAGS and _reprocess_failed(jobs):
-                change = SettingsChange.PATHS  # re-tagging alone would hide that failure
+            change = _wider(change, _unhealed(jobs))  # a smaller job would hide that failure
             job_id = await self._queue(library, change, jobs) if refs or _busy_refs(jobs) else None
         except BaseException:
             try:
-                await self.settings.save(library, current.selection, current.tag_rules)
+                await self.settings.save(
+                    library, current.selection, current.tag_rules, current.chunking
+                )
             except Exception:
                 log.exception("could not restore the settings of %s", library)
             raise
         return change, refs, job_id
 
     async def _retry(self, library: str) -> tuple[SettingsChange | None, list[str], str | None]:
-        """Queue the library's last failed re-processing again; else do nothing.
-
-        A failed ``reprocess`` not yet followed by one that succeeded wins over a newer ``retag``
-        (which succeeded or not): only a re-import brings that version's paths in line.
-        """
+        """Queue the library's widest failed re-processing not redone since; else do nothing."""
         jobs = await self.jobs.list_for_library(library)  # newest first
-        last = next((job for job in jobs if job.kind in LIBRARY_KINDS), None)
-        if _reprocess_failed(jobs):
-            change = SettingsChange.PATHS
-        elif last is not None and last.state is JobState.FAILED:
-            change = SettingsChange.TAGS
-        else:
+        change = _unhealed(jobs)
+        if change is None:
             return None, [], None
         refs = [v.ref for v in await self.sources.imported_versions(library)]
         return change, refs, await self._queue(library, change, jobs)
 
     async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
-        reusable = {REPROCESS_JOB, _CHANGE_JOBS[change]}
+        reusable = {kind for kind, done in _JOB_CHANGES.items() if done.reach >= change.reach}
         for job in jobs:
             if job.kind in reusable and job.state is JobState.QUEUED:
                 return job.id
@@ -1239,19 +1281,26 @@ class ReprocessLibraryUseCase:
             raise ReprocessFailedError(failures)
 
     async def _one(self, job: Job, current: ImportedRef, tracker: _OneVersion) -> _VersionOutcome:
-        one = replace(
-            job,
-            kind=REFRESH_JOB,
-            version=current.ref,
-            commit_sha=current.commit_sha,  # where it is, never where its branch is now
-            ref_kind=current.kind,
-        )
-        try:
-            await self.importer(one, tracker)
-        except Exception as error:
-            log.warning("re-processing %s %s failed", job.library, current.ref, exc_info=True)
-            return tracker.outcome((failure_code(error), _describe(error)))
-        return tracker.outcome()
+        return await _reimport(self.importer, job, current, tracker)
+
+
+async def _reimport(
+    importer: JobHandler, job: Job, current: ImportedRef, tracker: _OneVersion
+) -> _VersionOutcome:
+    """Re-import one version at the commit it serves; a failure is the outcome, not raised."""
+    one = replace(
+        job,
+        kind=REFRESH_JOB,
+        version=current.ref,
+        commit_sha=current.commit_sha,  # where it is, never where its branch is now
+        ref_kind=current.kind,
+    )
+    try:
+        await importer(one, tracker)
+    except Exception as error:
+        log.warning("re-processing %s %s failed", job.library, current.ref, exc_info=True)
+        return tracker.outcome((failure_code(error), _describe(error)))
+    return tracker.outcome()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1315,6 +1364,137 @@ class RetagLibraryUseCase:
             if everything:
                 await self.index.retag(stored.manifest_id, everything)
             return len(stored.articles)
+
+
+@dataclass(frozen=True, slots=True)
+class RechunkLibraryUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``RECHUNK_JOB``: nothing is fetched.
+
+    Each version's active manifest is copied into a pending one (same articles, images and
+    renames), its articles get the imported tags the tag rules give now, and they are cut with
+    the library's chunking as it is now, from the stored text: a blob already chunked with that
+    config takes its stored chunks. The copy is indexed and activated like an import (manual
+    tags last, under the tag lock), so each version switches at once and serves its old chunks
+    until then. A version whose text was stored by another parser version is re-imported at its
+    commit instead (``importer``, a refresh importer without steps of its own): its text is not
+    what the parser gives now, and chunks keyed with the current parser must not be cut from
+    it. A version that fails keeps what it served and the others go on; the job then fails with
+    every failure. ``done`` / ``total`` count versions.
+
+    Durable steps (``checkpoints``): the list of versions, then one per version, as for
+    ``ReprocessLibraryUseCase``. A version killed halfway starts over (the recovery hook
+    discards its pending copy).
+    """
+
+    sources: LibrarySources
+    copier: VersionCopier
+    chunker: Chunker
+    tags: ImportedTagStore
+    versions: VersionPublisher
+    index: ChunkIndex
+    tag_locks: TagLocks
+    importer: JobHandler
+    checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Re-chunk every version; raising fails the job."""
+        step = self.checkpoints.step
+        versions = await step("list the versions", partial(_versions, self.sources, job.library))
+        await progress.report(done=0, total=len(versions))
+        chunked = reused = 0
+        failures: list[tuple[str, str, str]] = []
+        for done, current in enumerate(versions, 1):
+            tracker = _OneVersion(progress, current.ref, chunked, reused)
+            outcome = await step(
+                f"re-chunk {current.ref}", partial(self._one, job, current, tracker)
+            )
+            chunked, reused = chunked + outcome.chunked, reused + outcome.reused
+            for problem in outcome.problems:
+                await progress.problem(problem.path, problem.code, problem.reason)
+            await progress.report(done=done, total=len(versions))
+            await progress.chunking(chunked=chunked, reused=reused)
+            if outcome.failure is not None:
+                failures.append((current.ref, *outcome.failure))
+        if failures:
+            raise ReprocessFailedError(failures)
+
+    async def _one(self, job: Job, current: ImportedRef, tracker: _OneVersion) -> _VersionOutcome:
+        try:
+            source = await self.sources.get(job.library)
+            chunker = self.chunker.configured(source.chunking)
+            copied = await self.copier.copy(
+                job.library, current.ref, content_version=PARSER_VERSION
+            )
+        except StoredTextOutdatedError:
+            return await _reimport(self.importer, job, current, tracker)
+        except Exception as error:
+            log.warning("re-chunking %s %s failed", job.library, current.ref, exc_info=True)
+            return tracker.outcome((failure_code(error), _describe(error)))
+        if copied is None:  # removed since the versions were listed: nothing to serve
+            return tracker.outcome()
+        try:
+            await self._publish(job.library, current.ref, copied, source, chunker, tracker)
+        except Exception as error:
+            await _discard_shielded(self.versions, self.index, job.library, copied.manifest_id)
+            log.warning("re-chunking %s %s failed", job.library, current.ref, exc_info=True)
+            return tracker.outcome((failure_code(error), _describe(error)))
+        except BaseException:
+            await _discard_shielded(self.versions, self.index, job.library, copied.manifest_id)
+            raise
+        return tracker.outcome()
+
+    async def _publish(
+        self,
+        library: str,
+        ref: str,
+        copied: CopiedVersion,
+        source: ImportSource,
+        chunker: Chunker,
+        tracker: _OneVersion,
+    ) -> None:
+        """Re-tag and re-chunk the copy, index it, then activate it."""
+        wanted = {
+            a.path: StoredArticleTags(
+                path=a.path, front_matter=a.front_matter, tags=a.tags
+            ).retagged(source.tag_rules)
+            for a in copied.articles
+        }
+        tagged = await self.tags.set_imported_tags(copied.manifest_id, wanted)
+        blobs = list(dict.fromkeys(a.blob_sha for a in copied.articles))
+        found: dict[str, tuple[ArticleChunk, ...]] = {}
+        for start in range(0, len(blobs), KNOWN_BATCH):
+            found |= await self.index.known(chunker.config_hash, blobs[start : start + KNOWN_BATCH])
+        unknown: dict[str, ParsedArticle] = {}
+        for article in copied.articles:
+            if article.blob_sha not in found:
+                unknown.setdefault(article.blob_sha, article.parsed())
+        cut = await asyncio.to_thread(_cut, chunker, unknown)
+        every = found | cut
+        version = ImportedVersion(
+            library=library,
+            ref=ref,
+            kind=copied.kind,
+            commit_sha=copied.commit_sha,
+            config_hash=chunker.config_hash,
+            articles=tuple(
+                ImportedArticle(
+                    path=a.path,
+                    blob_sha=a.blob_sha,
+                    title=a.title,
+                    tags=tagged.get(a.path, wanted[a.path]),
+                    front_matter=dict(a.front_matter),
+                    content=a.content,
+                    chunks=every[a.blob_sha],
+                )
+                for a in copied.articles
+            ),
+            refresh=True,
+        )
+        await tracker.chunking(
+            chunked=len(cut), reused=sum(a.blob_sha in found for a in copied.articles)
+        )
+        await self.index.index(copied.manifest_id, version)
+        await _activate(self.versions, self.index, self.tag_locks, library, copied.manifest_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1382,6 +1562,11 @@ class ImportVersionUseCase:
         # A job queued without a kind is imported as a bare commit: the SHA is what is fetched.
         refs = _full_refs(job.ref_kind or RefKind.COMMIT, job.version)
         step = self.checkpoints.step
+        # A step of its own: a resumed import cuts and labels its chunks with the config its
+        # first run read, even if the library's chunking was edited in between.
+        chunker = self.chunker.configured(
+            await step("read the chunking settings", partial(_same, source.chunking))
+        )
         try:
             async with AsyncExitStack() as stack:
                 checkout = _Checkout(
@@ -1395,7 +1580,7 @@ class ImportVersionUseCase:
                     stack,
                 )
                 paths = await step("list the selected files", lambda: _list(checkout, source))
-                articles, wanted = await self._articles(checkout, paths, source, progress)
+                articles, wanted = await self._articles(checkout, paths, source, chunker, progress)
                 readme, context7, taken = await step(
                     "read the README, context7.json and the images",
                     lambda: self._assets(checkout, wanted),
@@ -1412,19 +1597,24 @@ class ImportVersionUseCase:
         renamed_from, renames = await step(
             "detect renames", lambda: self._renames(job, source, credential, refs, articles)
         )
-        version = ImportedVersion(
-            library=job.library,
-            ref=job.version,
-            kind=job.ref_kind or RefKind.COMMIT,
-            commit_sha=job.commit_sha,
-            config_hash=self.chunker.config_hash,
-            articles=tuple(articles),
-            images=images,
-            refresh=self.refresh,
-            renamed_from=renamed_from,
-            renames=renames,
+        await step(
+            "publish",
+            partial(
+                self._publish,
+                ImportedVersion(
+                    library=job.library,
+                    ref=job.version,
+                    kind=job.ref_kind or RefKind.COMMIT,
+                    commit_sha=job.commit_sha,
+                    config_hash=chunker.config_hash,
+                    articles=tuple(articles),
+                    images=images,
+                    refresh=self.refresh,
+                    renamed_from=renamed_from,
+                    renames=renames,
+                ),
+            ),
         )
-        await step("publish", lambda: self._publish(version))
         # Not a step: it never fails the import, reads what is imported now and replaces whole
         # maps, so running it again after a crash is the right thing to do.
         await self._renew_newer(job, job.ref_kind or RefKind.COMMIT, source, credential, refs)
@@ -1450,17 +1640,6 @@ class ImportVersionUseCase:
         except Exception:
             log.exception("could not apply the README of %s %s", library, ref)
 
-    async def _activate(self, library: str, manifest_id: str) -> None:
-        """Give the manifest its library's manual tags, chunks included, then activate it.
-
-        Last, so a tag set while the version was stored and indexed counts too.
-        """
-        async with self.tag_locks.of(library):
-            tagged = await self.versions.apply_manual_tags(manifest_id)
-            if tagged:
-                await self.index.retag(manifest_id, tagged)
-            await self.versions.activate(manifest_id)
-
     async def _publish(self, version: ImportedVersion) -> None:
         """Store the version as a pending manifest, index its chunks, then activate it.
 
@@ -1471,14 +1650,9 @@ class ImportVersionUseCase:
         try:
             manifest_id = await self.versions.store(version)
             await self.index.index(manifest_id, version)
-            await self._activate(version.library, manifest_id)
+            await _activate(self.versions, self.index, self.tag_locks, version.library, manifest_id)
         except BaseException:
-            # Run as a task of its own and shielded, so that the cancellation that got us here
-            # cannot cut the clean-up short. A failing clean-up is logged, never hides the cause.
-            cleanup = asyncio.ensure_future(self._discard(version.library, manifest_id))
-            _cleanups.add(cleanup)
-            cleanup.add_done_callback(_cleanups.discard)
-            await asyncio.shield(cleanup)
+            await _discard_shielded(self.versions, self.index, version.library, manifest_id)
             raise
 
     async def _assets(
@@ -1677,6 +1851,7 @@ class ImportVersionUseCase:
         checkout: _Checkout,
         paths: Sequence[str],
         source: ImportSource,
+        chunker: Chunker,
         progress: JobProgress,
     ) -> tuple[list[ImportedArticle], list[str]]:
         """Return the articles and the image paths they reference (first-seen order).
@@ -1684,7 +1859,7 @@ class ImportVersionUseCase:
         One durable step per ``batch_files`` files. What a step returns is all that later steps
         and the progress depend on, so a replayed step leaves the job as the first run did.
         """
-        total, config_hash = len(paths), self.chunker.config_hash
+        total, config_hash = len(paths), chunker.config_hash
         await progress.report(done=0, total=total)
         articles: list[_Article] = []
         chunks: dict[str, tuple[ArticleChunk, ...]] = {}
@@ -1697,7 +1872,9 @@ class ImportVersionUseCase:
                 partial(
                     self._batch,
                     checkout,
-                    _BatchInput(files, start, total, used, dict(chunks), source, config_hash),
+                    _BatchInput(
+                        files, start, total, used, dict(chunks), source, config_hash, chunker
+                    ),
                     progress,
                 ),
             )
@@ -1751,7 +1928,7 @@ class ImportVersionUseCase:
         for _, blob_sha, parsed in loaded:
             if blob_sha not in known and blob_sha not in found:
                 unknown.setdefault(blob_sha, parsed)
-        cut = await asyncio.to_thread(self._cut, unknown)
+        cut = await asyncio.to_thread(_cut, given.chunker, unknown)
         every = {**known, **found, **cut}
         rules = given.source.tag_rules
         return _Batch(
@@ -1775,14 +1952,54 @@ class ImportVersionUseCase:
             used=used,
         )
 
-    def _cut(self, articles: Mapping[str, ParsedArticle]) -> dict[str, tuple[ArticleChunk, ...]]:
-        return {sha: tuple(self.chunker.chunk(a)) for sha, a in articles.items()}
 
-    async def _discard(self, library: str, manifest_id: str | None) -> None:
+async def _same[T](value: T) -> T:
+    return value
+
+
+def _cut(
+    chunker: Chunker, articles: Mapping[str, ParsedArticle]
+) -> dict[str, tuple[ArticleChunk, ...]]:
+    return {sha: tuple(chunker.chunk(a)) for sha, a in articles.items()}
+
+
+async def _activate(
+    versions: VersionPublisher,
+    index: ChunkIndex,
+    tag_locks: TagLocks,
+    library: str,
+    manifest_id: str,
+) -> None:
+    """Give the manifest its library's manual tags, chunks included, then activate it.
+
+    Last, so a tag set while the version was stored and indexed counts too.
+    """
+    async with tag_locks.of(library):
+        tagged = await versions.apply_manual_tags(manifest_id)
+        if tagged:
+            await index.retag(manifest_id, tagged)
+        await versions.activate(manifest_id)
+
+
+async def _discard_shielded(
+    versions: VersionPublisher, index: ChunkIndex, library: str, manifest_id: str | None
+) -> None:
+    """Discard what a failed publish left pending; the cancellation that got here cannot stop it.
+
+    Run as a task of its own and shielded, so that the clean-up is not cut short. A failing
+    clean-up is logged, never hides the cause.
+    """
+
+    async def discard() -> None:
         try:
-            await _discard_pending(self.versions, self.index, library, manifest_id)
+            await _discard_pending(versions, index, library, manifest_id)
         except Exception:
             log.exception("could not discard the pending import of %s", library)
+
+    cleanup = asyncio.ensure_future(discard())
+    _cleanups.add(cleanup)
+    cleanup.add_done_callback(_cleanups.discard)
+    await asyncio.shield(cleanup)
 
 
 def _full_refs(kind: RefKind, name: str) -> list[str]:
@@ -1830,6 +2047,7 @@ class _BatchInput:
     """Chunks of the blobs the steps before this one took."""
     source: ImportSource
     config_hash: str
+    chunker: Chunker
 
 
 @dataclass(frozen=True, slots=True)

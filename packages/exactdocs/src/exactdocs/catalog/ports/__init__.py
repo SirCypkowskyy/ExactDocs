@@ -1,6 +1,7 @@
 from exactdocs.catalog.ports.driven import (
     ImportedTagWriter,
     LibraryRepository,
+    ManifestCopier,
     ManifestRepository,
 )
 from exactdocs.catalog.ports.driving import (
@@ -40,6 +41,7 @@ __all__ = [
     "ListLibraries",
     "ListRenames",
     "ListTags",
+    "ManifestCopier",
     "ManifestRepository",
     "RemoveLibrary",
     "RemoveVersion",

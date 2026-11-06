@@ -8,6 +8,7 @@ import pytest
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.dtos import (
@@ -63,6 +64,7 @@ def build(*versions: Version) -> CatalogModule:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
 
 
@@ -198,6 +200,7 @@ async def test_a_library_removed_while_pinning_is_reported_as_missing() -> None:
         repository=repository,
         manifests=(written := InMemoryManifestRepository(inner)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
 
     with pytest.raises(LibraryNotFoundError):

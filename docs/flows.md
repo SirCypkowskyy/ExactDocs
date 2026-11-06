@@ -54,12 +54,16 @@ job problems with a code, and the version is published without them.
 
 ### Editing a library's settings
 
-`PUT /libraries/{owner}/{repo}/settings` stores new paths and tag rules, then queues one job for
-the whole library. Changed paths: a `reprocess` job runs the `refresh` pipeline for each version
-at the commit it serves, so each version's new manifest replaces the old one at once. Only tag
-rules changed: a `retag` job re-derives each stored article's imported tags (front matter plus
-rules) and writes them per version in one transaction, then copies them onto the chunks, without
-fetching. Until a version is done it serves its previous state; one that fails keeps it.
+`PUT /libraries/{owner}/{repo}/settings` stores new paths, tag rules and chunking, then queues
+one job for the whole library. Changed paths: a `reprocess` job runs the `refresh` pipeline for
+each version at the commit it serves, so each version's new manifest replaces the old one at
+once. Changed chunking: a `rechunk` job copies each version's active manifest into a pending one,
+re-derives its imported tags, cuts the stored text with the new chunking (reusing chunk sets
+already cut with it), indexes the copy and activates it, without fetching (a version stored by an
+older parser is re-imported at its commit instead). Only tag rules changed: a `retag` job
+re-derives each stored article's imported tags (front matter plus rules) and writes them per
+version in one transaction, then copies them onto the chunks, without fetching. Until a version
+is done it serves its previous state; one that fails keeps it.
 
 ### Re-sync
 

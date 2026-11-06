@@ -9,11 +9,14 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySettings,
+    CatalogLibrarySources,
     CatalogSearchableVersions,
+    CatalogVersionCopier,
 )
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
 )
 from exactdocs.catalog.dtos import (
@@ -33,13 +36,18 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
+from exactdocs.ingestion.errors import StoredTextOutdatedError
 from exactdocs.ingestion.models import (
+    PARSER_VERSION,
+    ChunkingConfig,
+    CopiedArticle,
     PathSelection,
     ProposedId,
     StoredArticleTags,
     StoredTags,
     TagRule,
 )
+from exactdocs.ingestion.models import RefKind as IngestionRefKind
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
 from exactdocs_kernel import MAX_LIMIT
 
@@ -70,6 +78,7 @@ CATALOG = CatalogModule.build(
     repository=_LIBRARIES,
     manifests=(written := InMemoryManifestRepository(_LIBRARIES)),
     imported_tags=InMemoryImportedTags(written),
+    copier=InMemoryManifestCopier(written),
 )
 ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
 
@@ -80,6 +89,7 @@ LIBRARY_IDS = CatalogLibraryIds(
         repository=_TAKEN,
         manifests=(written := InMemoryManifestRepository(_TAKEN)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     ).get_library
 )
 
@@ -185,6 +195,7 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
 
     found = await CatalogLibraries(catalog.list_libraries).all()
@@ -208,6 +219,7 @@ async def test_default_versions_come_in_one_call_with_active_manifests_only() ->
         repository=repository,
         manifests=(written := InMemoryManifestRepository(repository)),
         imported_tags=InMemoryImportedTags(written),
+        copier=InMemoryManifestCopier(written),
     )
     stored = await catalog.store_manifest(
         StoreManifestCommand(
@@ -244,7 +256,10 @@ def _tagging_catalog() -> CatalogModule:
     libraries = InMemoryLibraryRepository.of([PAYMENTS])
     manifests = InMemoryManifestRepository(libraries)
     return CatalogModule.build(
-        repository=libraries, manifests=manifests, imported_tags=InMemoryImportedTags(manifests)
+        repository=libraries,
+        manifests=manifests,
+        imported_tags=InMemoryImportedTags(manifests),
+        copier=InMemoryManifestCopier(manifests),
     )
 
 
@@ -293,8 +308,76 @@ async def test_settings_are_stored_on_the_catalog_library() -> None:
         "/acme/payments",
         PathSelection.of(["docs/"], ["docs/old/"]),
         TagRule.many([("docs/api/**", "api")]),
+        ChunkingConfig(split_depth=2, min_chars=10, max_chars=900),
     )
 
     settings = (await catalog.get_library(GetLibraryQuery(id="/acme/payments"))).settings
     assert (settings.include_paths, settings.exclude_paths) == (["docs/"], ["docs/old/"])
     assert [(r.pattern, r.tag) for r in settings.tag_rules] == [("docs/api/**", "api")]
+    assert settings.chunking.model_dump() == {
+        "split_level": 2,
+        "min_chars": 10,
+        "max_chars": 900,
+        "chunker": "markdown",
+    }
+
+
+async def test_a_version_is_copied_for_re_chunking_through_the_catalog() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogVersionCopier(catalog.copy_manifest)
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/payments",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="1" * 40,
+                    content_version=PARSER_VERSION,
+                    title="A",
+                    tags=["x"],
+                    front_matter={"tags": ["x"]},
+                    content="# A",
+                )
+            ],
+        )
+    )
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    copied = await bridge.copy("/acme/payments", "v1.4.0", content_version=PARSER_VERSION)
+
+    assert copied is not None
+    assert copied.manifest_id != stored.manifest_id
+    assert (copied.kind, copied.commit_sha) == (IngestionRefKind.TAG, "a" * 40)
+    assert copied.articles == (
+        CopiedArticle(
+            path="a.md",
+            blob_sha="1" * 40,
+            title="A",
+            front_matter={"tags": ["x"]},
+            tags=("x",),
+            content="# A",
+        ),
+    )
+    with pytest.raises(StoredTextOutdatedError):
+        await bridge.copy("/acme/payments", "v1.4.0", content_version=PARSER_VERSION + 1)
+    assert await bridge.copy("/acme/payments", "nope", content_version=PARSER_VERSION) is None
+    assert await bridge.copy("/acme/nope", "v1.4.0", content_version=PARSER_VERSION) is None
+
+
+async def test_the_chunking_settings_reach_the_importer() -> None:
+    catalog = _tagging_catalog()
+    await CatalogLibrarySettings(catalog.set_library_settings).save(
+        "/acme/payments",
+        PathSelection.of(["docs/"]),
+        (),
+        ChunkingConfig(split_depth=3, min_chars=5),
+    )
+
+    source = await CatalogLibrarySources(catalog.get_library, catalog.list_renames).get(
+        "/acme/payments"
+    )
+
+    assert source.chunking == ChunkingConfig(split_depth=3, min_chars=5)

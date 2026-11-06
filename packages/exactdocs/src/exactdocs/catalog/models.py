@@ -187,6 +187,8 @@ class ChunkingConfig:
     split_level: int = _HEADING_LEVELS
     min_chars: int = 0
     max_chars: int | None = None
+    chunker: str = "markdown"
+    """Which chunker cuts; the importer knows which ones exist."""
 
     def __post_init__(self) -> None:
         if not 1 <= self.split_level <= _HEADING_LEVELS:
@@ -194,6 +196,9 @@ class ChunkingConfig:
             raise InvalidSettingsError(message)
         if self.min_chars < 0 or (self.max_chars is not None and self.max_chars < self.min_chars):
             message = "chunk sizes must satisfy 0 <= min_chars <= max_chars"
+            raise InvalidSettingsError(message)
+        if not self.chunker:
+            message = "a chunker must be named"
             raise InvalidSettingsError(message)
 
 

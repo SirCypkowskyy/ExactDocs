@@ -98,26 +98,42 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
-- **Editing paths and tag rules** (LIB-09, TAG-02): `PUT /libraries/{owner}/{repo}/settings`
-  with `{"include_paths", "exclude_paths", "tag_rules"}` replaces the whole set (what is left out
-  is cleared; `GET /libraries/{owner}/{repo}` has the current `settings`), validated like
-  `POST /libraries` (422 `invalid_path_pattern` / `invalid_tag`, nothing stored), 404 for an
-  unknown library. Every version is then re-processed by **one** job, at the commit it serves (a
+- **Editing paths, tag rules and chunking** (LIB-09, TAG-02, IMP-03):
+  `PUT /libraries/{owner}/{repo}/settings` with `{"include_paths", "exclude_paths", "tag_rules",
+  "chunking"}` replaces the whole set (what is left out is cleared, `chunking` back to its
+  defaults; `GET /libraries/{owner}/{repo}` has the current `settings`), validated like
+  `POST /libraries` (422 `invalid_path_pattern` / `invalid_tag` / `invalid_chunking_config` or a
+  field error, nothing stored), 404 for an unknown library. `chunking` is
+  `{"split_level": 1-6, "min_chars": 0, "max_chars": null, "chunker": "markdown"}` (the
+  defaults): `split_level` is the deepest heading that starts a chunk (`2` cuts at `#` and `##`
+  only); a chunk longer than `max_chars` is cut again at its deeper headings (never inside a code
+  block or table, so a section without deeper headings stays whole); chunks shorter than
+  `min_chars` are merged with the next one (the last with the one before) as long as the result
+  stays within `max_chars`, and the text before the first heading is never merged; `max_chars`
+  must not be smaller than `min_chars` (both at most 1,000,000). `markdown` (markdown-it-py) is
+  the only chunker. Every version is then re-processed by **one** job, at the commit it serves (a
   branch is not synced): changed paths queue a `reprocess` job that fetches each version again
-  and re-imports it (unchanged blobs reuse their chunks); only tag rules changed queue a `retag`
-  job that derives each stored article's tags again from its stored front matter and the new
-  rules, fetching and chunking nothing (manual tags stay). Each version keeps serving its old
-  state until its new one is complete and then switches at once: a new manifest activated, or,
-  for a `retag`, the version's catalog entries re-tagged in one transaction, with search's tag
-  copies following a moment later under the same lock (as for manual tags; a rerun of the job
-  always brings them in line). A version that cannot be re-processed keeps what it had, the
-  others go on, and the job fails naming it (`error_code` the failures' shared code, else
-  `reprocess_failed`); sending the same settings again then queues that job again. While the newest `reprocess` failed, a retry or a tag-only edit queues a `reprocess` (it re-tags too), so a re-tag never hides that failure. Both jobs count `done` / `total` in versions. The answer is
-  **202** with the job in `Location` and the body's `job_id`, `reprocess` (`paths` or `tags`) and
+  and re-imports it (unchanged blobs reuse their chunks); a changed chunking (paths unchanged)
+  queues a `rechunk` job that copies what each version serves into a new manifest, re-derives
+  its tags and cuts the **stored** text again, fetching nothing (a blob already cut with that
+  chunking reuses its chunks; a version stored by an older parser is re-imported at its commit
+  instead); only tag rules changed queue a `retag` job that derives each stored article's tags
+  again from its stored front matter and the new rules, fetching and chunking nothing (manual
+  tags stay). Each version keeps serving its old state (its old chunks too) until its new one is
+  complete and then switches at once: a new manifest activated, or, for a `retag`, the version's
+  catalog entries re-tagged in one transaction, with search's tag copies following a moment
+  later under the same lock (as for manual tags; a rerun of the job always brings them in
+  line). A version that cannot be re-processed keeps what it had, the others go on, and the job
+  fails naming it (`error_code` the failures' shared code, else `reprocess_failed`); sending the
+  same settings again then queues that job again. A job redoes what the smaller ones do
+  (`reprocess` > `rechunk` > `retag`): while a wider one failed and has not been redone, a retry
+  or a smaller edit queues the wider one, so a smaller job never hides that failure. The jobs
+  count `done` / `total` in versions. The answer is **202** with the job in `Location` and the
+  body's `job_id`, `reprocess` (`paths`, `chunking` or `tags`), the stored `chunking` and
   `versions` (the library's refs, which the job re-processes), or **200** with `job_id: null`
   when nothing changed and the last re-processing did not fail, or the library has no version
-  yet (imports to come use the new settings). Edits of one library take turns. A job of that kind still queued for the library is reused (a queued
-  `reprocess` also stands in for a tag change). Removal waits for these jobs like for an import.
+  yet (imports to come use the new settings). Edits of one library take turns. A queued job
+  that does at least what is needed is reused. Removal waits for these jobs like for an import.
 - **`context7.json`** (LIB-06): a repository's root `context7.json` is read when a library is
   added or previewed (only that one file of the pinned commit: its tree entry, then its blob) and
   again by every import. Reading it for an add or a preview uses a preview slot, never an
@@ -235,7 +251,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 ## Jobs, access and health
 
-- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `retag` or
+- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag` or
   `collect`; state `queued`,
   `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; problems).
   A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its

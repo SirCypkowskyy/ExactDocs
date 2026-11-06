@@ -18,6 +18,7 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     ArticleChunk,
     ArticleTags,
+    ChunkingConfig,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -79,6 +80,10 @@ class CountingChunker:
     def config_hash(self) -> str:
         return self.inner.config_hash
 
+    def configured(self, config: ChunkingConfig) -> CountingChunker:
+        self.inner = self.inner.configured(config)
+        return self
+
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         if article.path == self.kill_at:
             raise Killed
@@ -86,10 +91,15 @@ class CountingChunker:
         return self.inner.chunk(article)
 
 
+@dataclass(slots=True)
 class Sources:
+    chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+
     async def get(self, library: str) -> ImportSource:
         del library
-        return ImportSource(url=URL, selection=PathSelection(include=("docs/",)))
+        return ImportSource(
+            url=URL, selection=PathSelection(include=("docs/",)), chunking=self.chunking
+        )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
         del library
@@ -156,12 +166,16 @@ class Catalog:
 
 
 def importer(
-    repository: Repository, chunker: CountingChunker, catalog: Catalog, checkpoints
+    repository: Repository,
+    chunker: CountingChunker,
+    catalog: Catalog,
+    checkpoints,
+    sources: Sources | None = None,
 ) -> ImportVersionUseCase:
     return ImportVersionUseCase(
         gateway=repository,
         chunker=chunker,
-        sources=Sources(),
+        sources=sources or Sources(),
         versions=catalog,
         index=catalog,
         vault=InMemoryCredentialVault(),
@@ -243,3 +257,24 @@ async def test_a_resume_with_only_publishing_left_fetches_nothing_and_publishes_
 
     assert (repository.fetches, again.cut) == (1, [])
     assert catalog.log == ["store", "index m2", "activate m2", "describe"]
+
+
+async def test_a_resumed_import_cuts_and_labels_with_the_chunking_its_first_run_read(
+    tmp_path: Path,
+) -> None:
+    repository, catalog, checkpoints = Repository(tmp_path), Catalog(), InMemoryCheckpoints()
+    sources = Sources(ChunkingConfig(split_depth=1))
+    with pytest.raises(Killed):
+        await run(
+            importer(repository, CountingChunker(kill_at=page(121)), catalog, checkpoints, sources),
+            InMemoryJobRepository(),
+        )
+    sources.chunking = ChunkingConfig(split_depth=2)  # edited while the job was down
+
+    await run(
+        importer(repository, CountingChunker(), catalog, checkpoints.resumed(), sources),
+        InMemoryJobRepository(),
+    )
+
+    [version] = catalog.stored
+    assert version.config_hash == MarkdownChunker(ChunkingConfig(split_depth=1)).config_hash
