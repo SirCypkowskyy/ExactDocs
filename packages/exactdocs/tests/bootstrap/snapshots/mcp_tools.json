@@ -262,6 +262,15 @@
                       ],
                       "type": "string"
                     },
+                    "origin": {
+                      "default": "manual",
+                      "description": "`auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.",
+                      "enum": [
+                        "manual",
+                        "auto"
+                      ],
+                      "type": "string"
+                    },
                     "ref": {
                       "type": "string"
                     }

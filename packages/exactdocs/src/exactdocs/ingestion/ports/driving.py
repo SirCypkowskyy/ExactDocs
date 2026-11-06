@@ -8,9 +8,12 @@ from exactdocs.ingestion.dtos import (
     AddedVersion,
     AddLibraryCommand,
     AddVersionCommand,
+    AutoSyncOut,
     CheckedRepository,
     CheckRepositoryCommand,
+    DisableAutoSyncCommand,
     EnqueueJobCommand,
+    GetAutoSyncQuery,
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
@@ -27,6 +30,8 @@ from exactdocs.ingestion.dtos import (
     RemoveVersionCommand,
     RepositoryPreview,
     RepositoryRefs,
+    ScheduledChecks,
+    SetAutoSyncCommand,
     SyncedLibrary,
     SyncLibraryCommand,
     TagArticleCommand,
@@ -243,5 +248,54 @@ class TagArticle(Protocol):
     """
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
+        """Run the use case."""
+        ...
+
+
+class GetAutoSync(Protocol):
+    """Read how a library is checked on its own (``enabled`` false when it is not).
+
+    Raises ``NotFoundError`` for an unknown library.
+    """
+
+    async def __call__(self, query: GetAutoSyncQuery) -> AutoSyncOut:
+        """Run the use case."""
+        ...
+
+
+class SetAutoSync(Protocol):
+    """Turn on (or change) a library's scheduled check (SYNC-02); it runs at the next tick.
+
+    Raises ``NotFoundError`` for an unknown library and ``InvalidAutoSyncError`` for a pattern,
+    retention or interval that cannot be used. Nothing is imported or removed here.
+    """
+
+    async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
+        """Run the use case."""
+        ...
+
+
+class DisableAutoSync(Protocol):
+    """Turn a library's scheduled check off; its versions, ``auto`` ones too, stay.
+
+    Raises ``NotFoundError`` for an unknown library.
+    """
+
+    async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
+        """Run the use case."""
+        ...
+
+
+class RunScheduledChecks(Protocol):
+    """One tick of the schedule: check every library that is due (the clock decides).
+
+    For each one, the remote is asked for its refs once: new matching tags are queued as
+    ``auto`` imports, ``auto`` versions beyond ``keep_last`` removed, and with
+    ``sync_branches`` the branches re-synced. What a library's check could not do is recorded on
+    its schedule (``last_error``) and never stops the others. A tick that starts while another
+    runs does nothing.
+    """
+
+    async def __call__(self) -> ScheduledChecks:
         """Run the use case."""
         ...

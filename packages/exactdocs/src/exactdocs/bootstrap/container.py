@@ -57,7 +57,11 @@ from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, swee
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
-from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault, SqliteJobRepository
+from exactdocs.ingestion.adapters.driven.sqlite import (
+    SqliteAutoSyncStore,
+    SqliteCredentialVault,
+    SqliteJobRepository,
+)
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
@@ -259,6 +263,7 @@ class Container:
             manual_tags=CatalogManualTags(catalog.set_manual_tags),
             tag_locks=tag_locks,
             runner=DbosJobQueue(),
+            auto_syncs=SqliteAutoSyncStore(engine),
         )
         return cls(
             settings=settings,
@@ -278,6 +283,8 @@ class Container:
                 run_job=ingestion.run_job,
                 recover_jobs=ingestion.recover_jobs,
                 submit_queued_jobs=ingestion.submit_queued_jobs,
+                run_scheduled_checks=ingestion.run_scheduled_checks,
+                schedule=settings.auto_sync_schedule,
                 poll_interval=settings.job_poll_seconds,
                 database=settings.data_dir / JOBS_FILE,
                 queue=QUEUE,

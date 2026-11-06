@@ -31,6 +31,7 @@ from exactdocs.catalog.models import (
     TagMatch,
     TagSelection,
     Version,
+    VersionOrigin,
 )
 from exactdocs_kernel import (
     DEFAULT_LIMIT,
@@ -92,6 +93,13 @@ class VersionOut(_Dto):
     commit_sha: str
     imported_at: datetime
     is_default: bool = Field(description="True for the version `/owner/repo` resolves to.")
+    origin: VersionOrigin = Field(
+        default=VersionOrigin.MANUAL,
+        description=(
+            "`auto` when the library's scheduled check imported it (retention may remove it), "
+            "`manual` when someone added it."
+        ),
+    )
 
     @classmethod
     def from_model(cls, version: Version, *, is_default: bool) -> Self:
@@ -102,6 +110,7 @@ class VersionOut(_Dto):
             commit_sha=version.commit_sha,
             imported_at=version.imported_at,
             is_default=is_default,
+            origin=version.origin,
         )
 
 
@@ -307,6 +316,10 @@ class StoreManifestCommand(_Dto):
     renames: list[RenameIn] = Field(
         default=[],
         description="Files moved since an earlier version; kept and replaced with the manifest.",
+    )
+    origin: VersionOrigin = Field(
+        default=VersionOrigin.MANUAL,
+        description="Given to the version if this manifest's activation creates it.",
     )
 
 

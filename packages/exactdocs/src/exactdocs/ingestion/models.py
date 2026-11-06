@@ -12,8 +12,9 @@ import math
 import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
+from fnmatch import fnmatchcase
 from functools import lru_cache
 from itertools import pairwise, starmap
 from operator import itemgetter
@@ -28,6 +29,7 @@ from markdown_it.token import Token
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
     CredentialProblem,
+    InvalidAutoSyncError,
     InvalidChunkingConfigError,
     InvalidContext7Error,
     InvalidCredentialError,
@@ -379,6 +381,16 @@ DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
 """How long a replaced manifest is kept so that its chunk IDs can still be recognized as stale."""
 
 
+class VersionOrigin(StrEnum):
+    """Who asked for a version: a person (``manual``) or the scheduled check (``auto``).
+
+    Retention (``AutoSync.keep_last``) only ever removes ``auto`` versions.
+    """
+
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
 class JobState(StrEnum):
     """Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."""
 
@@ -473,6 +485,8 @@ class Job:
     error: str | None = None
     error_code: str | None = None
     """The stable code of ``error``: a ``SyncErrorCode``, an error's own code or ``unexpected``."""
+    origin: VersionOrigin = VersionOrigin.MANUAL
+    """Who queued it; the first import of a version gives the version this origin."""
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -488,6 +502,7 @@ class Job:
         now: datetime,
         commit_sha: str | None = None,
         ref_kind: RefKind | None = None,
+        origin: VersionOrigin = VersionOrigin.MANUAL,
     ) -> Self:
         """Create a job that waits for the worker."""
         return cls(
@@ -497,6 +512,7 @@ class Job:
             version=version,
             commit_sha=commit_sha,
             ref_kind=ref_kind,
+            origin=origin,
             state=JobState.QUEUED,
             created_at=now,
         )
@@ -1548,6 +1564,8 @@ class ImportedVersion:
     renamed_from: str | None = None
     """The ref whose commit ``renames`` were detected against; ``None`` when none were."""
     renames: tuple[GitRename, ...] = ()
+    origin: VersionOrigin = VersionOrigin.MANUAL
+    """Given to the version when this creates it; a version that exists keeps its own."""
 
 
 def git_blob_sha(data: bytes) -> str:
@@ -1593,6 +1611,7 @@ class ImportedRef:
     ref: str
     kind: RefKind
     commit_sha: str
+    origin: VersionOrigin = VersionOrigin.MANUAL
 
 
 _NUMERIC_REF = re.compile(r"[vV]?(\d{1,9}(?:\.\d{1,9}){0,7})")
@@ -1676,3 +1695,137 @@ class SyncStatus(StrEnum):
     """A tag or a commit never moves: it is not synced."""
     FAILED = "failed"
     """The branch is gone upstream: the version keeps what it served; the failure is on a job."""
+
+
+# ---------------------------------------------------------------- the scheduled check (SYNC-02)
+
+MAX_TAG_PATTERN = 200
+MAX_KEEP_LAST = 100
+MIN_INTERVAL_MINUTES = 1
+MAX_INTERVAL_MINUTES = 7 * 24 * 60
+DEFAULT_KEEP_LAST = 5
+DEFAULT_INTERVAL_MINUTES = 60
+MAX_CHECK_ERROR = 500
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AutoSync:
+    """When and how a library is checked on its own: new tags imported, branches re-synced.
+
+    Every ``interval_minutes`` the scheduled check asks the remote for its refs once. With a
+    ``tag_pattern`` (a glob over tag names, ``v*``), tags it matches that have a version order
+    (``v1.4.0``, ``2.1``) become ``auto`` versions, and of those only the newest ``keep_last``
+    are kept: older ``auto`` versions are removed, ``manual`` ones never. With
+    ``sync_branches`` every branch version is re-synced as ``SyncLibrary`` would. ``checked_at``
+    is when the last check ended (``None``: at the next tick) and ``last_error`` what it could
+    not do.
+    """
+
+    library: str
+    tag_pattern: str | None = None
+    keep_last: int = DEFAULT_KEEP_LAST
+    interval_minutes: int = DEFAULT_INTERVAL_MINUTES
+    sync_branches: bool = False
+    checked_at: datetime | None = None
+    last_error: str | None = None
+
+    def __post_init__(self) -> None:
+        pattern = self.tag_pattern
+        if pattern is not None and (
+            not pattern
+            or len(pattern) > MAX_TAG_PATTERN
+            or not all(c.isprintable() and not c.isspace() for c in pattern)
+        ):
+            message = f"a tag pattern is 1 to {MAX_TAG_PATTERN} characters without spaces"
+            raise InvalidAutoSyncError(message)
+        if not 1 <= self.keep_last <= MAX_KEEP_LAST:
+            message = f"keep_last must be between 1 and {MAX_KEEP_LAST}"
+            raise InvalidAutoSyncError(message)
+        if not MIN_INTERVAL_MINUTES <= self.interval_minutes <= MAX_INTERVAL_MINUTES:
+            message = (
+                f"interval_minutes must be between {MIN_INTERVAL_MINUTES} "
+                f"and {MAX_INTERVAL_MINUTES}"
+            )
+            raise InvalidAutoSyncError(message)
+
+    def matches(self, tag: str) -> bool:
+        """Tell whether the tag is one to import automatically (case-sensitive glob)."""
+        return self.tag_pattern is not None and fnmatchcase(tag, self.tag_pattern)
+
+    @property
+    def next_check_at(self) -> datetime | None:
+        """When the library is due again; ``None``: at the next tick of the schedule."""
+        if self.checked_at is None:
+            return None
+        return self.checked_at + timedelta(minutes=self.interval_minutes)
+
+    def is_due(self, now: datetime) -> bool:
+        """Tell whether the scheduled check should look at the library ``now``."""
+        due = self.next_check_at
+        return due is None or now >= due
+
+    def checked(self, now: datetime, error: str | None) -> Self:
+        """Record that a check ended at ``now``, with what it could not do."""
+        if error is not None and len(error) > MAX_CHECK_ERROR:
+            error = error[: MAX_CHECK_ERROR - 1] + "…"
+        return replace(self, checked_at=now, last_error=error)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AutoImportPlan:
+    """What one scheduled check does with a library's tags."""
+
+    imports: tuple[ResolvedRef, ...] = ()
+    """Tags to import as ``auto`` versions, oldest first."""
+    removals: tuple[str, ...] = ()
+    """``auto`` versions that fell out of the newest ``keep_last``."""
+
+
+_ORDER_WIDTH = 8  # what ``_NUMERIC_REF`` allows: ``1.4`` ranks as ``1.4.0.0.0.0.0.0``
+
+
+def _order(ref: str) -> tuple[tuple[int, ...], str]:
+    """Rank a numeric ref: ``1.4`` equals ``1.4.0``, and the name breaks a tie."""
+    numbers = _numbers(ref) or ()
+    padded = numbers + (0,) * (_ORDER_WIDTH - len(numbers)) if numbers else ()
+    return padded, ref
+
+
+def plan_auto_imports(
+    auto_sync: AutoSync,
+    tips: Sequence[ResolvedRef],
+    versions: Sequence[ImportedRef],
+    *,
+    failed: Collection[tuple[str, str]] = (),
+) -> AutoImportPlan:
+    """Pick the tags to import and the ``auto`` versions to remove (pure).
+
+    The newest ``keep_last`` of (the matching tags that are not versions yet, plus the ``auto``
+    versions) are kept: the tags among them are imported, the ``auto`` versions outside them
+    removed. A tag without a version order (a pre-release, a name) is never imported; a
+    ``manual`` version is never removed and does not count. ``failed`` holds the (tag, commit)
+    pairs whose last import failed: they are not tried again until the tag moves.
+    """
+    if auto_sync.tag_pattern is None:
+        return AutoImportPlan()
+    have = {v.ref for v in versions}
+    new = {
+        tip.name: tip
+        for tip in tips
+        if tip.kind is RefKind.TAG
+        and tip.name not in have
+        and auto_sync.matches(tip.name)
+        and _numbers(tip.name) is not None
+        and (tip.name, tip.commit_sha) not in failed
+    }
+    autos = [
+        v.ref
+        for v in versions
+        if v.origin is VersionOrigin.AUTO and v.kind is RefKind.TAG and _numbers(v.ref) is not None
+    ]
+    ranked = sorted({*new, *autos}, key=_order, reverse=True)
+    kept = set(ranked[: auto_sync.keep_last])
+    return AutoImportPlan(
+        imports=tuple(new[name] for name in reversed(ranked) if name in kept and name in new),
+        removals=tuple(ref for ref in reversed(ranked) if ref not in kept and ref in autos),
+    )

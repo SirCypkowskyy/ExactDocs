@@ -45,6 +45,7 @@ from exactdocs.catalog.models import (
     StoredImage,
     TagMatch,
     TagSelection,
+    VersionOrigin,
     VersionRef,
 )
 from exactdocs.catalog.ports import LibraryRepository, ManifestRepository
@@ -296,6 +297,25 @@ async def test_activation_creates_a_version_that_did_not_exist(stores: Stores) -
         RefKind.TAG,
         sha("ccc333"),
     )
+
+
+async def test_a_version_keeps_the_origin_of_the_manifest_that_created_it(
+    stores: Stores,
+) -> None:
+    first = replace(manifest("m1", "v1.4.0", "ccc333", kind=RefKind.TAG), origin=VersionOrigin.AUTO)
+    await store(stores, first)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    # A later import of the version (a confirmed re-import) was queued by hand.
+    later = manifest("m2", "v1.4.0", "ddd444", kind=RefKind.TAG, created_at=T0 + timedelta(1))
+    await store(stores, later)
+
+    activated = await stores.manifests.activate(ManifestId("m2"), at=T0 + timedelta(1))
+
+    library = await stores.libraries.get(PAYMENTS.id)
+    assert library is not None
+    assert [v.origin for v in library.versions] == [VersionOrigin.AUTO]
+    assert (activated.commit_sha, activated.origin) == (sha("ddd444"), VersionOrigin.AUTO)
+    assert (await fetch(stores.manifests, "m1")).origin is VersionOrigin.AUTO
 
 
 async def test_each_version_keeps_its_own_active_manifest(stores: Stores) -> None:

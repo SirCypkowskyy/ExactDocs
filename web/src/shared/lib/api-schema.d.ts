@@ -641,6 +641,42 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/auto-sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Auto Sync
+         * @description Say how the library is checked on its own (`enabled` false: never) and how it went.
+         */
+        readonly get: operations["ingestion-get_auto_sync"];
+        /**
+         * Set Auto Sync
+         * @description Check the library on its own every `interval_minutes`, starting at the next tick.
+         *
+         *     Each check asks the repository for its refs once. Tags matching `tag_pattern` that have
+         *     a version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions,
+         *     oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are
+         *     removed. Versions added by hand (`manual`) are never removed and do not count. A tag
+         *     whose import failed is tried again only once it moves. With `sync_branches`, every
+         *     branch version is re-synced as `POST .../sync` would. Send the whole set: what is left
+         *     out takes its default. What a check could not do is its `last_error`.
+         */
+        readonly put: operations["ingestion-set_auto_sync"];
+        readonly post?: never;
+        /**
+         * Disable Auto Sync
+         * @description Stop checking the library on its own; every version, `auto` ones too, stays.
+         */
+        readonly delete: operations["ingestion-disable_auto_sync"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -885,6 +921,71 @@ export interface components {
              * Format: password
              */
             readonly password: string;
+        };
+        /**
+         * AutoSyncIn
+         * @description How a library is checked on its own; the whole set (what is left out takes its default).
+         */
+        readonly AutoSyncIn: {
+            /**
+             * Tag Pattern
+             * @description A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a version order become `auto` versions. Null imports no tag.
+             */
+            readonly tag_pattern?: string | null;
+            /**
+             * Keep Last
+             * @description How many `auto` versions are kept, the newest; older ones are removed.
+             * @default 5
+             */
+            readonly keep_last: number;
+            /**
+             * Interval Minutes
+             * @description How often the library is checked.
+             * @default 60
+             */
+            readonly interval_minutes: number;
+            /**
+             * Sync Branches
+             * @description Re-sync every branch version at each check.
+             * @default false
+             */
+            readonly sync_branches: boolean;
+        };
+        /**
+         * AutoSyncOut
+         * @description A library's scheduled check, and how the last one went.
+         */
+        readonly AutoSyncOut: {
+            /** Library */
+            readonly library: string;
+            /**
+             * Enabled
+             * @description False when the library is never checked on its own.
+             */
+            readonly enabled: boolean;
+            /** Tag Pattern */
+            readonly tag_pattern: string | null;
+            /** Keep Last */
+            readonly keep_last: number;
+            /** Interval Minutes */
+            readonly interval_minutes: number;
+            /** Sync Branches */
+            readonly sync_branches: boolean;
+            /**
+             * Checked At
+             * @description When the last check ended.
+             */
+            readonly checked_at: string | null;
+            /**
+             * Next Check At
+             * @description When the library is due again; null while enabled: at the next tick.
+             */
+            readonly next_check_at: string | null;
+            /**
+             * Last Error
+             * @description What the last check could not do, for people.
+             */
+            readonly last_error: string | null;
         };
         /**
          * C7ContextResponse
@@ -1320,6 +1421,11 @@ export interface components {
              * @description The stable code of `error`, null unless the job failed (or failed before codes were recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or `unexpected`.
              */
             readonly error_code: string | null;
+            /**
+             * @description `auto` when the scheduled check queued it, `manual` otherwise.
+             * @default manual
+             */
+            readonly origin: components["schemas"]["exactdocs__ingestion__models__VersionOrigin"];
             /**
              * Created At
              * Format: date-time
@@ -1858,6 +1964,11 @@ export interface components {
              * @description True for the version `/owner/repo` resolves to.
              */
             readonly is_default: boolean;
+            /**
+             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.
+             * @default manual
+             */
+            readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];
             /** Library */
             readonly library: string;
         };
@@ -2198,6 +2309,11 @@ export interface components {
              * @description True for the version `/owner/repo` resolves to.
              */
             readonly is_default: boolean;
+            /**
+             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.
+             * @default manual
+             */
+            readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];
         };
         /**
          * RefKind
@@ -2212,11 +2328,25 @@ export interface components {
          */
         readonly exactdocs__catalog__models__TagMatch: "any" | "all";
         /**
+         * VersionOrigin
+         * @description Who asked for a version: a person, or the scheduled check (which may prune its own).
+         * @enum {string}
+         */
+        readonly exactdocs__catalog__models__VersionOrigin: "manual" | "auto";
+        /**
          * RefKind
          * @description What a requested ref turned out to be.
          * @enum {string}
          */
         readonly exactdocs__ingestion__models__RefKind: "tag" | "branch" | "commit";
+        /**
+         * VersionOrigin
+         * @description Who asked for a version: a person (``manual``) or the scheduled check (``auto``).
+         *
+         *     Retention (``AutoSync.keep_last``) only ever removes ``auto`` versions.
+         * @enum {string}
+         */
+        readonly exactdocs__ingestion__models__VersionOrigin: "manual" | "auto";
         /**
          * TagMatch
          * @description How a tag filter combines its tags.
@@ -5306,6 +5436,241 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["JobList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-get_auto_sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AutoSyncOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-set_auto_sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AutoSyncIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AutoSyncOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-disable_auto_sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AutoSyncOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

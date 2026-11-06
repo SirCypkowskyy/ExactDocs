@@ -34,7 +34,8 @@ from exactdocs.catalog.errors import LibraryNotFoundError
 from exactdocs.catalog.models import HostKind, Library, LibraryId
 
 ORPHAN_VERSION = (
-    "INSERT INTO catalog_library_versions VALUES ('/no/such', 'v1', 'tag', 'abc', '2026-11-04')"
+    "INSERT INTO catalog_library_versions (library_id, ref, kind, commit_sha, imported_at) "
+    "VALUES ('/no/such', 'v1', 'tag', 'abc', '2026-11-04')"
 )
 
 

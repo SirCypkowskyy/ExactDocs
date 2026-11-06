@@ -4634,6 +4634,342 @@
           }
         }
       }
+    },
+    "/api/v1/libraries/{owner}/{repo}/auto-sync": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Get Auto Sync",
+        "description": "Say how the library is checked on its own (`enabled` false: never) and how it went.",
+        "operationId": "ingestion-get_auto_sync",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoSyncOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Set Auto Sync",
+        "description": "Check the library on its own every `interval_minutes`, starting at the next tick.\n\nEach check asks the repository for its refs once. Tags matching `tag_pattern` that have\na version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions,\noldest first, and only the newest `keep_last` `auto` versions are kept: older ones are\nremoved. Versions added by hand (`manual`) are never removed and do not count. A tag\nwhose import failed is tried again only once it moves. With `sync_branches`, every\nbranch version is re-synced as `POST .../sync` would. Send the whole set: what is left\nout takes its default. What a check could not do is its `last_error`.",
+        "operationId": "ingestion-set_auto_sync",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoSyncIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoSyncOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Disable Auto Sync",
+        "description": "Stop checking the library on its own; every version, `auto` ones too, stays.",
+        "operationId": "ingestion-disable_auto_sync",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoSyncOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5157,6 +5493,139 @@
         ],
         "title": "AuthenticateQuery",
         "description": "A username and password to check."
+      },
+      "AutoSyncIn": {
+        "properties": {
+          "tag_pattern": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Pattern",
+            "description": "A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a version order become `auto` versions. Null imports no tag."
+          },
+          "keep_last": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Keep Last",
+            "description": "How many `auto` versions are kept, the newest; older ones are removed.",
+            "default": 5
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "maximum": 10080.0,
+            "minimum": 1.0,
+            "title": "Interval Minutes",
+            "description": "How often the library is checked.",
+            "default": 60
+          },
+          "sync_branches": {
+            "type": "boolean",
+            "title": "Sync Branches",
+            "description": "Re-sync every branch version at each check.",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AutoSyncIn",
+        "description": "How a library is checked on its own; the whole set (what is left out takes its default)."
+      },
+      "AutoSyncOut": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "False when the library is never checked on its own."
+          },
+          "tag_pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Pattern"
+          },
+          "keep_last": {
+            "type": "integer",
+            "title": "Keep Last"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes"
+          },
+          "sync_branches": {
+            "type": "boolean",
+            "title": "Sync Branches"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At",
+            "description": "When the last check ended."
+          },
+          "next_check_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Check At",
+            "description": "When the library is due again; null while enabled: at the next tick."
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error",
+            "description": "What the last check could not do, for people."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "enabled",
+          "tag_pattern",
+          "keep_last",
+          "interval_minutes",
+          "sync_branches",
+          "checked_at",
+          "next_check_at",
+          "last_error"
+        ],
+        "title": "AutoSyncOut",
+        "description": "A library's scheduled check, and how the last one went."
       },
       "C7ContextResponse": {
         "properties": {
@@ -6066,6 +6535,11 @@
             ],
             "title": "Error Code",
             "description": "The stable code of `error`, null unless the job failed (or failed before codes were recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or `unexpected`."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin",
+            "description": "`auto` when the scheduled check queued it, `manual` otherwise.",
+            "default": "manual"
           },
           "created_at": {
             "type": "string",
@@ -7270,6 +7744,11 @@
             "title": "Is Default",
             "description": "True for the version `/owner/repo` resolves to."
           },
+          "origin": {
+            "$ref": "#/components/schemas/exactdocs__catalog__models__VersionOrigin",
+            "description": "`auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.",
+            "default": "manual"
+          },
           "library": {
             "type": "string",
             "title": "Library"
@@ -7992,6 +8471,11 @@
             "type": "boolean",
             "title": "Is Default",
             "description": "True for the version `/owner/repo` resolves to."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/exactdocs__catalog__models__VersionOrigin",
+            "description": "`auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.",
+            "default": "manual"
           }
         },
         "additionalProperties": false,
@@ -8025,6 +8509,15 @@
         "title": "TagMatch",
         "description": "Whether an article needs any or all of the filter's tags."
       },
+      "exactdocs__catalog__models__VersionOrigin": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "auto"
+        ],
+        "title": "VersionOrigin",
+        "description": "Who asked for a version: a person, or the scheduled check (which may prune its own)."
+      },
       "exactdocs__ingestion__models__RefKind": {
         "type": "string",
         "enum": [
@@ -8034,6 +8527,15 @@
         ],
         "title": "RefKind",
         "description": "What a requested ref turned out to be."
+      },
+      "exactdocs__ingestion__models__VersionOrigin": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "auto"
+        ],
+        "title": "VersionOrigin",
+        "description": "Who asked for a version: a person (``manual``) or the scheduled check (``auto``).\n\nRetention (``AutoSync.keep_last``) only ever removes ``auto`` versions."
       },
       "exactdocs__retrieval__models__TagMatch": {
         "type": "string",

@@ -181,6 +181,13 @@ def create_app(container: Container) -> FastAPI:
             tag_article=container.ingestion.tag_article,
         )
     )
+    protected.include_router(
+        ingestion_http.build_auto_sync_router(
+            get_auto_sync=container.ingestion.get_auto_sync,
+            set_auto_sync=container.ingestion.set_auto_sync,
+            disable_auto_sync=container.ingestion.disable_auto_sync,
+        )
+    )
     v1.include_router(protected)
     api.include_router(v1)
     app.include_router(api)

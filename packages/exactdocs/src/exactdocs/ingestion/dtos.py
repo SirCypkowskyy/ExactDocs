@@ -6,8 +6,15 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from exactdocs.ingestion.models import (
+    DEFAULT_INTERVAL_MINUTES,
+    DEFAULT_KEEP_LAST,
+    MAX_INTERVAL_MINUTES,
+    MAX_KEEP_LAST,
+    MAX_TAG_PATTERN,
     MAX_TAG_RULES,
+    MIN_INTERVAL_MINUTES,
     AccessToken,
+    AutoSync,
     Context7Config,
     Credential,
     DeployKey,
@@ -19,6 +26,7 @@ from exactdocs.ingestion.models import (
     RepositoryHost,
     ResolvedRef,
     SyncStatus,
+    VersionOrigin,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, MAX_TAGS, Page
 
@@ -76,6 +84,10 @@ class JobSummary(_Dto):
     )
     error: str | None
     error_code: str | None = Field(description=ERROR_CODE)
+    origin: VersionOrigin = Field(
+        default=VersionOrigin.MANUAL,
+        description="`auto` when the scheduled check queued it, `manual` otherwise.",
+    )
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -97,6 +109,7 @@ class JobSummary(_Dto):
             reused=job.reused,
             error=job.error,
             error_code=job.error_code,
+            origin=job.origin,
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
@@ -170,6 +183,10 @@ class EnqueueJobCommand(_Dto):
     version: str | None = Field(default=None, min_length=1)
     commit_sha: str | None = Field(default=None, min_length=1)
     ref_kind: RefKind | None = Field(default=None, description="What `version` is.")
+    origin: VersionOrigin = Field(
+        default=VersionOrigin.MANUAL,
+        description="Given to the version by its first import: `auto` ones may be pruned.",
+    )
 
 
 class GetJobQuery(_Dto):
@@ -609,3 +626,91 @@ class SyncedLibrary(_Dto):
 
     library_id: str
     versions: list[SyncedVersion]
+
+
+class AutoSyncIn(_Dto):
+    """How a library is checked on its own; the whole set (what is left out takes its default)."""
+
+    tag_pattern: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_TAG_PATTERN,
+        description=(
+            "A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a "
+            "version order become `auto` versions. Null imports no tag."
+        ),
+    )
+    keep_last: Annotated[int, Field(ge=1, le=MAX_KEEP_LAST)] = Field(
+        default=DEFAULT_KEEP_LAST,
+        description="How many `auto` versions are kept, the newest; older ones are removed.",
+    )
+    interval_minutes: Annotated[int, Field(ge=MIN_INTERVAL_MINUTES, le=MAX_INTERVAL_MINUTES)] = (
+        Field(default=DEFAULT_INTERVAL_MINUTES, description="How often the library is checked.")
+    )
+    sync_branches: bool = Field(
+        default=False, description="Re-sync every branch version at each check."
+    )
+
+
+class SetAutoSyncCommand(AutoSyncIn):
+    """Turn a library's scheduled check on, or change it; it runs at the next tick."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+
+
+class GetAutoSyncQuery(_Dto):
+    """Read a library's scheduled check."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+
+
+class DisableAutoSyncCommand(_Dto):
+    """Turn a library's scheduled check off; its versions stay as they are."""
+
+    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+
+
+class AutoSyncOut(_Dto):
+    """A library's scheduled check, and how the last one went."""
+
+    library: str
+    enabled: bool = Field(description="False when the library is never checked on its own.")
+    tag_pattern: str | None
+    keep_last: int
+    interval_minutes: int
+    sync_branches: bool
+    checked_at: datetime | None = Field(description="When the last check ended.")
+    next_check_at: datetime | None = Field(
+        description="When the library is due again; null while enabled: at the next tick."
+    )
+    last_error: str | None = Field(description="What the last check could not do, for people.")
+
+    @classmethod
+    def from_model(cls, auto_sync: AutoSync) -> Self:
+        """Map a domain value (an enabled check)."""
+        return cls(
+            library=auto_sync.library,
+            enabled=True,
+            tag_pattern=auto_sync.tag_pattern,
+            keep_last=auto_sync.keep_last,
+            interval_minutes=auto_sync.interval_minutes,
+            sync_branches=auto_sync.sync_branches,
+            checked_at=auto_sync.checked_at,
+            next_check_at=auto_sync.next_check_at,
+            last_error=auto_sync.last_error,
+        )
+
+    @classmethod
+    def disabled(cls, library: str) -> Self:
+        """Describe a library that is never checked on its own."""
+        return cls.from_model(AutoSync(library=library)).model_copy(
+            update={"enabled": False, "next_check_at": None}
+        )
+
+
+class ScheduledChecks(_Dto):
+    """What one tick of the schedule did."""
+
+    checked: list[str] = Field(description="The libraries that were due and were checked.")
+    imports: list[str] = Field(description="IDs of the `auto` import jobs queued.")
+    removed: list[str] = Field(description="The `auto` versions removed, `/owner/repo/ref`.")

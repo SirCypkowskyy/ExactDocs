@@ -229,6 +229,7 @@ erDiagram
         text ref PK "tag, branch or commit"
         text kind
         text commit_sha
+        text origin "manual or auto"
     }
     catalog_manifests {
         text id PK
@@ -318,6 +319,13 @@ erDiagram
     ingestion_library_credentials {
         text library PK "by value"
         text sealed "Fernet-encrypted token or key"
+    }
+    ingestion_auto_syncs {
+        text library PK "by value"
+        text tag_pattern "glob, null: no tag"
+        int keep_last
+        int interval_minutes
+        text checked_at
     }
 ```
 
@@ -454,6 +462,19 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   through a per-library `asyncio.Lock` (`TagLocks`), which only orders one process's writes; with
   two, an older re-tag could land last in the chunk copies. So `serve` pins uvicorn to one worker
   (`workers=1`, whatever `WEB_CONCURRENCY` says).
+- **The scheduled check (SYNC-02).** The worker also keeps a DBOS schedule
+  (`exactdocs-scheduled-checks`, `EXACTDOCS_AUTO_SYNC_SCHEDULE`, a cron expression with seconds,
+  every minute by default) whose workflow runs `RunScheduledChecks` outside its own workflow
+  context (the jobs it queues are workflows of their own) and is deleted when it ends. The tick
+  only wakes it up: the kernel `Clock` decides which libraries are due, from each one's
+  `AutoSync` (`ingestion_auto_syncs`: tag pattern, `keep_last`, `interval_minutes`,
+  `sync_branches`, when it was last checked and what failed). `plan_auto_imports` is the pure
+  rule (newest `keep_last` of the matching ordered tags plus the `auto` versions; manual ones
+  never count). A version's `origin` (`manual`/`auto`) travels from the job through the import's
+  `StoreManifest` to `catalog_manifests.origin`, and the activation that creates the version
+  gives it that origin (`catalog_library_versions.origin`); later imports never change it. A
+  tick that meets one still running does nothing, and a check is recorded only if nobody saved
+  the schedule meanwhile.
 - `RunNextJob` (claim the oldest queued job whose library has none running, in one atomic
   statement, and run it inline) remains for tests that drive jobs one at a time.
 

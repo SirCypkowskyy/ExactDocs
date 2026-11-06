@@ -4,6 +4,9 @@ A workflow's completed steps are stored in DBOS's own SQLite file, so a job that
 when the process died (a crash, a deploy, ``kill -9``) resumes at its first unfinished step on
 the next start instead of starting over. The queue runs at most ``concurrency`` jobs at once and
 one per library (the library is the queue's partition key).
+
+A DBOS schedule (``schedule``, a cron expression with seconds) also runs ``RunScheduledChecks``
+on every tick: the scheduled check of the libraries that are due (SYNC-02).
 """
 
 import asyncio
@@ -11,15 +14,21 @@ import contextvars
 import logging
 import sqlite3
 import threading
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, closing, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from dbos import DBOS, DBOSConfig
 
-from exactdocs.ingestion.ports.driving import RecoverJobs, RunJob, SubmitQueuedJobs
+from exactdocs.ingestion.ports.driving import (
+    RecoverJobs,
+    RunJob,
+    RunScheduledChecks,
+    SubmitQueuedJobs,
+)
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +41,10 @@ _FORGET_POLL = 0.05  # seconds between looks at a finished workflow's status, wh
 _FORGET_TRIES = 200
 _VACUUM_ABOVE = 2**20  # bytes of free pages
 _LIVE = ["ENQUEUED", "PENDING", "DELAYED"]
+SCHEDULE = "exactdocs-scheduled-checks"
+"""The name of the DBOS schedule that ticks ``RunScheduledChecks``."""
+SCHEDULE_WORKFLOW = "exactdocs.scheduled_checks"
+EVERY_MINUTE = "0 * * * * *"  # seconds first: second 0 of every minute
 _DONE = frozenset({"SUCCESS", "ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"})
 
 
@@ -61,6 +74,10 @@ class DbosJobWorker:
     """How often DBOS looks for a queued job to start: an idle server only polls this often."""
     resubmit_interval: float = 30.0
     """How often queued jobs are handed to DBOS again, in case one was not taken when queued."""
+    run_scheduled_checks: RunScheduledChecks | None = None
+    """One tick of the libraries' scheduled checks; without it no schedule is kept."""
+    schedule: str = EVERY_MINUTE
+    """When it ticks: a DBOS cron expression with seconds. Libraries are due by their interval."""
     _running: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
 
@@ -98,7 +115,12 @@ class DbosJobWorker:
                 async def run(job_id: str) -> None:  # DBOS wraps functions, not bound methods
                     await self._run(job_id)
 
+                async def tick(scheduled_at: datetime, context: object) -> None:
+                    del scheduled_at, context
+                    await self._tick()
+
                 DBOS.workflow(name=self.workflow)(run)
+                DBOS.workflow(name=SCHEDULE_WORKFLOW)(tick)
                 DBOS.launch()  # here, on the running loop: DBOS then runs workflows on it
                 await DBOS.register_queue_async(
                     self.queue,
@@ -108,6 +130,7 @@ class DbosJobWorker:
                     on_conflict="always_update",
                 )
                 await self._recover()
+                await self._apply_schedule(tick)
                 resubmit = asyncio.create_task(self._resubmit(), context=contextvars.Context())
                 try:
                     yield
@@ -139,6 +162,51 @@ class DbosJobWorker:
         )
         self._forgetting.add(forget)
         forget.add_done_callback(self._forgetting.discard)
+
+    async def _apply_schedule(
+        self, tick: Callable[[datetime, object], Coroutine[object, object, None]]
+    ) -> None:
+        """Keep the DBOS schedule in line with ``run_scheduled_checks`` and ``schedule``."""
+        if self.run_scheduled_checks is None:
+            await DBOS.delete_schedule_async(SCHEDULE)
+            return
+        await DBOS.apply_schedules_async(
+            [{"schedule_name": SCHEDULE, "workflow_fn": tick, "schedule": self.schedule}]
+        )
+
+    async def _tick(self) -> None:
+        """Run one tick (the scheduled workflow), then delete its workflow.
+
+        The checks run outside the workflow's context: the jobs they queue are workflows of
+        their own, not steps of this one, and a tick needs no durability (the next one checks
+        whatever this one did not).
+        """
+        if self.run_scheduled_checks is None:
+            return
+        task = asyncio.current_task()
+        if task is not None:
+            self._running.add(task)
+        workflow_id = DBOS.workflow_id
+        try:
+            await asyncio.get_running_loop().create_task(
+                self._check(self.run_scheduled_checks), context=contextvars.Context()
+            )
+        finally:
+            if task is not None:
+                self._running.discard(task)
+        if workflow_id is not None:
+            forget = asyncio.get_running_loop().create_task(
+                self._forget(workflow_id), context=contextvars.Context()
+            )
+            self._forgetting.add(forget)
+            forget.add_done_callback(self._forgetting.discard)
+
+    @staticmethod
+    async def _check(run_scheduled_checks: RunScheduledChecks) -> None:
+        try:
+            await run_scheduled_checks()
+        except Exception:  # the next tick tries again
+            log.exception("the scheduled checks failed")
 
     async def _forget(self, job_id: str) -> None:
         """Delete a finished workflow (its steps hold the whole text of an import).

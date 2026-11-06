@@ -127,7 +127,10 @@ def step_running(context: Context) -> None:
 
 
 def start(
-    context: Context, max_image_bytes: int | None = None, secret_key: str | None = None
+    context: Context,
+    max_image_bytes: int | None = None,
+    secret_key: str | None = None,
+    auto_sync_schedule: str | None = None,
 ) -> None:
     # A scenario that starts over with other settings stops the instance it had first: a
     # process runs one job worker.
@@ -142,6 +145,8 @@ def start(
         settings.secret_key = SecretStr(secret_key)
     if max_image_bytes is not None:
         settings.max_image_bytes = max_image_bytes
+    if auto_sync_schedule is not None:
+        settings.auto_sync_schedule = auto_sync_schedule
     context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     git = GitCli.locate()

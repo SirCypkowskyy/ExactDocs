@@ -21,11 +21,14 @@ from exactdocs.ingestion.dtos import (
     AddedVersion,
     AddLibraryCommand,
     AddVersionCommand,
+    AutoSyncOut,
     CheckedRepository,
     CheckRepositoryCommand,
     Context7Out,
     CredentialIn,
+    DisableAutoSyncCommand,
     EnqueueJobCommand,
+    GetAutoSyncQuery,
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
@@ -44,6 +47,8 @@ from exactdocs.ingestion.dtos import (
     RemoveVersionCommand,
     RepositoryPreview,
     RepositoryRefs,
+    ScheduledChecks,
+    SetAutoSyncCommand,
     SyncedLibrary,
     SyncedVersion,
     SyncLibraryCommand,
@@ -92,6 +97,7 @@ from exactdocs.ingestion.models import (
     REFRESH_JOB,
     UNEXPECTED_ERROR,
     ArticleChunk,
+    AutoSync,
     Context7Config,
     Credential,
     FetchedFile,
@@ -118,6 +124,7 @@ from exactdocs.ingestion.models import (
     SyncErrorCode,
     SyncStatus,
     TagRule,
+    VersionOrigin,
     article_tags,
     check_credential_fits,
     compose_renames,
@@ -125,6 +132,7 @@ from exactdocs.ingestion.models import (
     is_unordered,
     parse_article,
     parse_context7,
+    plan_auto_imports,
     previous_version,
     readme_summary,
     ref_tips,
@@ -132,6 +140,7 @@ from exactdocs.ingestion.models import (
     sniff_image,
 )
 from exactdocs.ingestion.ports.driven import (
+    AutoSyncStore,
     Checkpoints,
     Chunker,
     ChunkIndex,
@@ -153,8 +162,8 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
     VersionPublisher,
 )
-from exactdocs.ingestion.ports.driving import EnqueueJob
-from exactdocs_kernel import Clock, DomainError, paginate
+from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibrary
+from exactdocs_kernel import Clock, DomainError, NotFoundError, paginate
 
 log = logging.getLogger(__name__)
 
@@ -195,6 +204,7 @@ class EnqueueJobUseCase:
             version=command.version,
             commit_sha=command.commit_sha,
             ref_kind=command.ref_kind,
+            origin=command.origin,
             now=self.clock.now(),
         )
         await self.jobs.add(job)
@@ -674,7 +684,10 @@ class AddLibraryUseCase:
 
 
 async def _enqueue_import(
-    enqueue_job: EnqueueJob, library: str, resolved: ResolvedRef
+    enqueue_job: EnqueueJob,
+    library: str,
+    resolved: ResolvedRef,
+    origin: VersionOrigin = VersionOrigin.MANUAL,
 ) -> JobSummary:
     """Queue the import of a ref already pinned to its commit."""
     return await enqueue_job(
@@ -684,6 +697,7 @@ async def _enqueue_import(
             version=resolved.name,
             commit_sha=resolved.commit_sha,
             ref_kind=resolved.kind,
+            origin=origin,
         )
     )
 
@@ -1121,6 +1135,7 @@ class ImportVersionUseCase:
             refresh=self.refresh,
             renamed_from=renamed_from,
             renames=renames,
+            origin=job.origin,
         )
         await step("publish", lambda: self._publish(version))
         # Not a step: it never fails the import, reads what is imported now and replaces whole
@@ -2001,6 +2016,7 @@ class RemoveLibraryUseCase:
     index: ChunkIndex
     enqueue_job: EnqueueJob
     vault: CredentialVault
+    schedules: AutoSyncStore
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Refuse during any import of the library, remove it from the catalog, then clean up."""
@@ -2009,6 +2025,7 @@ class RemoveLibraryUseCase:
         removed = await self.removals.remove_library(library)
         await self.jobs.delete_for(library)
         await self.vault.delete(library)  # the removed library's token or key goes with it
+        await self.schedules.delete(library)  # and its scheduled check
         await _forget_chunks(self.index, removed)
         return RemovalResult(
             library=removed.library,
@@ -2044,3 +2061,191 @@ class CollectGarbageUseCase:
             await progress.report(done=done, total=len(self.collectors))
         if errors:
             raise errors[0]
+
+
+@dataclass(frozen=True, slots=True)
+class GetAutoSyncUseCase:
+    """Implements ``ports.driving.GetAutoSync``."""
+
+    sources: LibrarySources
+    schedules: AutoSyncStore
+
+    async def __call__(self, query: GetAutoSyncQuery) -> AutoSyncOut:
+        """Return the library's schedule; ``enabled`` false when it has none."""
+        library = query.library.lower()
+        await self.sources.get(library)  # an unknown library is not found
+        found = await self.schedules.get(library)
+        return AutoSyncOut.disabled(library) if found is None else AutoSyncOut.from_model(found)
+
+
+@dataclass(frozen=True, slots=True)
+class SetAutoSyncUseCase:
+    """Implements ``ports.driving.SetAutoSync``."""
+
+    sources: LibrarySources
+    schedules: AutoSyncStore
+
+    async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
+        """Store the schedule; the library is due at once, so the next tick checks it."""
+        library = command.library.lower()
+        await self.sources.get(library)
+        auto_sync = AutoSync(
+            library=library,
+            tag_pattern=command.tag_pattern,
+            keep_last=command.keep_last,
+            interval_minutes=command.interval_minutes,
+            sync_branches=command.sync_branches,
+        )
+        await self.schedules.save(auto_sync)
+        return AutoSyncOut.from_model(auto_sync)
+
+
+@dataclass(frozen=True, slots=True)
+class DisableAutoSyncUseCase:
+    """Implements ``ports.driving.DisableAutoSync``."""
+
+    sources: LibrarySources
+    schedules: AutoSyncStore
+
+    async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
+        """Forget the schedule; every version stays."""
+        library = command.library.lower()
+        await self.sources.get(library)
+        await self.schedules.delete(library)
+        return AutoSyncOut.disabled(library)
+
+
+@dataclass(slots=True)
+class _Tally:
+    """What a tick did so far."""
+
+    checked: list[str] = field(default_factory=list)
+    imports: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+
+    def out(self) -> ScheduledChecks:
+        return ScheduledChecks(checked=self.checked, imports=self.imports, removed=self.removed)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunScheduledChecksUseCase:
+    """Implements ``ports.driving.RunScheduledChecks``: one tick of the schedule (SYNC-02).
+
+    The clock decides which libraries are due (``AutoSync.is_due``), so the schedule's own tick
+    only needs to be finer than the shortest interval. Each due library is checked in turn:
+    with a tag pattern the remote is asked for its tags and ``plan_auto_imports`` says what to
+    queue (``auto`` imports, oldest first) and which ``auto`` versions to remove (through
+    ``RemoveVersion``, which waits for nothing: a version being imported is left for the next
+    check); with ``sync_branches`` the library is then re-synced by ``SyncLibrary``, which
+    records its failures on the versions' jobs as a sync by hand does. What a check could not do
+    is its ``last_error``; the check is recorded when it ends, so a library that fails is tried
+    again only after its interval.
+    """
+
+    schedules: AutoSyncStore
+    sources: LibrarySources
+    remote: GitRemote
+    vault: CredentialVault
+    jobs: JobRepository
+    clock: Clock
+    enqueue_job: EnqueueJob
+    sync_library: SyncLibrary
+    remove_version: RemoveVersion
+    _running: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    async def __call__(self) -> ScheduledChecks:
+        """Check every due library; a tick that meets one still running does nothing."""
+        tally = _Tally()
+        if self._running.locked():
+            return tally.out()
+        async with self._running:
+            now = self.clock.now()
+            for auto_sync in await self.schedules.list_all():
+                if auto_sync.is_due(now):
+                    await self._check_one(auto_sync, tally)
+        return tally.out()
+
+    async def _check_one(self, auto_sync: AutoSync, tally: _Tally) -> None:
+        library = auto_sync.library
+        try:
+            error = await self._check(auto_sync, tally)
+        except NotFoundError:  # the library was removed: so is its schedule
+            await self.schedules.delete(library)
+            return
+        except Exception as raised:
+            log.exception("the scheduled check of %s failed", library)
+            error = _describe(raised)
+        tally.checked.append(library)
+        # Saved only if nobody changed (or turned off) the schedule while it was checked.
+        if await self.schedules.get(library) == auto_sync:
+            await self.schedules.save(auto_sync.checked(self.clock.now(), error))
+
+    async def _check(self, auto_sync: AutoSync, tally: _Tally) -> str | None:
+        library = auto_sync.library
+        source = await self.sources.get(library)
+        errors: list[str] = []
+        if auto_sync.tag_pattern is not None:
+            credential: Credential | None = None
+            try:
+                credential = await self.vault.load(library, source.url.credential_scope)
+                refs = await self.remote.list_refs(source.url, credential=credential)
+            except DomainError as raised:
+                errors.append(f"tags not checked: {_anonymous(raised, credential)}")
+            else:
+                errors += await self._tags(auto_sync, ref_tips(refs), tally)
+        if auto_sync.sync_branches:
+            try:
+                await self.sync_library(SyncLibraryCommand(library=library))
+            except VersionImportingError:
+                pass  # the branch is being imported already
+            except DomainError as raised:  # also recorded on the versions' jobs
+                errors.append(f"branches not synced: {raised}")
+        return "; ".join(errors) or None
+
+    async def _tags(
+        self, auto_sync: AutoSync, tips: Sequence[ResolvedRef], tally: _Tally
+    ) -> list[str]:
+        library = auto_sync.library
+        versions = await self.sources.imported_versions(library)
+        jobs = await self.jobs.list_for_library(library)  # newest first
+        plan = plan_auto_imports(auto_sync, tips, versions, failed=_failed_tags(jobs, versions))
+        busy = _busy_refs(jobs)
+        errors: list[str] = []
+        for tip in plan.imports:
+            if tip.name in busy:
+                continue
+            try:
+                job = await _enqueue_import(self.enqueue_job, library, tip, VersionOrigin.AUTO)
+            except VersionImportingError:
+                continue  # queued by someone else meanwhile
+            except DomainError as raised:
+                errors.append(f"{tip.name!r} not queued: {raised}")
+            else:
+                tally.imports.append(job.id)
+        for ref in plan.removals:
+            try:
+                await self.remove_version(RemoveVersionCommand(library=library, ref=ref))
+            except ImportInProgressError, NotFoundError:
+                continue  # being imported (tried at the next check), or already gone
+            except DomainError as raised:
+                errors.append(f"{ref!r} not removed: {raised}")
+            else:
+                tally.removed.append(f"{library}/{ref}")
+        return errors
+
+
+def _failed_tags(jobs: Sequence[Job], versions: Sequence[ImportedRef]) -> set[tuple[str, str]]:
+    """Return (ref, commit) of refs that are no version and whose newest import job failed."""
+    have = {v.ref for v in versions}
+    newest: dict[str, Job] = {}
+    for job in jobs:  # newest first
+        if job.version:
+            newest.setdefault(job.version, job)
+    return {
+        (ref, job.commit_sha)
+        for ref, job in newest.items()
+        if ref not in have
+        and job.kind in IMPORT_KINDS
+        and job.state is JobState.FAILED
+        and job.commit_sha
+    }

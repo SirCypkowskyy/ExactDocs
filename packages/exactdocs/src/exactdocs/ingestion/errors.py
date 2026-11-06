@@ -411,3 +411,12 @@ class SyncFailedError(ValidationError):
         self.code = code
         self.cause_code = cause.code
         self.job_ids = tuple(job_ids)
+
+
+class InvalidAutoSyncError(ValidationError):
+    """A library's schedule (tag pattern, retention or interval) cannot be used."""
+
+    code = "invalid_auto_sync"
+
+    def __init__(self, problem: str) -> None:
+        super().__init__(f"invalid schedule: {problem}")

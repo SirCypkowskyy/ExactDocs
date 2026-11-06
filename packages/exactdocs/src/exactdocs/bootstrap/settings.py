@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # How often the job worker looks for a queued job to start; an idle server polls no more
     # often than this. Tests lower it.
     job_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+    # When the scheduled check ticks (a DBOS cron expression, seconds first): each tick checks the
+    # libraries whose own interval is up (new tags imported, branches re-synced). Tests tick every
+    # second.
+    auto_sync_schedule: str = "0 * * * * *"
     # Images the articles reference: one above `max_image_bytes` is skipped unread, and a version
     # keeps images until they add up to `max_images_bytes` (they are held in memory and in the
     # database, about 8 times over at the peak; later ones are skipped and listed as problems).
