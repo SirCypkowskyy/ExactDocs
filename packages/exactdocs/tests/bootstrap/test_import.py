@@ -121,6 +121,7 @@ class World:
             c.catalog.discard_pending_manifests,
             c.catalog.apply_readme,
             c.catalog.apply_manual_tags,
+            c.catalog.replace_renames,
         )
         return ImportVersionUseCase(
             gateway=git_cli,

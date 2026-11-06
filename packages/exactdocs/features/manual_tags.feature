@@ -52,3 +52,17 @@ Feature: Users tag articles by hand, and manual tags follow renames
     Given "/fixture/docs-repo/v1.3.0" is imported
     When the user tags "docs/guide/setup.md" with "#!?"
     Then the tag is refused as invalid
+
+  Scenario: An older version imported later still carries a tag across a rename
+    Given "/fixture/docs-repo/v1.4.0" is imported
+    And the user adds the version "v1.3.0"
+    When the user tags "docs/guide/setup.md" with "legacy"
+    Then "docs/guide/install.md" in "v1.4.0" is tagged "legacy"
+    And "docs/guide/install.md" in "v1.4.0" shows "legacy" as a manual tag set on "docs/guide/setup.md"
+
+  Scenario: A tag set before an older version is imported reaches the renamed article
+    Given "/fixture/docs-repo/v1.4.0" is imported
+    And the user tagged "docs/guide/setup.md" with "legacy"
+    When the user adds the version "v1.3.0"
+    Then "docs/guide/install.md" in "v1.4.0" is tagged "legacy"
+    And searching "v1.4.0" for "docker" with the tag "legacy" finds only "docs/guide/install.md"

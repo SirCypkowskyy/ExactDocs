@@ -24,6 +24,7 @@ from exactdocs.catalog.models import (
     ManifestState,
     ManualTag,
     ManualTags,
+    RenameDirection,
     StoredArticle,
     StoredImage,
     TagSelection,
@@ -221,16 +222,17 @@ class InMemoryManifestRepository:
         self.manifests[manifest_id] = replace(found, entries=entries)
         return touched
 
-    async def find_rename(self, manifest_id: ManifestId, old_path: str) -> ManifestRename | None:
-        """Return the rename of ``old_path`` stored with the manifest, or ``None``."""
-        found = self.manifests.get(manifest_id)
-        return next((r for r in found.renames if r.old_path == old_path), None) if found else None
-
-    async def find_rename_to(self, manifest_id: ManifestId, new_path: str) -> ManifestRename | None:
-        """Return the rename that made ``new_path`` (the first by old path), or ``None``."""
+    async def find_rename(
+        self,
+        manifest_id: ManifestId,
+        path: str,
+        direction: RenameDirection = RenameDirection.FORWARD,
+    ) -> ManifestRename | None:
+        """Return the rename of the old path, or (``BACK``) the first one into the new path."""
         found = self.manifests.get(manifest_id)
         renames = sorted(found.renames, key=lambda r: r.old_path) if found else []
-        return next((r for r in renames if r.new_path == new_path), None)
+        back = direction is RenameDirection.BACK
+        return next((r for r in renames if (r.new_path if back else r.old_path) == path), None)
 
     async def list_renames(
         self, manifest_id: ManifestId, *, limit: int
@@ -238,6 +240,20 @@ class InMemoryManifestRepository:
         """Return up to ``limit`` renames of the manifest, sorted by old path."""
         found = self.manifests.get(manifest_id)
         return tuple(sorted(found.renames, key=lambda r: r.old_path))[:limit] if found else ()
+
+    async def replace_renames(
+        self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
+    ) -> None:
+        """Keep the renames into the manifest's entries, one per old path, as its whole map."""
+        found = self.manifests.get(manifest_id)
+        if found is None:
+            return
+        paths = {e.path for e in found.entries}
+        kept: dict[str, ManifestRename] = {}
+        for r in renames:
+            if r.new_path in paths:
+                kept.setdefault(r.old_path, r)
+        self.manifests[manifest_id] = replace(found, renames=tuple(kept.values()))
 
     async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
         """Return up to ``limit`` article paths of the manifest, sorted."""

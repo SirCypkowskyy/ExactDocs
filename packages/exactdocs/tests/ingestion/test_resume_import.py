@@ -132,6 +132,12 @@ class Catalog:
     async def retag(self, manifest_id: str, tags: ArticleTags) -> None:
         del manifest_id, tags
 
+    async def replace_renames(
+        self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
+    ) -> Mapping[str, ArticleTags]:
+        del library, ref, from_ref, renames
+        return {}
+
     async def describe(self, **_: object) -> None:
         self._call("describe")
 

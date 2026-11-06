@@ -221,6 +221,7 @@ class Container:
                 catalog.discard_pending_manifests,
                 catalog.apply_readme,
                 catalog.apply_manual_tags,
+                catalog.replace_renames,
             ),
             index=index,
             vault=vault,
