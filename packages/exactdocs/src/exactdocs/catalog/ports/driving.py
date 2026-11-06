@@ -23,6 +23,7 @@ from exactdocs.catalog.dtos import (
     GetAssetQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
+    GetVersionTagsQuery,
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
@@ -43,11 +44,14 @@ from exactdocs.catalog.dtos import (
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
     RetaggedManifest,
+    SetImportedTagsCommand,
+    SetLibrarySettingsCommand,
     SetManualTagsCommand,
     StoredManifest,
     StoreManifestCommand,
     TagList,
     UpdateLibraryCommand,
+    VersionTags,
 )
 
 
@@ -345,5 +349,42 @@ class PinDefaultVersion(Protocol):
     """
 
     async def __call__(self, command: PinDefaultVersionCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class SetLibrarySettings(Protocol):
+    """Replace a library's paths and tag rules; its chunking settings stay.
+
+    Nothing is re-imported here: the importer re-processes the versions. Raises
+    ``LibraryNotFoundError`` and a validation error for a tag rule that cannot be one.
+    """
+
+    async def __call__(self, command: SetLibrarySettingsCommand) -> LibraryDetail:
+        """Run the use case."""
+        ...
+
+
+class GetVersionTags(Protocol):
+    """Name a version's active manifest with each article's path, front matter and imported tags.
+
+    For the importer, which derives imported tags again when tag rules change. The ref must
+    match exactly. Raises ``LibraryNotFoundError`` / ``VersionNotFoundError``.
+    """
+
+    async def __call__(self, query: GetVersionTagsQuery) -> VersionTags:
+        """Run the use case."""
+        ...
+
+
+class SetImportedTags(Protocol):
+    """Replace the imported tags of articles of a manifest in one transaction (manual ones stay).
+
+    Returns every given article the manifest has, changed or not, with every tag it carries
+    now, so the copies other domains keep can always be brought in line. Raises
+    ``ManifestNotFoundError``.
+    """
+
+    async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:
         """Run the use case."""
         ...

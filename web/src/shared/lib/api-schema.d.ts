@@ -414,6 +414,38 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Update Library Settings
+         * @description Replace the library's paths and tag rules; every version is then re-processed.
+         *
+         *     Send the whole set (`GET /libraries/{owner}/{repo}` has the current `settings`): what is
+         *     left out is cleared. Changed paths queue a `reprocess` job that fetches every version
+         *     again at the commit it serves (a branch is not synced) and re-imports it; only tag rules
+         *     changed queue a `retag` job that re-tags the stored articles, fetching nothing. Each
+         *     version keeps serving its old state until its new one is complete, then switches at
+         *     once (after a `retag`, search's tag filters follow the listings a moment later); one
+         *     that fails keeps the old state and the job fails naming it. Sending the same settings
+         *     again re-runs that failed job. Answers 202 with the job in `Location`, or 200 with no
+         *     job when the settings are unchanged and the last re-processing did not fail (or there
+         *     is no version yet: imports to come use them). 422 for an invalid pattern or tag (nothing
+         *     is stored), 404 for an unknown library.
+         */
+        readonly put: operations["ingestion-update_library_settings"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/repositories/check": {
         readonly parameters: {
             readonly query?: never;
@@ -1527,6 +1559,27 @@ export interface components {
             readonly version: string;
         };
         /**
+         * LibrarySettingsIn
+         * @description A library's paths and tag rules, as a whole: what is left out is cleared.
+         */
+        readonly LibrarySettingsIn: {
+            /**
+             * Include Paths
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file.
+             */
+            readonly include_paths?: readonly string[];
+            /**
+             * Exclude Paths
+             * @description Folders, files or globs to leave out; they win.
+             */
+            readonly exclude_paths?: readonly string[];
+            /**
+             * Tag Rules
+             * @description Tags for articles by path; they are added to the front-matter tags.
+             */
+            readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][];
+        };
+        /**
          * LibrarySettingsOut
          * @description A library's import settings.
          */
@@ -1994,6 +2047,12 @@ export interface components {
             readonly account?: components["schemas"]["AccountSummary"] | null;
         };
         /**
+         * SettingsChange
+         * @description What an edit of a library's settings asks of its versions.
+         * @enum {string}
+         */
+        readonly SettingsChange: "paths" | "tags";
+        /**
          * Span
          * @description A `[start, end)` range of characters.
          */
@@ -2177,6 +2236,32 @@ export interface components {
             readonly expires_at: string | null;
             /** Last Used At */
             readonly last_used_at: string | null;
+        };
+        /**
+         * UpdatedLibrarySettings
+         * @description The settings as stored (normalized) and the job that brings every version in line.
+         */
+        readonly UpdatedLibrarySettings: {
+            /** Library Id */
+            readonly library_id: string;
+            /** Include Paths */
+            readonly include_paths: readonly string[];
+            /** Exclude Paths */
+            readonly exclude_paths: readonly string[];
+            /** Tag Rules */
+            readonly tag_rules: readonly components["schemas"]["TagRuleIn"][];
+            /** @description `paths`: the selection changed, every version is fetched again at its commit; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed. */
+            readonly reprocess: components["schemas"]["SettingsChange"] | null;
+            /**
+             * Job Id
+             * @description The job re-processing every version (`/jobs/{id}`); one already queued for the library is reused. Unchanged settings re-run the library's last re-processing job when it failed. Null when nothing is to do or the library has no versions yet.
+             */
+            readonly job_id: string | null;
+            /**
+             * Versions
+             * @description The library's refs now, at the commits they serve: what the job re-processes (it reads the versions again when it runs). Listed also when a queued job is reused.
+             */
+            readonly versions: readonly string[];
         };
         /**
          * VersionOut
@@ -4505,6 +4590,96 @@ export interface operations {
                     readonly "application/json": components["schemas"]["C7ContextResponse"];
                     readonly "text/plain": string;
                 };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-update_library_settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LibrarySettingsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Nothing changed and nothing failed: nothing is re-processed. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UpdatedLibrarySettings"];
+                };
+            };
+            /** @description Stored; a job re-processes every version. */
+            readonly 202: {
+                headers: {
+                    /** @description The job: `/api/v1/jobs/{job_id}`. */
+                    readonly Location?: string;
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {

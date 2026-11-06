@@ -307,7 +307,7 @@ erDiagram
 
     ingestion_jobs {
         text id PK
-        text kind "import, refresh, collect"
+        text kind "import, refresh, reprocess, retag, collect"
         text library "by value"
         text version "ref, by value"
         text state "queued, running, succeeded, failed"
@@ -407,7 +407,7 @@ request. A `Job` has a kind, a library (and optionally a version), a state (`que
 `succeeded`, `failed`), `done`/`total` files, per-file problems (path, reason), an error and
 timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jobs` read them.
 
-- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, or the confirmed re-import of a moved tag, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
+- **Kinds** today: `import` (a version's first import), `refresh` (a re-sync of a branch version that moved, or the confirmed re-import of a moved tag, which reuses unchanged chunks and fails with `not_found` if the version was removed meanwhile), `reprocess` (every version of a library re-imported at its commit after its paths were edited; `version` is null), `retag` (every version re-tagged from its stored articles after only its tag rules were edited: the catalog switches each version in one transaction and the search index's tag copies follow right after, as for manual tags) and `collect` (frees content nothing uses after a removal). **They are registered, not hard-coded.** `IngestionModule.build(handlers=..., recovery_hooks=...)`
   maps a kind to the `JobHandler` that runs it and, optionally, a `RecoveryHook`. Handlers report
   through a `JobProgress` port; every report is stored at once. Raising fails the job: a domain
   error's message is shown to users, anything else only as `unexpected <ErrorType>` (details go
@@ -483,6 +483,16 @@ that last step, which is one transaction in the catalog.
   text, its chunks, pickled and base64-encoded by DBOS), plus its images. The workflow is deleted
   when the job ends and the file is compacted (`VACUUM`) once no workflow is left in it, so it
   does not keep that size.
+- **Steps of `reprocess` and `retag`** (#61, `STEPS_VERSION` `jobs-2`): first the library's
+  versions (so a resumed job takes the same ones in the same order, even if one was added
+  meanwhile), then **one step per version**: `re-import <ref>` runs the refresh import inside it
+  without steps of its own, `re-tag <ref>` the version's re-tag. The import's own steps are not
+  used there: it reads the library and its credential before its first step, so a version that
+  failed there and succeeded on a resume would take steps another version recorded. A version's
+  result (files, chunk counters, problems, its failure) rebuilds the job's progress on a replay.
+  A version killed halfway starts over (the recovery hook discards its pending manifest; a re-tag
+  is safe to redo); the versions finished before are not done again, nor is a recorded failure
+  retried by that job.
 - **Undo.** Any failure after the store (an exception or a cancellation) discards the pending
   chunks and then the pending manifest. The order matters: retrieval asks the catalog and only
   removes a manifest it is told is still pending. After a crash the recovery hook does the same

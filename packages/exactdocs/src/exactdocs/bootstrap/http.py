@@ -179,6 +179,7 @@ def create_app(container: Container) -> FastAPI:
             sync_library=container.ingestion.sync_library,
             reimport_version=container.ingestion.reimport_version,
             tag_article=container.ingestion.tag_article,
+            update_library_settings=container.ingestion.update_library_settings,
         )
     )
     v1.include_router(protected)

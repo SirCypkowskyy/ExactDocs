@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
     InMemoryManifestRepository,
 )
@@ -72,7 +73,9 @@ def catalog() -> CatalogModule:
         ]
     )
     return CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     )
 
 
@@ -192,7 +195,9 @@ async def test_an_ambiguous_short_sha_is_a_validation_error(catalog: CatalogModu
 async def test_a_library_is_created_without_versions_and_not_twice() -> None:
     repository = InMemoryLibraryRepository()
     create = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(repository)),
+        imported_tags=InMemoryImportedTags(written),
     ).create_library
     command = CreateLibraryCommand(
         id="/Acme/Docs",

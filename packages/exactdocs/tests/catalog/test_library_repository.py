@@ -241,6 +241,24 @@ async def test_set_text_changes_only_the_given_fields_and_marks_them(
     assert await repository.get(LibraryId("/x/y")) is None
 
 
+async def test_set_settings_replaces_only_the_settings(repository: LibraryRepository) -> None:
+    await repository.save(PAYMENTS)
+    await repository.pin_default(PAYMENTS.id, VersionRef("main"))
+    settings = LibrarySettings(
+        include_paths=("guide/",),
+        tag_rules=(TagRule(pattern="guide/**", tag="guide"),),
+        chunking=PAYMENTS.settings.chunking,
+    )
+
+    await repository.set_settings(PAYMENTS.id, settings)
+    await repository.set_settings(LibraryId("/x/y"), settings)
+
+    assert await repository.get(PAYMENTS.id) == replace(
+        PAYMENTS, settings=settings, pinned_version=VersionRef("main")
+    )
+    assert await repository.get(LibraryId("/x/y")) is None
+
+
 async def test_follow_readme_keeps_edited_fields(repository: LibraryRepository) -> None:
     await repository.save(replace(PAYMENTS, title_edited=True, description_edited=False))
 

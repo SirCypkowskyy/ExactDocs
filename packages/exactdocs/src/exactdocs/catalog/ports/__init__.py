@@ -1,4 +1,8 @@
-from exactdocs.catalog.ports.driven import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports.driven import (
+    ImportedTagWriter,
+    LibraryRepository,
+    ManifestRepository,
+)
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     CollectGarbage,
@@ -29,6 +33,7 @@ __all__ = [
     "GetAsset",
     "GetLibrary",
     "GetManifestStates",
+    "ImportedTagWriter",
     "LibraryRepository",
     "ListArticles",
     "ListDefaultManifests",
