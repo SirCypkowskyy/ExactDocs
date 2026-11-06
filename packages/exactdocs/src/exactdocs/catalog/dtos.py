@@ -1024,6 +1024,43 @@ class SetImportedTagsCommand(_Dto):
     articles: list[ArticleTags]
 
 
+MAX_STORED_ARTICLE_FILES = 1000
+
+
+class StoredFileIn(_Dto):
+    """A file of a commit, named by its path and git blob SHA."""
+
+    path: str = Field(min_length=1)
+    blob_sha: str = Field(min_length=1)
+
+
+class FindStoredArticlesQuery(_Dto):
+    """Ask what the catalog stored for these files, so an import need not parse them again."""
+
+    library: str = Field(min_length=1)
+    ref: str | None = Field(
+        default=None, description="The version being imported: its active manifest is read first."
+    )
+    content_version: int = Field(description="The importer's parser version: part of the key.")
+    files: list[StoredFileIn] = Field(max_length=MAX_STORED_ARTICLE_FILES)
+
+
+class StoredArticleOut(_Dto):
+    """What an import stored for a file: its title, front matter and text (tags are derived)."""
+
+    path: str
+    blob_sha: str
+    title: str
+    front_matter: dict[str, Any]
+    content: str
+
+
+class StoredArticles(_Dto):
+    """The asked files the catalog holds; the others are left out."""
+
+    articles: list[StoredArticleOut]
+
+
 class CopyManifestCommand(_Dto):
     """Copy a version's active manifest into a new pending one (to re-chunk what it serves)."""
 

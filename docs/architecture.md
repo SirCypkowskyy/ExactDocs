@@ -552,9 +552,16 @@ that last step, which is one transaction in the catalog.
   job).
 - **Reuse.** Content is keyed by git blob SHA and the parser version, chunk sets by blob SHA and
   the chunking config, so a blob that an earlier import chunked is not chunked again. The
-  stored chunks are read back through retrieval's `GetChunkSets`; parsing is repeated, because
-  the title and tags depend on the path as well as the bytes. Importing a commit again changes
-  nothing a reader can see.
+  stored chunks are read back through retrieval's `GetChunkSets`. Parsing is skipped too (#164)
+  for a file some manifest of the library holds at the same path, blob SHA and parser version
+  (`FindStoredArticles`): the title and the image links depend on the path, the rest on the bytes
+  and the parser. The version's own active manifest is looked in first (by primary key), then the
+  library's other manifests, one probe per file through the blob-SHA index, so the lookup stays
+  far cheaper than the parse whatever the size of the catalog. Title, front matter and text are taken as stored; the tags are derived again
+  from the stored front matter and the library's rules now, the image links from the text. A text
+  that starts with a `---` block is parsed anyway: it may be front matter that did not parse,
+  whose note only a parse can list again. Importing a commit again changes nothing a reader can
+  see.
 - **Memory.** The selected text is held in memory until stored, and again as chunks, as DTOs in
   the bridges and as SQL parameters: several times over, and the worker runs two jobs at once
   (a resumed import loads its stored steps back into memory the same way).

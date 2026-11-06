@@ -36,6 +36,7 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
+    PARSER_VERSION,
     REFRESH_JOB,
     AccessToken,
     ArticleChunk,
@@ -56,6 +57,7 @@ from exactdocs.ingestion.models import (
     RefKind,
     RepositoryHost,
     RepositoryUrl,
+    StoredArticle,
     TagRule,
     git_blob_sha,
     parse_article,
@@ -280,13 +282,44 @@ class CountingChunker:
 
 
 @dataclass(slots=True)
+class Stored:
+    """A fake ``StoredArticleSource``: what earlier imports stored, by path, blob and parser."""
+
+    articles: dict[tuple[str, str, int], StoredArticle] = field(default_factory=dict)
+    asked: list[int] = field(default_factory=list)
+
+    def keep(self, version: ImportedVersion, parser_version: int = PARSER_VERSION) -> Self:
+        for a in version.articles:
+            self.articles[a.path, a.blob_sha, parser_version] = StoredArticle(
+                path=a.path,
+                blob_sha=a.blob_sha,
+                title=a.title,
+                front_matter=a.front_matter,
+                content=a.content,
+            )
+        return self
+
+    async def find(
+        self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
+    ) -> list[StoredArticle]:
+        assert (library, ref) == ("/a/b", "v1")
+        self.asked.append(len(files))
+        keys = [(path, sha, parser_version) for path, sha in files]
+        return [self.articles[key] for key in keys if key in self.articles]
+
+
+@dataclass(slots=True)
 class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
     problems: list[tuple[str, str, str]] = field(default_factory=list)
     counts: list[tuple[int, int]] = field(default_factory=list)
+    parses: list[tuple[int, int]] = field(default_factory=list)
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.counts.append((chunked, reused))
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        self.parses.append((parsed, taken))
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
@@ -348,6 +381,7 @@ def build_world(
     renames: RenameSource | None = None,
     imported: Sequence[ImportedRef] = (),
     earlier: Sequence[GitRename] = (),
+    stored: Stored | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -364,6 +398,7 @@ def build_world(
         max_article_bytes=max_bytes,
         max_import_bytes=max_import_bytes,
         renames=renames,
+        stored=stored,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
         tag_locks=TagLocks(),
@@ -1572,3 +1607,150 @@ async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
     (extra, _) = world.gateway.extra[0]
     assert len(extra) == cap
     assert [c for _, c, _ in world.progress.problems].count("truncated") == 1
+
+
+INSTALL_V2 = INSTALL + "\n## Upgrade\n\nRun it again.\n"
+
+
+def _counting_parses(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    parsed: list[str] = []
+
+    def counting(path: str, source: str) -> ParsedArticle:
+        parsed.append(path)
+        return parse_article(path, source)
+
+    monkeypatch.setattr("exactdocs.ingestion.use_cases.parse_article", counting)
+    return parsed
+
+
+async def _imported(tmp_path: Path, files: Mapping[str, bytes]) -> ImportedVersion:
+    first = build_world(tmp_path / "first", files)
+    await first.run(make_job(), first.progress)
+    return first.catalog.stored[0]
+
+
+@pytest.fixture
+def first(tmp_path: Path) -> Path:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    return tmp_path
+
+
+async def test_a_resync_parses_only_the_files_that_changed(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = await _imported(
+        first, {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()}
+    )
+    world = build_world(
+        first / "second",
+        {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL_V2.encode()},
+        stored=Stored().keep(before),
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/install.md"]
+    assert world.progress.parses == [(1, 1)]
+    [auth, install] = world.catalog.stored[0].articles
+    assert auth == before.articles[0]  # title, tags, front matter, text and chunks
+    assert install.content == INSTALL_V2
+
+
+async def test_an_article_taken_from_the_catalog_gets_the_tags_the_rules_give_now(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = await _imported(first, {"docs/auth.md": AUTH.encode()})
+    world = build_world(
+        first / "second",
+        {"docs/auth.md": AUTH.encode()},
+        rules=(TagRule.of("docs/**", "Api"),),
+        stored=Stored().keep(before),
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == []
+    assert before.articles[0].tags == ("auth",)
+    assert world.catalog.stored[0].articles[0].tags == ("api", "auth")
+
+
+async def test_a_parser_change_parses_every_file_again(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()}
+    before = await _imported(first, files)
+    world = build_world(
+        first / "second", files, stored=Stored().keep(before, parser_version=PARSER_VERSION - 1)
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/auth.md", "docs/install.md"]
+    assert world.progress.parses == [(2, 0)]
+
+
+async def test_the_same_file_at_another_path_is_parsed(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The title (from the file name) and the image links depend on the path."""
+    before = await _imported(first, {"docs/install.md": b"Run it.\n\n![](img/a.png)\n"})
+    world = build_world(
+        first / "second",
+        {"docs/setup/install.md": b"Run it.\n\n![](img/a.png)\n"},
+        stored=Stored().keep(before),
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/setup/install.md"]
+
+
+async def test_a_taken_article_brings_its_images_and_notes_as_a_parse_would(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "---\ntitle: [1]\ntags: 7\n---\nRun it.\n\n![](../img/a.png)\n"
+    files = {"docs/install.md": text.encode(), "img/a.png": PNG}
+    before = await _imported(first, files)
+    plain = build_world(first / "second", files)
+    await plain.run(make_job(), plain.progress)
+    (first / "third").mkdir()
+    world = build_world(first / "third", files, stored=Stored().keep(before))
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == []
+    assert world.catalog.stored[0] == plain.catalog.stored[0]
+    assert world.progress.problems == plain.progress.problems != []
+
+
+async def test_a_file_whose_text_starts_with_a_dash_block_is_parsed_for_its_note(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Malformed front matter stays in the text: only a parse can list its note again."""
+    text = b"---\ntitle: [unclosed\n---\n# Install\n"
+    before = await _imported(first, {"docs/install.md": text})
+    world = build_world(first / "second", {"docs/install.md": text}, stored=Stored().keep(before))
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/install.md"]
+    assert [code for _, code, _ in world.progress.problems] == [ProblemCode.FRONT_MATTER]
+
+
+async def test_stored_articles_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
+    files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
+    stored = Stored()
+    world = build_world(tmp_path, files, stored=stored)
+    world.run = replace(world.run, batch_files=len(files))  # one step for every file
+
+    await world.run(make_job(), world.progress)
+
+    assert stored.asked == [500, 500, 100]
+    assert world.progress.parses == [(1100, 0)]

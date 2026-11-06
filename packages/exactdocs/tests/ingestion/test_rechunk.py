@@ -214,6 +214,7 @@ class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
     problems: list[tuple[str, ProblemCode, str]] = field(default_factory=list)
     counters: list[tuple[int, int]] = field(default_factory=list)
+    parses: list[tuple[int, int]] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
@@ -223,6 +224,9 @@ class Progress:
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.counters.append((chunked, reused))
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        self.parses.append((parsed, taken))
 
 
 @dataclass
@@ -316,6 +320,7 @@ async def test_a_blob_chunked_with_the_new_config_before_is_not_cut_again(world)
 
     # "main" serves only the guide, which v1.0.0 cut moments before with the same config.
     assert world.progress.counters[-1] == (3, 1)
+    assert world.progress.parses[-1] == (0, 4)  # every article taken from the copies, unparsed
     assert world.index.indexed["main-copy2"].articles[0].chunks == next(
         a.chunks for a in world.index.indexed["v1.0.0-copy1"].articles if a.path == "docs/guide.md"
     )

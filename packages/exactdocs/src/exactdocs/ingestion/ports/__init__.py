@@ -20,6 +20,7 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
     ScheduleSwitch,
     SecretBox,
+    StoredArticleSource,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -79,6 +80,7 @@ __all__ = [
     "RunNextJob",
     "ScheduleSwitch",
     "SecretBox",
+    "StoredArticleSource",
     "SubmitQueuedJobs",
     "SyncLibrary",
     "VersionPublisher",

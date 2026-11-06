@@ -60,6 +60,7 @@ from exactdocs.ingestion.ports.driven import (
     RenameSource,
     RepositoryTree,
     ScheduleSwitch,
+    StoredArticleSource,
     VersionCopier,
     VersionPublisher,
 )
@@ -384,6 +385,7 @@ def import_job(
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES,
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
     renames: RenameSource | None = None,
+    stored: StoredArticleSource | None = None,
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
     tag_locks: TagLocks,
@@ -398,6 +400,7 @@ def import_job(
     The handlers re-process a library after a settings edit too: ``reprocess`` re-imports every
     version; ``rechunk`` re-chunks (and re-tags) the copies ``copier`` makes of what each
     version serves; ``retag`` re-tags them from what ``imported_tags`` has stored.
+    ``stored`` lets an import take the files earlier imports stored instead of parsing them.
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
     chunked); without it an interrupted import starts over.
     """
@@ -411,6 +414,7 @@ def import_job(
         max_article_bytes,
         max_import_bytes,
         renames=renames,
+        stored=stored,
         max_image_bytes=max_image_bytes,
         max_images_bytes=max_images_bytes,
         batch_files=batch_files,

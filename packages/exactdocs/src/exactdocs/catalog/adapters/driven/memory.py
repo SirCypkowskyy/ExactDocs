@@ -441,6 +441,40 @@ class InMemoryImportedTags:
 
 
 @dataclass(frozen=True, slots=True)
+class InMemoryStoredArticles:
+    """Implements ``ports.driven.StoredArticleFinder`` on an ``InMemoryManifestRepository``."""
+
+    repository: InMemoryManifestRepository
+
+    async def find_articles(
+        self,
+        library_id: LibraryId,
+        ref: VersionRef | None,
+        content_version: int,
+        files: Collection[tuple[str, str]],
+    ) -> Sequence[StoredArticle]:
+        """Return the first entry of the library's manifests stored for each file."""
+        del ref  # an optimisation of the SQL lookup: any manifest gives the same article
+        wanted, found = set(files), {}
+        for manifest in self.repository.manifests.values():
+            if manifest.library != library_id:
+                continue
+            for entry in manifest.entries:
+                key = (entry.path, entry.blob_sha)
+                if key in wanted and entry.content_version == content_version:
+                    found.setdefault(
+                        key,
+                        StoredArticle(
+                            manifest_id=manifest.id,
+                            commit_sha=manifest.commit_sha,
+                            entry=entry,
+                            content=self.repository.contents[entry.content_key],
+                        ),
+                    )
+        return list(found.values())
+
+
+@dataclass(frozen=True, slots=True)
 class InMemoryManifestCopier:
     """Implements ``ports.driven.ManifestCopier`` on an ``InMemoryManifestRepository``."""
 

@@ -56,6 +56,8 @@ async def test_every_field_survives_a_round_trip(repository: JobRepository) -> N
         queued("j1")
         .started(T0 + timedelta(seconds=5))
         .progressed(done=4, total=10)
+        .chunking(chunked=2, reused=1)
+        .parsing(parsed=3, taken=5)
         .with_problem("assets/logo.png", ProblemCode.BINARY, "binary file")
         .with_problem("guide/ünï.md", ProblemCode.UNDECODABLE, "not text")
         .failed("boom", T0 + timedelta(seconds=9, microseconds=7), code="tag_moved")

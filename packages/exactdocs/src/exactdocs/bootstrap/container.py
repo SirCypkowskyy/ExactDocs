@@ -23,6 +23,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogRemovals,
     CatalogRenamedPaths,
     CatalogSearchableVersions,
+    CatalogStoredArticles,
     CatalogVersionCopier,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
@@ -41,6 +42,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
+    SqliteStoredArticles,
 )
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
@@ -97,6 +99,7 @@ def _build_read_side(
         repository=SqliteLibraryRepository(engine),
         manifests=SqliteManifestRepository(engine),
         imported_tags=SqliteImportedTags(engine),
+        stored_articles=SqliteStoredArticles(engine),
         copier=SqliteManifestCopier(engine),
     )
     search = SqliteSearchIndex(engine)
@@ -245,6 +248,7 @@ class Container:
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
             renames=renames,
+            stored=CatalogStoredArticles(catalog.find_stored_articles),
             max_image_bytes=settings.max_image_bytes,
             max_images_bytes=settings.max_images_bytes,
             checkpoints=DbosCheckpoints(),

@@ -3,6 +3,7 @@ from exactdocs.catalog.ports.driven import (
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
+    StoredArticleFinder,
 )
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
@@ -48,4 +49,5 @@ __all__ = [
     "ResolveRenamedPath",
     "ResolveVersion",
     "StoreManifest",
+    "StoredArticleFinder",
 ]

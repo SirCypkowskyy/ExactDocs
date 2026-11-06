@@ -30,7 +30,7 @@ sequenceDiagram
     end
     W->>Q: start the oldest queued job whose library has none running
     W->>G: shallow, blobless fetch of the pinned commit, sparse checkout of the selected paths
-    W->>W: read each file, parse (front matter, tags), chunk by headings: 100 files per durable step
+    W->>W: read each file, parse the ones not stored before (front matter, tags), chunk by headings: 100 files per durable step
     W->>C: store the articles as a pending manifest
     W->>R: index the chunks (reusing chunk sets by blob SHA and chunking config)
     alt every step succeeded
