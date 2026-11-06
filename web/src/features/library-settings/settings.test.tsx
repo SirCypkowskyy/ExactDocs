@@ -167,6 +167,7 @@ const jobs = {
       job {jobId} for {label}
     </p>
   ),
+  Preview: () => null,
 };
 
 function renderPage(lib = library) {

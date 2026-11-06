@@ -60,6 +60,11 @@ at the commit it serves, so each version's new manifest replaces the old one at 
 rules changed: a `retag` job re-derives each stored article's imported tags (front matter plus
 rules) and writes them per version in one transaction, then copies them onto the chunks, without
 fetching. Until a version is done it serves its previous state; one that fails keeps it.
+In the web UI this is *Files and tags* on the library's settings page: saving a change first
+warns that every version is re-processed (naming them), then follows the job's progress; a
+Preview shows which files the typed paths take in the default version (not for a private
+library yet: a preview cannot use its stored credential). When the newest re-processing failed,
+the section shows it with *Run again*, which sends the stored settings back.
 
 ### Re-sync
 
