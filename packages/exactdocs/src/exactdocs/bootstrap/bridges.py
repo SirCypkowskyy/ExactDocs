@@ -321,7 +321,7 @@ class CatalogLibrarySources:
         )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
-        """Return the library's imported versions with their kind and commit."""
+        """Return the versions: kind, commit, origin and whether it is the pinned default."""
         detail = await self.get_library(GetLibraryQuery(id=library))
         return [
             ImportedRef(
@@ -329,6 +329,7 @@ class CatalogLibrarySources:
                 kind=RefKind(v.kind.value),
                 commit_sha=v.commit_sha,
                 origin=VersionOrigin(v.origin.value),
+                pinned=detail.default_pinned and v.is_default,
             )
             for v in detail.versions
         ]

@@ -468,13 +468,20 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   context (the jobs it queues are workflows of their own) and is deleted when it ends. The tick
   only wakes it up: the kernel `Clock` decides which libraries are due, from each one's
   `AutoSync` (`ingestion_auto_syncs`: tag pattern, `keep_last`, `interval_minutes`,
-  `sync_branches`, when it was last checked and what failed). `plan_auto_imports` is the pure
-  rule (newest `keep_last` of the matching ordered tags plus the `auto` versions; manual ones
-  never count). A version's `origin` (`manual`/`auto`) travels from the job through the import's
+  `sync_branches`, when it was last checked and what failed, and a `revision` each save
+  changes). `plan_auto_imports` is the pure rule: it imports the matching ordered tags among the
+  newest `keep_last` of (those tags plus the `auto` versions), and removes only the `auto`
+  versions outside the newest `keep_last` *versions*, so an old one goes after its replacement
+  is imported; manual versions and the pinned default never count. Only a permanent import
+  failure (`PERMANENT_IMPORT_FAILURES`) holds a tag back until it moves. The schedule is paused
+  while no library has one (`ScheduleSwitch`, `DbosScheduleSwitch` pauses or resumes it by
+  name; the worker sets it from the stored schedules at start), so an idle server writes no
+  tick workflow. A version's `origin` (`manual`/`auto`) travels from the job through the import's
   `StoreManifest` to `catalog_manifests.origin`, and the activation that creates the version
   gives it that origin (`catalog_library_versions.origin`); later imports never change it. A
-  tick that meets one still running does nothing, and a check is recorded only if nobody saved
-  the schedule meanwhile.
+  tick that meets one still running does nothing, and a check is recorded by a compare-and-set
+  on the `revision` and `checked_at` it read (`AutoSyncStore.record_check`), so a save made
+  meanwhile is kept. With both a pattern and `sync_branches`, the refs are listed once.
 - `RunNextJob` (claim the oldest queued job whose library has none running, in one atomic
   statement, and run it inline) remains for tests that drive jobs one at a time.
 

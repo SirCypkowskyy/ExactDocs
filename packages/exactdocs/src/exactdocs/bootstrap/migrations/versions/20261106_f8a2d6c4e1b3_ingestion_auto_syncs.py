@@ -26,6 +26,7 @@ def upgrade() -> None:
         sa.Column("sync_branches", sa.Boolean, nullable=False),
         sa.Column("checked_at", sa.Text),
         sa.Column("last_error", sa.Text),
+        sa.Column("revision", sa.Text, nullable=False, server_default=""),
     )
 
 

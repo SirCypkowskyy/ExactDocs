@@ -299,3 +299,11 @@ class RunScheduledChecks(Protocol):
     async def __call__(self) -> ScheduledChecks:
         """Run the use case."""
         ...
+
+
+class SwitchSchedule(Protocol):
+    """Turn the scheduled check's tick on when any library has a schedule, off otherwise."""
+
+    async def __call__(self) -> None:
+        """Run the use case."""
+        ...

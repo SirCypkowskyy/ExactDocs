@@ -94,6 +94,7 @@ from exactdocs.ingestion.models import (
     IMPORT_JOB,
     IMPORT_KINDS,
     MAX_IMAGES,
+    PERMANENT_IMPORT_FAILURES,
     REFRESH_JOB,
     UNEXPECTED_ERROR,
     ArticleChunk,
@@ -118,6 +119,7 @@ from exactdocs.ingestion.models import (
     ProposedId,
     ReadmeSummary,
     RefKind,
+    RemoteRefs,
     Removed,
     RepositoryUrl,
     ResolvedRef,
@@ -160,9 +162,10 @@ from exactdocs.ingestion.ports.driven import (
     Removals,
     RenameSource,
     RepositoryTree,
+    ScheduleSwitch,
     VersionPublisher,
 )
-from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibrary
+from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion
 from exactdocs_kernel import Clock, DomainError, NotFoundError, paginate
 
 log = logging.getLogger(__name__)
@@ -771,7 +774,16 @@ class SyncLibraryUseCase:
     vault: CredentialVault
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
+        """Sync the library; see ``sync``."""
+        return await self.sync(command)
+
+    async def sync(
+        self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
+    ) -> SyncedLibrary:
         """Ask the remote where each branch and tag is now, queue an import for moved branches.
+
+        ``refs`` is what the remote advertised a moment ago (the scheduled check listed it for
+        the tags): the remote is not asked again.
 
         The import is the one of adding a version: pinned to the new commit, it fetches it,
         reuses the chunks of every unchanged blob and activates the new manifest in place of the
@@ -801,8 +813,9 @@ class SyncLibraryUseCase:
             credential: Credential | None = None
             try:
                 # An unreadable or other-host credential is recorded like any failure to read.
-                credential = await self.vault.load(library, source.url.credential_scope)
-                refs = await self.remote.list_refs(source.url, credential=credential)
+                if refs is None:
+                    credential = await self.vault.load(library, source.url.credential_scope)
+                    refs = await self.remote.list_refs(source.url, credential=credential)
             except DomainError as raised:
                 error = _anonymous(raised, credential)
                 code = failure_code(error)
@@ -2017,6 +2030,7 @@ class RemoveLibraryUseCase:
     enqueue_job: EnqueueJob
     vault: CredentialVault
     schedules: AutoSyncStore
+    switch: ScheduleSwitch
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Refuse during any import of the library, remove it from the catalog, then clean up."""
@@ -2026,6 +2040,7 @@ class RemoveLibraryUseCase:
         await self.jobs.delete_for(library)
         await self.vault.delete(library)  # the removed library's token or key goes with it
         await self.schedules.delete(library)  # and its scheduled check
+        await _switch_to_need(self.schedules, self.switch)
         await _forget_chunks(self.index, removed)
         return RemovalResult(
             library=removed.library,
@@ -2084,6 +2099,7 @@ class SetAutoSyncUseCase:
 
     sources: LibrarySources
     schedules: AutoSyncStore
+    switch: ScheduleSwitch
 
     async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
         """Store the schedule; the library is due at once, so the next tick checks it."""
@@ -2095,8 +2111,10 @@ class SetAutoSyncUseCase:
             keep_last=command.keep_last,
             interval_minutes=command.interval_minutes,
             sync_branches=command.sync_branches,
+            revision=uuid.uuid4().hex,
         )
         await self.schedules.save(auto_sync)
+        await self.switch.turn(on=True)
         return AutoSyncOut.from_model(auto_sync)
 
 
@@ -2106,13 +2124,31 @@ class DisableAutoSyncUseCase:
 
     sources: LibrarySources
     schedules: AutoSyncStore
+    switch: ScheduleSwitch
 
     async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
-        """Forget the schedule; every version stays."""
+        """Forget the schedule; every version stays. The last one off stops the tick."""
         library = command.library.lower()
         await self.sources.get(library)
         await self.schedules.delete(library)
+        await _switch_to_need(self.schedules, self.switch)
         return AutoSyncOut.disabled(library)
+
+
+@dataclass(frozen=True, slots=True)
+class SwitchScheduleUseCase:
+    """Implements ``ports.driving.SwitchSchedule``."""
+
+    schedules: AutoSyncStore
+    switch: ScheduleSwitch
+
+    async def __call__(self) -> None:
+        """Tick only while some library has a schedule."""
+        await _switch_to_need(self.schedules, self.switch)
+
+
+async def _switch_to_need(schedules: AutoSyncStore, switch: ScheduleSwitch) -> None:
+    await switch.turn(on=bool(await schedules.list_all()))
 
 
 @dataclass(slots=True)
@@ -2136,10 +2172,12 @@ class RunScheduledChecksUseCase:
     with a tag pattern the remote is asked for its tags and ``plan_auto_imports`` says what to
     queue (``auto`` imports, oldest first) and which ``auto`` versions to remove (through
     ``RemoveVersion``, which waits for nothing: a version being imported is left for the next
-    check); with ``sync_branches`` the library is then re-synced by ``SyncLibrary``, which
-    records its failures on the versions' jobs as a sync by hand does. What a check could not do
-    is its ``last_error``; the check is recorded when it ends, so a library that fails is tried
-    again only after its interval.
+    check); with ``sync_branches`` the library is then re-synced by ``SyncLibrary`` from the
+    same refs (listed once), which records its failures on the versions' jobs as a sync by hand
+    does. What a check could not do is its ``last_error``; the check is recorded when it ends
+    (compare-and-set: not over a schedule saved meanwhile), so a library that fails is tried
+    again only after its interval. A schedule of a removed library is dropped, and the tick
+    paused when none is left (``ScheduleSwitch``).
     """
 
     schedules: AutoSyncStore
@@ -2149,8 +2187,9 @@ class RunScheduledChecksUseCase:
     jobs: JobRepository
     clock: Clock
     enqueue_job: EnqueueJob
-    sync_library: SyncLibrary
+    sync_library: SyncLibraryUseCase
     remove_version: RemoveVersion
+    switch: ScheduleSwitch
     _running: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     async def __call__(self) -> ScheduledChecks:
@@ -2171,19 +2210,20 @@ class RunScheduledChecksUseCase:
             error = await self._check(auto_sync, tally)
         except NotFoundError:  # the library was removed: so is its schedule
             await self.schedules.delete(library)
+            await _switch_to_need(self.schedules, self.switch)
             return
         except Exception as raised:
             log.exception("the scheduled check of %s failed", library)
             error = _describe(raised)
         tally.checked.append(library)
-        # Saved only if nobody changed (or turned off) the schedule while it was checked.
-        if await self.schedules.get(library) == auto_sync:
-            await self.schedules.save(auto_sync.checked(self.clock.now(), error))
+        # Recorded only if nobody saved (or turned off) the schedule while it was checked.
+        await self.schedules.record_check(auto_sync, auto_sync.checked(self.clock.now(), error))
 
     async def _check(self, auto_sync: AutoSync, tally: _Tally) -> str | None:
         library = auto_sync.library
         source = await self.sources.get(library)
         errors: list[str] = []
+        refs: RemoteRefs | None = None
         if auto_sync.tag_pattern is not None:
             credential: Credential | None = None
             try:
@@ -2195,7 +2235,9 @@ class RunScheduledChecksUseCase:
                 errors += await self._tags(auto_sync, ref_tips(refs), tally)
         if auto_sync.sync_branches:
             try:
-                await self.sync_library(SyncLibraryCommand(library=library))
+                # The refs listed for the tags; without them (none, or the remote failed) the
+                # sync asks itself, and records a failure on the versions' jobs.
+                await self.sync_library.sync(SyncLibraryCommand(library=library), refs=refs)
             except VersionImportingError:
                 pass  # the branch is being imported already
             except DomainError as raised:  # also recorded on the versions' jobs
@@ -2235,7 +2277,11 @@ class RunScheduledChecksUseCase:
 
 
 def _failed_tags(jobs: Sequence[Job], versions: Sequence[ImportedRef]) -> set[tuple[str, str]]:
-    """Return (ref, commit) of refs that are no version and whose newest import job failed."""
+    """Return (ref, commit) of refs that are no version and whose newest import failed for good.
+
+    Only a failure that the same commit would meet again (``PERMANENT_IMPORT_FAILURES``) holds
+    a tag back; an unreachable remote, a refused credential or a bug is tried at the next check.
+    """
     have = {v.ref for v in versions}
     newest: dict[str, Job] = {}
     for job in jobs:  # newest first
@@ -2247,5 +2293,6 @@ def _failed_tags(jobs: Sequence[Job], versions: Sequence[ImportedRef]) -> set[tu
         if ref not in have
         and job.kind in IMPORT_KINDS
         and job.state is JobState.FAILED
+        and job.error_code in PERMANENT_IMPORT_FAILURES
         and job.commit_sha
     }

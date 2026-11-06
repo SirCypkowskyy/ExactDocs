@@ -15,7 +15,9 @@ Feature: New tags are imported automatically and branches re-synced on a schedul
     And the scheduled check imported "v1.4.0" and "v1.4.1"
     When tag "v1.5.0" is pushed and the scheduled check runs
     Then "v1.5.0" is imported
-    And the oldest auto-imported version is removed
+    And the oldest auto-imported version is still served
+    When the scheduled check runs again
+    Then the oldest auto-imported version is removed
     And manually imported versions are kept
 
   Scenario: A branch that moved is re-synced by the scheduled check

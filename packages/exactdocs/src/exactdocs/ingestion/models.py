@@ -444,6 +444,9 @@ class SyncErrorCode(StrEnum):
     """The tag now points at another commit; it is reported, never re-imported by a sync."""
 
 
+PERMANENT_IMPORT_FAILURES = frozenset({"no_articles", "import_too_large", "checkout_unreadable"})
+"""Codes of an import that fails again at the same commit; anything else may pass next time."""
+
 UNEXPECTED_ERROR = "unexpected"
 """The ``error_code`` of a job that failed on something no domain error describes (a bug)."""
 
@@ -1612,6 +1615,8 @@ class ImportedRef:
     kind: RefKind
     commit_sha: str
     origin: VersionOrigin = VersionOrigin.MANUAL
+    pinned: bool = False
+    """The library's owner pinned it as the default version (LIB-10): retention keeps it."""
 
 
 _NUMERIC_REF = re.compile(r"[vV]?(\d{1,9}(?:\.\d{1,9}){0,7})")
@@ -1715,7 +1720,8 @@ class AutoSync:
     Every ``interval_minutes`` the scheduled check asks the remote for its refs once. With a
     ``tag_pattern`` (a glob over tag names, ``v*``), tags it matches that have a version order
     (``v1.4.0``, ``2.1``) become ``auto`` versions, and of those only the newest ``keep_last``
-    are kept: older ``auto`` versions are removed, ``manual`` ones never. With
+    are kept: older ``auto`` versions are removed once their replacements are versions,
+    ``manual`` ones and the pinned default never. With
     ``sync_branches`` every branch version is re-synced as ``SyncLibrary`` would. ``checked_at``
     is when the last check ended (``None``: at the next tick) and ``last_error`` what it could
     not do.
@@ -1728,6 +1734,8 @@ class AutoSync:
     sync_branches: bool = False
     checked_at: datetime | None = None
     last_error: str | None = None
+    revision: str = ""
+    """Changes on every save of the settings: a check records itself only on the one it read."""
 
     def __post_init__(self) -> None:
         pattern = self.tag_pattern
@@ -1800,11 +1808,14 @@ def plan_auto_imports(
 ) -> AutoImportPlan:
     """Pick the tags to import and the ``auto`` versions to remove (pure).
 
-    The newest ``keep_last`` of (the matching tags that are not versions yet, plus the ``auto``
-    versions) are kept: the tags among them are imported, the ``auto`` versions outside them
-    removed. A tag without a version order (a pre-release, a name) is never imported; a
-    ``manual`` version is never removed and does not count. ``failed`` holds the (tag, commit)
-    pairs whose last import failed: they are not tried again until the tag moves.
+    Imports: the matching tags that are not versions yet and are among the newest ``keep_last``
+    of (those tags plus the ``auto`` versions). Removals: the ``auto`` versions outside the
+    newest ``keep_last`` *versions*, so an old one goes only at the first check after its
+    replacement is imported (a failed import never leaves the library short). A tag without a
+    version order (a pre-release, a name) is never imported; a ``manual`` version and the
+    pinned default version are never removed and do not count. ``failed`` holds the (tag,
+    commit) pairs whose last import failed for good: they are not tried again until the tag
+    moves.
     """
     if auto_sync.tag_pattern is None:
         return AutoImportPlan()
@@ -1818,14 +1829,21 @@ def plan_auto_imports(
         and _numbers(tip.name) is not None
         and (tip.name, tip.commit_sha) not in failed
     }
-    autos = [
-        v.ref
-        for v in versions
-        if v.origin is VersionOrigin.AUTO and v.kind is RefKind.TAG and _numbers(v.ref) is not None
-    ]
+    autos = sorted(
+        (
+            v.ref
+            for v in versions
+            if v.origin is VersionOrigin.AUTO
+            and not v.pinned
+            and v.kind is RefKind.TAG
+            and _numbers(v.ref) is not None
+        ),
+        key=_order,
+        reverse=True,
+    )
     ranked = sorted({*new, *autos}, key=_order, reverse=True)
-    kept = set(ranked[: auto_sync.keep_last])
+    wanted = set(ranked[: auto_sync.keep_last])
     return AutoImportPlan(
-        imports=tuple(new[name] for name in reversed(ranked) if name in kept and name in new),
-        removals=tuple(ref for ref in reversed(ranked) if ref not in kept and ref in autos),
+        imports=tuple(new[name] for name in reversed(ranked) if name in wanted and name in new),
+        removals=tuple(reversed(autos[auto_sync.keep_last :])),
     )

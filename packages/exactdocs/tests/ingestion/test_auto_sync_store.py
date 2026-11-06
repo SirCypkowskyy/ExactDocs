@@ -57,3 +57,23 @@ async def test_saving_again_replaces_and_delete_forgets(store: AutoSyncStore) ->
     await store.delete("/acme/b")
     await store.delete("/acme/unknown")
     assert [s.library for s in await store.list_all()] == ["/acme/a"]
+
+
+async def test_a_check_is_recorded_only_on_the_schedule_it_read(store: AutoSyncStore) -> None:
+    read = AutoSync(library="/acme/docs", tag_pattern="v*", revision="r1")
+    await store.save(read)
+
+    assert await store.record_check(read, read.checked(T0, None))
+    recorded = await store.get("/acme/docs")
+    assert recorded == read.checked(T0, None)
+
+    # Saved again with the same values (a new revision) while a second check ran.
+    resaved = AutoSync(library="/acme/docs", tag_pattern="v*", revision="r2")
+    await store.save(resaved)
+    assert recorded is not None
+    assert not await store.record_check(recorded, recorded.checked(T0, "late"))
+    assert await store.get("/acme/docs") == resaved
+
+    await store.delete("/acme/docs")
+    assert not await store.record_check(resaved, resaved.checked(T0, None))
+    assert await store.get("/acme/docs") is None

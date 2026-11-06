@@ -48,10 +48,12 @@ from exactdocs.identity.adapters.driven.sqlite import (
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
     QUEUE,
+    SCHEDULE,
     STEPS_VERSION,
     WORKFLOW,
     DbosCheckpoints,
     DbosJobQueue,
+    DbosScheduleSwitch,
 )
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
@@ -264,6 +266,7 @@ class Container:
             tag_locks=tag_locks,
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine),
+            schedule_switch=DbosScheduleSwitch(SCHEDULE),
         )
         return cls(
             settings=settings,
@@ -284,6 +287,8 @@ class Container:
                 recover_jobs=ingestion.recover_jobs,
                 submit_queued_jobs=ingestion.submit_queued_jobs,
                 run_scheduled_checks=ingestion.run_scheduled_checks,
+                switch_schedule=ingestion.switch_schedule,
+                schedule_name=SCHEDULE,
                 schedule=settings.auto_sync_schedule,
                 poll_interval=settings.job_poll_seconds,
                 database=settings.data_dir / JOBS_FILE,

@@ -503,10 +503,30 @@ class AutoSyncStore(Protocol):
         """Store the schedule, replacing the library's earlier one."""
         ...
 
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Store a check's result if the schedule is still the one it read; say whether it was.
+
+        ``checked``'s ``checked_at`` and ``last_error`` are stored in one atomic step only when
+        the stored ``revision`` and ``checked_at`` are ``read``'s: a schedule saved or removed
+        meanwhile is left alone.
+        """
+        ...
+
     async def delete(self, library: str) -> None:
         """Forget the library's schedule (nothing happens when it has none)."""
         ...
 
     async def list_all(self) -> Sequence[AutoSync]:
         """Return every stored schedule, by library."""
+        ...
+
+
+class ScheduleSwitch(Protocol):
+    """Turns the scheduled check's tick on or off: with no schedule, nothing is written."""
+
+    async def turn(self, *, on: bool) -> None:
+        """Make the tick run (``on``) or stop; best effort, never raises.
+
+        The worker sets it again from the stored schedules when it starts.
+        """
         ...

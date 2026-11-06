@@ -105,8 +105,16 @@ def step_push_and_check(context: Context, name: str) -> None:
 
 
 @when("the scheduled check runs")
+@when("the scheduled check runs again")
 def step_check(context: Context) -> None:
     _run_check(context)
+
+
+@then("the oldest auto-imported version is still served")
+def step_still_served(context: Context) -> None:
+    """Removed only once its replacement is a version: a check that queues does not prune."""
+    versions = _versions(context)
+    assert sorted(r for r, o in versions.items() if o == "auto") == ["v1.4.0", "v1.4.1", "v1.5.0"]
 
 
 @then('"{ref}" is imported')

@@ -345,6 +345,7 @@ auto_syncs = Table(
     Column("sync_branches", Boolean, nullable=False),
     Column("checked_at", Text),  # UTC ISO-8601
     Column("last_error", Text),
+    Column("revision", Text, nullable=False, server_default=""),
 )
 
 
@@ -371,6 +372,7 @@ class SqliteAutoSyncStore:
             "sync_branches": auto_sync.sync_branches,
             "checked_at": _text(auto_sync.checked_at),
             "last_error": auto_sync.last_error,
+            "revision": auto_sync.revision,
         }
         statement = sqlite_insert(auto_syncs).values(library=auto_sync.library, **values)
         statement = statement.on_conflict_do_update(
@@ -383,6 +385,23 @@ class SqliteAutoSyncStore:
         """Forget the library's schedule."""
         async with self.engine.begin() as connection:
             await connection.execute(delete(auto_syncs).where(auto_syncs.c.library == library))
+
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Compare and set: store the check only on the row the check read."""
+        before = _text(read.checked_at)
+        statement = (
+            update(auto_syncs)
+            .where(
+                auto_syncs.c.library == read.library,
+                auto_syncs.c.revision == read.revision,
+                auto_syncs.c.checked_at.is_(None)
+                if before is None
+                else auto_syncs.c.checked_at == before,
+            )
+            .values(checked_at=_text(checked.checked_at), last_error=checked.last_error)
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(statement)).rowcount == 1
 
     async def list_all(self) -> Sequence[AutoSync]:
         """Return every schedule, by library."""
@@ -400,4 +419,5 @@ def _auto_sync(row: Row) -> AutoSync:
         sync_branches=bool(row.sync_branches),
         checked_at=_moment(row.checked_at),
         last_error=row.last_error,
+        revision=row.revision,
     )

@@ -30,6 +30,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    JobId,
     JobState,
     PathSelection,
     ProposedId,
@@ -154,7 +155,7 @@ async def _noop(job: object, progress: object, /) -> None: ...
 
 
 def tag(ref: str, origin: VersionOrigin = VersionOrigin.MANUAL) -> ImportedRef:
-    return ImportedRef(ref=ref, kind=RefKind.TAG, commit_sha=SHA[ref], origin=origin)
+    return ImportedRef(ref=ref, kind=RefKind.TAG, commit_sha=SHA.get(ref, OLD), origin=origin)
 
 
 def auto(ref: str) -> ImportedRef:
@@ -190,6 +191,16 @@ def jobs() -> InMemoryJobRepository:
     return InMemoryJobRepository()
 
 
+class Switch:
+    """A ``ScheduleSwitch`` that remembers every turn."""
+
+    def __init__(self) -> None:
+        self.turns: list[bool] = []
+
+    async def turn(self, *, on: bool) -> None:
+        self.turns.append(on)
+
+
 @pytest.fixture
 def module(
     remote: Remote,
@@ -197,6 +208,17 @@ def module(
     schedules: InMemoryAutoSyncStore,
     jobs: InMemoryJobRepository,
     clock: HandClock,
+) -> IngestionModule:
+    return make_module(remote, catalog, schedules, jobs, clock)
+
+
+def make_module(
+    remote: Remote,
+    catalog: Catalog,
+    schedules: InMemoryAutoSyncStore,
+    jobs: InMemoryJobRepository,
+    clock: HandClock,
+    switch: Switch | None = None,
 ) -> IngestionModule:
     return IngestionModule.build(
         jobs=jobs,
@@ -209,6 +231,7 @@ def module(
         index=catalog,
         handlers={IMPORT_JOB: _noop, REFRESH_JOB: _noop},
         auto_syncs=schedules,
+        schedule_switch=switch,
     )
 
 
@@ -225,15 +248,44 @@ def imports(jobs: InMemoryJobRepository) -> dict[str, VersionOrigin]:
 # ---------------------------------------------------------------- the plan (pure)
 
 
-def test_matching_tags_become_imports_and_only_the_newest_are_kept() -> None:
-    plan = plan_auto_imports(
-        AutoSync(library=LIBRARY, tag_pattern="v*", keep_last=2),
-        [tip("v1.3.0"), tip("v1.4.0"), tip("v1.5.0"), tip("main", RefKind.BRANCH)],
-        [tag("v1.2.0"), auto("v1.3.0"), auto("v1.4.0")],
+def test_a_new_tag_is_imported_and_the_oldest_auto_version_goes_once_it_is_a_version() -> None:
+    sync = AutoSync(library=LIBRARY, tag_pattern="v*", keep_last=2)
+    tips = [tip("v1.3.0"), tip("v1.4.0"), tip("v1.5.0"), tip("main", RefKind.BRANCH)]
+
+    queued = plan_auto_imports(sync, tips, [tag("v1.2.0"), auto("v1.3.0"), auto("v1.4.0")])
+    imported = plan_auto_imports(
+        sync, tips, [tag("v1.2.0"), auto("v1.3.0"), auto("v1.4.0"), auto("v1.5.0")]
     )
 
-    assert [t.name for t in plan.imports] == ["v1.5.0"]
-    assert plan.removals == ("v1.3.0",)  # the oldest auto version; v1.2.0 is manual
+    assert ([t.name for t in queued.imports], queued.removals) == (["v1.5.0"], ())
+    # Next check: v1.5.0 is a version now, so the oldest auto one goes; v1.2.0 is manual.
+    assert (imported.imports, imported.removals) == ((), ("v1.3.0",))
+
+
+def test_old_auto_versions_stay_until_their_replacements_are_versions() -> None:
+    plan = plan_auto_imports(
+        AutoSync(library=LIBRARY, tag_pattern="v*", keep_last=2),
+        [tip("v1.0", sha=OLD), tip("v1.1", sha=OLD), tip("v1.2", sha=NEW), tip("v1.3", sha=NEW)],
+        [auto("v1.0"), auto("v1.1")],
+    )
+
+    assert [t.name for t in plan.imports] == ["v1.2", "v1.3"]
+    assert plan.removals == ()  # if both imports fail, the library keeps v1.0 and v1.1
+
+
+def test_the_pinned_default_version_is_never_removed_and_does_not_count() -> None:
+    pinned = ImportedRef(
+        ref="v1.3.0", kind=RefKind.TAG, commit_sha=SHA["v1.3.0"], origin=VersionOrigin.AUTO,
+        pinned=True,
+    )  # fmt: skip
+
+    plan = plan_auto_imports(
+        AutoSync(library=LIBRARY, tag_pattern="v*", keep_last=1),
+        [tip("v1.3.0"), tip("v1.4.0"), tip("v1.5.0")],
+        [pinned, auto("v1.4.0"), auto("v1.5.0")],
+    )
+
+    assert (plan.imports, plan.removals) == ((), ("v1.4.0",))
 
 
 def test_imports_are_queued_oldest_first_and_capped_by_keep_last() -> None:
@@ -356,9 +408,98 @@ async def test_a_tick_imports_new_tags_as_auto_and_prunes_old_auto_versions(
     second = await module.run_scheduled_checks()
 
     assert [j.version for j in jobs.jobs.values() if j.state is JobState.QUEUED] == ["v1.5.0"]
-    assert second.removed == [f"{LIBRARY}/v1.3.0"]
+    assert (second.removed, catalog.removed) == ([], [])  # until v1.5.0 is a version
+
+    for job in list(jobs.jobs.values()):
+        if job.state is JobState.QUEUED:
+            await jobs.save(job.started(clock.now()).succeeded(clock.now()))
+    catalog.versions.append(auto("v1.5.0"))
+    clock.advance(minutes=60)
+
+    third = await module.run_scheduled_checks()
+
+    assert third.removed == [f"{LIBRARY}/v1.3.0"]
     assert catalog.removed == ["v1.3.0"]
-    assert [v.ref for v in catalog.versions] == ["v1.2.0", "v1.4.0"]  # manual v1.2.0 stays
+    assert [v.ref for v in catalog.versions] == ["v1.2.0", "v1.4.0", "v1.5.0"]  # manual stays
+    assert third.imports == []  # the removed v1.3.0 is older than what is kept: not re-imported
+
+
+async def _fail_import(
+    module: IngestionModule, jobs: InMemoryJobRepository, clock: HandClock, code: str
+) -> None:
+    """Queue an import of v1.4.0 and fail it with ``code``."""
+    job = await module.enqueue_job(
+        EnqueueJobCommand(
+            kind=IMPORT_JOB,
+            library=LIBRARY,
+            version="v1.4.0",
+            commit_sha=SHA["v1.4.0"],
+            ref_kind=RefKind.TAG,
+            origin=VersionOrigin.AUTO,
+        )
+    )
+    stored = jobs.jobs[JobId(job.id)]
+    await jobs.save(stored.started(clock.now()).failed("it failed", clock.now(), code=code))
+
+
+@pytest.mark.parametrize(
+    ("code", "retried"),
+    [
+        ("no_articles", False),
+        ("import_too_large", False),
+        ("repo_unreachable", True),
+        ("auth_failed", True),
+        ("unexpected", True),
+    ],
+)
+async def test_only_a_permanent_failure_keeps_a_tag_from_being_tried_again(
+    module: IngestionModule,
+    jobs: InMemoryJobRepository,
+    clock: HandClock,
+    code: str,
+    *,
+    retried: bool,
+) -> None:
+    await _fail_import(module, jobs, clock, code)
+    await module.set_auto_sync(schedule())
+
+    result = await module.run_scheduled_checks()
+
+    queued = {jobs.jobs[JobId(i)].version for i in result.imports}
+    assert ("v1.4.0" in queued) is retried
+    assert "v1.3.0" in queued
+
+
+async def test_the_tick_runs_only_while_a_library_has_a_schedule(
+    remote: Remote,
+    catalog: Catalog,
+    schedules: InMemoryAutoSyncStore,
+    jobs: InMemoryJobRepository,
+    clock: HandClock,
+) -> None:
+    switch = Switch()
+    module = make_module(remote, catalog, schedules, jobs, clock, switch=switch)
+
+    await module.switch_schedule()
+    await module.set_auto_sync(schedule())
+    await module.disable_auto_sync(DisableAutoSyncCommand(library=LIBRARY))
+    await module.set_auto_sync(schedule())
+    await module.remove_library(RemoveLibraryCommand(library=LIBRARY))
+
+    assert switch.turns == [False, True, False, True, False]
+
+
+async def test_refs_are_listed_once_when_tags_and_branches_are_both_checked(
+    module: IngestionModule, remote: Remote, catalog: Catalog, jobs: InMemoryJobRepository
+) -> None:
+    catalog.versions.append(ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD))
+    remote.heads["main"] = NEW
+    await module.set_auto_sync(schedule(sync_branches=True))
+
+    await module.run_scheduled_checks()
+
+    assert remote.calls == 1
+    assert {j.version for j in jobs.jobs.values() if j.kind == REFRESH_JOB} == {"main"}
 
 
 async def test_a_library_is_not_checked_again_before_its_interval_is_up(

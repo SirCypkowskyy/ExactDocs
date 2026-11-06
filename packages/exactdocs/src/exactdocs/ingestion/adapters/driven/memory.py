@@ -238,6 +238,17 @@ class InMemoryAutoSyncStore:
         """Forget the library's schedule."""
         self.schedules.pop(library, None)
 
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Store the check if the schedule is still the one it read."""
+        stored = self.schedules.get(read.library)
+        if stored is None or (stored.revision, stored.checked_at) != (
+            read.revision,
+            read.checked_at,
+        ):
+            return False
+        self.schedules[read.library] = checked
+        return True
+
     async def list_all(self) -> Sequence[AutoSync]:
         """Return every schedule, by library."""
         return [self.schedules[k] for k in sorted(self.schedules)]

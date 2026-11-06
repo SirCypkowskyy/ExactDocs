@@ -18,6 +18,7 @@ from exactdocs.ingestion.ports.driven import (
     Removals,
     RenameSource,
     RepositoryTree,
+    ScheduleSwitch,
     SecretBox,
     VersionPublisher,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "RepositoryTree",
     "RunJob",
     "RunNextJob",
+    "ScheduleSwitch",
     "SecretBox",
     "SubmitQueuedJobs",
     "SyncLibrary",

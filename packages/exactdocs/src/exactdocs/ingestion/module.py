@@ -50,6 +50,7 @@ from exactdocs.ingestion.ports.driven import (
     Removals,
     RenameSource,
     RepositoryTree,
+    ScheduleSwitch,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -74,6 +75,7 @@ from exactdocs.ingestion.ports.driving import (
     RunScheduledChecks,
     SetAutoSync,
     SubmitQueuedJobs,
+    SwitchSchedule,
     SyncLibrary,
     TagArticle,
 )
@@ -102,6 +104,7 @@ from exactdocs.ingestion.use_cases import (
     RunScheduledChecksUseCase,
     SetAutoSyncUseCase,
     SubmitQueuedJobsUseCase,
+    SwitchScheduleUseCase,
     SyncLibraryUseCase,
     TagArticleUseCase,
     TagLocks,
@@ -183,6 +186,17 @@ class _NoAutoSyncs:
     async def list_all(self) -> list[AutoSync]:
         return []
 
+    async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        del read, checked
+        return False
+
+
+class _NoSwitch:
+    """The default ``schedule_switch`` of ``build``: no tick to turn on or off."""
+
+    async def turn(self, *, on: bool) -> None:
+        del on
+
 
 class _NoRunner:
     """The default ``runner`` of ``build``: jobs wait in the repository for ``RunNextJob``."""
@@ -216,6 +230,7 @@ class IngestionModule:
     run_scheduled_checks: RunScheduledChecks
     set_auto_sync: SetAutoSync
     submit_queued_jobs: SubmitQueuedJobs
+    switch_schedule: SwitchSchedule
     sync_library: SyncLibrary
     tag_article: TagArticle
 
@@ -239,6 +254,7 @@ class IngestionModule:
         manual_tags: ManualTagStore | None = None,
         tag_locks: TagLocks | None = None,
         auto_syncs: AutoSyncStore | None = None,
+        schedule_switch: ScheduleSwitch | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -249,6 +265,7 @@ class IngestionModule:
         library is added; without it there is none. ``runner`` is told about every queued job;
         without one, jobs wait for ``run_next_job``. ``auto_syncs`` keeps the libraries'
         scheduled checks (``run_scheduled_checks`` is one tick); without it none is kept.
+        ``schedule_switch`` turns the tick on while any library has a schedule.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
@@ -258,6 +275,7 @@ class IngestionModule:
         none = _NoLibrarySources()
         vault = vault or _NoCredentials()
         schedules = auto_syncs or _NoAutoSyncs()
+        switch = schedule_switch or _NoSwitch()
         remove_version = RemoveVersionUseCase(jobs, removals, index, enqueue_job)
         sync_library = SyncLibraryUseCase(remote, sources or none, jobs, clock, enqueue_job, vault)
         return cls(
@@ -266,7 +284,7 @@ class IngestionModule:
                 remote, sources or _NoLibrarySources(), jobs, enqueue_job, vault
             ),
             check_repository=CheckRepositoryUseCase(remote, library_ids),
-            disable_auto_sync=DisableAutoSyncUseCase(sources or none, schedules),
+            disable_auto_sync=DisableAutoSyncUseCase(sources or none, schedules, switch),
             enqueue_job=enqueue_job,
             get_auto_sync=GetAutoSyncUseCase(sources or none, schedules),
             get_job=GetJobUseCase(jobs),
@@ -280,7 +298,7 @@ class IngestionModule:
                 remote, sources or none, jobs, enqueue_job, vault
             ),
             remove_library=RemoveLibraryUseCase(
-                jobs, removals, index, enqueue_job, vault, schedules
+                jobs, removals, index, enqueue_job, vault, schedules, switch
             ),
             remove_version=remove_version,
             run_job=RunJobUseCase(jobs, clock, handlers, recovery_hooks),
@@ -295,9 +313,11 @@ class IngestionModule:
                 enqueue_job=enqueue_job,
                 sync_library=sync_library,
                 remove_version=remove_version,
+                switch=switch,
             ),
-            set_auto_sync=SetAutoSyncUseCase(sources or none, schedules),
+            set_auto_sync=SetAutoSyncUseCase(sources or none, schedules, switch),
             submit_queued_jobs=SubmitQueuedJobsUseCase(jobs, runner),
+            switch_schedule=SwitchScheduleUseCase(schedules, switch),
             sync_library=sync_library,
             tag_article=TagArticleUseCase(
                 manual_tags or _NoManualTags(), index, tag_locks or TagLocks()

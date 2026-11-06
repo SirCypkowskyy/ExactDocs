@@ -28,6 +28,7 @@ from exactdocs.ingestion.ports.driving import (
     RunJob,
     RunScheduledChecks,
     SubmitQueuedJobs,
+    SwitchSchedule,
 )
 
 log = logging.getLogger(__name__)
@@ -41,8 +42,6 @@ _FORGET_POLL = 0.05  # seconds between looks at a finished workflow's status, wh
 _FORGET_TRIES = 200
 _VACUUM_ABOVE = 2**20  # bytes of free pages
 _LIVE = ["ENQUEUED", "PENDING", "DELAYED"]
-SCHEDULE = "exactdocs-scheduled-checks"
-"""The name of the DBOS schedule that ticks ``RunScheduledChecks``."""
 SCHEDULE_WORKFLOW = "exactdocs.scheduled_checks"
 EVERY_MINUTE = "0 * * * * *"  # seconds first: second 0 of every minute
 _DONE = frozenset({"SUCCESS", "ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"})
@@ -76,6 +75,10 @@ class DbosJobWorker:
     """How often queued jobs are handed to DBOS again, in case one was not taken when queued."""
     run_scheduled_checks: RunScheduledChecks | None = None
     """One tick of the libraries' scheduled checks; without it no schedule is kept."""
+    switch_schedule: SwitchSchedule | None = None
+    """Pauses the schedule while no library has one (an idle server then writes nothing)."""
+    schedule_name: str = "exactdocs-scheduled-checks"
+    """The DBOS schedule; the one ``adapters.driven.dbos.DbosScheduleSwitch`` pauses."""
     schedule: str = EVERY_MINUTE
     """When it ticks: a DBOS cron expression with seconds. Libraries are due by their interval."""
     _running: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
@@ -168,11 +171,13 @@ class DbosJobWorker:
     ) -> None:
         """Keep the DBOS schedule in line with ``run_scheduled_checks`` and ``schedule``."""
         if self.run_scheduled_checks is None:
-            await DBOS.delete_schedule_async(SCHEDULE)
+            await DBOS.delete_schedule_async(self.schedule_name)
             return
         await DBOS.apply_schedules_async(
-            [{"schedule_name": SCHEDULE, "workflow_fn": tick, "schedule": self.schedule}]
+            [{"schedule_name": self.schedule_name, "workflow_fn": tick, "schedule": self.schedule}]
         )
+        if self.switch_schedule is not None:
+            await self.switch_schedule()  # paused again at once while no library has one
 
     async def _tick(self) -> None:
         """Run one tick (the scheduled workflow), then delete its workflow.
