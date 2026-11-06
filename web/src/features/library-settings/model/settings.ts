@@ -489,10 +489,12 @@ export function effectiveChange(
   const failed = unhealedJob(jobs);
   const pending = failed && JOBS[failed.kind];
   const own = reachOf({ kind: change === "paths" ? "reprocess" : "retag" });
+  const runs = pending && pending.reach > own ? pending.change : change;
   return {
-    change: pending && pending.reach > own ? pending.change : change,
-    // A failed re-chunk or re-process is run again by this save.
-    afterFailure: reachOf(failed) > reachOf({ kind: "retag" }),
+    change: runs,
+    // Only when this save runs that same failed re-chunk or re-process again: a paths edit after a
+    // failed re-chunk is a re-process of its own, and is not worded as a re-run.
+    afterFailure: pending !== undefined && pending.reach > 1 && pending.change === runs,
   };
 }
 

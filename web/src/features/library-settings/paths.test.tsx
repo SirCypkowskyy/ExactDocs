@@ -245,7 +245,12 @@ describe("paths and tag rules model", () => {
   it("warns a tag-only change as a re-chunk while the last re-chunk failed", () => {
     const failed = { kind: "rechunk", state: "failed" } as const;
     expect(effectiveChange("tags", [failed])).toEqual({ change: "chunking", afterFailure: true });
-    expect(effectiveChange("paths", [failed])).toEqual({ change: "paths", afterFailure: true });
+    // A paths edit re-processes in full anyway: it is not worded as a re-run of the re-chunk.
+    expect(effectiveChange("paths", [failed])).toEqual({ change: "paths", afterFailure: false });
+    expect(effectiveChange("paths", [{ kind: "reprocess", state: "failed" }])).toEqual({
+      change: "paths",
+      afterFailure: true,
+    });
     expect(effectiveChange("tags", [{ kind: "retag", state: "succeeded" }, failed]).change).toBe(
       "chunking",
     );
@@ -507,6 +512,18 @@ describe("editing paths and tag rules", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Re-process every version?" });
     expect(dialog).toHaveTextContent("runs it in full");
     expect(dialog).not.toHaveTextContent("nothing is fetched");
+  });
+
+  it("does not call a paths edit after a failed re-chunk a re-run of a failed re-processing", async () => {
+    serve(undefined, { jobs: [reprocessJob({ kind: "rechunk" })] });
+    renderPage();
+    const s = await section();
+    expect(await s.findByText(/The last re-chunking failed/)).toBeInTheDocument();
+    await userEvent.type(s.getByLabelText("Leave out"), "docs/archive/**");
+    await userEvent.click(saveButton());
+    const dialog = await screen.findByRole("alertdialog", { name: "Re-process every version?" });
+    expect(dialog).not.toHaveTextContent("last re-processing failed");
+    expect(dialog).toHaveTextContent("imported with the new paths");
   });
 
   it("explains that a private library cannot be previewed, instead of offering a preview", async () => {
