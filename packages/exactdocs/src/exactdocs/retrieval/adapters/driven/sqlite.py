@@ -4,6 +4,7 @@ from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import batched
 from typing import Any
 
 from sqlalchemy import (
@@ -28,9 +29,10 @@ from sqlalchemy import (
     tuple_,
     update,
 )
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from exactdocs.retrieval.constants import STORED_PROFILE_FIELDS
+from exactdocs.retrieval.constants import STORED_PROFILE_FIELDS, VECTOR_BATCH
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     InvalidModelRefError,
@@ -42,8 +44,10 @@ from exactdocs.retrieval.models import (
     Chunk,
     ChunkHeading,
     ChunkId,
+    ChunkKey,
     ChunkSet,
     ChunkSetKey,
+    EmbeddingSource,
     IndexedManifest,
     KeySource,
     LibraryAi,
@@ -55,6 +59,7 @@ from exactdocs.retrieval.models import (
     Removed,
     RetrievalMode,
     SectionRef,
+    SpendEntry,
     StoredChunk,
     VersionCounts,
 )
@@ -152,6 +157,21 @@ ai_providers = Table(
     Column("kind", Text, nullable=False),
     Column("settings", Text, nullable=False),
     Column("sealed_key", Text),
+)
+
+# The spend ledger (docs/decisions/ai-retrieval.md, *Cost and budgets*): one row per scope and UTC
+# window, added to atomically. US dollars are whole millionths, so additions stay exact.
+ai_spend = Table(
+    "retrieval_ai_spend",
+    metadata,
+    Column("scope_kind", Text, primary_key=True),
+    Column("scope_id", Text, primary_key=True),
+    Column("window_kind", Text, primary_key=True),  # SpendWindow value
+    Column("window_start", Text, primary_key=True),  # ISO date, UTC
+    Column("input_tokens", Integer, nullable=False, server_default="0"),
+    Column("output_tokens", Integer, nullable=False, server_default="0"),
+    Column("requests", Integer, nullable=False, server_default="0"),
+    Column("usd_micros", Integer, nullable=False, server_default="0"),
 )
 
 
@@ -438,6 +458,56 @@ class SqliteChunkRepository:
                 )
                 changed += result.rowcount
         return changed
+
+    async def embedding_sources(
+        self, manifest_id: str, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, EmbeddingSource]:
+        """Read the heading path and text of these chunks, with the manifest's first path of each.
+
+        Args:
+            manifest_id: The manifest.
+            keys: The stored chunks.
+
+        Returns:
+            The sources found.
+        """
+        columns = tuple_(
+            manifest_chunks.c.blob_sha, manifest_chunks.c.config_hash, manifest_chunks.c.position
+        )
+        found: dict[ChunkKey, EmbeddingSource] = {}
+        async with self.engine.connect() as connection:
+            for batch in batched(
+                sorted(keys), VECTOR_BATCH, strict=False
+            ):  # three bound variables per key
+                rows = await connection.execute(
+                    select(
+                        manifest_chunks.c.article_path,
+                        chunks.c.blob_sha,
+                        chunks.c.config_hash,
+                        chunks.c.position,
+                        chunks.c.heading_path,
+                        chunks.c.content,
+                    )
+                    .select_from(
+                        manifest_chunks.join(
+                            chunks,
+                            (chunks.c.blob_sha == manifest_chunks.c.blob_sha)
+                            & (chunks.c.config_hash == manifest_chunks.c.config_hash)
+                            & (chunks.c.position == manifest_chunks.c.position),
+                        )
+                    )
+                    .where(manifest_chunks.c.manifest_id == manifest_id, columns.in_(batch))
+                    .order_by(manifest_chunks.c.article_path)
+                )
+                for row in rows:
+                    key: ChunkKey = (row.blob_sha, row.config_hash, row.position)
+                    if key not in found:
+                        found[key] = EmbeddingSource(
+                            article_path=row.article_path,
+                            heading_path=tuple(json.loads(row.heading_path)),
+                            content=row.content,
+                        )
+        return found
 
 
 def _stored_chunks() -> Select[Any]:
@@ -753,3 +823,50 @@ def _profile(row: Row[Any]) -> ProviderProfile | None:
             "stored AI provider %r is no longer valid; fix it over the REST API", row.name
         )
         return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteSpendLedger:
+    """Implements ``ports.driven.SpendLedger`` with an upsert per row (``retrieval_ai_spend``)."""
+
+    engine: AsyncEngine
+    """The database."""
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        """Add each entry to its row in one transaction; a missing row is created.
+
+        Args:
+            entries: The usage, one entry per row.
+        """
+        if not entries:
+            return
+        statement = sqlite_insert(ai_spend)
+        statement = statement.on_conflict_do_update(
+            index_elements=[
+                ai_spend.c.scope_kind,
+                ai_spend.c.scope_id,
+                ai_spend.c.window_kind,
+                ai_spend.c.window_start,
+            ],
+            set_={
+                name: ai_spend.c[name] + statement.excluded[name]
+                for name in ("input_tokens", "output_tokens", "requests", "usd_micros")
+            },
+        )
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                statement,
+                [
+                    {
+                        "scope_kind": e.scope_kind,
+                        "scope_id": e.scope_id,
+                        "window_kind": e.window.value,
+                        "window_start": e.window_start.isoformat(),
+                        "input_tokens": e.input_tokens,
+                        "output_tokens": e.output_tokens,
+                        "requests": e.requests,
+                        "usd_micros": e.usd_micros,
+                    }
+                    for e in entries
+                ],
+            )

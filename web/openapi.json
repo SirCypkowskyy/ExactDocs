@@ -4585,6 +4585,96 @@
         ]
       }
     },
+    "/api/v1/ai/embedding/estimate": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Estimate Embedding",
+        "description": "Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.\n\nCounts the distinct chunks of every active version (of libraries with AI on) that have no\nvector from the configured embedding model, at 4 characters per token, priced with the\nbundled price list. Calls no model and no tokenizer: an estimate, as `note` says.\nThe REST form of `exactdocs ai estimate`.",
+        "operationId": "ai-estimate_embedding",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingEstimateOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/settings": {
       "put": {
         "tags": [
@@ -7760,6 +7850,98 @@
         ],
         "title": "DeployKeyIn",
         "description": "An SSH deploy key (private part, no passphrase). Write-only: no response repeats it."
+      },
+      "EmbeddingEstimateOut": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "The embedding role's model, `<profile>:<model>`; null when none is configured."
+          },
+          "space_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Id",
+            "description": "The space of that model, if it has one yet."
+          },
+          "versions": {
+            "type": "integer",
+            "title": "Versions",
+            "description": "Versions looked at: active ones of libraries with AI on."
+          },
+          "chunks": {
+            "type": "integer",
+            "title": "Chunks",
+            "description": "Distinct stored chunks without a vector (a blob shared by versions counts once)."
+          },
+          "characters": {
+            "type": "integer",
+            "title": "Characters",
+            "description": "Characters of their text and heading paths."
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "title": "Estimated Tokens",
+            "description": "`characters` / 4, rounded up: an estimate."
+          },
+          "usd_per_million_tokens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usd Per Million Tokens",
+            "description": "The model's input price; null when the price list does not know the model."
+          },
+          "estimated_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Usd",
+            "description": "The estimated tokens at that price; null without a price."
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "description": "How the numbers were made.",
+            "default": "An estimate: tokens are counted as 4 characters per token, never by the model's tokenizer, and the price is the bundled price list's."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model",
+          "space_id",
+          "versions",
+          "chunks",
+          "characters",
+          "estimated_tokens",
+          "usd_per_million_tokens",
+          "estimated_usd"
+        ],
+        "title": "EmbeddingEstimateOut",
+        "description": "What embedding every version not embedded yet would send and cost, before it runs.\n\nCounted from characters (4 per token), never with the model's tokenizer, and priced with the\nbundled price list: an estimate, as `note` says."
       },
       "ErrorResponse": {
         "properties": {

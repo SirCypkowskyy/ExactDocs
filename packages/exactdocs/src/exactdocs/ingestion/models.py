@@ -2000,3 +2000,39 @@ def plan_auto_imports(
         imports=tuple(new[name] for name in reversed(ranked) if name in wanted and name in new),
         removals=tuple(reversed(autos[auto_sync.keep_last :])),
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VersionToEmbed:
+    """A version the instance's embedding model has not fully embedded."""
+
+    library: str
+    """The library ID."""
+    ref: str
+    """The version."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbedPlan:
+    """What an ``embed`` job of one version does (a durable step's result)."""
+
+    space_id: int | None
+    """The embedding space it fills; ``None`` when nothing of the version is to be sent."""
+    manifest_id: str | None
+    """The version's manifest when the job started."""
+    missing: int
+    """Chunks without a vector then."""
+    created: bool
+    """The job created the space (the model changed): every other version needs embedding too."""
+    skipped: str | None
+    """Why nothing is sent (``ai_off``, ``no_embedding_model``...), if nothing is."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddedBatch:
+    """One batch of an ``embed`` job (a durable step's result)."""
+
+    embedded: int
+    """Vectors stored."""
+    finished: bool
+    """Nothing of the version is left to embed, or nothing more may be sent."""

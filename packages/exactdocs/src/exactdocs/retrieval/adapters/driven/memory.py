@@ -1,3 +1,4 @@
+import hashlib
 import math
 import struct
 import sys
@@ -5,8 +6,9 @@ from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from itertools import batched
 
-from exactdocs.retrieval.constants import MEMORY_FORMAT
+from exactdocs.retrieval.constants import CHARS_PER_TOKEN, MEMORY_FORMAT
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     RetiredEmbeddingSpaceError,
@@ -15,10 +17,13 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import (
     CatalogLibrary,
+    Chunk,
     ChunkId,
     ChunkKey,
     ChunkSet,
     ChunkSetKey,
+    EmbeddedTexts,
+    EmbeddingSource,
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
@@ -27,6 +32,7 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     ModelRole,
+    PendingChunks,
     ProviderProfile,
     RebuiltIndex,
     Removed,
@@ -36,6 +42,8 @@ from exactdocs.retrieval.models import (
     SearchIndexState,
     SectionRef,
     SpaceState,
+    SpendEntry,
+    SpendWindow,
     StoredChunk,
     TagFilter,
     VectorCoverage,
@@ -168,6 +176,31 @@ class InMemoryChunkRepository:
         }
         rows.update(changed)
         return len(changed)
+
+    async def embedding_sources(
+        self, manifest_id: str, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, EmbeddingSource]:
+        """Return what each of these chunks of the manifest is embedded from (first path wins).
+
+        Args:
+            manifest_id: The manifest.
+            keys: The stored chunks.
+
+        Returns:
+            The sources found.
+        """
+        wanted = set(keys)
+        found: dict[ChunkKey, EmbeddingSource] = {}
+        for row in sorted(self.rows.get(manifest_id, {}).values(), key=lambda r: r.article_path):
+            key: ChunkKey = (row.chunk_set[0], row.chunk_set[1], row.position)
+            if key in wanted and key not in found:
+                chunk = self.chunk_sets[row.chunk_set].chunks[row.position]
+                found[key] = EmbeddingSource(
+                    article_path=row.article_path,
+                    heading_path=chunk.heading_path,
+                    content=chunk.content,
+                )
+        return found
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- index format
@@ -603,6 +636,33 @@ class InMemoryVectorIndex:
         keys = {(*r.chunk_set, r.position) for r in self.chunks.rows.get(manifest_id, {}).values()}
         return sorted(k for k in keys if k not in stored)[:limit]
 
+    async def pending(
+        self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
+    ) -> PendingChunks:
+        """Count the distinct chunks of these manifests without a vector in the space.
+
+        Args:
+            space_id: The space; ``None`` counts every chunk.
+            manifest_ids: The manifests.
+
+        Returns:
+            The chunks and their characters.
+        """
+        stored: Mapping[ChunkKey, object] = {}
+        if space_id is not None:
+            self._live(space_id)
+            stored = self._stored(space_id)
+        keys = {
+            (*row.chunk_set, row.position)
+            for manifest_id in manifest_ids
+            for row in self.chunks.rows.get(manifest_id, {}).values()
+        }
+        missing = [k for k in keys if k not in stored]
+        characters = sum(
+            _characters(self.chunks.chunk_sets[k[0], k[1]].chunks[k[2]]) for k in missing
+        )
+        return PendingChunks(chunks=len(missing), characters=characters)
+
     def _space(self, space_id: EmbeddingSpaceId) -> EmbeddingSpace:
         """Find the space.
 
@@ -668,6 +728,18 @@ class InMemoryVectorIndex:
         return stored
 
 
+def _characters(chunk: Chunk) -> int:
+    """Count the characters of a chunk's text and heading path, as the estimate does.
+
+    Args:
+        chunk: The chunk.
+
+    Returns:
+        The characters.
+    """
+    return len(chunk.content) + sum(len(h) for h in chunk.heading_path)
+
+
 def _float32(vector: tuple[float, ...]) -> tuple[float, ...]:
     """Round to 32-bit floats, as the stores keep vectors.
 
@@ -693,3 +765,172 @@ def _cosine_distance(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     norms = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return max(0.0, 1 - dot / norms)  # rounding can put a vector's own distance below 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HashEmbeddings:
+    """Implements ``ports.driven.Embeddings`` in process: a vector from each text's hash.
+
+    The same text always gets the same vector, and different texts different ones, so tests can
+    tell what was embedded without any provider. ``usage`` is one token per 4 characters.
+    """
+
+    name: str
+    """``<profile>:<model>``."""
+    size: int
+    """The vectors' dimensions."""
+    batch_size: int
+    """Texts per call."""
+    sent: list[str]
+    """Every text embedded as a document, in order (shared with ``HashEmbeddingModels``)."""
+    calls: list[str]
+    """The model of every call, in order (shared with ``HashEmbeddingModels``)."""
+
+    async def dimensions(self) -> int:
+        """Say the vectors' size.
+
+        Returns:
+            ``size``.
+        """
+        return self.size
+
+    async def embed_documents(self, texts: Sequence[str]) -> EmbeddedTexts:
+        """Embed texts as documents, ``batch_size`` per call.
+
+        Args:
+            texts: The texts.
+
+        Returns:
+            Their vectors.
+        """
+        self.sent.extend(texts)
+        return self._embed(texts)
+
+    async def embed_query(self, text: str) -> EmbeddedTexts:
+        """Embed a query.
+
+        Args:
+            text: The query.
+
+        Returns:
+            Its vector.
+        """
+        return self._embed([text])
+
+    def _embed(self, texts: Sequence[str]) -> EmbeddedTexts:
+        """Hash each text into a vector, one call per batch.
+
+        Args:
+            texts: The texts.
+
+        Returns:
+            The vectors and the usage.
+        """
+        calls = list(batched(texts, self.batch_size, strict=False))
+        self.calls.extend(self.name for _ in calls)
+        return EmbeddedTexts(
+            vectors=tuple(_hash_vector(t, self.size) for t in texts),
+            input_tokens=sum(-(-len(t) // CHARS_PER_TOKEN) for t in texts),
+            requests=len(calls),
+        )
+
+
+def _hash_vector(text: str, size: int) -> tuple[float, ...]:
+    """Make a non-zero vector from a text's SHA-256.
+
+    Args:
+        text: The text.
+        size: The dimensions.
+
+    Returns:
+        The vector.
+    """
+    digest = hashlib.sha256(text.encode()).digest()
+    return tuple(1.0 + digest[i % len(digest)] / 255 for i in range(size))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HashEmbeddingModels:
+    """Implements ``ports.driven.EmbeddingModels`` with ``HashEmbeddings`` (tests, no provider).
+
+    The handle the factory built is ignored; what is sent and which model is called is kept.
+    """
+
+    size: int = 8
+    """The dimensions a model answers when none are configured."""
+    sent: list[str] = field(default_factory=list)
+    """Every text embedded as a document, in order."""
+    calls: list[str] = field(default_factory=list)
+    """The model of every call, in order."""
+
+    def bind(
+        self, handle: object, *, name: str, dimensions: int | None, batch_size: int
+    ) -> HashEmbeddings:
+        """Make a hash model.
+
+        Args:
+            handle: Ignored.
+            name: ``<profile>:<model>``.
+            dimensions: The configured dimensions, else ``size``.
+            batch_size: Texts per call.
+
+        Returns:
+            The model.
+        """
+        del handle
+        return HashEmbeddings(
+            name=name,
+            size=dimensions or self.size,
+            batch_size=batch_size,
+            sent=self.sent,
+            calls=self.calls,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemorySpendLedger:
+    """Implements ``ports.driven.SpendLedger`` with a dictionary of summed rows."""
+
+    rows: dict[tuple[str, str, SpendWindow, str], SpendEntry] = field(default_factory=dict)
+    """Each row by (scope kind, scope ID, window, window start)."""
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        """Add each entry to its row.
+
+        Args:
+            entries: The usage.
+        """
+        for entry in entries:
+            key = (entry.scope_kind, entry.scope_id, entry.window, entry.window_start.isoformat())
+            row = self.rows.get(key)
+            self.rows[key] = (
+                entry
+                if row is None
+                else replace(
+                    row,
+                    input_tokens=row.input_tokens + entry.input_tokens,
+                    output_tokens=row.output_tokens + entry.output_tokens,
+                    requests=row.requests + entry.requests,
+                    usd_micros=row.usd_micros + entry.usd_micros,
+                )
+            )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StaticPrices:
+    """Implements ``ports.driven.Prices`` from a fixed table (tests)."""
+
+    input_prices: Mapping[tuple[str, str], float] = field(default_factory=dict)
+    """US dollars per million input tokens, by (profile kind, model)."""
+
+    def input_usd_per_million(self, profile_kind: str, model: str) -> float | None:
+        """Look the model up.
+
+        Args:
+            profile_kind: The profile's kind.
+            model: The model.
+
+        Returns:
+            Its price, or ``None``.
+        """
+        return self.input_prices.get((profile_kind, model))

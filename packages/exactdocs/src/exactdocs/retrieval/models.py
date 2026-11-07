@@ -7,7 +7,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, date, datetime
 from enum import IntEnum, StrEnum
 from itertools import groupby
 from typing import NewType, NoReturn
@@ -21,6 +21,7 @@ from exactdocs.retrieval.constants import (
     _OPTIONAL_KIND_FIELDS,
     _SELF_HOSTED_KINDS,
     _WORD,
+    CHARS_PER_TOKEN,
     CREDENTIAL_HEADER_SUFFIXES,
     CREDENTIAL_HEADERS,
     DEFAULT_MODE_ORDER,
@@ -29,6 +30,7 @@ from exactdocs.retrieval.constants import (
     DNS_LABEL,
     EMBEDDING_INPUT_FORMAT,
     HEADER_NAME,
+    HEADING_SEPARATOR,
     MASK,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_FLOAT32,
@@ -37,8 +39,12 @@ from exactdocs.retrieval.constants import (
     MAX_MODEL_NAME,
     MAX_REQUEST_TIMEOUT,
     MAX_RETRIES,
+    MICROS_PER_USD,
     PROFILE_NAME,
+    SPEND_SCOPE_EMBEDDING,
+    SPEND_SCOPE_INSTANCE,
     STOP_WORDS,
+    TOKENS_PER_MILLION,
 )
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
@@ -1725,3 +1731,238 @@ def checked_vector(values: Sequence[float], dimensions: int) -> tuple[float, ...
     if not all(math.isfinite(v) and abs(v) <= MAX_FLOAT32 for v in vector) or not any(vector):
         raise InvalidVectorError
     return vector
+
+
+# ---------------------------------------------------------------- embedding jobs
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddingTarget:
+    """The embedding model the instance is configured with now (RET-01).
+
+    Its dimensions are known only when the operator set them: otherwise the model is asked once,
+    when its space is created. A space made by this target is ``matches``.
+    """
+
+    profile_kind: str
+    """The kind of the role's provider profile."""
+    model: str
+    """The embedding model, as the provider spells it."""
+    dimensions: int | None = None
+    """The configured dimensions (``EmbeddingSettings(dimensions=...)``), if any."""
+    input_format: int = EMBEDDING_INPUT_FORMAT
+    """What chunks are embedded from."""
+
+    def matches(self, spec: EmbeddingSpec) -> bool:
+        """Say whether a space's vectors were made by this target.
+
+        Args:
+            spec: The space's spec.
+
+        Returns:
+            True when the kind, the model and the input format are this target's, and the
+            dimensions too when they are configured.
+        """
+        same = (spec.profile_kind, spec.model, spec.input_format) == (
+            self.profile_kind,
+            self.model,
+            self.input_format,
+        )
+        return same and (self.dimensions is None or spec.dimensions == self.dimensions)
+
+    def spec(self, dimensions: int) -> EmbeddingSpec:
+        """Describe the space this target's vectors go to.
+
+        Args:
+            dimensions: The vectors' size (configured, or what the model answered).
+
+        Returns:
+            The spec.
+        """
+        return EmbeddingSpec(
+            profile_kind=self.profile_kind,
+            model=self.model,
+            dimensions=dimensions,
+            input_format=self.input_format,
+        )
+
+
+def current_space(
+    target: EmbeddingTarget, spaces: Sequence[EmbeddingSpace]
+) -> EmbeddingSpace | None:
+    """Find the space the configured model embeds into and searches: the newest it made.
+
+    Args:
+        target: The configured model.
+        spaces: Every space, oldest first.
+
+    Returns:
+        The newest space of the target that is not retired, or ``None``.
+    """
+    return next(
+        (
+            s
+            for s in reversed(spaces)
+            if s.state is not SpaceState.RETIRED and target.matches(s.spec)
+        ),
+        None,
+    )
+
+
+class EmbeddingSkip(StrEnum):
+    """Why an ``embed`` job of a version sends nothing."""
+
+    NO_MODEL = "no_embedding_model"
+    """No embedding model is configured (or its profile does not exist)."""
+    AI_OFF = "ai_off"
+    """The library has AI off: nothing of it is ever sent to a provider."""
+    NO_VERSION = "no_version"
+    """The version has no active manifest (it was removed meanwhile)."""
+    SPACE_CHANGED = "space_changed"
+    """The embedding model changed meanwhile: the job of the new model embeds the version."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddingSource:
+    """What one stored chunk is embedded from, as a manifest holds it."""
+
+    article_path: str
+    """Where the chunk's article is in the manifest (its title comes from the catalog)."""
+    heading_path: tuple[str, ...]
+    """The chunk's heading and every heading above it."""
+    content: str
+    """The chunk's text."""
+
+
+def embedding_text(title: str, source: EmbeddingSource) -> str:
+    """Write the text a chunk is embedded from (input format 1).
+
+    The article title, then the heading path, then a blank line and the chunk's text; an empty
+    title or path is left out.
+
+    Args:
+        title: The article's title.
+        source: The chunk.
+
+    Returns:
+        The text sent to the embedding model.
+    """
+    head = [part for part in (title.strip(), HEADING_SEPARATOR.join(source.heading_path)) if part]
+    return "\n".join(head) + "\n\n" + source.content if head else source.content
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddedTexts:
+    """Vectors a model returned, in the order of the texts, and what it said they cost."""
+
+    vectors: tuple[tuple[float, ...], ...]
+    """One vector per text."""
+    input_tokens: int
+    """Tokens the provider reported in its returned ``usage``; 0 when it reported none."""
+    requests: int
+    """Calls made to the provider."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PendingChunks:
+    """Stored chunks some manifests hold that have no vector yet, each counted once."""
+
+    chunks: int
+    """Distinct stored chunks."""
+    characters: int
+    """Characters of their text and heading paths."""
+
+    @property
+    def estimated_tokens(self) -> int:
+        """Estimate their tokens at ``CHARS_PER_TOKEN`` characters each, never by a tokenizer.
+
+        Returns:
+            The estimate, rounded up.
+        """
+        return -(-self.characters // CHARS_PER_TOKEN)
+
+
+def estimated_usd(tokens: int, usd_per_million: float | None) -> float | None:
+    """Price some input tokens.
+
+    Args:
+        tokens: The tokens.
+        usd_per_million: The input price per million tokens; ``None`` when unknown.
+
+    Returns:
+        US dollars, or ``None`` without a price.
+    """
+    return None if usd_per_million is None else tokens * usd_per_million / TOKENS_PER_MILLION
+
+
+class SpendWindow(StrEnum):
+    """A budget window of the spend ledger, in UTC."""
+
+    DAY = "day"
+    MONTH = "month"
+
+    def start(self, at: datetime) -> date:
+        """Find the first day of the window that holds ``at``.
+
+        Args:
+            at: An aware time.
+
+        Returns:
+            The window's first day, in UTC.
+        """
+        day = at.astimezone(UTC).date()
+        return day if self is SpendWindow.DAY else day.replace(day=1)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpendEntry:
+    """Usage to add to one row of the spend ledger: one scope in one window.
+
+    A row is keyed by (scope kind, scope ID, window, window start); the ledger adds an entry to
+    its row atomically. Budgets (#95) read the same rows.
+    """
+
+    scope_kind: str
+    """``embedding`` for embedding runs; instance, library and user scopes come with #95."""
+    scope_id: str
+    """Who spent: ``instance`` for embedding runs."""
+    window: SpendWindow
+    """Day or month."""
+    window_start: date
+    """The window's first day (UTC)."""
+    input_tokens: int = 0
+    """Tokens sent, as the provider reported them."""
+    output_tokens: int = 0
+    """Tokens received (none for embeddings)."""
+    requests: int = 0
+    """Calls made."""
+    usd_micros: int = 0
+    """Their price in millionths of a US dollar; 0 when the price is unknown."""
+
+
+def embedding_spend(
+    at: datetime, *, input_tokens: int, requests: int, usd_per_million: float | None
+) -> tuple[SpendEntry, ...]:
+    """Write one embedding call's usage as ledger entries: its day and its month.
+
+    Args:
+        at: When the call was made.
+        input_tokens: Tokens the provider reported.
+        requests: Calls made.
+        usd_per_million: The model's input price per million tokens, if known.
+
+    Returns:
+        One entry per window.
+    """
+    usd = estimated_usd(input_tokens, usd_per_million)
+    micros = 0 if usd is None else round(usd * MICROS_PER_USD)
+    return tuple(
+        SpendEntry(
+            scope_kind=SPEND_SCOPE_EMBEDDING,
+            scope_id=SPEND_SCOPE_INSTANCE,
+            window=window,
+            window_start=window.start(at),
+            input_tokens=input_tokens,
+            requests=requests,
+            usd_micros=micros,
+        )
+        for window in SpendWindow
+    )

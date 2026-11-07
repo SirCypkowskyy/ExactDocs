@@ -14,6 +14,8 @@ from exactdocs.ingestion.models import (
     Collected,
     CopiedVersion,
     Credential,
+    EmbeddedBatch,
+    EmbedPlan,
     FetchedFile,
     GitRename,
     ImportedRef,
@@ -33,6 +35,7 @@ from exactdocs.ingestion.models import (
     StoredTags,
     TaggedPath,
     TagRule,
+    VersionToEmbed,
 )
 
 
@@ -617,5 +620,56 @@ class ScheduleSwitch(Protocol):
         """Make the tick run (``on``) or stop; best effort, never raises.
 
         The worker sets it again from the stored schedules when it starts.
+        """
+        ...
+
+
+class VersionEmbedder(Protocol):
+    """Embeds versions with the instance's embedding model (retrieval, in ingestion's words).
+
+    Nothing of a library with AI off is ever sent: its plans are skipped.
+    """
+
+    async def plan(self, library: str, ref: str) -> EmbedPlan:
+        """Pick the version's embedding space (a new model gets a new one) and count the gap.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+
+        Returns:
+            The plan; ``space_id`` is ``None`` when nothing is to be sent.
+        """
+        ...
+
+    async def embed_batch(self, library: str, ref: str, plan: EmbedPlan) -> EmbeddedBatch:
+        """Embed the next batch of the version's chunks that have no vector.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            plan: The job's plan.
+
+        Returns:
+            What it embedded, and whether the version is done.
+        """
+        ...
+
+    async def finish(self, plan: EmbedPlan) -> None:
+        """Switch to the plan's space once it covers every version, retiring the older ones.
+
+        Args:
+            plan: The job's plan.
+        """
+        ...
+
+    async def unembedded(self, library: str | None) -> Sequence[VersionToEmbed]:
+        """Name the versions not fully embedded (of one library, or all); none without a model.
+
+        Args:
+            library: Only this library's; every library's when ``None``.
+
+        Returns:
+            The versions.
         """
         ...

@@ -29,12 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from exactdocs.retrieval.constants import (
     _DIMENSIONS,
     _LOADED,
+    _VECTOR_ABSENT,
     _VECTOR_COVERAGE,
     _VECTOR_CREATE,
     _VECTOR_DELETE,
     _VECTOR_DROP,
     _VECTOR_MISSING,
     _VECTOR_NEAREST,
+    _VECTOR_PENDING,
     _VECTOR_UPSERT,
     SQLITE_VEC_MODULE,
     TAG_CONDITIONS,
@@ -53,6 +55,7 @@ from exactdocs.retrieval.models import (
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
+    PendingChunks,
     SpaceState,
     TagFilter,
     VectorCoverage,
@@ -398,6 +401,30 @@ class SqliteVectorIndex:
             await self._live(connection, space_id)
             rows = await connection.execute(statement, {"manifest": manifest_id, "limit": limit})
             return [(r.blob_sha, r.config_hash, r.position) for r in rows]
+
+    async def pending(
+        self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
+    ) -> PendingChunks:
+        """Count the distinct chunks of these manifests without a vector in the space, in SQL.
+
+        Args:
+            space_id: The space; ``None`` counts every chunk.
+            manifest_ids: The manifests.
+
+        Returns:
+            The chunks and the characters of their text and heading paths.
+        """
+        if not manifest_ids:
+            return PendingChunks(chunks=0, characters=0)
+        missing = "" if space_id is None else _VECTOR_ABSENT.format(table=_table(space_id))
+        statement = text(_VECTOR_PENDING.format(missing=missing)).bindparams(
+            bindparam("manifests", expanding=True)
+        )
+        async with self.engine.connect() as connection:
+            if space_id is not None:
+                await self._live(connection, space_id)
+            row = (await connection.execute(statement, {"manifests": list(manifest_ids)})).one()
+        return PendingChunks(chunks=row.chunks, characters=row.characters)
 
     def _write(self) -> AbstractAsyncContextManager[AsyncConnection]:
         """Open a write transaction (BEGIN IMMEDIATE, as the other repositories do).

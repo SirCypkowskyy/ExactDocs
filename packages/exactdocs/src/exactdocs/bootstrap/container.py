@@ -13,6 +13,7 @@ from exactdocs.bootstrap.ai_models import ConfiguredAi, PydanticAiModels, config
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogArticleSuggestions,
+    CatalogArticleTitles,
     CatalogCollector,
     CatalogDefaultVersions,
     CatalogImportedTags,
@@ -30,6 +31,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionPublisher,
     RetrievalChunkIndex,
     RetrievalCollector,
+    RetrievalVersionEmbedder,
 )
 from exactdocs.bootstrap.constants import (
     AI_KEYS_PURPOSE,
@@ -80,6 +82,7 @@ from exactdocs.ingestion.adapters.driven.sqlite import (
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
+from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -89,10 +92,13 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
+from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteChunkRepository,
     SqliteLibraryModes,
     SqliteProviderProfiles,
+    SqliteSpendLedger,
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
@@ -235,6 +241,12 @@ def _build_read_side(
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
         vectors=vectors,
+        embedding_models=PydanticAiEmbeddingModels(),
+        article_titles=CatalogArticleTitles(list_articles=catalog.list_articles),
+        spend=SqliteSpendLedger(engine=engine),
+        prices=GenaiPrices(),
+        embedding_dimensions=settings.ai.embedding.dimensions,
+        embedding_batch_size=settings.ai.embedding.batch_size,
     )
     return catalog, retrieval
 
@@ -426,6 +438,13 @@ class Container:
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine=engine),
             schedule_switch=DbosScheduleSwitch(SCHEDULE),
+            embedder=RetrievalVersionEmbedder(
+                plan_embedding=retrieval.plan_embedding,
+                embed_batch_of=retrieval.embed_batch,
+                finish_embedding=retrieval.finish_embedding,
+                list_unembedded_versions=retrieval.list_unembedded_versions,
+            ),
+            checkpoints=DbosCheckpoints(),
         )
         return cls(
             settings=settings,
@@ -457,6 +476,21 @@ class Container:
                 engine_options={"poolclass": NullPool},
             ),
         )
+
+    async def _queue_embedding(self) -> None:
+        """Queue the embedding of every version the configured model has not embedded.
+
+        A new or changed embedding model, or versions imported while none was configured, are
+        embedded in the background from here. No model is called: only the stored spaces are
+        read. A failure is logged and never stops the start (BM25 answers meanwhile).
+        """
+        try:
+            queued = await self.ingestion.queue_embedding(QueueEmbeddingCommand())
+        except Exception:
+            logger.exception("could not queue the embedding of the versions not embedded yet")
+            return
+        if queued.queued:
+            logger.info("%d versions are being embedded in the background", queued.queued)
 
     @asynccontextmanager
     async def running(self, *, jobs: bool = True) -> AsyncGenerator[None]:
@@ -492,6 +526,7 @@ class Container:
                 # Fetch folders a crash left behind. A data dir has exactly one job runner.
                 await asyncio.to_thread(sweep_stale_fetches, self.settings.data_dir / WORK_DIR)
                 async with self.job_worker.running():
+                    await self._queue_embedding()
                     yield
             else:
                 yield

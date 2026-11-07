@@ -155,6 +155,7 @@ def create_app(container: Container) -> FastAPI:
             delete_provider=container.retrieval.delete_provider,
             check_provider=container.retrieval.check_provider,
             list_roles=container.retrieval.list_roles,
+            estimate_embedding=container.retrieval.estimate_embedding,
         )
     )
     protected.include_router(

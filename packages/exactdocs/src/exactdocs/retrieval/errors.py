@@ -419,3 +419,19 @@ class VectorStoreUnavailableError(DomainError):
         super().__init__(
             "the vector store is unavailable: sqlite-vec cannot be loaded by this Python"
         )
+
+
+class EmbeddingFailedError(DomainError):
+    """The embedding model did not answer as expected; the embedding job stops and can be rerun."""
+
+    code = "embedding_failed"
+
+    def __init__(self, model: str, reason: str) -> None:
+        """Name the model and what went wrong.
+
+        Args:
+            model: ``<profile>:<model>``.
+            reason: A short reason (an error type and its HTTP status), never a key.
+        """
+        super().__init__(f"embedding with {_data(model)} failed: {_data(reason)}")
+        self.model = model

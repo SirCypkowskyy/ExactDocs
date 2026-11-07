@@ -570,6 +570,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/ai/embedding/estimate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Estimate Embedding
+         * @description Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.
+         *
+         *     Counts the distinct chunks of every active version (of libraries with AI on) that have no
+         *     vector from the configured embedding model, at 4 characters per token, priced with the
+         *     bundled price list. Calls no model and no tokenizer: an estimate, as `note` says.
+         *     The REST form of `exactdocs ai estimate`.
+         */
+        readonly get: operations["ai-estimate_embedding"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/settings": {
         readonly parameters: {
             readonly query?: never;
@@ -1612,6 +1637,61 @@ export interface components {
              * Format: password
              */
             readonly private_key: string;
+        };
+        /**
+         * EmbeddingEstimateOut
+         * @description What embedding every version not embedded yet would send and cost, before it runs.
+         *
+         *     Counted from characters (4 per token), never with the model's tokenizer, and priced with the
+         *     bundled price list: an estimate, as `note` says.
+         */
+        readonly EmbeddingEstimateOut: {
+            /**
+             * Model
+             * @description The embedding role's model, `<profile>:<model>`; null when none is configured.
+             */
+            readonly model: string | null;
+            /**
+             * Space Id
+             * @description The space of that model, if it has one yet.
+             */
+            readonly space_id: number | null;
+            /**
+             * Versions
+             * @description Versions looked at: active ones of libraries with AI on.
+             */
+            readonly versions: number;
+            /**
+             * Chunks
+             * @description Distinct stored chunks without a vector (a blob shared by versions counts once).
+             */
+            readonly chunks: number;
+            /**
+             * Characters
+             * @description Characters of their text and heading paths.
+             */
+            readonly characters: number;
+            /**
+             * Estimated Tokens
+             * @description `characters` / 4, rounded up: an estimate.
+             */
+            readonly estimated_tokens: number;
+            /**
+             * Usd Per Million Tokens
+             * @description The model's input price; null when the price list does not know the model.
+             */
+            readonly usd_per_million_tokens: number | null;
+            /**
+             * Estimated Usd
+             * @description The estimated tokens at that price; null without a price.
+             */
+            readonly estimated_usd: number | null;
+            /**
+             * Note
+             * @description How the numbers were made.
+             * @default An estimate: tokens are counted as 4 characters per token, never by the model's tokenizer, and the price is the bundled price list's.
+             */
+            readonly note: string;
         };
         /**
          * ErrorResponse
@@ -6385,6 +6465,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RoleListOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-estimate_embedding": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbeddingEstimateOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
