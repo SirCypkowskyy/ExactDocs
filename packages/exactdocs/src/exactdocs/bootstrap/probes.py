@@ -60,6 +60,10 @@ class Health(BaseModel):
     reindex_required: bool | None
     """The index is in an older or unrecorded format: run `exactdocs reindex` (it keeps serving).
     Null when the database could not tell."""
+    vector_store_missing: str | None = None
+    """The database extension the vector store needs and cannot load here: `vector` (pgvector)
+    on PostgreSQL, `sqlite-vec` on SQLite. Hybrid modes answer with BM25 until it is installed.
+    Null when it loads, or when no embedding model is configured (it is not checked then)."""
 
 
 class Readiness(BaseModel):
@@ -95,8 +99,8 @@ def build_probe_router(container: Container) -> APIRouter:
             request: The request; a probe with an untrusted ``Host`` gets no details.
 
         Returns:
-            The version and what the database says about its schema and search index, or only
-            ``status`` for an untrusted ``Host``.
+            The version and what the database says about its schema, search index and vector
+            store, or only ``status`` for an untrusted ``Host``.
         """
         if getattr(request.state, UNTRUSTED_HOST, False):
             return Alive(status="ok")
@@ -145,6 +149,7 @@ async def _health(container: Container) -> Health:
                 return unknown
             revision = await current_revision(container.engine)
             index = await container.retrieval.get_search_index_state()
+            vectors = await container.retrieval.get_vector_store_state()
     except SQLAlchemyError, OSError, TimeoutError:
         return unknown
     return Health(
@@ -154,6 +159,7 @@ async def _health(container: Container) -> Health:
         schema_revision=revision,
         search_index_format=index.stored_format,
         reindex_required=index.needs_rebuild,
+        vector_store_missing=vectors.missing,
     )
 
 

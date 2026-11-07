@@ -5,27 +5,20 @@ import struct
 from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime
 
 import aiosqlite
-from sqlalchemy import (
-    Column,
-    Integer,
-    MetaData,
-    Row,
-    Table,
-    Text,
-    bindparam,
-    insert,
-    select,
-    text,
-    tuple_,
-    update,
-)
+from sqlalchemy import bindparam, insert, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from exactdocs.retrieval.adapters.driven.vector_tables import (
+    chunk_ids,
+    iso,
+    space_from_row,
+    spaces_table,
+    vector_table,
+)
 from exactdocs.retrieval.constants import (
     _DIMENSIONS,
     _LOADED,
@@ -36,11 +29,11 @@ from exactdocs.retrieval.constants import (
     _VECTOR_MISSING,
     _VECTOR_NEAREST,
     _VECTOR_UPSERT,
+    SQLITE_VEC_EXTENSION,
     SQLITE_VEC_MODULE,
     TAG_CONDITIONS,
     VECTOR_BATCH,
     VECTOR_MMAP_BYTES,
-    VECTOR_TABLE_PREFIX,
 )
 from exactdocs.retrieval.errors import (
     RetiredEmbeddingSpaceError,
@@ -57,54 +50,12 @@ from exactdocs.retrieval.models import (
     TagFilter,
     VectorCoverage,
     VectorHit,
-    VectorMetric,
     checked_vector,
 )
 
-# `retrieval_embedding_spaces` is created by an Alembic revision in `exactdocs.bootstrap`; this is
-# only the adapter's query-side description of it. The vectors of a space live in a table this
-# adapter creates and drops itself (`retrieval_vec_<id>`), like the search index tables of
-# `exactdocs reindex`: one fixed dimension per table, and no way to mix two models. Each row is a
-# `retrieval_chunks` row (its `id`, with ON DELETE CASCADE, so garbage collection removes vectors
-# with their chunk sets) and its vector as little-endian float32, the format sqlite-vec reads.
-# The tables are plain SQLite: storing, backing up and restoring them needs no extension; only
+# The tables (`vector_tables.py`) are plain SQLite: each vector is a little-endian float32 BLOB,
+# the format sqlite-vec reads, so storing, backing up and restoring them needs no extension; only
 # the distance function in `nearest` does.
-metadata = MetaData()
-spaces_table = Table(
-    "retrieval_embedding_spaces",
-    metadata,
-    Column("id", Integer, primary_key=True),
-    Column("profile_kind", Text, nullable=False),
-    Column("model", Text, nullable=False),
-    Column("dimensions", Integer, nullable=False),
-    Column("metric", Text, nullable=False),
-    Column("input_format", Integer, nullable=False),
-    Column("state", Text, nullable=False),
-    Column("created_at", Text, nullable=False),  # ISO 8601, UTC
-    Column("activated_at", Text),
-)
-
-# Only the columns that identify a chunk; the chunk repository owns the table.
-chunk_rows = Table(
-    "retrieval_chunks",
-    metadata,
-    Column("id", Integer, primary_key=True),
-    Column("blob_sha", Text, nullable=False),
-    Column("config_hash", Text, nullable=False),
-    Column("position", Integer, nullable=False),
-)
-
-
-def _table(space_id: EmbeddingSpaceId) -> str:
-    """Name the vector table of a space (an integer ID: safe to put in SQL).
-
-    Args:
-        space_id: The space.
-
-    Returns:
-        ``retrieval_vec_<id>``.
-    """
-    return f"{VECTOR_TABLE_PREFIX}{int(space_id)}"
 
 
 def _pack(vector: Sequence[float]) -> bytes:
@@ -128,42 +79,6 @@ def _sqlite_vec_path() -> str:
     return importlib.import_module(SQLITE_VEC_MODULE).loadable_path()
 
 
-def _iso(moment: datetime) -> str:
-    """UTC ISO 8601, so stored timestamps compare as text.
-
-    Args:
-        moment: An aware time.
-
-    Returns:
-        The text stored.
-    """
-    return moment.astimezone(UTC).isoformat()
-
-
-def _space(row: Row[Any]) -> EmbeddingSpace:
-    """Map a row of ``retrieval_embedding_spaces``.
-
-    Args:
-        row: The row.
-
-    Returns:
-        The space.
-    """
-    return EmbeddingSpace(
-        id=EmbeddingSpaceId(row.id),
-        spec=EmbeddingSpec(
-            profile_kind=row.profile_kind,
-            model=row.model,
-            dimensions=row.dimensions,
-            input_format=row.input_format,
-            metric=VectorMetric(row.metric),
-        ),
-        state=SpaceState(row.state),
-        created_at=datetime.fromisoformat(row.created_at),
-        activated_at=None if row.activated_at is None else datetime.fromisoformat(row.activated_at),
-    )
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteVectorIndex:
     """Implements ``ports.driven.VectorIndex`` with plain tables and sqlite-vec's distance.
@@ -181,6 +96,14 @@ class SqliteVectorIndex:
     """Returns the path of sqlite-vec's loadable extension (raises when it is not installed)."""
     _loads: dict[str, bool] = field(default_factory=dict)
     """Whether sqlite-vec loaded, once ``available`` found out (key ``"loads"``)."""
+
+    def requirement(self) -> str:
+        """Name what searching needs.
+
+        Returns:
+            ``sqlite-vec``.
+        """
+        return SQLITE_VEC_EXTENSION
 
     async def available(self) -> bool:
         """Load sqlite-vec into a connection once, and remember whether it worked.
@@ -206,7 +129,7 @@ class SqliteVectorIndex:
         """
         async with self.engine.connect() as connection:
             rows = await connection.execute(select(spaces_table).order_by(spaces_table.c.id))
-            return [_space(r) for r in rows]
+            return [space_from_row(r) for r in rows]
 
     async def create_space(self, spec: EmbeddingSpec, at: datetime) -> EmbeddingSpace:
         """Record the space and create its table, in one transaction.
@@ -228,18 +151,18 @@ class SqliteVectorIndex:
                     metric=spec.metric.value,
                     input_format=spec.input_format,
                     state=SpaceState.BUILDING.value,
-                    created_at=_iso(at),
+                    created_at=iso(at),
                 )
                 .returning(spaces_table.c.id)
             )
             space_id = EmbeddingSpaceId(int(space_id or 0))
             await connection.exec_driver_sql(
-                _VECTOR_CREATE.format(table=_table(space_id), size=4 * spec.dimensions)
+                _VECTOR_CREATE.format(table=vector_table(space_id), size=4 * spec.dimensions)
             )
             row = (
                 await connection.execute(select(spaces_table).where(spaces_table.c.id == space_id))
             ).one()
-        return _space(row)
+        return space_from_row(row)
 
     async def activate_space(self, space_id: EmbeddingSpaceId, at: datetime) -> EmbeddingSpace:
         """Mark the space active, keeping the time of its first activation.
@@ -258,13 +181,13 @@ class SqliteVectorIndex:
                 .where(spaces_table.c.id == space_id)
                 .values(
                     state=SpaceState.ACTIVE.value,
-                    activated_at=_iso(space.activated_at or at),
+                    activated_at=iso(space.activated_at or at),
                 )
             )
             row = (
                 await connection.execute(select(spaces_table).where(spaces_table.c.id == space_id))
             ).one()
-        return _space(row)
+        return space_from_row(row)
 
     async def retire_space(self, space_id: EmbeddingSpaceId) -> None:
         """Mark the space retired and drop its table, in one transaction.
@@ -279,7 +202,7 @@ class SqliteVectorIndex:
                 .where(spaces_table.c.id == space_id)
                 .values(state=SpaceState.RETIRED.value)
             )
-            await connection.exec_driver_sql(_VECTOR_DROP.format(table=_table(space_id)))
+            await connection.exec_driver_sql(_VECTOR_DROP.format(table=vector_table(space_id)))
 
     async def upsert(
         self, space_id: EmbeddingSpaceId, vectors: Mapping[ChunkKey, Sequence[float]]
@@ -296,10 +219,12 @@ class SqliteVectorIndex:
         async with self._write() as connection:
             space = await self._live(connection, space_id)
             blobs = {k: _pack(checked_vector(v, space.spec.dimensions)) for k, v in vectors.items()}
-            ids = await self._chunk_ids(connection, list(blobs))
+            ids = await chunk_ids(connection, list(blobs))
             rows = [{"key": ids[k], "embedding": blobs[k]} for k in blobs if k in ids]
             if rows:
-                await connection.execute(text(_VECTOR_UPSERT.format(table=_table(space_id))), rows)
+                await connection.execute(
+                    text(_VECTOR_UPSERT.format(table=vector_table(space_id))), rows
+                )
         return len(rows)
 
     async def delete(self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]) -> int:
@@ -314,8 +239,8 @@ class SqliteVectorIndex:
         """
         async with self._write() as connection:
             await self._live(connection, space_id)
-            ids = list((await self._chunk_ids(connection, list(set(keys)))).values())
-            statement = text(_VECTOR_DELETE.format(table=_table(space_id))).bindparams(
+            ids = list((await chunk_ids(connection, list(set(keys)))).values())
+            statement = text(_VECTOR_DELETE.format(table=vector_table(space_id))).bindparams(
                 bindparam("keys", expanding=True)
             )
             gone = 0
@@ -345,7 +270,7 @@ class SqliteVectorIndex:
             The nearest chunks, nearest first, ties by chunk ID.
         """
         tags = TAG_CONDITIONS[tag_filter.match if tag_filter.tags else None]
-        statement = text(_VECTOR_NEAREST.format(table=_table(space_id), tags=tags))
+        statement = text(_VECTOR_NEAREST.format(table=vector_table(space_id), tags=tags))
         async with self.engine.connect() as connection:
             dimensions = await self._dimensions(connection, space_id)
             params: dict[str, object] = {
@@ -374,7 +299,7 @@ class SqliteVectorIndex:
         Returns:
             The counts.
         """
-        statement = text(_VECTOR_COVERAGE.format(table=_table(space_id)))
+        statement = text(_VECTOR_COVERAGE.format(table=vector_table(space_id)))
         async with self.engine.connect() as connection:
             await self._live(connection, space_id)
             row = (await connection.execute(statement, {"manifest": manifest_id})).one()
@@ -393,7 +318,7 @@ class SqliteVectorIndex:
         Returns:
             The keys.
         """
-        statement = text(_VECTOR_MISSING.format(table=_table(space_id)))
+        statement = text(_VECTOR_MISSING.format(table=vector_table(space_id)))
         async with self.engine.connect() as connection:
             await self._live(connection, space_id)
             rows = await connection.execute(statement, {"manifest": manifest_id, "limit": limit})
@@ -427,7 +352,7 @@ class SqliteVectorIndex:
         ).one_or_none()
         if row is None:
             raise UnknownEmbeddingSpaceError(space_id)
-        return _space(row)
+        return space_from_row(row)
 
     async def _live(
         self, connection: AsyncConnection, space_id: EmbeddingSpaceId
@@ -448,32 +373,6 @@ class SqliteVectorIndex:
         if space.state is SpaceState.RETIRED:
             raise RetiredEmbeddingSpaceError(space_id)
         return space
-
-    async def _chunk_ids(
-        self, connection: AsyncConnection, keys: Sequence[ChunkKey]
-    ) -> dict[ChunkKey, int]:
-        """Find the ``retrieval_chunks`` row of each key; keys without one are left out.
-
-        Args:
-            connection: The connection to read with.
-            keys: The chunks.
-
-        Returns:
-            The row ID of each stored chunk.
-        """
-        found: dict[ChunkKey, int] = {}
-        columns = tuple_(chunk_rows.c.blob_sha, chunk_rows.c.config_hash, chunk_rows.c.position)
-        for start in range(0, len(keys), VECTOR_BATCH):  # three bound variables per key
-            rows = await connection.execute(
-                select(
-                    chunk_rows.c.id,
-                    chunk_rows.c.blob_sha,
-                    chunk_rows.c.config_hash,
-                    chunk_rows.c.position,
-                ).where(columns.in_(keys[start : start + VECTOR_BATCH]))
-            )
-            found |= {(r.blob_sha, r.config_hash, r.position): r.id for r in rows}
-        return found
 
     async def _load(self, connection: AsyncConnection) -> None:
         """Load sqlite-vec into this pooled connection, unless it already has it.

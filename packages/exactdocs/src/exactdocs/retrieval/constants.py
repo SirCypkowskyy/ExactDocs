@@ -501,6 +501,8 @@ MAX_FLOAT32: Final[float] = 3.4028234663852886e38
 # ---------------------------------------------------------------- adapters/driven/sqlite_vectors
 SQLITE_VEC_MODULE: Final[str] = "sqlite_vec"
 """The Python package of sqlite-vec (``[ai]`` extra), imported only to find its extension."""
+SQLITE_VEC_EXTENSION: Final[str] = "sqlite-vec"
+"""What the SQLite vector store needs to search, as `/api/health` names it when it is missing."""
 VECTOR_TABLE_PREFIX: Final[str] = "retrieval_vec_"
 """Each embedding space keeps its vectors in ``retrieval_vec_<space ID>``."""
 VECTOR_MMAP_BYTES: Final[int] = 1 << 30
@@ -556,3 +558,50 @@ _VECTOR_MISSING: Final[str] = (
     "ORDER BY c.blob_sha, c.config_hash, c.position LIMIT :limit"
 )
 """A manifest's chunks without a vector, in a stable order."""
+
+# ---------------------------------------------------------------- adapters/driven/postgres_vectors
+PGVECTOR_EXTENSION: Final[str] = "vector"
+"""pgvector's PostgreSQL extension. The store creates it (``CREATE EXTENSION IF NOT EXISTS``)
+the first time it is needed, when it is not in the database yet; `/api/health` names it when it
+cannot."""
+PGVECTOR_MODULE: Final[str] = "pgvector.sqlalchemy"
+"""The SQLAlchemy type of pgvector's Python package (``[ai]`` extra), imported only by a store
+that is used (an embedding model is configured)."""
+TRANSIENT_SQLSTATES: Final[tuple[str, ...]] = ("08", "40", "53", "55", "57")
+"""SQLSTATE classes of a failure that may pass (connection, rollback, resources, lock, operator
+intervention): checking for pgvector is tried again next time instead of being given up."""
+_PG_EXTENSION_SCHEMA: Final[str] = (
+    "SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
+    "WHERE e.extname = :name"
+)
+"""The schema pgvector is installed in (``public``, or e.g. ``extensions`` on Supabase): its type
+and operator are named with it, whatever the role's ``search_path``."""
+_PG_EXTENSION_CREATE: Final[str] = "CREATE EXTENSION IF NOT EXISTS {extension}"
+"""Installs pgvector in the database (needs a superuser: it is not a trusted extension)."""
+_PG_VECTOR_CREATE: Final[str] = (
+    "CREATE TABLE {table} ("
+    "chunk_key INTEGER PRIMARY KEY REFERENCES retrieval_chunks (id) ON DELETE CASCADE, "
+    "embedding {schema}.vector({dimensions}) NOT NULL)"
+)
+"""A space's vector table: a fixed ``vector(<dimensions>)`` per ``retrieval_chunks`` row. No
+index: search is exact (an HNSW index would stop at 2,000 dimensions; the column goes to 16,000)."""
+_PG_VECTOR_INLINE: Final[str] = "ALTER TABLE {table} ALTER COLUMN embedding SET STORAGE MAIN"
+"""Keeps each vector in its row instead of TOAST (pgvector's default, ``EXTERNAL``) whenever it
+fits in a page: a search reads every vector of a manifest, and fetching each from TOAST made
+#242's benchmark (50,000 vectors of 1,024 dimensions) about 2.5 times slower. A vector too large
+for a page (over about 2,000 dimensions) still goes to TOAST."""
+_PG_VECTOR_UPSERT: Final[str] = (
+    "INSERT INTO {table} (chunk_key, embedding) "
+    "VALUES (:key, CAST(:embedding AS {schema}.vector)) "
+    "ON CONFLICT (chunk_key) DO UPDATE SET embedding = excluded.embedding"
+)
+"""Stores or replaces one vector."""
+_PG_VECTOR_NEAREST: Final[str] = (
+    "SELECT mc.chunk_id, "
+    "GREATEST(0.0, v.embedding OPERATOR({schema}.<=>) CAST(:query AS {schema}.vector)) AS distance"
+    + _VECTOR_JOIN
+    + "JOIN {table} v ON v.chunk_key = c.id WHERE mc.manifest_id = :manifest {tags} "
+    "ORDER BY distance, mc.chunk_id LIMIT :limit"
+)
+"""Exact cosine search (pgvector's ``<=>``) over one manifest's chunks, as ``_VECTOR_NEAREST``
+does on SQLite: tags filter before the ORDER BY, and a distance below zero is clamped to 0."""

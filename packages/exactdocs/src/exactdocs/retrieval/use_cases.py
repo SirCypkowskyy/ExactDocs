@@ -68,6 +68,7 @@ from exactdocs.retrieval.dtos import (
     SearchResultOut,
     SetChunkOut,
     SetLibraryRetrievalCommand,
+    VectorStoreStateOut,
 )
 from exactdocs.retrieval.errors import (
     ArticleNotFoundError,
@@ -869,6 +870,31 @@ class GetSearchIndexStateUseCase:
     async def __call__(self) -> SearchIndexStateOut:
         """Report the stored format against the current one."""
         return SearchIndexStateOut.from_model(await self.maintenance.state())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetVectorStoreStateUseCase:
+    """Implements ``ports.driving.GetVectorStoreState``."""
+
+    modes: RetrievalModes
+    """The roles configured and the vector store the hybrid modes search."""
+
+    async def __call__(self) -> VectorStoreStateOut:
+        """Check the store only when the instance embeds (the embedding model is instance-wide).
+
+        Returns:
+            What the store needs, and whether it can search (``None``: not checked).
+        """
+        vectors = self.modes.vectors
+        if vectors is None:
+            return VectorStoreStateOut(requirement=None, available=None)
+        # A library without overrides: the instance's roles (no library overrides the embedder).
+        roles = await self.modes.roles.configured("", LibraryAi())
+        if ModelRole.EMBEDDING not in roles:
+            return VectorStoreStateOut(requirement=vectors.requirement(), available=None)
+        return VectorStoreStateOut(
+            requirement=vectors.requirement(), available=await vectors.available()
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

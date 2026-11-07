@@ -4,6 +4,10 @@ Not collected by pytest (a run takes a minute). Run it from the repository root:
 
     uv run python packages/exactdocs/tests/retrieval/bench_vector_index.py [chunks] [dimensions]
 
+It runs on the store of the database ``Settings`` picks: SQLite (sqlite-vec) by default, pgvector
+(#243) with ``EXACTDOCS_DATABASE_URL`` naming an empty PostgreSQL database (and
+``EXACTDOCS_SECRET_KEY`` set).
+
 The target (docs/decisions/ai-retrieval.md, *Vector store*) is a p95 under 150 ms on the CI
 runner; above it, an ANN index per space is the follow-up.
 """
@@ -17,10 +21,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.models import (
     Chunk,
     ChunkId,
@@ -83,7 +86,7 @@ async def main(chunks: int, dimensions: int) -> None:
                 manifest_id="m", version_id="/bench/x/v1", library="/bench/x", indexed_at=T0
             )
             await SqliteChunkRepository(engine=engine).add(manifest, sets, rows)
-            vectors = SqliteVectorIndex(engine=engine)
+            vectors = vector_index(engine)
             space = await vectors.create_space(
                 EmbeddingSpec(profile_kind="bench", model="m", dimensions=dimensions), T0
             )
@@ -109,9 +112,9 @@ async def main(chunks: int, dimensions: int) -> None:
             p95 = took[int(0.95 * (len(took) - 1))]
             sys.stdout.write(
                 f"{len(keys)} vectors x {dimensions} dimensions, one manifest\n"
-                f"write: {written:.1f} s; nearest (k=10, {QUERIES} queries, first one loads "
-                f"sqlite-vec): p50 {statistics.median(took):.1f} ms, p95 {p95:.1f} ms, "
-                f"max {took[-1]:.1f} ms\n"
+                f"{type(vectors).__name__}; write: {written:.1f} s; nearest (k=10, {QUERIES} "
+                f"queries, the first one loads the extension): "
+                f"p50 {statistics.median(took):.1f} ms, p95 {p95:.1f} ms, max {took[-1]:.1f} ms\n"
             )
 
 

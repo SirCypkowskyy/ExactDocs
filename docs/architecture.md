@@ -293,7 +293,22 @@ only holds each process's git work folders and `known_hosts`. What changes:
   `PRAGMA mmap_size` (`VECTOR_MMAP_BYTES`, 1 GiB; the setting is per connection) and remembers
   in its `info` that it is loaded and the dimensions of the spaces it searched, so a search is
   one query. A revision that rebuilds `retrieval_chunks`
-  must keep its `id`s (or rebuild the vector tables too).
+  must keep its `id`s (or rebuild the vector tables too). The tables and row mapping both stores
+  share are in `adapters/driven/vector_tables.py`.
+- **Vector store on PostgreSQL (#243):** `PostgresVectorIndex` keeps the same layout with a
+  `vector(<dimensions>)` column (pgvector) set to `STORAGE MAIN`, so a vector that fits in a page
+  stays in its row instead of TOAST (2.5 times faster on #242's benchmark; larger ones still go to
+  TOAST). Search is exact, `<=>` over one manifest's chunks with the same join, tag conditions,
+  clamping and order as on SQLite, and no index, so the 2,000-dimension limit of pgvector's
+  indexes does not apply. The extension is looked up once per process, in a write turn (two
+  processes never create it together), when the store is first needed: the type and operator are
+  qualified with the extension's schema (`public`, `extensions` on Supabase). When it is missing it
+  is created (`CREATE EXTENSION IF NOT EXISTS vector`); when that fails (pgvector is not a trusted
+  extension, so a role that is not superuser cannot), the store reports unavailable with a
+  sentence saying what to run, logs it, and `/healthz` names `vector` in `vector_store_missing`.
+  A failure that may pass (the database unreachable) is not kept. pgvector's Python package
+  (`[ai]` extra) is imported then, for its SQLAlchemy type. `bootstrap.container.vector_index`
+  picks the store by the database's dialect.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
@@ -890,10 +905,10 @@ catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (cre
 retire a space, upsert and delete vectors by `ChunkKey`, nearest within one manifest, a manifest's
 coverage and missing chunks) with an in-memory reference and the SQLite adapter (see *Vector
 store* under Persistence), one contract test for both (`tests/retrieval/test_vector_index.py`),
-which the pgvector adapter (#243) joins. `OpenEmbeddingSpace` finds the space of a model or
+which the pgvector adapter (#243) runs too. `OpenEmbeddingSpace` finds the space of a model or
 creates a new one when the model, its dimensions or the input format changed, so two models never
 share one. `RetrievalModes` asks `VectorIndex.available()` once an embedding role is configured:
-when sqlite-vec cannot load, the hybrid modes are unavailable and a setting that needs them falls
+when its extension cannot load (sqlite-vec, or pgvector's `vector`), the hybrid modes are unavailable and a setting that needs them falls
 back to BM25 with `fallback_reason: vector_store_unavailable`. Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:

@@ -307,8 +307,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best mode configured); it must be available with the
   settings sent: 422 `mode_unavailable` names the model role it needs that is not configured, or
-  says the vector store is unavailable (sqlite-vec cannot be loaded; `fallback_reason`
-  `vector_store_unavailable` where a setting is skipped for that reason).
+  says the vector store is unavailable (its extension cannot be loaded: sqlite-vec on SQLite,
+  pgvector's `vector` on PostgreSQL; `fallback_reason` `vector_store_unavailable` where a setting
+  is skipped for that reason).
   `ai_enabled: false` sends nothing of the library to any AI provider: its searches are BM25.
   `llm`, `judge` and `reranker` (`<profile>:<model>`) replace the instance's role for this library
   (404 `unknown_provider` for a profile that does not exist, 422 `invalid_model` when not written
@@ -383,8 +384,10 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   database's `schema_revision`, the `search_index_format` the search index was built in (`null`
   if none is recorded), and `reindex_required`: `true` when that format is older than this
   version's or not recorded, until `exactdocs reindex` has run (search keeps answering
-  meanwhile). When the database did not answer in time, `database_reachable` is `false` and the
-  three database fields are `null`. A request whose `Host` the instance does not trust gets only
+  meanwhile), and `vector_store_missing`: once an embedding model is configured, the extension the
+  vector store needs and cannot load (`sqlite-vec` on SQLite, `vector` on PostgreSQL), else
+  `null`. When the database did not answer in time, `database_reachable` is `false` and the
+  database fields are `null`. A request whose `Host` the instance does not trust gets only
   `{"status": "ok"}`. `GET /readyz` (readiness) answers 200 `{"status": "ready"}` when the
   database file exists, answers within 2 s and is at this version's schema revision, else 503
   `{"status": "not_ready", "reason": ...}` with a fixed sentence. Only exact `GET`/`HEAD`

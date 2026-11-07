@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from exactdocs.bootstrap.backup import create_backup, restore_backup
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.database import open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
@@ -193,3 +193,8 @@ async def test_a_space_retired_after_a_search_is_reported_retired(engine: AsyncE
 
     with pytest.raises(RetiredEmbeddingSpaceError):
         await vectors.nearest(space.id, "m1", [1, 0, 0], TagFilter(), 5)
+
+
+async def test_the_container_keeps_sqlite_vec_on_sqlite(engine: AsyncEngine) -> None:
+    assert isinstance(vector_index(engine), SqliteVectorIndex)
+    assert vector_index(engine).requirement() == "sqlite-vec"

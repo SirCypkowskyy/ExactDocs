@@ -48,7 +48,10 @@ class UnavailableModeError(ValidationError):
             plural = "s" if len(missing_roles) > 1 else ""
             why = f": it needs the {' and '.join(missing_roles)} role{plural}, not configured"
         elif not vector_store:
-            why = ": the vector store is unavailable (sqlite-vec cannot be loaded by this Python)"
+            why = (
+                ": the vector store is unavailable (its database extension, sqlite-vec or"
+                " pgvector, cannot be loaded here; /api/health names it)"
+            )
         else:
             why = ""
         super().__init__(
@@ -410,12 +413,15 @@ class InvalidVectorError(ValidationError):
 
 
 class VectorStoreUnavailableError(DomainError):
-    """The vector store cannot search here (sqlite-vec cannot be loaded); BM25 still can."""
+    """The vector store cannot search here (its extension cannot be loaded); BM25 still can."""
 
     code = "vector_store_unavailable"
 
-    def __init__(self) -> None:
-        """Say why the store cannot search."""
-        super().__init__(
-            "the vector store is unavailable: sqlite-vec cannot be loaded by this Python"
-        )
+    def __init__(self, reason: str = "sqlite-vec cannot be loaded by this Python") -> None:
+        """Say why the store cannot search.
+
+        Args:
+            reason: What is missing, and what the operator can do about it.
+        """
+        super().__init__(f"the vector store is unavailable: {reason}")
+        self.reason = reason
