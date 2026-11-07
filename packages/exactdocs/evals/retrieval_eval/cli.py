@@ -1,0 +1,93 @@
+"""``just eval``: build the fixture, run the suite, write the JSON report and the job summary."""
+
+import argparse
+import asyncio
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+from fixture_repo import DocsRepo, build
+from retrieval_eval.fixture import run_on_fixture
+from retrieval_eval.suite import BASELINE_FILE, MODES, baseline_of, markdown, read_baseline
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="just eval",
+        description="Compare retrieval modes on the fixture docs repository (docs/evals.md).",
+    )
+    parser.add_argument(
+        "--modes",
+        default=",".join(m.mode.value for m in MODES),
+        help="comma-separated modes to try (default: all; those that cannot run are reported)",
+    )
+    parser.add_argument(
+        "--allow-providers",
+        action="store_true",
+        help="also run modes that call a hosted model (manual runs only, never in PR jobs)",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=BASELINE_FILE,
+        help="baseline JSON to compare recall@5 with (CI passes the copy on develop)",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("reports/evals/retrieval.json"),
+        help="where to write the JSON report",
+    )
+    parser.add_argument(
+        "--summary",
+        type=Path,
+        default=Path(os.environ["GITHUB_STEP_SUMMARY"])
+        if os.environ.get("GITHUB_STEP_SUMMARY")
+        else None,
+        help="append the Markdown summary here (default: $GITHUB_STEP_SUMMARY when set)",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        action="store_true",
+        help=f"store this run's ranking metrics as the baseline ({BASELINE_FILE.name})",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the suite.
+
+    Args:
+        argv: The arguments; ``sys.argv`` by default.
+
+    Returns:
+        0 when every gate passed, 1 otherwise.
+    """
+    args = _parser().parse_args(argv)
+    wanted = {name.strip().lower() for name in args.modes.split(",") if name.strip()}
+    unknown = wanted - {m.mode.value for m in MODES}
+    if unknown:
+        sys.stderr.write(f"unknown mode(s): {', '.join(sorted(unknown))}\n")
+        return 2
+    with tempfile.TemporaryDirectory(prefix="exactdocs-eval-") as tmp:
+        repo = build(Path(tmp) / "fixture" / "docs-repo")
+        report = asyncio.run(
+            run_on_fixture(
+                DocsRepo(repo, repo.as_uri(), ""),
+                Path(tmp) / "data",
+                modes=[m for m in MODES if m.mode.value in wanted],
+                allow_providers=args.allow_providers,
+                baseline=read_baseline(args.baseline),
+            )
+        )
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    summary = markdown(report)
+    sys.stdout.write(summary)
+    if args.summary is not None:
+        with args.summary.open("a", encoding="utf-8") as out:
+            out.write(summary)
+    if args.write_baseline:
+        BASELINE_FILE.write_text(baseline_of(report), encoding="utf-8")
+    return 0 if report.passed else 1

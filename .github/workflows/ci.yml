@@ -38,6 +38,21 @@ jobs:
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
+      # docs/evals.md: every mode on the fixture; BM25 gates (wrong-version rate 0, recall@5 within
+      # 2 points of the baseline on develop, so a pull request cannot lower its own bar). Modes
+      # needing a model are reported unavailable; hosted ones never run here (no secrets).
+      - name: Retrieval eval (BM25, gating)
+        run: |
+          baseline=packages/exactdocs/evals/retrieval_eval/baseline.json
+          if git fetch --no-tags --depth=1 origin develop \
+              && git show "FETCH_HEAD:$baseline" > "$RUNNER_TEMP/baseline.json"; then
+            echo "Comparing with the baseline on develop"
+          else
+            echo "::notice::no baseline on develop yet; comparing with this branch's"
+            cp "$baseline" "$RUNNER_TEMP/baseline.json"
+          fi
+          uv run python packages/exactdocs/evals/run_retrieval_eval.py \
+            --baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/retrieval.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
