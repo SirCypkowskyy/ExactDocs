@@ -108,6 +108,14 @@ PRIVATE_FILE_MODE: Final[int] = 0o600
 """Mode of an archive and of every restored file: they hold account hashes and tokens' hashes."""
 COPY_CHUNK_BYTES: Final[int] = 1024 * 1024
 """How much of a file is hashed or copied at a time."""
+MAX_MANIFEST_BYTES: Final[int] = 64 * 1024
+"""A manifest is a few hundred bytes; a larger one is not read (it would be loaded whole)."""
+RESTORE_FREE_MARGIN_BYTES: Final[int] = 64 * 1024 * 1024
+"""Room a restore leaves free on each filesystem it writes to, beyond the files themselves."""
+STALE_STAGING_SECONDS: Final[float] = 24 * 3600
+"""A backup's staging folder this old was left by a backup that was killed: it is removed."""
+STAGING_PREFIX: Final[str] = ".exactdocs-backup-"
+"""Name prefix of a backup's staging folder (next to the archive, or in the data dir for `-`)."""
 
 # ---------------------------------------------------------------- database
 MIGRATIONS: Final[Path] = Path(__file__).parent / "migrations"

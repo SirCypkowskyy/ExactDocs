@@ -25,6 +25,7 @@ from exactdocs.bootstrap.backup import (
     BackupSummary,
     create_backup,
     restore_backup,
+    sweep_stale_staging,
 )
 from exactdocs.bootstrap.cli_library import exit_code
 from exactdocs.bootstrap.client import (
@@ -45,6 +46,7 @@ from exactdocs.bootstrap.constants import (
     EXIT_INTERRUPTED,
     EXIT_USAGE,
     SKILL_PATH,
+    STAGING_PREFIX,
 )
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
@@ -898,6 +900,9 @@ def backup(
     """
     settings = Settings()
     to_stdout = path == "-"
+    if to_stdout and sys.stdout.isatty():
+        message = "exactdocs: the archive is binary; redirect it (`backup - > file.tar.gz`)"
+        raise SystemExit(message)
     report = sys.stderr if to_stdout else sys.stdout
     try:
         summary = (
@@ -931,7 +936,8 @@ def _backup_to_stdout(settings: Settings, *, include_secret_key: bool) -> Backup
         What was written (its path no longer exists).
     """
     # In the data dir: writable wherever the server runs (a container may have no usable /tmp).
-    with tempfile.TemporaryDirectory(dir=settings.data_dir, prefix=".exactdocs-backup-") as tmp:
+    sweep_stale_staging(settings.data_dir)
+    with tempfile.TemporaryDirectory(dir=settings.data_dir, prefix=STAGING_PREFIX) as tmp:
         summary = create_backup(
             settings, Path(tmp) / "backup.tar.gz", include_secret_key=include_secret_key
         )

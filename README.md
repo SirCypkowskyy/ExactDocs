@@ -460,7 +460,15 @@ or copy the old `secret.key` into the new data directory (before or after the re
 `serve`). Without the key every library keeps serving its docs, and adding a version asks for its
 credential again (`credentials_required`). With `--include-secret-key` the archive opens those
 credentials by itself: store it like the key. Archives and restored files are created with mode
-`0600`; they also hold the password and token hashes.
+`0600`; they also hold the password and token hashes. (The files a running server creates itself,
+such as `exactdocs.db`, are `0644` inside the `0700` data directory; a restored instance's are
+`0600`. Both keep other users out.)
+
+A backup stages its copies next to the archive (for `-`, in the data directory) before writing it,
+so that filesystem needs room for about two copies of the database while it runs. A backup that was
+killed leaves a `.exactdocs-backup-*` folder there; the next backup removes those older than a
+day. A restore checks each file's size against its manifest and the free space (keeping 64 MiB to
+spare) before it writes anything.
 
 PostgreSQL (planned with TEAM-01) is backed up with its own tools: `pg_dump -Fc` of the database,
 plus `jobs.sqlite`, `known_hosts` and the key from the data directory; `exactdocs backup` refuses a

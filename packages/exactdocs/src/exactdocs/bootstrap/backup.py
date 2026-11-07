@@ -18,6 +18,7 @@ A restore writes into a data directory that holds no instance yet, refuses a sch
 this build knows, and migrates an older one, as ``serve`` would.
 """
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -26,12 +27,13 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
+import time
 import zlib
 from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import make_url
@@ -46,12 +48,19 @@ from exactdocs.bootstrap.constants import (
     JOBS_FILE,
     KNOWN_HOSTS_FILE,
     MANIFEST_MEMBER,
+    MAX_MANIFEST_BYTES,
     PRIVATE_FILE_MODE,
+    RESTORE_FREE_MARGIN_BYTES,
+    STAGING_PREFIX,
+    STALE_STAGING_SECONDS,
 )
 from exactdocs.bootstrap.container import ReadOnlyContainer
 from exactdocs.bootstrap.database import alembic_config, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.constants import KEY_FILE
+
+type _Declared = dict[str, Any]
+"""A manifest's entry for one member: ``{"sha256": str, "size": int}``, checked by ``_declared``."""
 
 
 class BackupError(RuntimeError):
@@ -129,6 +138,9 @@ def create_backup(
     except OSError as exc:
         message = f"Cannot write the backup to {destination}: {exc.strerror or exc}."
         raise BackupError(message) from exc
+    except sqlite3.Error as exc:  # locked past the busy timeout, or not a database
+        message = f"Cannot copy the database {database}: {exc}."
+        raise BackupError(message) from exc
     return BackupSummary(
         path=destination,
         schema_revision=revision,
@@ -155,7 +167,8 @@ def _stage_and_write(
         BackupError: The database has no schema revision, or a copy is damaged.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".exactdocs-backup-") as tmp:
+    sweep_stale_staging(destination.parent)
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=STAGING_PREFIX) as tmp:
         staging = Path(tmp)
         members: dict[str, Path] = {}
         # Jobs first: a resumed import may redo a step, never skip one (module docstring).
@@ -178,7 +191,10 @@ def _stage_and_write(
             "exactdocs_version": __version__,
             "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "schema_revision": revision,
-            "files": {name: _sha256(path) for name, path in members.items()},
+            "files": {
+                name: {"sha256": _sha256(path), "size": path.stat().st_size}
+                for name, path in members.items()
+            },
         }
         manifest_path = staging / MANIFEST_MEMBER
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -189,8 +205,8 @@ def _stage_and_write(
 async def restore_backup(settings: Settings, archive: Path) -> RestoreSummary:
     """Restore an archive into a data directory that holds no instance, then migrate it.
 
-    Nothing is written before the archive is known to be complete, intact and not newer than
-    this build.
+    Nothing is written before the archive is known to be complete, intact, not newer than this
+    build, and small enough for the disk. A ``BackupError`` says why it is refused.
 
     Args:
         settings: Where the restored instance will keep its data.
@@ -198,9 +214,6 @@ async def restore_backup(settings: Settings, archive: Path) -> RestoreSummary:
 
     Returns:
         What was restored.
-
-    Raises:
-        BackupError: The archive is unusable or newer, or the data directory is not empty.
     """
     database = database_path(settings)
     targets = {
@@ -209,24 +222,7 @@ async def restore_backup(settings: Settings, archive: Path) -> RestoreSummary:
         KNOWN_HOSTS_FILE: settings.data_dir / KNOWN_HOSTS_FILE,
         KEY_FILE: settings.data_dir / KEY_FILE,
     }
-    with _open_archive(archive) as tar:
-        manifest = _manifest(tar, archive, allowed=set(targets))
-        revision = str(manifest["schema_revision"])
-        _refuse_newer(revision)
-        files: dict[str, str] = manifest["files"]
-        occupied = [
-            path
-            for path in (*(targets[name] for name in files), database, _sidecar(database, "-wal"))
-            if path.exists()
-        ]
-        if occupied:
-            message = (
-                f"{occupied[0]} already exists: the data directory already holds an instance. "
-                "Restore only into an empty data directory (EXACTDOCS_DATA_DIR), with the server "
-                "stopped."
-            )
-            raise BackupError(message)
-        _extract(tar, archive, files, targets)
+    manifest, files = await asyncio.to_thread(_unpack, archive, targets)
     engine = open_database(settings)
     try:
         await migrate(engine)
@@ -238,10 +234,54 @@ async def restore_backup(settings: Settings, archive: Path) -> RestoreSummary:
     return RestoreSummary(
         members=tuple(files),
         version=str(manifest.get("exactdocs_version", "unknown")),
-        schema_from=revision,
+        schema_from=str(manifest["schema_revision"]),
         schema_to=_head(),
         reindex_required=index.needs_rebuild,
     )
+
+
+def _unpack(archive: Path, targets: dict[str, Path]) -> tuple[dict[str, Any], dict[str, _Declared]]:
+    """Check the archive and the data directory, then put the archive's files in place.
+
+    Args:
+        archive: The archive.
+        targets: Member name to the path it is restored to.
+
+    Returns:
+        The manifest and its files.
+
+    Raises:
+        BackupError: The archive is unusable or newer, the data directory holds an instance,
+            or the files do not fit.
+    """
+    database = targets[DATABASE_MEMBER]
+    with _open_archive(archive) as tar:
+        manifest = _manifest(tar, archive, allowed=set(targets))
+        revision = str(manifest["schema_revision"])
+        _refuse_newer(revision)
+        files: dict[str, _Declared] = manifest["files"]
+        # Whatever the archive holds: any of these means another instance lives here.
+        always = (
+            database,
+            _sidecar(database, "-wal"),
+            _sidecar(database, "-shm"),
+            targets[JOBS_FILE],
+        )
+        occupied = [
+            path
+            for path in (*always, *(targets[name] for name in files))
+            if os.path.lexists(path)  # a dangling link counts too
+        ]
+        if occupied:
+            message = (
+                f"{occupied[0]} already exists: the data directory already holds an instance. "
+                "Restore only into an empty data directory (EXACTDOCS_DATA_DIR), with the server "
+                "stopped."
+            )
+            raise BackupError(message)
+        _check_room(tar, archive, files, targets)
+        _extract(tar, archive, files, targets)
+    return manifest, files
 
 
 def database_path(settings: Settings) -> Path:
@@ -316,7 +356,7 @@ def _revision(database: Path) -> str | None:
     ) as db:
         try:
             row = db.execute("SELECT version_num FROM alembic_version").fetchone()
-        except sqlite3.OperationalError:
+        except sqlite3.DatabaseError:  # no such table, or not a SQLite file at all
             return None
     return row[0] if row else None
 
@@ -433,7 +473,8 @@ def _manifest(tar: tarfile.TarFile, archive: Path, *, allowed: set[str]) -> dict
     """
     try:
         member = tar.getmember(MANIFEST_MEMBER)
-        file = tar.extractfile(member) if member.isreg() else None
+        readable = member.isreg() and member.size <= MAX_MANIFEST_BYTES
+        file = tar.extractfile(member) if readable else None
         manifest = json.load(file) if file else None
     except KeyError, ValueError, tarfile.TarError, OSError, EOFError:
         manifest = None
@@ -452,6 +493,7 @@ def _manifest(tar: tarfile.TarFile, archive: Path, *, allowed: set[str]) -> dict
         not isinstance(files, dict)
         or DATABASE_MEMBER not in files
         or not set(files) <= allowed
+        or not all(_declared(entry) for entry in files.values())
         or not isinstance(manifest.get("schema_revision"), str)
     ):
         message = f"{archive} has a damaged manifest: restore from another backup."
@@ -473,52 +515,81 @@ def _sidecar(database: Path, suffix: str) -> Path:
 
 
 def _extract(
-    tar: tarfile.TarFile, archive: Path, files: dict[str, str], targets: dict[str, Path]
+    tar: tarfile.TarFile, archive: Path, files: dict[str, _Declared], targets: dict[str, Path]
 ) -> None:
     """Write every member next to its target, check it, then move them all into place.
 
     Args:
         tar: The open archive.
         archive: Its path, for messages.
-        files: Member name to expected SHA-256.
+        files: Member name to its declared SHA-256 and size.
         targets: Member name to the path it is restored to.
 
     Raises:
-        BackupError: A member is missing, not a file, or differs from its checksum.
+        BackupError: A member is missing, not a file, larger than declared or differs from its
+            checksum; the database is not an ExactDocs one; or a file cannot be written.
     """
     staged: dict[str, Path] = {}
     try:
-        for name, expected in files.items():
-            target = targets[name]
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            staged[name] = target.with_name(f".{target.name}.restoring")
-            if _copy_member(tar, name, staged[name]) != expected:
-                message = f"{archive} is damaged ({name} differs from its checksum)."
-                raise BackupError(message)
-        if _revision(staged[DATABASE_MEMBER]) is None:
-            message = f"{archive} holds no ExactDocs database."
-            raise BackupError(message)
+        _stage(tar, archive, files, targets, staged)
         for name, path in staged.items():
             path.replace(targets[name])
         staged.clear()
+    except OSError as exc:  # disk full, permissions, a read-only volume
+        where = targets[DATABASE_MEMBER].parent
+        message = f"Cannot restore into {where}: {exc.strerror or exc}. Nothing was kept."
+        raise BackupError(message) from exc
     finally:
         for path in staged.values():
             path.unlink(missing_ok=True)
 
 
-def _copy_member(tar: tarfile.TarFile, name: str, target: Path) -> str:
+def _stage(
+    tar: tarfile.TarFile,
+    archive: Path,
+    files: dict[str, _Declared],
+    targets: dict[str, Path],
+    staged: dict[str, Path],
+) -> None:
+    """Write each member to a staging file next to its target and check it.
+
+    Args:
+        tar: The open archive.
+        archive: Its path, for messages.
+        files: Member name to its declared SHA-256 and size.
+        targets: Member name to the path it is restored to.
+        staged: Filled with member name to staging file, as each is started (for cleanup).
+
+    Raises:
+        BackupError: A member is larger than declared or differs from its checksum, or the
+            database is not an ExactDocs one.
+    """
+    for name, declared in files.items():
+        target = targets[name]
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        staged[name] = target.with_name(f".{target.name}.restoring")
+        if _copy_member(tar, name, staged[name], declared) != declared["sha256"]:
+            message = f"{archive} is damaged ({name} differs from its checksum)."
+            raise BackupError(message)
+    if _revision(staged[DATABASE_MEMBER]) is None:
+        message = f"{archive} holds no ExactDocs database."
+        raise BackupError(message)
+
+
+def _copy_member(tar: tarfile.TarFile, name: str, target: Path, declared: _Declared) -> str:
     """Copy one regular-file member out of the archive (never a link or a path of its own).
 
     Args:
         tar: The open archive.
         name: The member.
-        target: The new file to write, private.
+        target: The staging file to write, private; a leftover of a killed restore is replaced.
+        declared: The member's SHA-256 and size from the manifest.
 
     Returns:
         The SHA-256 of what was written.
 
     Raises:
-        BackupError: The member is missing or not a regular file.
+        BackupError: The member is missing, not a regular file, or larger than declared.
     """
     try:
         member = tar.getmember(name)
@@ -529,9 +600,97 @@ def _copy_member(tar: tarfile.TarFile, name: str, target: Path) -> str:
         message = f"The backup lacks {name}, or it is not a regular file."
         raise BackupError(message)
     digest = hashlib.sha256()
+    written = 0
+    target.unlink(missing_ok=True)  # ours by name: left by a restore that was killed
     descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE)
     with os.fdopen(descriptor, "wb") as file, source:
         while chunk := source.read(COPY_CHUNK_BYTES):
+            written += len(chunk)
+            if written > declared["size"]:
+                message = f"The backup's {name} is larger than its manifest says: it is damaged."
+                raise BackupError(message)
             digest.update(chunk)
             file.write(chunk)
     return digest.hexdigest()
+
+
+def _check_room(
+    tar: tarfile.TarFile, archive: Path, files: dict[str, _Declared], targets: dict[str, Path]
+) -> None:
+    """Refuse before writing when a member's size disagrees, or the disk lacks room for them.
+
+    Args:
+        tar: The open archive.
+        archive: Its path, for messages.
+        files: Member name to its declared SHA-256 and size.
+        targets: Member name to the path it is restored to.
+
+    Raises:
+        BackupError: A member's size differs from the manifest, or a filesystem lacks room.
+    """
+    needed: dict[Path, int] = {}
+    for name, declared in files.items():
+        try:
+            size: int = tar.getmember(name).size
+        except KeyError:
+            size = -1
+        if size != declared["size"]:
+            message = f"{archive} is damaged ({name} is not the size its manifest says)."
+            raise BackupError(message)
+        where = _existing_ancestor(targets[name].parent)
+        needed[where] = needed.get(where, 0) + size
+    for where, size in needed.items():
+        free = shutil.disk_usage(where).free
+        if size + RESTORE_FREE_MARGIN_BYTES > free:
+            message = (
+                f"Not enough room under {where}: the restore needs {size} bytes plus "
+                f"{RESTORE_FREE_MARGIN_BYTES} to spare, and {free} are free."
+            )
+            raise BackupError(message)
+
+
+def _existing_ancestor(path: Path) -> Path:
+    """Return the closest existing folder at or above ``path`` (the one a restore will create into).
+
+    Args:
+        path: A folder that may not exist yet.
+
+    Returns:
+        The folder whose filesystem the files will land on.
+    """
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
+def _declared(entry: object) -> bool:
+    """Tell whether a manifest entry declares a SHA-256 and a size.
+
+    Args:
+        entry: The value under a member name in ``files``.
+
+    Returns:
+        Whether it has the expected shape.
+    """
+    return (
+        isinstance(entry, dict)
+        and isinstance(entry.get("sha256"), str)
+        and isinstance(entry.get("size"), int)
+        and not isinstance(entry.get("size"), bool)
+        and entry["size"] >= 0
+    )
+
+
+def sweep_stale_staging(folder: Path) -> None:
+    """Remove the staging folders of backups that were killed (older than a day).
+
+    A running backup's folder is younger, and is left alone.
+
+    Args:
+        folder: Where backups stage (next to an archive, or the data dir for ``-``).
+    """
+    cutoff = time.time() - STALE_STAGING_SECONDS
+    for staging in folder.glob(f"{STAGING_PREFIX}*"):
+        with contextlib.suppress(OSError):
+            if staging.is_dir() and not staging.is_symlink() and staging.stat().st_mtime < cutoff:
+                shutil.rmtree(staging, ignore_errors=True)

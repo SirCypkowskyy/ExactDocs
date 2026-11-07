@@ -1,6 +1,8 @@
 """``exactdocs backup`` / ``restore``: consistent while serving, complete, and refusing harm."""
 
 import asyncio
+import errno
+import hashlib
 import io
 import json
 import os
@@ -8,15 +10,19 @@ import sqlite3
 import stat
 import tarfile
 import threading
+import time
+from collections.abc import Callable
 from contextlib import closing, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from alembic import command
 from sqlalchemy import Connection
 
-from exactdocs.bootstrap import cli
+from exactdocs.bootstrap import backup, cli
 from exactdocs.bootstrap.backup import BackupError, create_backup, restore_backup
 from exactdocs.bootstrap.constants import (
     DATABASE_MEMBER,
@@ -43,6 +49,8 @@ OLDER_REVISION = "a1c9e4d7b352"
 """The schema revision of release v0.2.0."""
 WRITES = 200
 """Rows a concurrent writer adds while a backup runs."""
+ZEROS = bytes(4096)
+"""A member that is not a SQLite file at all."""
 
 
 @pytest.fixture
@@ -164,6 +172,41 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
     file = tar.extractfile(name)
     assert file is not None
     return file.read()
+
+
+def _member(archive: Path, name: str) -> bytes:
+    """Read one member of an archive.
+
+    Args:
+        archive: The archive.
+        name: The member.
+
+    Returns:
+        Its content.
+    """
+    with tarfile.open(archive, "r:gz") as tar:
+        return _read(tar, name)
+
+
+def _rewrite_manifest(archive: Path, change: Callable[[dict[str, Any]], None]) -> None:
+    """Change an archive's manifest in place.
+
+    Args:
+        archive: The archive.
+        change: Edits the parsed manifest.
+    """
+    manifest = json.loads(_member(archive, MANIFEST_MEMBER))
+    change(manifest)
+    _rewrite(archive, MANIFEST_MEMBER, json.dumps(manifest).encode())
+
+
+def _not_sqlite(manifest: dict[str, Any]) -> None:
+    """Point the manifest at a database member of 4096 zero bytes.
+
+    Args:
+        manifest: The parsed manifest.
+    """
+    manifest["files"][DATABASE_MEMBER] = {"sha256": hashlib.sha256(ZEROS).hexdigest(), "size": 4096}
 
 
 def _rewrite(archive: Path, change: str, content: bytes) -> None:
@@ -332,7 +375,8 @@ async def test_a_damaged_archive_is_refused_and_nothing_is_left(
 ) -> None:
     archive = tmp_path / "backup.tar.gz"
     create_backup(started, archive)
-    _rewrite(archive, KNOWN_HOSTS_FILE, b"evil.example ssh-ed25519 AAAA\n")
+    original = _member(archive, KNOWN_HOSTS_FILE)
+    _rewrite(archive, KNOWN_HOSTS_FILE, b"#" * len(original))  # same size, other bytes
 
     with pytest.raises(BackupError, match="checksum"):
         await restore_backup(target, archive)
@@ -441,3 +485,148 @@ def test_the_cli_says_why_a_restore_is_refused(tmp_path: Path) -> None:
             exit_on_error=False,
             result_action="return_value",
         )
+
+
+async def test_a_member_that_is_not_sqlite_is_refused_with_a_message(
+    started: Settings, target: Settings, tmp_path: Path
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+    _rewrite(archive, DATABASE_MEMBER, ZEROS)
+    _rewrite_manifest(archive, _not_sqlite)
+
+    with pytest.raises(BackupError, match="holds no ExactDocs database"):
+        await restore_backup(target, archive)
+
+    assert _files(target.data_dir) == []
+
+
+async def test_a_leftover_of_a_killed_restore_is_replaced(
+    started: Settings, target: Settings, tmp_path: Path
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+    target.data_dir.mkdir()
+    (target.data_dir / ".exactdocs.db.restoring").write_bytes(b"half")
+
+    await restore_backup(target, archive)
+
+    assert _revision(target.data_dir / "exactdocs.db") == schema_head()
+    assert not (target.data_dir / ".exactdocs.db.restoring").exists()
+
+
+async def test_a_member_of_another_size_than_declared_is_refused_before_writing(
+    started: Settings, target: Settings, tmp_path: Path
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+    _rewrite_manifest(archive, lambda m: m["files"][DATABASE_MEMBER].update(size=1))
+
+    with pytest.raises(BackupError, match="not the size its manifest says"):
+        await restore_backup(target, archive)
+
+    assert not target.data_dir.exists()
+
+
+async def test_a_restore_that_does_not_fit_is_refused_before_writing(
+    started: Settings, target: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+    monkeypatch.setattr(
+        backup.shutil, "disk_usage", lambda _: SimpleNamespace(total=1, used=1, free=1024)
+    )
+
+    with pytest.raises(BackupError, match="Not enough room under"):
+        await restore_backup(target, archive)
+
+    assert not target.data_dir.exists()
+
+
+async def test_a_full_disk_is_a_message_and_leaves_nothing(
+    started: Settings, target: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+
+    def full(self: Path, target: Path) -> Path:
+        """Fail as a full disk would, while the files are moved into place.
+
+        Args:
+            self: The staging file.
+            target: Where it was going.
+
+        Raises:
+            OSError: Always, ENOSPC.
+        """
+        del self, target
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(Path, "replace", full)
+
+    with pytest.raises(BackupError, match="No space left on device"):
+        await restore_backup(target, archive)
+
+    assert _files(target.data_dir) == []
+
+
+async def test_an_oversized_manifest_is_not_read(
+    started: Settings, target: Settings, tmp_path: Path
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+    _rewrite_manifest(archive, lambda m: m.update(padding="x" * 100_000))
+
+    with pytest.raises(BackupError, match=r"no readable manifest\.json"):
+        await restore_backup(target, archive)
+
+
+@pytest.mark.parametrize("leftover", [JOBS_FILE, "exactdocs.db-shm", "exactdocs.db"])
+async def test_any_trace_of_another_instance_counts_as_occupied(
+    started: Settings, target: Settings, tmp_path: Path, leftover: str
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)  # holds no jobs.sqlite: the source never ran its worker
+    target.data_dir.mkdir()
+    (target.data_dir / leftover).write_bytes(b"another instance")
+
+    with pytest.raises(BackupError, match="already holds an instance"):
+        await restore_backup(target, archive)
+
+
+async def test_a_dangling_link_where_the_database_goes_counts_as_occupied(
+    started: Settings, target: Settings, tmp_path: Path
+) -> None:
+    archive = tmp_path / "backup.tar.gz"
+    create_backup(started, archive)
+    target.data_dir.mkdir()
+    (target.data_dir / "exactdocs.db").symlink_to(tmp_path / "nowhere.db")
+
+    with pytest.raises(BackupError, match="already holds an instance"):
+        await restore_backup(target, archive)
+
+    assert not (tmp_path / "nowhere.db").exists()
+
+
+def test_a_killed_backup_s_staging_folder_is_swept(started: Settings, tmp_path: Path) -> None:
+    old = tmp_path / ".exactdocs-backup-killed"
+    old.mkdir()
+    (old / "exactdocs.db").write_bytes(b"copy")
+    stale = time.time() - 2 * 24 * 3600
+    os.utime(old, (stale, stale))
+    young = tmp_path / ".exactdocs-backup-running"
+    young.mkdir()
+
+    create_backup(started, tmp_path / "backup.tar.gz")
+
+    assert not old.exists()
+    assert young.exists()  # another backup may be writing it
+
+
+def test_backup_to_a_terminal_is_refused(started: Settings) -> None:
+    with (
+        patch.dict(os.environ, {"EXACTDOCS_DATA_DIR": str(started.data_dir)}),
+        patch("sys.stdout.isatty", return_value=True),
+        pytest.raises(SystemExit, match="redirect it"),
+    ):
+        cli.app(["backup", "-"], exit_on_error=False, result_action="return_value")
