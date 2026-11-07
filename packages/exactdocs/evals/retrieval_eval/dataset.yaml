@@ -1,0 +1,453 @@
+# The retrieval eval dataset (Pydantic Evals format), read by retrieval_eval.dataset.
+#
+# Every case is a question pinned to one version of the fixture docs repository
+# (packages/exactdocs/tests/fixtures/docs-repo) and the section that answers it:
+#   kind: identifier  the fixture's expected-queries.yaml, one case per asserted version (a test
+#                     keeps the two in step: change that file, then this one)
+#   kind: question    a natural-language question, the way an agent asks
+# expected_output.hits holds the expected section (version, article path, heading path from the
+# H1); an empty list means the version has no answer, so any hit must still be of that version.
+# See docs/evals.md for how to add a case.
+name: retrieval
+cases:
+- name: 'v1.3.0: snake_case'
+  inputs: {query: snake_case, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, snake_case]
+- name: 'v1.4.0: snake_case'
+  inputs: {query: snake_case, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, snake_case]
+- name: 'v1.3.0: camelCase'
+  inputs: {query: camelCase, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, camelCase]
+- name: 'v1.4.0: camelCase'
+  inputs: {query: camelCase, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, camelCase]
+- name: 'v1.3.0: --flag'
+  inputs: {query: --flag, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, --flag]
+- name: 'v1.4.0: --flag'
+  inputs: {query: --flag, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, --flag]
+- name: 'v1.3.0: pkg.mod.fn'
+  inputs: {query: pkg.mod.fn, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, pkg.mod.fn]
+- name: 'v1.4.0: pkg.mod.fn'
+  inputs: {query: pkg.mod.fn, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, pkg.mod.fn]
+- name: 'v1.3.0: connection_pool'
+  inputs: {query: connection_pool, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Connection pool]
+- name: 'v1.4.0: connection_pool'
+  inputs: {query: connection_pool, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Connection pool]
+- name: 'v1.3.0: --dry-run'
+  inputs: {query: --dry-run, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Command line]
+- name: 'v1.4.0: --dry-run'
+  inputs: {query: --dry-run, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Command line]
+- name: 'v1.3.0: rotating tokens'
+  inputs: {query: rotating tokens, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/auth.md
+      heading_path: [Authentication, Rotating tokens]
+- name: 'v1.4.0: rotating tokens'
+  inputs: {query: rotating tokens, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/auth.md
+      heading_path: [Authentication, Rotating tokens]
+- name: 'v1.3.0: docker'
+  inputs: {query: docker, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/setup.md
+      heading_path: [Guide, Install, Docker]
+- name: 'v1.4.0: docker'
+  inputs: {query: docker, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/install.md
+      heading_path: [Guide, Install, Docker]
+- name: 'v1.3.0: crème brûlée'
+  inputs: {query: crème brûlée, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/legacy/latin1.md
+      heading_path: [Journal de bord, Paiements récents]
+- name: 'v1.4.0: crème brûlée'
+  inputs: {query: crème brûlée, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/legacy/latin1.md
+      heading_path: [Journal de bord, Paiements récents]
+- name: 'v1.3.0: retry_policy'
+  inputs: {query: retry_policy, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits: []
+- name: 'v1.4.0: retry_policy'
+  inputs: {query: retry_policy, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/resilience.md
+      heading_path: [Resilience, Retry policy, retry_policy]
+- name: 'v1.3.0: max_retries'
+  inputs: {query: max_retries, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits: []
+- name: 'v1.4.0: max_retries'
+  inputs: {query: max_retries, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/resilience.md
+      heading_path: [Resilience, Retry policy, max_retries]
+- name: 'v1.3.0: podman'
+  inputs: {query: podman, version: v1.3.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits: []
+- name: 'v1.4.0: podman'
+  inputs: {query: podman, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits: []
+- name: 'next: podman'
+  inputs: {query: podman, version: next}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: next
+      article: docs/guide/install.md
+      heading_path: [Guide, Install, Podman]
+- name: 'v1.4.0: ACME-4021'
+  inputs: {query: ACME-4021, version: v1.4.0}
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/errors.md
+      heading_path: [Errors, ACME-4021]
+- name: 'v1.3.0: tokens [auth]'
+  inputs:
+    query: tokens
+    version: v1.3.0
+    tags: &id001 [auth]
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/api/auth.md
+      heading_path: [Authentication API, Issue a token]
+- name: 'v1.4.0: tokens [auth]'
+  inputs:
+    query: tokens
+    version: v1.4.0
+    tags: *id001
+  metadata: {kind: identifier}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/api/auth.md
+      heading_path: [Authentication API, Issue a token]
+- name: 'v1.3.0: How do I run the SDK in a Docker container?'
+  inputs: {query: 'How do I run the SDK in a Docker container?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/setup.md
+      heading_path: [Guide, Install, Docker]
+- name: 'v1.4.0: How do I run the SDK in a Docker container?'
+  inputs: {query: 'How do I run the SDK in a Docker container?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/install.md
+      heading_path: [Guide, Install, Docker]
+- name: 'v1.3.0: The port is already taken when I start the container. What can I do?'
+  inputs: {query: 'The port is already taken when I start the container. What can I do?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/setup.md
+      heading_path: [Guide, Install, Docker, Troubleshooting]
+- name: 'v1.4.0: The port is already taken when I start the container. What can I do?'
+  inputs: {query: 'The port is already taken when I start the container. What can I do?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/install.md
+      heading_path: [Guide, Install, Docker, Troubleshooting]
+- name: 'v1.3.0: Which Python version does the SDK need?'
+  inputs: {query: 'Which Python version does the SDK need?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/setup.md
+      heading_path: [Guide, Install]
+- name: 'v1.4.0: Which Python version does the SDK need?'
+  inputs: {query: 'Which Python version does the SDK need?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/install.md
+      heading_path: [Guide, Install]
+- name: 'v1.4.0: How do I install the SDK with Podman?'
+  inputs: {query: 'How do I install the SDK with Podman?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits: []
+- name: 'next: How do I install the SDK with Podman?'
+  inputs: {query: 'How do I install the SDK with Podman?', version: next}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: next
+      article: docs/guide/install.md
+      heading_path: [Guide, Install, Podman]
+- name: 'v1.3.0: How do I replace an API key without downtime?'
+  inputs: {query: 'How do I replace an API key without downtime?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/auth.md
+      heading_path: [Authentication, Rotating tokens]
+- name: 'v1.4.0: How do I replace an API key without downtime?'
+  inputs: {query: 'How do I replace an API key without downtime?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/auth.md
+      heading_path: [Authentication, Rotating tokens]
+- name: 'v1.3.0: Which endpoint creates a new token?'
+  inputs: {query: 'Which endpoint creates a new token?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/api/auth.md
+      heading_path: [Authentication API, Issue a token]
+- name: 'v1.4.0: Which endpoint creates a new token?'
+  inputs: {query: 'Which endpoint creates a new token?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/api/auth.md
+      heading_path: [Authentication API, Issue a token]
+- name: 'v1.3.0: How do I revoke a token immediately?'
+  inputs: {query: 'How do I revoke a token immediately?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/api/auth.md
+      heading_path: [Authentication API, Revoke a token]
+- name: 'v1.4.0: How do I revoke a token immediately?'
+  inputs: {query: 'How do I revoke a token immediately?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/api/auth.md
+      heading_path: [Authentication API, Revoke a token]
+- name: 'v1.3.0: How can I validate a charge without sending it?'
+  inputs: {query: 'How can I validate a charge without sending it?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Command line]
+- name: 'v1.4.0: How can I validate a charge without sending it?'
+  inputs: {query: 'How can I validate a charge without sending it?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Command line]
+- name: 'v1.3.0: How many HTTP connections does the client keep open?'
+  inputs: {query: 'How many HTTP connections does the client keep open?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Connection pool]
+- name: 'v1.4.0: How many HTTP connections does the client keep open?'
+  inputs: {query: 'How many HTTP connections does the client keep open?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/configuration.md
+      heading_path: [Configuration, Connection pool]
+- name: 'v1.3.0: How do I charge a card with the Python client?'
+  inputs: {query: 'How do I charge a card with the Python client?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/api/client.mdx
+      heading_path: [Client, Charge a card]
+- name: 'v1.4.0: How do I charge a card with the Python client?'
+  inputs: {query: 'How do I charge a card with the Python client?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/api/client.mdx
+      heading_path: [Client, Charge a card]
+- name: 'v1.3.0: Which naming style do JSON payloads use?'
+  inputs: {query: 'Which naming style do JSON payloads use?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.3.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, camelCase]
+- name: 'v1.4.0: Which naming style do JSON payloads use?'
+  inputs: {query: 'Which naming style do JSON payloads use?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/naming.md
+      heading_path: [Naming conventions, camelCase]
+- name: 'v1.3.0: Which failures does the client repeat by default?'
+  inputs: {query: 'Which failures does the client repeat by default?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits: []
+- name: 'v1.4.0: Which failures does the client repeat by default?'
+  inputs: {query: 'Which failures does the client repeat by default?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/resilience.md
+      heading_path: [Resilience, Retry policy, retry_policy]
+- name: 'v1.3.0: How do I limit how many times a failed call is repeated?'
+  inputs: {query: 'How do I limit how many times a failed call is repeated?', version: v1.3.0}
+  metadata: {kind: question}
+  expected_output:
+    hits: []
+- name: 'v1.4.0: How do I limit how many times a failed call is repeated?'
+  inputs: {query: 'How do I limit how many times a failed call is repeated?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/guide/resilience.md
+      heading_path: [Resilience, Retry policy, max_retries]
+- name: 'v1.4.0: What does it mean when the issuer declined the card?'
+  inputs: {query: 'What does it mean when the issuer declined the card?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/errors.md
+      heading_path: [Errors, ACME-4021]
+- name: 'v1.4.0: The payment network timed out. Did the charge go through?'
+  inputs: {query: 'The payment network timed out. Did the charge go through?', version: v1.4.0}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: v1.4.0
+      article: docs/reference/errors.md
+      heading_path: [Errors, ACME-5003]
+- name: 'next: What is retry_policy called in 2.0?'
+  inputs: {query: 'What is retry_policy called in 2.0?', version: next}
+  metadata: {kind: question}
+  expected_output:
+    hits:
+    - version: next
+      article: docs/guide/migration.md
+      heading_path: [Migrating to 2.0, Renamed options]

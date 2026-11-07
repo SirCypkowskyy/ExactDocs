@@ -41,6 +41,7 @@ just setup                 # install everything
 just check                 # everything CI runs; must pass before a PR
 just fmt                   # format Python + web
 just test -k <expr>        # pytest;  just bdd  # behave;  just arch  # architecture rules
+just eval                  # retrieval eval suite: modes compared on the fixture (docs/evals.md)
 just serve                 # :3000 (API, /mcp, UI if built);  just dev  # + Vite on :5173
 just docs                  # documentation site preview (Zensical)
 ```
