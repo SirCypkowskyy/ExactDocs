@@ -128,6 +128,21 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
     return configured
 
 
+async def _warm_ai(settings: Settings) -> None:
+    """Load the provider SDKs in a worker thread at start when an AI role is configured.
+
+    The first search that calls a model would otherwise import them (seconds) on the event loop,
+    stalling every other request, and spend its reranker timeout on it. With no role configured
+    nothing is loaded (RUN-02).
+
+    Args:
+        settings: The runtime configuration.
+    """
+    ai = settings.ai
+    if any(role.model for role in (ai.embedding, ai.reranker, ai.llm, ai.judge)):
+        await PydanticAiModels().warm()
+
+
 def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
     """Build the secret box of one purpose from ``EXACTDOCS_SECRET_KEY`` or the key file.
 
@@ -249,6 +264,8 @@ class ReadOnlyContainer:
     No identity, ingestion, worker, secret key, ``known_hosts`` or ``git``: nothing here can write.
     """
 
+    settings: Settings
+    """The runtime configuration (which AI roles to load the SDKs for at start)."""
     engine: AsyncEngine
     catalog: CatalogModule
     retrieval: RetrievalModule
@@ -261,7 +278,7 @@ class ReadOnlyContainer:
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
         catalog, retrieval = _build_read_side(engine, settings, ai_box=ai_box)
-        return cls(engine=engine, catalog=catalog, retrieval=retrieval)
+        return cls(settings=settings, engine=engine, catalog=catalog, retrieval=retrieval)
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
@@ -274,6 +291,7 @@ class ReadOnlyContainer:
             raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
+            await _warm_ai(self.settings)
             yield
         finally:
             try:
@@ -478,6 +496,7 @@ class Container:
             raise RuntimeError(message)
         try:
             await migrate(self.engine)
+            await _warm_ai(self.settings)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
                 stored = (

@@ -101,6 +101,7 @@ from exactdocs.retrieval.models import (
     ProviderProfile,
 )
 from exactdocs.retrieval.ports.driven import Reranker
+from exactdocs_kernel import SealedTextUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +296,14 @@ def read_key(
             if open_sealed is None or profile.sealed_key is None:
                 reason = "its key is sealed and this process has no secret key to open it"
                 raise ProviderUnsupportedError(profile.name, reason)
-            return open_sealed(profile.sealed_key)
+            try:
+                return open_sealed(profile.sealed_key)
+            except SealedTextUnreadableError:
+                reason = (
+                    "its stored key does not open with this secret key (it was changed); "
+                    "store the key again"
+                )
+                raise ProviderUnsupportedError(profile.name, reason) from None
 
 
 def http_client(

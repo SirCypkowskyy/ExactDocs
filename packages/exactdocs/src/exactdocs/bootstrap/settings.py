@@ -123,9 +123,10 @@ class RerankerSettings(RoleSettings):
     """`EXACTDOCS_AI__RERANKER__TOP_N`: how many of a search's best candidates are reranked (a
     library may set its own)."""
     timeout: float = Field(default=DEFAULT_RERANK_TIMEOUT, gt=0, le=MAX_RERANK_TIMEOUT)
-    """`EXACTDOCS_AI__RERANKER__TIMEOUT`: seconds a search waits for the reranker; after that, or
-    on any reranker error, results keep their order (`reranked: false`, `fallback_reason`
-    `reranker_timeout` or `reranker_failed`)."""
+    """`EXACTDOCS_AI__RERANKER__TIMEOUT`: seconds a search gives the reranker, to be built and to
+    answer (reading the candidates' text is not counted); after that, or on any reranker error,
+    results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
+    `reranker_failed`)."""
 
 
 class AiSettings(BaseModel):

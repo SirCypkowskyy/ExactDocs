@@ -588,16 +588,20 @@ base_url = "http://tei:8080"
 [ai.reranker]
 model = "cohere:rerank-v3.5"            # or "tei:BAAI/bge-reranker-base" (TEI serves one model)
 top_n = 32                              # candidates reranked per search (1 to 200)
-timeout = 2.0                           # seconds; then the search keeps its order
+timeout = 2.0                           # seconds for building the reranker and its call
 ```
 
-vLLM and LiteLLM (`kind = "vllm"` / `"litellm"`, base URL ending in `/v1` or `/v2`) and Azure AI
+A `tei` profile still needs the `exactdocs[ai]` extra, like every profile, although it only uses
+`httpx2`. vLLM and LiteLLM (`kind = "vllm"` / `"litellm"`, base URL ending in `/v1` or `/v2`) and Azure AI
 Foundry's Cohere deployments (`openai-compatible`) speak the Cohere-compatible dialect too. Only
 the query and the candidates' chunk text are sent (cut to 8000 characters each, in batches of 100,
 or 32 for TEI), never a library name, a version or a user. A reranker that times out, fails or
 answers something unusable never fails a search: results keep their order with `reranked: false`
 and `fallback_reason` `reranker_timeout` or `reranker_failed`, and the failure is logged without
-the query. Traces show it as the `rerank` stage, without the query or any text. The hybrid, HyDE
+the query. With a `limit` above `top_n`, the reranked results come first and the rest follow in the
+mode's order, with the mode's scores (not comparable with the reranker's). With any role
+configured, the provider SDKs are loaded in a worker thread at start, so the first search never
+waits for them. Traces show it as the `rerank` stage, without the query or any text. The hybrid, HyDE
 and agentic pipelines arrive with #91 onwards.
 
 ### Private repositories

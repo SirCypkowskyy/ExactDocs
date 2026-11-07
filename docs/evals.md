@@ -85,8 +85,9 @@ this stays true for every mode and adapter.)
 
 The JSON report also lists, per mode, the cases with a wrong version (and the offending results),
 the questions whose section was not in the top 10, the questions that raised, how many a
-cheaper mode answered (`fallbacks`), how many a reranker reordered (`reranked`) and how many kept
-the mode's order because the reranker failed or timed out (`rerank_fallbacks`); the Markdown
+cheaper mode answered (`fallbacks`), how many a reranker reordered (`reranked`) and, with a reranker
+role configured, how many came back with results but not reranked (`rerank_fallbacks`: the
+reranker failed or timed out, whatever `fallback_reason` shows); the Markdown
 summary repeats the last two for a mode that was reranked.
 
 ### Evaluating the reranker

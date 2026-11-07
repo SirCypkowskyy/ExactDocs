@@ -154,6 +154,30 @@ class Broken:
         raise RuntimeError(message)
 
 
+@dataclass
+class ModeFellBackAndRerankerFailed:
+    """The mode fell back and the reranker failed: only the mode's reason is shown."""
+
+    async def answer(self, question: Question) -> Answer:
+        return Answer(
+            hits=_ideal(question),
+            answered_by="bm25",
+            reranked=False,
+            fallback_reason="embedding_in_progress",
+        )
+
+
+async def test_a_reranker_failure_counts_even_when_another_fallback_reason_is_shown() -> None:
+    dataset = with_evaluators(load_dataset())
+    answered = sum(1 for c in dataset.cases if c.expected_output and c.expected_output.hits)
+
+    expected = await evaluate_mode(dataset, BM25, ModeFellBackAndRerankerFailed(), rerank=True)
+    not_expected = await evaluate_mode(dataset, BM25, ModeFellBackAndRerankerFailed())
+
+    assert (expected.reranked, expected.rerank_fallbacks) == (0, answered)
+    assert not_expected.rerank_fallbacks == 0
+
+
 V2_HIT = Hit(version="v2.0.0", article="docs/guide/resilience.md", heading_path=["Resilience"])
 
 

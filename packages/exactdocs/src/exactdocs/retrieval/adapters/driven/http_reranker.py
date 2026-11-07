@@ -81,8 +81,13 @@ class HttpReranker:
         size = self.dialect.batch
         batches = [texts[i : i + size] for i in range(0, len(texts), size)]
         cut = query[:MAX_RERANK_QUERY_CHARS]
-        scored = await asyncio.gather(*(self._call(cut, batch) for batch in batches))
-        return [score for batch in scored for score in batch]
+        try:
+            # One failed batch cancels the others: the caller keeps its order anyway.
+            async with asyncio.TaskGroup() as group:
+                calls = [group.create_task(self._call(cut, batch)) for batch in batches]
+        except* RerankerError as failed:
+            raise failed.exceptions[0] from None
+        return [score for call in calls for score in call.result()]
 
     async def _call(self, query: str, texts: list[str]) -> list[float]:
         """Make one rerank request.
@@ -144,11 +149,15 @@ def _scores(answer: object, count: int, dialect: RerankDialect) -> list[float]:
         raise TypeError(reason)
     scores: dict[int, float] = {}
     for item in items:
-        index = int(item["index"])
+        index, score = item["index"], item[key]
+        # Strict: an index must be an integer, a score a number; JSON true is neither.
+        if type(index) is not int or type(score) not in {int, float}:
+            reason = "an index or a score is not a number"
+            raise TypeError(reason)
         if not 0 <= index < count or index in scores:
             reason = "an index is out of range or repeated"
             raise ValueError(reason)
-        scores[index] = float(item[key])
+        scores[index] = float(score)
     if len(scores) != count:
         reason = "a candidate has no score"
         raise ValueError(reason)

@@ -121,10 +121,10 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
-    SearchHit,
     SearchText,
     SectionRef,
     SpaceState,
+    StoredChunk,
     TagFilter,
     TagMatch,
     article_chunk_rows,
@@ -156,7 +156,7 @@ from exactdocs.retrieval.ports.driven import (
     SecretBox,
     VectorIndex,
 )
-from exactdocs_kernel import NOTICE, Clock
+from exactdocs_kernel import NOTICE, Clock, DomainError, SealedTextUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +338,8 @@ class RetrievalModes:
             skipped. A call that names a mode that cannot run now fails with
             ``UnavailableModeError``.
         """
-        registry = await self.registry(library)
+        ai = await self.library_modes.ai_of(library)  # read once per search
+        registry = await self.registry(library, ai)
         if asked is not None:  # checked first: the library's setting does not matter then
             choice = registry.choose(asked=asked, library=None, instance=None)
         else:
@@ -351,8 +352,7 @@ class RetrievalModes:
             return choice
         if self.reranking is None:
             return replace(choice, rerank=False)
-        top_n = self.rerank_top_n(await self.library_modes.ai_of(library))
-        return replace(choice, rerank_top_n=top_n)
+        return replace(choice, rerank_top_n=self.rerank_top_n(ai), library_ai=ai)
 
     async def run(
         self,
@@ -393,7 +393,7 @@ class RetrievalModes:
 
     async def rerank(
         self, choice: ModeChoice, version: SearchableVersion, query: str, answer: PipelineAnswer
-    ) -> PipelineAnswer:
+    ) -> tuple[PipelineAnswer, Mapping[ChunkId, StoredChunk]]:
         """Reorder the best candidates of ``answer`` with the library's reranker, if it reranks.
 
         Args:
@@ -404,11 +404,11 @@ class RetrievalModes:
 
         Returns:
             The reranked answer; on a timeout or a failure, the answer in its own order with a
-            fallback reason. Never raises for the reranker.
+            fallback reason. Never raises for the reranker. Also the chunks it read, by ID.
         """
         if not choice.rerank or self.reranking is None:
-            return answer
-        return await self.reranking.apply(version, query, answer, choice.rerank_top_n)
+            return answer, {}
+        return await self.reranking.apply(version, query, answer, choice)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -417,10 +417,12 @@ class Reranking:
 
     The reranker is the one the library resolves to (its override, else the instance's
     ``reranker`` role), built from the profile as it is now. It receives the query text and the
-    candidates' chunk text only. A reranker that does not answer within ``limits.timeout``, fails,
-    answers something unusable or cannot be built never fails the search: the candidates keep
-    the mode's order, ``reranked`` stays 0, and the fallback reason says why (when no other
-    reason was given already). Failures are logged without the query or any text.
+    candidates' chunk text only, read before the clock starts. Building the reranker and its call
+    must finish within ``limits.timeout``. A reranker that does not, that fails, answers something
+    unusable or cannot be built (a profile that cannot rerank, a key that no longer opens) never
+    fails the search: the candidates keep the mode's order, ``reranked`` stays 0, and the
+    fallback reason says why (when no other reason was given already). Failures are logged
+    without the query or any text.
     """
 
     providers: AiProviders
@@ -431,96 +433,114 @@ class Reranking:
     """The instance's top N and timeout."""
 
     async def apply(
-        self, version: SearchableVersion, query: str, answer: PipelineAnswer, top_n: int
-    ) -> PipelineAnswer:
-        """Rerank the first ``top_n`` hits of ``answer``.
+        self, version: SearchableVersion, query: str, answer: PipelineAnswer, choice: ModeChoice
+    ) -> tuple[PipelineAnswer, Mapping[ChunkId, StoredChunk]]:
+        """Rerank the first ``choice.rerank_top_n`` hits of ``answer``.
 
         Args:
             version: The version searched.
             query: The query text.
             answer: The pipeline's answer, best first.
-            top_n: How many of its hits to rerank.
+            choice: How many hits to rerank, and the library's overrides read for this search.
 
         Returns:
             The answer with its first hits reordered by the reranker's score (each carrying it),
-            the rest after them; or the answer unchanged, with a fallback reason, when reranking
-            failed.
+            the rest after them in the mode's order with the mode's scores; or the answer in its
+            own order, with a fallback reason, when reranking failed. Candidates whose chunk is
+            gone are dropped (and no longer counted). Also the chunks read, by ID, so the caller
+            need not read them again.
         """
+        top_n = choice.rerank_top_n
         head = answer.hits[:top_n]
         if not head:
-            return answer
+            return answer, {}
+        stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in head])
+        # A chunk gone since the search (the manifest was collected) is not sent, nor shown, nor
+        # counted, so results and coverage stay consistent.
+        kept = tuple(h for h in head if h.chunk_id in stored)
+        answer = replace(
+            answer,
+            hits=(*kept, *answer.hits[top_n:]),
+            candidates=answer.candidates - (len(head) - len(kept)),
+        )
+        if not kept:
+            return answer, stored
+        texts = [stored[h.chunk_id].chunk.content for h in kept]
         try:
-            # Built before the clock starts: the first call loads the provider's SDK once.
-            reranker = await self._reranker(version.library)
             async with asyncio.timeout(self.limits.timeout):
-                kept, scores = await self._score(reranker, version, query, head)
+                reranker = await self._reranker(version.library, choice.library_ai)
+                scores = await reranker.rerank(query, texts)
         except TimeoutError:
             logger.warning(
                 "the reranker of %s did not answer within %ss: the search keeps its order",
                 version.library,
                 self.limits.timeout,
             )
-            return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT)
-        except (RerankerError, ProviderUnsupportedError) as error:
+            return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT), stored
+        except RerankerError as error:
             logger.warning(
                 "the reranker of %s failed: %s; the search keeps its order", version.library, error
             )
-            return _fallen_back(answer, FallbackReason.RERANKER_FAILED)
-        if not kept:
-            return answer
-        return replace(
-            answer, hits=(*reorder(kept, scores), *answer.hits[top_n:]), reranked=len(kept)
+            return _fallen_back(answer, FallbackReason.RERANKER_FAILED), stored
+        if len(scores) != len(kept) or not all(math.isfinite(score) for score in scores):
+            logger.warning(
+                "the reranker of %s did not answer one finite score per candidate; the search "
+                "keeps its order",
+                version.library,
+            )
+            return _fallen_back(answer, FallbackReason.RERANKER_FAILED), stored
+        reranked = replace(
+            answer, hits=(*reorder(kept, scores), *answer.hits[len(kept) :]), reranked=len(kept)
         )
+        return reranked, stored
 
-    async def _reranker(self, library: str) -> Reranker:
+    async def _reranker(self, library: str, ai: LibraryAi | None) -> Reranker:
         """Build the library's reranker from the profile as it is now.
 
         Args:
             library: The library searched.
+            ai: Its overrides, as read for this search; ``None`` reads them.
 
         Returns:
             The reranker.
 
         Raises:
-            RerankerError: No reranker resolves for the library.
+            RerankerError: No reranker resolves for the library, or building it failed (the
+                profile cannot rerank here, its key does not open, its key file cannot be read).
         """
-        reranker = await self.providers.reranker_for(library)
+        try:
+            reranker = await self.providers.reranker_for(library, ai)
+        except (DomainError, SealedTextUnreadableError, OSError) as error:
+            # Never the error's text: only its kind, which holds no key, URL or path.
+            reason = f"it could not be built ({type(error).__name__})"
+            raise RerankerError(reason) from None
         if reranker is None:
             reason = "no reranker resolves for the library"
             raise RerankerError(reason)
         return reranker
 
-    async def _score(
-        self,
-        reranker: Reranker,
-        version: SearchableVersion,
-        query: str,
-        head: Sequence[SearchHit],
-    ) -> tuple[tuple[SearchHit, ...], Sequence[float]]:
-        """Read the candidates' text and score it.
 
-        Args:
-            reranker: The library's reranker.
-            version: The version searched.
-            query: The query text.
-            head: The candidates to rerank.
+async def _chunks_of(
+    chunks: ChunkRepository,
+    version: SearchableVersion,
+    answer: PipelineAnswer,
+    read: Mapping[ChunkId, StoredChunk],
+) -> Mapping[ChunkId, StoredChunk]:
+    """Load the answer's chunks from the version, reusing those the reranker read already.
 
-        Returns:
-            The candidates whose chunk still exists, and the reranker's score of each.
+    Args:
+        chunks: The chunk store.
+        version: The version searched: chunks come from its manifest only.
+        answer: The hits to show.
+        read: Chunks of the same manifest read earlier in this search, by ID.
 
-        Raises:
-            RerankerError: The reranker answered with unusable scores.
-        """
-        stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in head])
-        # A chunk gone since the search (the manifest was collected) is not sent, nor shown.
-        kept = tuple(h for h in head if h.chunk_id in stored)
-        if not kept:
-            return kept, []
-        scores = await reranker.rerank(query, [stored[h.chunk_id].chunk.content for h in kept])
-        if len(scores) != len(kept) or not all(math.isfinite(score) for score in scores):
-            reason = "the answer does not hold one finite score per candidate"
-            raise RerankerError(reason)
-        return kept, scores
+    Returns:
+        The chunks that exist, by ID.
+    """
+    missing = [h.chunk_id for h in answer.hits if h.chunk_id not in read]
+    loaded = await chunks.get_many(version.manifest_id, missing) if missing else {}
+    wanted = {h.chunk_id for h in answer.hits}
+    return {**{k: v for k, v in read.items() if k in wanted}, **loaded}
 
 
 def _fallen_back(answer: PipelineAnswer, reason: FallbackReason) -> PipelineAnswer:
@@ -585,14 +605,13 @@ class SearchDocsUseCase:
             answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
+        read: Mapping[ChunkId, StoredChunk] = {}
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
             with self.tracer.span("search_docs.rerank", mode=answer.mode.value):
-                answer = await self.modes.rerank(choice, version, text.value, answer)
+                answer, read = await self.modes.rerank(choice, version, text.value, answer)
         answer = answer.cut(query.limit)
         with self.tracer.span("search_docs.chunks", mode=answer.mode.value):
-            stored = await self.chunks.get_many(
-                version.manifest_id, [h.chunk_id for h in answer.hits]
-            )
+            stored = await _chunks_of(self.chunks, version, answer, read)
         # A chunk gone since the search (the manifest was collected) leaves no result, and is not
         # counted as a candidate either, so results and coverage stay consistent.
         results = [
@@ -1266,14 +1285,13 @@ class QueryDocsUseCase:
             )
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
+        read: Mapping[ChunkId, StoredChunk] = {}
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
             with self.tracer.span("query_docs.rerank", mode=answer.mode.value):
-                answer = await self.modes.rerank(choice, version, text.value, answer)
+                answer, read = await self.modes.rerank(choice, version, text.value, answer)
         answer = answer.cut(QUERY_DOCS_CANDIDATES)
         with self.tracer.span("query_docs.chunks", mode=answer.mode.value):
-            stored = await self.chunks.get_many(
-                version.manifest_id, [h.chunk_id for h in answer.hits]
-            )
+            stored = await _chunks_of(self.chunks, version, answer, read)
         sections = [
             DocSectionOut.from_stored(version, stored[hit.chunk_id])
             for hit in answer.hits
@@ -1704,18 +1722,21 @@ class AiProviders:
             case ModelRole.LLM | ModelRole.JUDGE:
                 return await self.factory.chat_model(profile, binding.ref.model)
 
-    async def reranker_for(self, library: str) -> Reranker | None:
+    async def reranker_for(self, library: str, ai: LibraryAi | None = None) -> Reranker | None:
         """Build the reranker a library's searches use, from the profile as it is now.
 
         Args:
             library: The library ID, any letter case.
+            ai: The library's overrides, when the caller read them already; ``None`` reads them.
 
         Returns:
             The reranker, or ``None`` when the role does not resolve for the library (AI off,
             no role, a profile that no longer exists). The factory raises
             ``ProviderUnsupportedError`` for a profile that cannot rerank here.
         """
-        binding = bind_role(ModelRole.RERANKER, self.roles, await self.library_modes.ai_of(library))
+        if ai is None:
+            ai = await self.library_modes.ai_of(library)
+        binding = bind_role(ModelRole.RERANKER, self.roles, ai)
         if binding is None:
             return None
         profile = await self.profile(binding.ref.profile)

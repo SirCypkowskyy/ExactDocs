@@ -322,7 +322,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   one is a 422 `mode_unavailable` as well.
 - **Reranking** (RET-02): with a `reranker` role, a search's best candidates are reordered by the
   reranker (`reranked: true`, `coverage.reranked` counts them, and each reranked result's `score`
-  is the reranker's). A reranker that times out or fails never fails the search: results keep
+  is the reranker's). When `limit` is more than the top N, the reranked results come first and the
+  rest follow in the mode's order with the mode's scores, which are not comparable with the
+  reranker's. A reranker that times out or fails never fails the search: results keep
   the mode's order with `reranked: false` and `fallback_reason` `reranker_timeout` or
   `reranker_failed` (unless the mode itself fell back, whose reason is kept).
 

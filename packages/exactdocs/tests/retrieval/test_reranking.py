@@ -57,6 +57,7 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports.driven import RetrievalPipeline
 from exactdocs.retrieval.use_cases import Bm25Pipeline
+from exactdocs_kernel import SealedTextUnreadableError
 
 LIB = "/acme/payments"
 QUERY = "retry"
@@ -114,6 +115,9 @@ class FakeFactory:
     reranker_double: ScriptedReranker
     built: list[tuple[str, str]] = field(default_factory=list)
     refuse: bool = False
+    fail: Exception | None = None
+    """Raised while building, as a key that no longer opens would be."""
+    build_seconds: float = 0.0
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
@@ -127,6 +131,9 @@ class FakeFactory:
     async def reranker(self, profile: ProviderProfile, model: str) -> ScriptedReranker:
         if self.refuse:
             raise ProviderUnsupportedError(profile.name, "kind has no rerank API")
+        if self.fail is not None:
+            raise self.fail
+        await asyncio.sleep(self.build_seconds)
         self.built.append((profile.name, model))
         return self.reranker_double
 
@@ -157,14 +164,17 @@ class FallingBack:
 
     bm25: RetrievalPipeline
     requests: list[PipelineRequest] = field(default_factory=list)
+    ghost: bool = False
+    """Put first a hit whose chunk is gone (its manifest was collected meanwhile)."""
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         self.requests.append(request)
         found = await self.bm25.run(request)
+        gone = (SearchHit(chunk_id=ChunkId("gone"), score=99.0, snippet="", highlights=()),)
         return PipelineAnswer(
             mode=RetrievalMode.BM25,
-            hits=found.hits,
-            candidates=found.candidates,
+            hits=(*gone, *found.hits) if self.ghost else found.hits,
+            candidates=found.candidates + 1 if self.ghost else found.candidates,
             reranked=0,
             complete=found.complete,
             fallback_reason=FallbackReason.EMBEDDING_IN_PROGRESS,
@@ -467,6 +477,74 @@ async def test_an_earlier_fallback_reason_is_kept_when_reranking_fails_too() -> 
 
     assert result.fallback_reason is FallbackReason.EMBEDDING_IN_PROGRESS
     assert result.reranked is False
+
+
+async def test_a_reranker_that_cannot_be_built_keeps_the_order_and_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world(limits=RerankLimits(top_n=5))
+    world.factory.fail = SealedTextUnreadableError()  # the secret key changed since it was stored
+    found = await _unreranked(3)
+
+    result = await _search(world)
+
+    assert [r.chunk_id for r in result.results] == found
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_FAILED)
+    assert "could not be built (SealedTextUnreadableError)" in caplog.text
+    assert not world.reranker.calls
+
+
+async def test_building_the_reranker_counts_toward_its_timeout() -> None:
+    world = await _world(limits=RerankLimits(top_n=5, timeout=0.05))
+    world.factory.build_seconds = 1.0
+
+    result = await _search(world)
+
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_TIMEOUT)
+
+
+async def test_a_candidate_gone_before_reranking_is_neither_sent_nor_counted() -> None:
+    world = await _world(roles=WITH_HYBRID, limits=RerankLimits(top_n=4))
+    plain = await world.module.search_docs(
+        SearchDocsQuery(library=LIB, query=QUERY, limit=3, mode="hybrid")
+    )
+    world.hybrid.ghost = True
+
+    result = await world.module.search_docs(
+        SearchDocsQuery(library=LIB, query=QUERY, limit=3, mode="hybrid")
+    )
+
+    assert result.coverage.candidates == plain.coverage.candidates
+    assert "gone" not in [r.chunk_id for r in result.results]
+    assert [len(documents) for _, documents in world.reranker.calls] == [4, 3]
+
+
+async def test_chunks_are_read_once_and_library_settings_once_per_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = await _world(limits=RerankLimits(top_n=5))
+    read: list[list[str]] = []
+    settings_read: list[str] = []
+    get_many, ai_of = InMemoryChunkRepository.get_many, InMemoryLibraryModes.ai_of
+
+    async def counting_get_many(
+        self: InMemoryChunkRepository, manifest_id: str, chunk_ids: Sequence[ChunkId]
+    ) -> object:
+        read.append(list(chunk_ids))
+        return await get_many(self, manifest_id, chunk_ids)
+
+    async def counting_ai_of(self: InMemoryLibraryModes, library: str) -> LibraryAi:
+        settings_read.append(library)
+        return await ai_of(self, library)
+
+    monkeypatch.setattr(InMemoryChunkRepository, "get_many", counting_get_many)
+    monkeypatch.setattr(InMemoryLibraryModes, "ai_of", counting_ai_of)
+
+    result = await _search(world)
+
+    assert len(result.results) == 3
+    assert len(read) == 1  # the reranker's read serves the shown results too
+    assert len(settings_read) == 1
 
 
 # ---------------------------------------------------------------- tracing

@@ -128,6 +128,12 @@ async def test_no_documents_means_no_call() -> None:
     assert not seen
 
 
+def _two(index: object, score: object) -> Callable[[dict[str, Any]], httpx2.Response]:
+    """An answer for two candidates whose first item has this index and score."""
+    items = [{"index": index, "relevance_score": score}, {"index": 0, "relevance_score": 2}]
+    return lambda _: httpx2.Response(200, json={"results": items})
+
+
 @pytest.mark.parametrize(
     ("answer", "reason"),
     [
@@ -152,6 +158,9 @@ async def test_no_documents_means_no_call() -> None:
         ),
         (lambda _: httpx2.Response(200, json={"results": []}), "not a rerank result"),
         (lambda _: httpx2.Response(200, json=["nope"]), "not a rerank result"),
+        (_two(True, 1), "not a rerank result"),
+        (_two(1.0, 1), "not a rerank result"),
+        (_two(1, "1"), "not a rerank result"),
     ],
     ids=[
         "http-error",
@@ -161,6 +170,9 @@ async def test_no_documents_means_no_call() -> None:
         "repeated",
         "missing",
         "shape",
+        "bool-index",
+        "float-index",
+        "text-score",
     ],
 )
 async def test_an_unusable_answer_is_a_reranker_error_without_secrets(
@@ -185,3 +197,15 @@ async def test_a_transport_failure_is_a_reranker_error_without_the_url() -> None
         await reranker.rerank("q", ["a"])
 
     assert "rerank.example.com" not in str(error.value)
+
+
+async def test_one_failed_batch_fails_the_call_with_a_reranker_error() -> None:
+    def second_fails(body: dict[str, Any]) -> httpx2.Response:
+        if body["documents"][0] == "late":
+            return httpx2.Response(500)
+        return _cohere(body)
+
+    documents = ["early"] * COHERE_RERANK_BATCH + ["late"]
+
+    with pytest.raises(RerankerError, match="HTTP 500"):
+        await _reranker(second_fails, []).rerank("q", documents)

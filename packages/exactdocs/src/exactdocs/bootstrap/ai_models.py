@@ -12,13 +12,14 @@ import asyncio
 import importlib
 import importlib.util
 import logging
+import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import ModuleType
 
 from exactdocs.bootstrap.ai_endpoint import Endpoint
-from exactdocs.bootstrap.constants import CHECK_TEXT
+from exactdocs.bootstrap.constants import AI_SDK_MODULE, CHECK_TEXT
 from exactdocs.bootstrap.settings import AiSettings
 from exactdocs.retrieval.constants import MASK, MAX_CHECK_ERROR
 from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
@@ -110,8 +111,23 @@ class PydanticAiModels:
             return "local models arrive with the exactdocs[local] extra (#245)"
         return next((why for module, why in _needs(profile) if not _installed(module)), None)
 
-    def _sdk(self, profile: ProviderProfile) -> ModuleType:
+    async def warm(self) -> None:
+        """Load the SDK side in a worker thread, so no request waits for it on the event loop.
+
+        Called at start when an AI role is configured; a no-op once loaded or without the
+        ``[ai]`` extra (a profile's call then says what to install).
+        """
+        if AI_SDK_MODULE in sys.modules or not _installed("pydantic_ai"):
+            return
+        started = time.perf_counter()
+        await asyncio.to_thread(importlib.import_module, AI_SDK_MODULE)
+        logger.info("AI provider SDKs loaded in %.1fs", time.perf_counter() - started)
+
+    async def _sdk(self, profile: ProviderProfile) -> ModuleType:
         """Load the SDK side, once the profile is known to be callable.
+
+        The first load (seconds: pydantic-ai and the SDKs) runs in a worker thread, never on the
+        event loop; ``warm`` does it at start when a role is configured.
 
         Args:
             profile: The profile.
@@ -124,7 +140,10 @@ class PydanticAiModels:
         """
         if (reason := self.unsupported(profile)) is not None:
             raise ProviderUnsupportedError(profile.name, reason)
-        return importlib.import_module("exactdocs.bootstrap.ai_sdk")
+        loaded = sys.modules.get(AI_SDK_MODULE)
+        if loaded is not None:
+            return loaded
+        return await asyncio.to_thread(importlib.import_module, AI_SDK_MODULE)
 
     async def endpoint(self, profile: ProviderProfile) -> Endpoint:
         """The profile's endpoint: its key, now, and its one client, rebuilt when it changed.
@@ -137,7 +156,7 @@ class PydanticAiModels:
         Returns:
             The endpoint.
         """
-        sdk = self._sdk(profile)
+        sdk = await self._sdk(profile)
         key = sdk.read_key(
             profile, self.keys.get(profile.name), None if self.box is None else self.box.open
         )
@@ -200,7 +219,7 @@ class PydanticAiModels:
         Returns:
             The model.
         """
-        return await self._sdk(profile).chat_model(await self.endpoint(profile), model)
+        return await (await self._sdk(profile)).chat_model(await self.endpoint(profile), model)
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         """Build a pydantic-ai embedder.
@@ -212,7 +231,7 @@ class PydanticAiModels:
         Returns:
             The embedder.
         """
-        return await self._sdk(profile).embedder(await self.endpoint(profile), model)
+        return await (await self._sdk(profile)).embedder(await self.endpoint(profile), model)
 
     async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
         """Build an HTTP reranker in the dialect of the profile's kind (Cohere-compatible, TEI).
@@ -224,7 +243,7 @@ class PydanticAiModels:
         Returns:
             The reranker.
         """
-        sdk = self._sdk(profile)
+        sdk = await self._sdk(profile)
         built: Reranker = sdk.reranker(await self.endpoint(profile), model)
         return built
 
@@ -241,7 +260,7 @@ class PydanticAiModels:
         """
         started = time.perf_counter()
         try:
-            sdk = self._sdk(profile)
+            sdk = await self._sdk(profile)
         except ProviderUnsupportedError as error:
             return self._failed(profile, model, role, started, str(error))
         try:

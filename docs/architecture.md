@@ -802,17 +802,23 @@ back to BM25 with `fallback_reason: vector_store_unavailable`.
 library's `rerank_top_n` or the instance's `[ai.reranker] top_n`). `RetrievalModes.run` asks the
 pipeline for the top N when that is more than the call's limit; the search use cases then open a
 `rerank` stage span (no query, no text) and call `RetrievalModes.rerank`, which hands the answer to
-`Reranking` (in `use_cases`): it builds the library's reranker through `AiProviders.reranker_for`
-(the `ModelFactory`'s `reranker`, typed as the `Reranker` driven port: query and documents in,
-one score each out), reads the candidates' chunk text, and calls it under `asyncio.timeout`
-(`[ai.reranker] timeout`, 2 s). `models.reorder` orders the scored head by score (ties keep the
+`Reranking` (in `use_cases`): it reads the candidates' chunk text (handed back to the use case,
+which reads only the chunks it lacks; a candidate whose chunk is gone is dropped and no longer
+counted in `coverage.candidates`), then, under `asyncio.timeout` (`[ai.reranker] timeout`, 2 s),
+builds the library's reranker through `AiProviders.reranker_for` (the `ModelFactory`'s
+`reranker`, typed as the `Reranker` driven port: query and documents in, one score each out) from
+the library settings `RetrievalModes.choose` read once for the search, and calls it. Any build
+failure (`DomainError`, a sealed key that no longer opens, an unreadable key file) becomes a
+`RerankerError`. The provider SDKs are loaded in a worker thread: at start when a role is
+configured (`Container.running`, `PydanticAiModels.warm`), else on first use, never on the event
+loop. `models.reorder` orders the scored head by score (ties keep the
 mode's order) and keeps the rest after it; the use case then cuts to the limit
 (`PipelineAnswer.cut`). A timeout, a `RerankerError` or a `ProviderUnsupportedError` keeps the
 mode's order with `fallback_reason` `reranker_timeout` / `reranker_failed` and is logged without
 the query. The HTTP adapter (`adapters/driven/http_reranker.py`, `HttpReranker`) speaks the
 Cohere-compatible `/rerank` (`openai-compatible`, `vllm`, `litellm` profiles; Voyage's `data`
 answer too) or TEI's (`tei` profiles), cuts the texts to `MAX_RERANK_*_CHARS`, sends batches the
-endpoint accepts concurrently, and turns every failure into a `RerankerError` without the URL, key
+endpoint accepts concurrently (a `TaskGroup`: one failed batch cancels the rest), and turns every failure into a `RerankerError` without the URL, key
 or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client; the
 fastembed cross-encoder (#245) is another `Reranker` the factory returns for `local` profiles.
 

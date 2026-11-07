@@ -615,6 +615,9 @@ class ModeChoice:
     rerank_top_n: int = 0
     """How many of the best candidates the reranker reorders (the library's, else the
     instance's); 0 when there is no reranking."""
+    library_ai: LibraryAi | None = None
+    """The library's AI overrides as read for this search, so the reranker resolves from the same
+    read; ``None`` when there is no reranking."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -858,7 +861,8 @@ class RerankLimits:
     top_n: int = DEFAULT_RERANK_TOP_N
     """How many of the best candidates are reranked; a library may set its own."""
     timeout: float = DEFAULT_RERANK_TIMEOUT
-    """How long a search waits for the reranker, in seconds, before it keeps its order."""
+    """How long a search gives the reranker to be built and to answer, in seconds, before it keeps
+    its order; the candidates' text is read before the clock starts."""
 
 
 def reorder(hits: Sequence[SearchHit], scores: Sequence[float]) -> tuple[SearchHit, ...]:

@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_evals.reporting import EvaluationReport, ReportCase
 
 from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery, LibraryRetrievalOut
-from exactdocs.retrieval.models import FallbackReason, ModelRole, RetrievalMode
+from exactdocs.retrieval.models import ModelRole, RetrievalMode
 from exactdocs.retrieval.ports.driving import GetLibraryRetrieval, ReadChunk, SearchDocs
 from retrieval_eval.dataset import Answer, CaseInfo, Question, RetrievalDataset
 from retrieval_eval.evaluators import (
@@ -53,13 +53,6 @@ _DIGITS: Final[int] = 4
 """Rates are rounded to this many decimals, so a stored baseline reads plainly."""
 _USD_DIGITS: Final[int] = 6
 """USD per question is rounded to this many decimals (a millionth of a dollar)."""
-_RERANK_FALLBACKS: Final[frozenset[str]] = frozenset(
-    {
-        FallbackReason.RERANKER_TIMEOUT.value,
-        FallbackReason.RERANKER_FAILED.value,
-    }
-)
-"""Fallback reasons that mean the reranker did not reorder the answer."""
 
 
 class Tier(StrEnum):
@@ -150,7 +143,9 @@ class ModeOutcome(_Model):
     reranked: int = 0
     """Cases a reranker reordered (0 without a reranker role)."""
     rerank_fallbacks: int = 0
-    """Cases whose reranker failed or timed out, so the mode's own order was measured."""
+    """Cases where a reranker was expected (its role is configured) and results came back, but
+    they were not reranked: the reranker failed or timed out, so the mode's own order was
+    measured. Counted whatever the fallback reason says (a mode's own fallback takes that field)."""
     baseline_recall_at_5: float | None = None
     recall_at_5_delta_points: float | None = None
     """recall@5 minus the baseline's, in points."""
@@ -228,7 +223,7 @@ def metrics_of(report: EvaluationReport[Question, Answer, CaseInfo]) -> ModeMetr
 
 
 async def evaluate_mode(
-    dataset: RetrievalDataset, mode: EvalMode, retriever: Retriever
+    dataset: RetrievalDataset, mode: EvalMode, retriever: Retriever, *, rerank: bool = False
 ) -> ModeOutcome:
     """Run every case through ``retriever`` and aggregate.
 
@@ -236,6 +231,8 @@ async def evaluate_mode(
         dataset: The cases.
         mode: The mode the retriever answers in.
         retriever: How to ask that mode.
+        rerank: A reranker role is configured: every case with results should come back
+            reranked, and one that does not counts in ``rerank_fallbacks``.
 
     Returns:
         The mode's metrics, the cases with a wrong version, the errors and the misses.
@@ -274,9 +271,9 @@ async def evaluate_mode(
         misses=sorted(misses),
         fallbacks=sum(1 for c in report.cases if c.output.answered_by not in {None, mode.mode}),
         reranked=sum(1 for c in report.cases if c.output.reranked),
-        rerank_fallbacks=sum(
-            1 for c in report.cases if c.output.fallback_reason in _RERANK_FALLBACKS
-        ),
+        rerank_fallbacks=sum(1 for c in report.cases if c.output.hits and not c.output.reranked)
+        if rerank
+        else 0,
     )
 
 
@@ -400,7 +397,8 @@ async def run_modes(
                 mode=mode.mode.value,
                 commits=commits,
             )
-            outcome = await evaluate_mode(dataset, mode, retriever)
+            rerank = ModelRole.RERANKER in status.configured_roles
+            outcome = await evaluate_mode(dataset, mode, retriever, rerank=rerank)
         outcomes.append(outcome)
     return outcomes
 
