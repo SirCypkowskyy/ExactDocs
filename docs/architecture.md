@@ -764,6 +764,11 @@ Not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#
   private ones included (ruff's own rules skip them). It lists every parameter under `Args:`
   (`self`/`cls` excluded), the result under `Returns:` (`Yields:` for a generator; a property
   describes the attribute instead) and raised domain errors under `Raises:`.
+- **MCP tool descriptions come from a constant.** FastMCP publishes a tool function's docstring
+  as the tool's description, `Args:` and `Returns:` included. So a new tool passes
+  `description=` from a `Final` string in its domain's `constants.py` (written for the agent that
+  picks the tool) and keeps a full Google docstring on the function, as `article_outline` does.
+  Never add a tool to `conventions_baseline.txt` instead.
 - **Field docstrings.** Every dataclass field and every pydantic field has an attribute docstring
   on the line after it. Pydantic models set `use_attribute_docstrings=True` (the domains' `_Dto`
   bases do), so the docstring is the field's description in OpenAPI and the MCP tool schemas;

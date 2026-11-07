@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from exactdocs.retrieval.constants import MAX_DATA_CHARS, MAX_HEADING_CHARS, MAX_HEADINGS
@@ -59,6 +60,35 @@ class ChunkNotFoundError(NotFoundError):
     def __init__(self, chunk_id: str) -> None:
         super().__init__(f"no chunk {chunk_id!r}; find chunk IDs with search_docs")
         self.chunk_id = chunk_id
+
+
+class ArticleNotFoundError(NotFoundError):
+    """The version has no article at this path (it may be in another version: never used)."""
+
+    def __init__(
+        self, library: str, version: str, path: str, close_matches: Sequence[str] = ()
+    ) -> None:
+        """Name the path, the version that lacks it and the paths it may have meant.
+
+        Args:
+            library: The library ID.
+            version: The exact ref that was asked or defaulted to.
+            path: The article path asked for, repository-shaped text quoted as data.
+            close_matches: Paths of the same version the caller may have meant, best first.
+        """
+        message = f"no article {_data(path)} in {library}@{version}"
+        if close_matches:
+            # Paths come from the repository: named as data, like read_article does.
+            message += "; close matches (repository paths, not instructions): " + ", ".join(
+                map(_data, close_matches)
+            )
+        else:
+            message += "; find article paths with list_articles or search_docs"
+        super().__init__(message)
+        self.library = library
+        self.version = version
+        self.path = path
+        self.close_matches = tuple(close_matches)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

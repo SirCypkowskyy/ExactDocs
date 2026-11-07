@@ -4,6 +4,7 @@ from typing import Self
 from exactdocs.retrieval.constants import DEFAULT_QUERY_DOCS_TOKEN_BUDGET
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    ArticleSuggestions,
     ChunkRepository,
     DefaultVersions,
     Libraries,
@@ -14,6 +15,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchTracer,
 )
 from exactdocs.retrieval.ports.driving import (
+    ArticleOutline,
     CollectChunks,
     DiscardPendingChunks,
     GetChunkSets,
@@ -29,6 +31,7 @@ from exactdocs.retrieval.ports.driving import (
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
+    ArticleOutlineUseCase,
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
     GetChunkSetsUseCase,
@@ -56,6 +59,8 @@ class RetrievalModule:
     index_manifest: IndexManifest
     get_chunk_sets: GetChunkSets
     read_chunk: ReadChunk
+    article_outline: ArticleOutline
+    """An article's heading tree with chunk IDs (MCP, REST, and the agentic mode)."""
     resolve_library_id: ResolveLibraryId
     query_docs: QueryDocs
     discard_pending_chunks: DiscardPendingChunks
@@ -77,6 +82,7 @@ class RetrievalModule:
         search: SearchIndex,
         maintenance: SearchIndexMaintenance,
         renames: RenamedPaths | None = None,
+        suggestions: ArticleSuggestions | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
         tracer: SearchTracer | None = None,
@@ -98,6 +104,9 @@ class RetrievalModule:
             get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),
             read_chunk=ReadChunkUseCase(
                 versions=searchable, manifests=manifests, chunks=chunks, renames=renames
+            ),
+            article_outline=ArticleOutlineUseCase(
+                versions=searchable, chunks=chunks, suggestions=suggestions
             ),
             resolve_library_id=ResolveLibraryIdUseCase(
                 libraries=libraries,

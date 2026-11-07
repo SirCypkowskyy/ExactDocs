@@ -22,6 +22,9 @@ from exactdocs.retrieval.constants import (
 )
 from exactdocs.retrieval.dtos import (
     MAX_NAME,
+    MAX_PATH,
+    ArticleOutlineOut,
+    ArticleOutlineQuery,
     ChunkOut,
     LibraryMatchOut,
     QueryDocsQuery,
@@ -35,6 +38,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import (
+    ArticleOutline,
     QueryDocs,
     ReadChunk,
     ResolveLibraryId,
@@ -145,11 +149,13 @@ def build_router(
     search_docs: SearchDocs,
     search_all_libraries: SearchAllLibraries,
     read_chunk: ReadChunk,
+    article_outline: ArticleOutline,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
 ) -> APIRouter:
     """Expose retrieval: search beside the catalog's ``/libraries`` routes, ``/chunks``, ``/c7``."""
     router = APIRouter(tags=["retrieval"])
+    router.include_router(_outline_router(article_outline))
 
     # The ref is `?ref=` (it may contain `/`); no ref means the default version.
     @router.get("/libraries/{owner}/{repo}/search")
@@ -292,5 +298,45 @@ def build_router(
         return PlainTextResponse(
             f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
         )
+
+    return router
+
+
+def _outline_router(article_outline: ArticleOutline) -> APIRouter:
+    """Expose ``GET /libraries/{owner}/{repo}/outline``, beside the catalog's article route.
+
+    Args:
+        article_outline: The driving port that builds the outline.
+
+    Returns:
+        A router with the one route.
+    """
+    router = APIRouter(tags=["retrieval"])
+
+    @router.get("/libraries/{owner}/{repo}/outline")
+    async def outline(
+        owner: str,
+        repo: str,
+        path: Annotated[str, Query(min_length=1, max_length=MAX_PATH)],
+        ref: Annotated[str | None, Query(max_length=MAX_NAME)] = None,
+    ) -> ArticleOutlineOut:
+        """An article's heading tree with a chunk ID per heading, without its text.
+
+        404 `not_found` for a version that is not imported or a path it does not have.
+
+        Args:
+            owner: Repository owner, the first part of the library ID.
+            repo: Repository name, the second part of the library ID.
+            path: Article path in that version.
+            ref: Exact imported ref; the default version when absent.
+
+        Returns:
+            The outline and the version that answered.
+        """
+        try:
+            query = ArticleOutlineQuery(library=f"/{owner}/{repo}", ref=ref, path=path)
+        except ValidationError as error:  # what the Query() bounds above cannot see
+            raise RequestValidationError(error.errors()) from error
+        return await article_outline(query)
 
     return router

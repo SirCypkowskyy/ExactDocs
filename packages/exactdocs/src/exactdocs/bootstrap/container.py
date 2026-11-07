@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogArticleSuggestions,
     CatalogCollector,
     CatalogDefaultVersions,
     CatalogImportedTags,
@@ -119,6 +120,7 @@ def _build_read_side(
         search=search,
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
+        suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
     )
