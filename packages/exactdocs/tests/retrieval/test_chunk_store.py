@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
@@ -16,6 +17,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryLibraryModes,
     InMemorySearchIndex,
 )
+from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.constants import UNKNOWN_MANIFEST_GRACE
@@ -217,12 +219,13 @@ class World:
         return await self.retrieval.read_chunk(ReadChunkQuery(chunk_id=chunk_id))
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     catalog, clock = FakeCatalog(), FakeClock()
 
     def build(
-        chunks: ChunkRepository, search: InMemorySearchIndex | SqliteSearchIndex
+        chunks: ChunkRepository,
+        search: InMemorySearchIndex | SqliteSearchIndex | PostgresSearchIndex,
     ) -> RetrievalModule:
         return RetrievalModule.build(
             defaults=InMemoryDefaultVersions(),
@@ -247,8 +250,10 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             build(memory, InMemorySearchIndex(chunks=memory)), catalog, clock, count, memory
         )
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
-    async with container.running():
+    async with container.running(jobs=False):
 
         async def count_rows() -> int:
             async with container.engine.connect() as connection:
@@ -257,7 +262,11 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                 ).scalar_one()
 
         sqlite = SqliteChunkRepository(engine=container.engine)
-        search = SqliteSearchIndex(engine=container.engine)
+        search = (
+            PostgresSearchIndex(engine=container.engine)
+            if request.param == "postgres"
+            else SqliteSearchIndex(engine=container.engine)
+        )
         yield World(build(sqlite, search), catalog, clock, count_rows, sqlite)
 
 

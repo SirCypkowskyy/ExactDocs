@@ -1,8 +1,11 @@
-"""The one SQLite database: data directory, engine and the single Alembic history.
+"""The one database: data directory, engine and the single Alembic history.
 
 Every domain keeps its tables in this database (prefixed ``catalog_``, ``retrieval_``, ...) and
 its adapters receive the :class:`AsyncEngine`. Schema changes are Alembic revisions in
 ``migrations/versions``, owned by this package so no domain depends on another's schema.
+
+The database is a SQLite file in the data directory (the default) or PostgreSQL
+(``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share.
 """
 
 import sqlite3
@@ -15,19 +18,34 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, event
+from sqlalchemy import Connection, event, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
-from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATIONS, MIN_SQLITE
+from exactdocs.bootstrap.constants import (
+    BUSY_TIMEOUT_MS,
+    COLLATED_PREFIXES,
+    LOCK_NOT_AVAILABLE,
+    MIGRATION_LOCK,
+    MIGRATIONS,
+    MIN_POSTGRES,
+    MIN_SQLITE,
+    POSTGRES_DRIVER,
+    WRITE_LOCK,
+    WRITE_LOCK_TIMEOUT_MS,
+)
 from exactdocs.bootstrap.settings import Settings
 
 
 class StartupError(RuntimeError):
     """The instance cannot start with this configuration; the message says what to change."""
+
+
+class WriteTurnTimeoutError(RuntimeError):
+    """On PostgreSQL, a writing transaction waited longer than ``WRITE_LOCK_TIMEOUT_MS``."""
 
 
 def alembic_config(location: Path = MIGRATIONS) -> Config:
@@ -54,15 +72,20 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
     creates no directory, switches no journal mode and can never write. A missing file is a
     ``StartupError`` naming it.
     """
-    _check_sqlite()
     try:
         url = make_url(settings.effective_database_url)
     except ArgumentError as exc:
         message = "EXACTDOCS_DATABASE_URL is not a valid database URL."
         raise StartupError(message) from exc
+    if url.get_backend_name() == "postgresql":
+        return _open_postgres(url, settings, read_only=read_only)
     if url.get_backend_name() != "sqlite":
-        message = f"Unsupported database {url.get_backend_name()!r}: only SQLite is supported"
+        message = (
+            f"Unsupported database {url.get_backend_name()!r}: use SQLite or PostgreSQL "
+            "(postgresql+psycopg://...)."
+        )
         raise StartupError(message)
+    _check_sqlite()
     if read_only:
         return _open_read_only(url)
     _prepare_directory(settings.data_dir)
@@ -98,6 +121,80 @@ def _open_read_only(url: URL) -> AsyncEngine:
     event.listen(engine.sync_engine, "connect", _configure_read_only_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
+
+
+def _open_postgres(url: URL, settings: Settings, *, read_only: bool) -> AsyncEngine:
+    """Return an engine on PostgreSQL through psycopg 3 (no connection is made yet).
+
+    Args:
+        url: The database URL.
+        settings: The instance's settings (the data directory is still prepared for a server).
+        read_only: Every transaction is read-only (``default_transaction_read_only``).
+
+    Returns:
+        The engine.
+
+    Raises:
+        StartupError: Another PostgreSQL driver is named.
+    """
+    if url.drivername != POSTGRES_DRIVER:
+        message = (
+            f"Unsupported PostgreSQL driver {url.drivername!r}: ExactDocs uses psycopg 3, "
+            "write the URL as postgresql+psycopg://... (or postgresql://...)."
+        )
+        raise StartupError(message)
+    if not read_only:
+        _prepare_directory(settings.data_dir)  # git's work folders and known_hosts live there
+    options = "-c default_transaction_read_only=on" if read_only else None
+    engine = create_async_engine(
+        url,
+        pool_pre_ping=True,  # a server restart or a pooler leaves dead connections behind
+        connect_args={"options": options} if options else {},
+    )
+    event.listen(engine.sync_engine, "begin", _begin_postgres)
+    return engine
+
+
+def _begin_postgres(connection: Connection) -> None:
+    """Make a ``begin_immediate`` transaction take turns with the others that ask for it.
+
+    SQLite has one writer at a time and the adapters rely on ``BEGIN IMMEDIATE`` to make a
+    read-then-write atomic (the first admin, a manifest's activation). On PostgreSQL the same
+    transactions take one transaction-level advisory lock, released at commit or rollback, so
+    they keep that guarantee across every process using the database. A turn waits at most
+    ``WRITE_LOCK_TIMEOUT_MS``, as SQLite waits ``BUSY_TIMEOUT_MS``, then fails with
+    ``WriteTurnTimeoutError``. The price is SQLite's too: one writing transaction at a time,
+    whatever the number of processes.
+
+    Args:
+        connection: The connection whose transaction begins.
+    """
+    if not connection.get_execution_options().get("begin_immediate", False):
+        return
+    connection.exec_driver_sql(f"SET LOCAL lock_timeout = {WRITE_LOCK_TIMEOUT_MS}")
+    try:
+        connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({WRITE_LOCK})")
+    except OperationalError as error:
+        if getattr(error.orig, "sqlstate", None) != LOCK_NOT_AVAILABLE:
+            raise
+        message = (
+            f"Another ExactDocs process kept the database's write turn for over "
+            f"{WRITE_LOCK_TIMEOUT_MS // 1000} s; try again."
+        )
+        raise WriteTurnTimeoutError(message) from error
+    connection.exec_driver_sql("SET LOCAL lock_timeout = DEFAULT")
+
+
+def is_postgres(engine: AsyncEngine) -> bool:
+    """Tell whether the engine is on PostgreSQL.
+
+    Args:
+        engine: The database engine.
+
+    Returns:
+        ``True`` for PostgreSQL, ``False`` for SQLite.
+    """
+    return engine.dialect.name == "postgresql"
 
 
 def _configure_read_only_connection(
@@ -173,7 +270,15 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
     it. ``PRAGMA foreign_key_check`` before the commit proves the revisions left no violation.
     The transaction is ``BEGIN IMMEDIATE``: processes starting together migrate one after the
     other (the later ones find nothing left to do) instead of failing with "database is locked".
+
+    On PostgreSQL the revisions run in one transaction that first takes an advisory lock (the
+    same turn-taking across processes), and the text columns of ExactDocs' tables are then given
+    the "C" collation (see ``COLLATED_PREFIXES``).
     """
+    if is_postgres(engine):
+        async with engine.begin() as connection:
+            await connection.run_sync(_upgrade_postgres, location)
+        return
     async with engine.connect() as connection:
         await connection.execution_options(begin_immediate=True)
         # Raw cursor: the pragma is a no-op inside a transaction, which SQLAlchemy would begin.
@@ -203,6 +308,77 @@ def _upgrade(connection: Connection, location: Path) -> None:
         raise StartupError(message)
 
 
+def _upgrade_postgres(connection: Connection, location: Path) -> None:
+    """Run the revisions on PostgreSQL, one process at a time, then collate the text columns.
+
+    Args:
+        connection: A connection inside the migration's transaction.
+        location: The Alembic revisions.
+
+    Raises:
+        StartupError: The server is older than PostgreSQL 14, or the database is not UTF8.
+    """
+    version = connection.exec_driver_sql("SHOW server_version_num").scalar_one()
+    if int(version) < MIN_POSTGRES:
+        message = f"PostgreSQL {version} is too old: ExactDocs needs PostgreSQL 14 or newer."
+        raise StartupError(message)
+    encoding = connection.exec_driver_sql("SHOW server_encoding").scalar_one()
+    if encoding != "UTF8":
+        message = (
+            f"The PostgreSQL database is encoded in {encoding}: ExactDocs needs UTF8 "
+            "(CREATE DATABASE ... ENCODING 'UTF8')."
+        )
+        raise StartupError(message)
+    connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({MIGRATION_LOCK})")
+    config = alembic_config(location)
+    config.attributes["connection"] = connection
+    command.upgrade(config, "head")
+    _collate_by_code_point(connection)
+
+
+def _collate_by_code_point(connection: Connection) -> None:
+    """Give every text column of ExactDocs' tables the "C" collation, once.
+
+    SQLite compares text byte by byte; a PostgreSQL database usually has a locale's collation
+    (``en_US.utf8``), under which ``B`` sorts after ``a`` and listings would come out in another
+    order. Revisions create plain ``Text`` columns, so this runs after every migration and only
+    changes the columns that are not "C" yet (a new revision's, or every column of a new database),
+    keeping their exact type (``varchar(n)`` too). A column a generated column or a view reads
+    cannot change type and is left alone: give such a column ``Text(collation="C")`` in its
+    revision, as ``0c4e8a2f6b19`` does.
+
+    Args:
+        connection: A connection inside the migration's transaction.
+    """
+    rows = connection.execute(
+        text(
+            "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod)"
+            " FROM pg_attribute a"
+            " JOIN pg_class c ON c.oid = a.attrelid"
+            " JOIN pg_type t ON t.oid = a.atttypid"
+            " WHERE c.relnamespace = current_schema()::regnamespace AND c.relkind = 'r'"
+            " AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''"
+            " AND t.typcategory = 'S'"
+            " AND a.attcollation <> (SELECT oid FROM pg_collation WHERE collname = 'C'"
+            "  AND collnamespace = 'pg_catalog'::regnamespace)"
+            " AND left(c.relname, strpos(c.relname, '_')) = ANY(:prefixes)"
+            # A column a generated column or a view reads cannot change type: those keep theirs.
+            " AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.refobjid = a.attrelid"
+            "  AND d.refobjsubid = a.attnum"
+            "  AND (d.classid = 'pg_rewrite'::regclass"
+            "  OR (d.classid = 'pg_attrdef'::regclass AND d.deptype = 'n')))"
+            " ORDER BY c.relname, a.attnum"
+        ),
+        {"prefixes": list(COLLATED_PREFIXES)},
+    ).all()
+    preparer = connection.dialect.identifier_preparer
+    for table, column, column_type in rows:
+        connection.exec_driver_sql(
+            f"ALTER TABLE {preparer.quote(table)} ALTER COLUMN {preparer.quote(column)}"
+            f' TYPE {column_type} COLLATE "C"'
+        )
+
+
 async def current_revision(engine: AsyncEngine) -> str | None:
     """Return the schema revision the database is at, or ``None`` before the first migration."""
     async with engine.connect() as connection:
@@ -230,7 +406,7 @@ def database_file(engine: AsyncEngine) -> Path | None:
         The path, or ``None`` for an in-memory database.
     """
     database = engine.url.database
-    if not database or database == ":memory:":
+    if is_postgres(engine) or not database or database == ":memory:":
         return None
     if database.startswith("file:"):  # the read-only engine's URI form
         return Path(unquote(urlparse(database).path))
@@ -241,6 +417,7 @@ def database_file_missing(engine: AsyncEngine) -> bool:
     """Tell, without connecting, whether the database file is gone.
 
     Connecting to a missing SQLite file would create an empty one, so probes ask this first.
+    A PostgreSQL database has no file: always ``False``.
 
     Args:
         engine: The database engine.
@@ -256,6 +433,15 @@ async def check_schema_is_current(engine: AsyncEngine) -> None:
     """Refuse a database a reader cannot use: unreadable, not migrated, or newer than this build."""
     script = ScriptDirectory.from_config(alembic_config())
     head = script.get_current_head()
+    if is_postgres(engine):
+        where = engine.url.render_as_string(hide_password=True)
+        try:
+            revision = await current_revision(engine)
+        except OperationalError as exc:
+            message = f"Cannot read the ExactDocs database at {where}: {exc.orig}."
+            raise StartupError(message) from exc
+        _refuse_revision(script, revision, head, where)
+        return
     path = Path(unquote(urlparse(engine.url.database or "").path))
     try:
         revision = await current_revision(engine)
@@ -268,18 +454,35 @@ async def check_schema_is_current(engine: AsyncEngine) -> None:
             "server from starting later."
         )
         raise StartupError(message) from exc
+    _refuse_revision(script, revision, head, str(path))
+
+
+def _refuse_revision(
+    script: ScriptDirectory, revision: str | None, head: str | None, where: str
+) -> None:
+    """Raise ``StartupError`` unless the database is at ``head``.
+
+    Args:
+        script: This build's revisions.
+        revision: The database's revision.
+        head: The revision this build needs.
+        where: The database, as the message names it.
+
+    Raises:
+        StartupError: The database is behind, empty or ahead of this build.
+    """
     if revision == head:
         return
     if revision and revision not in {r.revision for r in script.walk_revisions()}:
         message = (
-            f"The ExactDocs database at {path} was migrated by a newer ExactDocs (revision "
+            f"The ExactDocs database at {where} was migrated by a newer ExactDocs (revision "
             f"{revision}; this one knows up to {head}). Upgrade this ExactDocs "
             "(for uvx: `uvx --refresh exactdocs`)."
         )
         raise StartupError(message)
     found = f"at revision {revision}" if revision else "empty"
     message = (
-        f"The ExactDocs database at {path} is {found}, but this version needs {head}. "
+        f"The ExactDocs database at {where} is {found}, but this version needs {head}. "
         "Start `exactdocs serve` to migrate it, then try again."
     )
     raise StartupError(message)

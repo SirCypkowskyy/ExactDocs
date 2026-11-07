@@ -410,8 +410,9 @@ chunks until the new ones are in place.
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (database, the generated secret key, `known_hosts`, fetch caches and `jobs.sqlite`, the durable steps of running imports). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
-| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | SQLite file, e.g. `sqlite:////srv/exactdocs.db` (PostgreSQL arrives with TEAM-01). Opened in WAL mode; the schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
+| `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform user-data directory | Where ExactDocs keeps everything (the SQLite database, the generated secret key, `known_hosts`, fetch caches and `jobs.sqlite`, the durable steps of running imports; on PostgreSQL only `known_hosts` and fetch caches). Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, e.g. `sqlite:////srv/exactdocs.db` (opened in WAL mode), or a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](#postgresql)). The schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
+| `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | PostgreSQL only: the schema of the same database where DBOS keeps the durable steps of jobs (SQLite keeps them in `<data dir>/jobs.sqlite`) |
 | `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
 | `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
@@ -425,7 +426,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
 | `EXACTDOCS_MAX_IMPORT_BYTES` | `268435456` (256 MiB) | An import whose selected text adds up to more fails with `import_too_large` instead of exhausting memory |
-| `EXACTDOCS_IMPORT_BATCH_FILES` | `100` | Files an import parses and chunks per durable step. An import that a crash, `kill -9` or a deploy interrupted resumes on the next start after its last completed step (DBOS keeps them in `<data dir>/jobs.sqlite`: about 3x the version's text while the import runs, compacted once no job runs), so it loses at most this many files of work |
+| `EXACTDOCS_IMPORT_BATCH_FILES` | `100` | Files an import parses and chunks per durable step. An import that a crash, `kill -9` or a deploy interrupted resumes on the next start after its last completed step (DBOS keeps them in `<data dir>/jobs.sqlite`, or in the `dbos` schema on PostgreSQL: about 3x the version's text while the import runs, compacted once no job runs), so it loses at most this many files of work |
 | `EXACTDOCS_JOB_POLL_SECONDS` | `1` | How often the job worker looks for a queued job to start (at most 60). An idle server polls no more often than this; lower it only if a second of delay before an import starts matters |
 | `EXACTDOCS_TELEMETRY` | `off` | `otlp`: traces and metrics over OTLP/HTTP to your OpenTelemetry collector, named by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `..._METRICS_ENDPOINT`); a signal with no endpoint, or with `OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` set to `none`, is not exported. See [Privacy and observability](#privacy-and-observability) |
 | `EXACTDOCS_TELEMETRY_QUERY_TEXT` | `false` | Keep the text of search queries in the traces. Off, it is left out of every span and redacted from request URLs |
@@ -435,7 +436,7 @@ chunks until the new ones are in place.
 
 ### Upgrading
 
-Start the new version on the same data directory (`docker pull` and recreate the container, or
+On PostgreSQL, stop every process first (see [PostgreSQL](#postgresql)). Start the new version on the same data directory (`docker pull` and recreate the container, or
 `uvx --refresh exactdocs serve`): the database is migrated on start and every library keeps
 serving; nothing is imported again. CI proves it for each change, from the previous release's data
 directory. When a release changes how the search index is built, its notes have a **Requires
@@ -451,6 +452,9 @@ It rebuilds the index from the stored chunks beside the one that answers, then s
 step: the server keeps serving throughout. Running it when nothing changed is harmless.
 
 ### Backup and restore
+
+On PostgreSQL, use `pg_dump` instead (see [PostgreSQL](#postgresql)); what follows is for the
+SQLite database.
 
 `exactdocs backup` writes one archive of the instance while the server keeps serving: a
 consistent snapshot of the database (SQLite's online backup API, so writers are not stopped) with
@@ -491,9 +495,9 @@ killed leaves a `.exactdocs-backup-*` folder there; the next backup removes thos
 day. A restore checks each file's size against its manifest and the free space (keeping 64 MiB to
 spare) before it writes anything.
 
-PostgreSQL (planned with TEAM-01) is backed up with its own tools: `pg_dump -Fc` of the database,
-plus `jobs.sqlite`, `known_hosts` and the key from the data directory; `exactdocs backup` refuses a
-non-SQLite `EXACTDOCS_DATABASE_URL`.
+PostgreSQL is backed up with its own tools: `pg_dump -Fc` of the database (DBOS's job steps are in
+it too), plus `EXACTDOCS_SECRET_KEY`; `exactdocs backup` refuses a non-SQLite
+`EXACTDOCS_DATABASE_URL`.
 
 ### AI providers and model roles
 
@@ -604,6 +608,90 @@ configured, the provider SDKs are loaded in a worker thread at start, so the fir
 waits for them. Traces show it as the `rerank` stage, without the query or any text. The hybrid, HyDE
 and agentic pipelines arrive with #91 onwards.
 
+### PostgreSQL
+
+A team's instance can keep everything in PostgreSQL 14 or newer (a UTF8 database, in any locale)
+instead of the SQLite file, and
+then run several server processes on it: in one container (`WEB_CONCURRENCY`), in several, or on
+several hosts behind a load balancer. Every process serves the web UI, the API and MCP, and runs
+jobs; a job runs once, in whichever process takes it first, and at most one per library at a time.
+A process that dies with running jobs leaves them to the next one that starts, or after about 30 s
+to any running process, which resumes them at their last completed step. A database outage or
+failover of up to about 15 s is waited out. A longer one, or another process taking over a
+process's executor slot meanwhile, makes that process stop taking jobs and stop itself (as
+`SIGTERM` does) within a few seconds, before anyone else can take its jobs over, so that no job runs
+twice: run it with a restart policy (`restart: unless-stopped` in the example below, a Deployment
+in Kubernetes). A process that starts after a crash waits 15 s before it resumes the jobs the
+crashed one left (it logs why).
+
+- `EXACTDOCS_DATABASE_URL=postgresql://user:password@host:5432/exactdocs` (`postgresql+psycopg://`
+  means the same). The role needs to own the database, or at least to create tables and a schema
+  in it; it does **not** need `CREATEDB`: DBOS keeps its tables in the schema `dbos` of the same
+  database (`EXACTDOCS_DBOS_SYSTEM_SCHEMA`), never in a database of its own. Percent-encode
+  special characters of the password.
+- `EXACTDOCS_SECRET_KEY` is required, the same in every process: otherwise each process would
+  generate its own key and could not open the credentials another one stored.
+- Every process still has its own data directory for its git work folders and `known_hosts`;
+  nothing in it has to be shared or backed up.
+- Back up with PostgreSQL's own tools (`pg_dump -Fc exactdocs > exactdocs.dump`); `exactdocs
+  backup` and `restore` copy a SQLite file only. Stop every ExactDocs process before a
+  `pg_restore`, and start them once it is done.
+- **Upgrade with every process stopped.** The new version migrates the schema when its first
+  process starts, and older processes only check the schema when they start, so stop them all,
+  then start the new version. This also matters when a release changes how jobs run (its notes
+  say so): an older process would otherwise keep running jobs the new one cannot resume.
+- Search uses PostgreSQL's full-text search (`tsvector`, the `simple` configuration, ranked with
+  `ts_rank_cd` over the same column weights, words cut as SQLite's index cuts them). It is not
+  BM25, but the shared ranking suite passes on it as on SQLite.
+- Writes that must not interleave (storing and activating a version, indexing it) take turns
+  across all processes, as on SQLite, so several processes serve more readers but do not import
+  faster. A writer that waits more than 30 s for its turn gives up with an error, as SQLite does
+  after its own wait.
+- Sign-in throttling counts failures per process (#253).
+
+Several processes on one PostgreSQL database, verified in CI (`deploy/compose.postgres.yaml`):
+
+<!-- compose.postgres.yaml: start -->
+```yaml
+# ExactDocs on PostgreSQL: several server processes share one database (README, "PostgreSQL").
+#   export POSTGRES_PASSWORD=$(openssl rand -hex 24) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+#   docker compose -f compose.postgres.yaml up -d
+services:
+  db:
+    restart: unless-stopped
+    # PostgreSQL 17 with pg_search and pgvector; any PostgreSQL 14 or newer works as well.
+    image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
+    environment:
+      POSTGRES_USER: exactdocs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: exactdocs
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U exactdocs -d exactdocs"]
+      interval: 2s
+      retries: 30
+    volumes: ["exactdocs-db:/var/lib/postgresql/data"]
+  exactdocs:
+    # A process whose executor slot another one took stops itself; this brings it back.
+    restart: unless-stopped
+    image: ${EXACTDOCS_IMAGE:-ghcr.io/sircypkowskyy/exactdocs:latest}
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${POSTGRES_PASSWORD}@db:5432/exactdocs
+      EXACTDOCS_SECRET_KEY: ${EXACTDOCS_SECRET_KEY:?set EXACTDOCS_SECRET_KEY}
+      WEB_CONCURRENCY: "2" # server processes; on PostgreSQL every one serves and runs jobs
+    ports: ["127.0.0.1:3000:3000"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes: ["exactdocs-data:/data"]
+volumes:
+  exactdocs-db:
+  exactdocs-data:
+```
+<!-- compose.postgres.yaml: end -->
+
 ### Private repositories
 
 Send a credential next to the URL in `POST /api/v1/repositories/check`, `POST /api/v1/libraries`
@@ -650,7 +738,8 @@ a temporary folder under the data directory (`work/`), with hooks, submodules an
 
 ## Teams and access (planned)
 
-MVP-1 has one admin account on SQLite. For teams, the plan is to run one instance on PostgreSQL, sign in through OIDC/OAuth, and share libraries with users or
+MVP-1 has one admin account. An instance can already run on [PostgreSQL](#postgresql) with several
+server processes; for teams, the plan is to sign in through OIDC/OAuth, and share libraries with users or
 identity-provider groups:
 
 | Role | Can |
@@ -724,7 +813,7 @@ flowchart TD
         api --> retrieval & catalog & importer & identity
         importer --> catalog & retrieval
     end
-    db[("SQLite in the data directory<br/>PostgreSQL planned")]
+    db[("SQLite in the data directory<br/>or PostgreSQL")]
     git[("Git hosts you configure<br/>GitHub, GitLab, Bitbucket, ...")]
     models[/"Optional model endpoints<br/>embeddings, reranker, LLM (planned)"/]
     agent -->|MCP| mcp
@@ -874,8 +963,8 @@ just dev          # API + MCP on :3000, UI on :5173
 just check        # everything CI runs
 ```
 
-Stack: Python (FastAPI, FastMCP), React (TanStack Router and Query, shadcn/ui), SQLite
-(PostgreSQL and pydantic-ai are planned). The production image serves the built frontend from the backend, so there
+Stack: Python (FastAPI, FastMCP), React (TanStack Router and Query, shadcn/ui), SQLite or
+PostgreSQL (pydantic-ai is planned). The production image serves the built frontend from the backend, so there
 is a single service to run.
 
 | Path | What |
@@ -913,7 +1002,8 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports & ada
 - [ ] Agentic tree retrieval with a pydantic-ai agent and a query cache
 - [ ] Retrieval eval suite (Pydantic Evals) comparing modes
 - [ ] MCP Apps (rendered articles in Claude / ChatGPT)
-- [ ] PostgreSQL, OIDC/OAuth, sharing with viewer / contributor / admin / creator roles
+- [x] PostgreSQL with several server processes
+- [ ] OIDC/OAuth, sharing with viewer / contributor / admin / creator roles
 - [x] OpenTelemetry traces to your own collector
 - [x] Prometheus metrics
 - [ ] `exactdocs.sources.yaml`, webhooks

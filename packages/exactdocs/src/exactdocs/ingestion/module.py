@@ -53,6 +53,7 @@ from exactdocs.ingestion.ports.driven import (
     JobRepository,
     JobRunner,
     LibraryIds,
+    LibraryLocks,
     LibrarySettingsStore,
     LibrarySources,
     ManualTagStore,
@@ -294,7 +295,8 @@ class IngestionModule:
         recovery_hooks: Mapping[JobKind, RecoveryHook] = MappingProxyType({}),
         runner: JobRunner | None = None,
         manual_tags: ManualTagStore | None = None,
-        tag_locks: TagLocks | None = None,
+        tag_locks: LibraryLocks | None = None,
+        settings_locks: LibraryLocks | None = None,
         auto_syncs: AutoSyncStore | None = None,
         schedule_switch: ScheduleSwitch | None = None,
         settings: LibrarySettingsStore | None = None,
@@ -310,7 +312,8 @@ class IngestionModule:
         scheduled checks (``run_scheduled_checks`` is one tick); without it none is kept.
         ``schedule_switch`` turns the tick on while any library has a schedule. ``settings``
         stores edited paths and tag rules; it needs the ``reprocess`` and ``retag`` handlers
-        of ``import_job``.
+        of ``import_job``. ``settings_locks`` orders the edits of one library (another object
+        than ``tag_locks``); without it they take turns within this process only.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
@@ -411,6 +414,7 @@ class IngestionModule:
                 settings=settings or _NoSettings(),
                 jobs=jobs,
                 enqueue_job=enqueue_job,
+                locks=settings_locks or TagLocks(),
             ),
         )
 
@@ -429,7 +433,7 @@ def import_job(
     stored: StoredArticleSource | None = None,
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES,
-    tag_locks: TagLocks,
+    tag_locks: LibraryLocks,
     imported_tags: ImportedTagStore,
     copier: VersionCopier,
     checkpoints: Checkpoints | None = None,

@@ -34,6 +34,8 @@ from sqlalchemy import (
     update,
     values,
 )
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -255,7 +257,7 @@ class SqliteLibraryRepository:
         async with self.engine.begin() as connection:
             values = _library_values(library)
             await connection.execute(
-                sqlite_insert(libraries)
+                _conflict_insert(connection, libraries)
                 .values(id=library.id.value, **values)
                 .on_conflict_do_update(index_elements=[libraries.c.id], set_=values)
             )
@@ -343,7 +345,7 @@ class SqliteLibraryRepository:
                 return
             values = {"tags": json.dumps(tags.tags)}
             await connection.execute(
-                sqlite_insert(manual_tags)
+                _conflict_insert(connection, manual_tags)
                 .values(library_id=library_id.value, path=tags.path, **values)
                 .on_conflict_do_update(
                     index_elements=[manual_tags.c.library_id, manual_tags.c.path], set_=values
@@ -419,21 +421,73 @@ def _tag_columns(entry: ManifestEntry) -> dict[str, str | None]:
     }
 
 
+def _conflict_insert(
+    bind: AsyncConnection | AsyncEngine, table: Table
+) -> sqlite.Insert | postgresql.Insert:
+    """Return an ``INSERT`` that takes ``ON CONFLICT`` clauses, in the database's dialect.
+
+    Args:
+        bind: Where the statement runs (SQLite or PostgreSQL).
+        table: The table to insert into.
+
+    Returns:
+        The statement; both dialects spell ``on_conflict_do_update``/``_nothing`` alike.
+    """
+    if bind.dialect.name == "postgresql":
+        return postgres_insert(table)
+    return sqlite_insert(table)
+
+
 # ponytail: a correlated json_each per row of the manifest, so a sparse tag on a huge manifest
 # scans it all; upgrade to a catalog_manifest_entry_tags(manifest_id, tag, path) side table.
-_has_any_tag = text(
-    "EXISTS (SELECT 1 FROM json_each(catalog_manifest_entries.tags)"
-    " WHERE value IN (SELECT value FROM json_each(:tags)))"
-)
-_has_all_tags = text(
-    "NOT EXISTS (SELECT 1 FROM json_each(:tags)"
-    " WHERE value NOT IN (SELECT value FROM json_each(catalog_manifest_entries.tags)))"
-)
+_has_any_tag = {
+    "sqlite": text(
+        "EXISTS (SELECT 1 FROM json_each(catalog_manifest_entries.tags)"
+        " WHERE value IN (SELECT value FROM json_each(:tags)))"
+    ),
+    "postgresql": text(
+        "EXISTS (SELECT 1 FROM json_array_elements_text(catalog_manifest_entries.tags::json) t"
+        " WHERE t IN (SELECT json_array_elements_text(CAST(:tags AS json))))"
+    ),
+}
+_has_all_tags = {
+    "sqlite": text(
+        "NOT EXISTS (SELECT 1 FROM json_each(:tags)"
+        " WHERE value NOT IN (SELECT value FROM json_each(catalog_manifest_entries.tags)))"
+    ),
+    "postgresql": text(
+        "NOT EXISTS (SELECT 1 FROM json_array_elements_text(CAST(:tags AS json)) wanted"
+        " WHERE wanted NOT IN"
+        " (SELECT json_array_elements_text(catalog_manifest_entries.tags::json)))"
+    ),
+}
+_count_tags = {
+    "sqlite": text(
+        "SELECT tag.value AS name, COUNT(DISTINCT e.path) AS n"
+        " FROM catalog_manifest_entries e, json_each(e.tags) AS tag"
+        " WHERE e.manifest_id = :manifest_id"
+        " GROUP BY tag.value ORDER BY n DESC, name LIMIT :limit"
+    ),
+    "postgresql": text(
+        'SELECT tag COLLATE "C" AS name, COUNT(DISTINCT e.path) AS n'
+        " FROM catalog_manifest_entries e, json_array_elements_text(e.tags::json) AS tag"
+        " WHERE e.manifest_id = :manifest_id"
+        ' GROUP BY tag COLLATE "C" ORDER BY n DESC, name LIMIT :limit'
+    ),
+}
 
 
-def _tag_condition(selection: TagSelection) -> TextClause:
-    """Match the tags JSON list of the entry against the filter's, inside SQLite."""
-    condition = _has_all_tags if selection.match is TagMatch.ALL else _has_any_tag
+def _tag_condition(selection: TagSelection, dialect: str) -> TextClause:
+    """Match the tags JSON list of the entry against the filter's, inside the database.
+
+    Args:
+        selection: The tags wanted and how they must match.
+        dialect: ``sqlite`` or ``postgresql``.
+
+    Returns:
+        The condition, with the wanted tags bound.
+    """
+    condition = (_has_all_tags if selection.match is TagMatch.ALL else _has_any_tag)[dialect]
     return condition.bindparams(tags=json.dumps(sorted(selection.tags)))
 
 
@@ -469,7 +523,7 @@ class SqliteManifestRepository:
                     raise VersionNotFoundError(str(manifest.library), str(manifest.ref))
             if contents:
                 await connection.execute(
-                    sqlite_insert(article_contents).on_conflict_do_nothing(),
+                    _conflict_insert(connection, article_contents).on_conflict_do_nothing(),
                     [
                         {"blob_sha": sha, "content_version": version, "content": text}
                         for (sha, version), text in contents.items()
@@ -477,7 +531,7 @@ class SqliteManifestRepository:
                 )
             if images:
                 await connection.execute(
-                    sqlite_insert(image_blobs).on_conflict_do_nothing(),
+                    _conflict_insert(connection, image_blobs).on_conflict_do_nothing(),
                     [
                         {"blob_sha": sha, "content_type": i.content_type, "data": i.data}
                         for sha, i in images.items()
@@ -707,7 +761,7 @@ class SqliteManifestRepository:
                 or_(path == prefix, and_(path >= f"{prefix}/", path < f"{prefix}0"))
             )
         if tags.tags:
-            query = query.where(_tag_condition(tags))
+            query = query.where(_tag_condition(tags, self.engine.dialect.name))
         if after is not None:
             query = query.where(path > after)
         async with self.engine.connect() as connection:
@@ -729,12 +783,7 @@ class SqliteManifestRepository:
         """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
         # ponytail: scans the manifest's entries; add a tag side table with the one planned for
         # the tag filter (see `_tag_condition`) when versions are large enough to notice.
-        query = text(
-            "SELECT tag.value AS name, COUNT(DISTINCT e.path) AS n"
-            " FROM catalog_manifest_entries e, json_each(e.tags) AS tag"
-            " WHERE e.manifest_id = :manifest_id"
-            " GROUP BY tag.value ORDER BY n DESC, name LIMIT :limit"
-        )
+        query = _count_tags[self.engine.dialect.name]
         async with self.engine.connect() as connection:
             rows = await connection.execute(query, {"manifest_id": manifest_id, "limit": limit})
             return tuple((row.name, row.n) for row in rows)
@@ -838,7 +887,7 @@ class SqliteManifestRepository:
             )
             moved = {"kind": row.kind, "commit_sha": row.commit_sha, "imported_at": at.isoformat()}
             await connection.execute(
-                sqlite_insert(library_versions)
+                _conflict_insert(connection, library_versions)
                 .values(library_id=row.library_id, ref=row.ref, origin=row.origin, **moved)
                 .on_conflict_do_update(  # the origin stays the one the version was created with
                     index_elements=[library_versions.c.library_id, library_versions.c.ref],
@@ -1003,7 +1052,7 @@ async def _insert_versions(connection: AsyncConnection, library: Library) -> Non
     """Add the library's versions; rows that exist are left alone (insert or ignore)."""
     if library.versions:
         await connection.execute(
-            sqlite_insert(library_versions).on_conflict_do_nothing(),
+            _conflict_insert(connection, library_versions).on_conflict_do_nothing(),
             [
                 {
                     "library_id": library.id.value,

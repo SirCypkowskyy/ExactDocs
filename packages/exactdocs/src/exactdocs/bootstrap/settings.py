@@ -15,9 +15,12 @@ from pydantic_settings import (
     SettingsError,
 )
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError
 
 from exactdocs.bootstrap.constants import (
     LOCAL_HOSTS,
+    POSTGRES_DRIVER,
+    POSTGRES_DRIVERS,
     SECRETS_REFUSED_IN_FILE,
     SETTINGS_FILE_VARIABLE,
 )
@@ -190,8 +193,16 @@ class Settings(BaseSettings):
     port: int = 3000
     # Docker sets EXACTDOCS_DATA_DIR=/data; `uvx` uses the platform user-data directory.
     data_dir: Path = Field(default_factory=_default_data_dir)
-    # Overrides the SQLite file in the data directory, e.g. `sqlite:////srv/exactdocs.db`.
     database_url: str | None = None
+    """Overrides the SQLite file in the data directory: another SQLite file
+    (`sqlite:////srv/exactdocs.db`) or a PostgreSQL database
+    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same).
+    Several server processes can share a PostgreSQL database; a SQLite one has one server.
+    """
+    dbos_system_schema: str = Field(default="dbos", pattern=r"^[a-z_][a-z0-9_]{0,62}$")
+    """PostgreSQL only: the schema of the same database where DBOS keeps its workflows and their
+    steps (SQLite keeps them in `<data dir>/jobs.sqlite`). ExactDocs never needs a second database.
+    """
     # Article files above this many bytes are skipped by an import, unread.
     max_article_bytes: int = Field(default=2 * 2**20, ge=1)
     # An import fails when its selected articles add up to more bytes than this (they are held in
@@ -329,14 +340,29 @@ class Settings(BaseSettings):
 
     @property
     def effective_database_url(self) -> str:
-        """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory (aiosqlite driver)."""
+        """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory.
+
+        SQLite runs on aiosqlite, PostgreSQL on psycopg 3: ``postgresql://`` and
+        ``postgresql+psycopg://`` both name it. Any other driver is left as written, and
+        ``open_database`` refuses it.
+        """
         if self.database_url:
             url = make_url(self.database_url)
         else:
             url = URL.create("sqlite", database=(self.data_dir / "exactdocs.db").as_posix())
         if url.get_backend_name() == "sqlite":
             url = url.set(drivername="sqlite+aiosqlite")
+        elif url.drivername in POSTGRES_DRIVERS:
+            url = url.set(drivername=POSTGRES_DRIVER)
         return url.render_as_string(hide_password=False)
+
+    @property
+    def uses_postgres(self) -> bool:
+        """Whether the database is PostgreSQL (``False`` for SQLite and for an invalid URL)."""
+        try:
+            return make_url(self.effective_database_url).get_backend_name() == "postgresql"
+        except ArgumentError:
+            return False
 
     @property
     def trusted_hosts(self) -> list[str]:

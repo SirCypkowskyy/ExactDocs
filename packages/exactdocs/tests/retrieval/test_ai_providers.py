@@ -13,6 +13,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import text
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
@@ -834,13 +835,15 @@ async def test_a_library_override_brings_a_role_the_instance_lacks() -> None:
 # ---------------------------------------------------------------- the stores (adapter contract)
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def stores(
     request: pytest.FixtureRequest,
 ) -> AsyncIterator[tuple[ProviderProfiles, LibraryModes]]:
     if request.param == "memory":
         yield InMemoryProviderProfiles(), InMemoryLibraryModes()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
     async with container.running(jobs=False):
         yield (

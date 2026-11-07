@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryAutoSyncStore
@@ -15,11 +16,13 @@ from exactdocs.ingestion.ports import AutoSyncStore
 T0 = datetime(2026, 11, 6, 9, 0, 0, 123456, tzinfo=UTC)
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def store(request: pytest.FixtureRequest) -> AsyncIterator[AutoSyncStore]:
     if request.param == "memory":
         yield InMemoryAutoSyncStore()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     engine = open_database(Settings())
     await migrate(engine)
     yield SqliteAutoSyncStore(engine=engine)

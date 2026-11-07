@@ -82,7 +82,12 @@ class SqliteAccountRepository:
         guarded = select(*(literal(v) for v in values.values())).where(
             ~exists(select(accounts.c.id))
         )
-        statement = insert(accounts).from_select(list(values), guarded)
+        # preserve_rowcount: an INSERT's rowcount is only kept on request (psycopg reports -1).
+        statement = (
+            insert(accounts)
+            .from_select(list(values), guarded)
+            .execution_options(preserve_rowcount=True)
+        )
         # BEGIN IMMEDIATE: a concurrent writer waits, then sees the row and inserts nothing.
         async with self.engine.connect() as connection:
             await connection.execution_options(begin_immediate=True)

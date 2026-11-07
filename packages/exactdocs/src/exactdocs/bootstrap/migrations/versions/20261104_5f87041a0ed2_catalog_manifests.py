@@ -49,6 +49,7 @@ def upgrade() -> None:
         ["library_id", "ref"],
         unique=True,
         sqlite_where=sa.text("state = 'active'"),
+        postgresql_where=sa.text("state = 'active'"),
     )
     op.create_table(
         "catalog_manifest_entries",

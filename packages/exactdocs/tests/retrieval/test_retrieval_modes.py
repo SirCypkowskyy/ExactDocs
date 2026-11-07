@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
@@ -447,11 +448,13 @@ async def test_a_library_that_does_not_exist_has_no_setting() -> None:
 # ---------------------------------------------------------------- the store (adapter contract)
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def library_modes(request: pytest.FixtureRequest) -> AsyncIterator[LibraryModes]:
     if request.param == "memory":
         yield InMemoryLibraryModes()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
     async with container.running(jobs=False):
         yield SqliteLibraryModes(engine=container.engine)
