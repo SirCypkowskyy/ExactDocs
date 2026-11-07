@@ -46,6 +46,7 @@ from exactdocs.bootstrap.constants import (
     COPY_CHUNK_BYTES,
     DATABASE_MEMBER,
     JOBS_FILE,
+    KEY_FILE,
     KNOWN_HOSTS_FILE,
     MANIFEST_MEMBER,
     MAX_MANIFEST_BYTES,
@@ -57,7 +58,6 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.bootstrap.container import ReadOnlyContainer
 from exactdocs.bootstrap.database import alembic_config, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.constants import KEY_FILE
 
 type _Declared = dict[str, Any]
 """A manifest's entry for one member: ``{"sha256": str, "size": int}``, checked by ``_declared``."""

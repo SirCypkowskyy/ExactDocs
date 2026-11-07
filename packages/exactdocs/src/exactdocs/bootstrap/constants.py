@@ -195,6 +195,17 @@ SETUP_EXEMPT: Final[frozenset[tuple[str, ...]]] = frozenset(
 out of that state, and `GET /session` is how the UI learns that it is in it.
 """
 
+# ---------------------------------------------------------------- secret_box
+KEY_FILE: Final[str] = "secret.key"
+"""File in the data directory that holds the generated secret key."""
+MIN_SECRET_KEY_LENGTH: Final[int] = 32
+"""Shortest ``EXACTDOCS_SECRET_KEY`` accepted, in characters."""
+_HKDF_INFO: Final[bytes] = b"exactdocs credentials v1"
+"""HKDF context of the credential encryption key, so the key serves nothing else (never change it:
+every sealed secret is derived from it)."""
+_OWNER_ONLY: Final[int] = 0o600
+"""File mode of the secret key file: readable by its owner only."""
+
 # ---------------------------------------------------------------- settings
 LOCAL_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "::1")
 """Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS."""

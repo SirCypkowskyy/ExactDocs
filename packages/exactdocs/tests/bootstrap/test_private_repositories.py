@@ -10,13 +10,13 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from exactdocs.bootstrap.constants import KNOWN_HOSTS_FILE
+from exactdocs.bootstrap.constants import KEY_FILE, KNOWN_HOSTS_FILE
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
+from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
-from exactdocs.ingestion.constants import KEY_FILE, REFRESH_JOB
+from exactdocs.ingestion.constants import REFRESH_JOB
 from exactdocs.ingestion.dtos import EnqueueJobCommand
 from exactdocs.ingestion.models import AccessToken, RefKind
 from fixture_repo import DocsRepo

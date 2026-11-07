@@ -14,10 +14,10 @@ from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, migrate, open_database
+from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
-from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
 from exactdocs.ingestion.constants import PINNED
 from exactdocs.ingestion.errors import CredentialsRequiredError
@@ -28,6 +28,15 @@ SECRET = "k" * 40
 SCOPE = "https://git.example.com"
 TOKEN = "ghp_s3cretvalue"
 KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nQmFkZ2VyS2V5Qm9keQ\n-----END OPENSSH PRIVATE KEY-----"
+# `AccessToken(token=TOKEN)` for "/a/b" at SCOPE, sealed with SECRET by the box while it still
+# lived in `ingestion/adapters/driven/secret_box.py` (#248): moving it must not change the format.
+SEALED_BEFORE_THE_MOVE = (
+    "gAAAAABq7yxHapAXhys2EiIKLC_CyR-4NhnfJaQ1rBFmRTyGBYfJtcw7j-2qQQJwoTfFuEJ8tlXI6KDw6yofK0cA950a"
+    "pkQK2D8Ofs4rTnpa890rpi0l3O3yunVN6DwEyaWnmcQVK3alH725Q6TDBuxzNuDsgG_FAthItDoq3BgrYMJfEFK11FnB"
+    "l5JcWqaSFBy0DyFeXhSngO2D4ltGfLa_FRvBLAcztE6vH6oH2N71s8qwJJaBnqlOE15bVoQh-GCa2VVB9HJc"
+)
+SECRET_ONLY = FernetSecretBox.from_secret(SECRET)
+WITH_A_NEWER_KEY = FernetSecretBox.from_secrets("n" * 40, SECRET)
 
 
 def test_a_sealed_text_opens_with_the_same_key_only() -> None:
@@ -208,6 +217,23 @@ def test_the_previous_key_still_opens_what_it_sealed() -> None:
         old.open(new.seal(TOKEN))  # sealed with the new key now
     with pytest.raises(CredentialsRequiredError):
         FernetSecretBox.from_secrets("x" * 40, "y" * 40).open(old.seal(TOKEN))
+
+
+@pytest.mark.parametrize("box", [SECRET_ONLY, WITH_A_NEWER_KEY], ids=["same key", "as previous"])
+async def test_a_credential_sealed_before_the_box_moved_to_bootstrap_still_opens(
+    box: FernetSecretBox,
+) -> None:
+    engine = open_database(Settings())
+    await migrate(engine)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO ingestion_library_credentials (library, sealed) VALUES (:l, :s)"),
+            {"l": "/a/b", "s": SEALED_BEFORE_THE_MOVE},
+        )
+    vault = SqliteCredentialVault(engine=engine, box=box)
+
+    assert await vault.load("/a/b", SCOPE) == AccessToken(token=TOKEN)
+    await engine.dispose()
 
 
 def test_a_short_key_never_appears_in_the_startup_error(tmp_path: Path) -> None:

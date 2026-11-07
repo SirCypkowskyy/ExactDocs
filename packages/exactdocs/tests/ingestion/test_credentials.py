@@ -1,4 +1,4 @@
-"""Credentials: validation, use cases and the vault (encryption itself: test_secret_box)."""
+"""Credentials: validation, use cases and the vault (encryption: bootstrap/test_secret_box)."""
 
 import asyncio
 import shutil

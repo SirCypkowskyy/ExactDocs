@@ -1,4 +1,7 @@
-"""Driven adapter for ``SecretBox``: Fernet (AES-128-CBC with HMAC-SHA256) from ``cryptography``.
+"""The instance's secret box: Fernet (AES-128-CBC with HMAC-SHA256) from ``cryptography``.
+
+It lives in the composition root, not in a domain: every domain that seals secrets declares its
+own small ``SecretBox`` driven port, and bootstrap passes this one instance to each of them.
 
 The key comes from ``EXACTDOCS_SECRET_KEY`` when set; any text of 32 characters or more works,
 and the Fernet key is derived from it with HKDF-SHA256 (so a pasted ``openssl rand -base64 32``
@@ -19,8 +22,7 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from exactdocs.ingestion.constants import MIN_SECRET_KEY_LENGTH
-from exactdocs.ingestion.constants._secrets import _HKDF_INFO, _OWNER_ONLY
+from exactdocs.bootstrap.constants import _HKDF_INFO, _OWNER_ONLY, MIN_SECRET_KEY_LENGTH
 from exactdocs.ingestion.errors import CredentialsRequiredError
 
 log = logging.getLogger(__name__)
@@ -28,7 +30,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FernetSecretBox:
-    """Implements ``ports.driven.SecretBox``.
+    """Implements every domain's ``SecretBox`` driven port (today ``ingestion.ports.SecretBox``).
 
     Sealing uses the first key; opening tries all of them, so a key can be rotated by listing
     the new one first and the old one as a previous key until the credentials are sent again.

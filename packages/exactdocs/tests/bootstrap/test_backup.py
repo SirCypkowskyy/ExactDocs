@@ -27,15 +27,15 @@ from exactdocs.bootstrap.backup import BackupError, create_backup, restore_backu
 from exactdocs.bootstrap.constants import (
     DATABASE_MEMBER,
     JOBS_FILE,
+    KEY_FILE,
     KNOWN_HOSTS_FILE,
     MANIFEST_MEMBER,
 )
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import alembic_config, open_database, schema_head
+from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
-from exactdocs.ingestion.constants import KEY_FILE
 from exactdocs.ingestion.errors import CredentialsRequiredError
 from exactdocs.ingestion.models import AccessToken
 
