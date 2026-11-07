@@ -55,6 +55,7 @@ FLAG_MARKERS = {
     "slots": "allow-dict",
     "kw_only": "allow-positional",
 }
+DATACLASS_MODULES = {"dataclasses", "pydantic.dataclasses"}
 MODEL_BASES = {"BaseModel", "BaseSettings", "RootModel"}
 PROPERTY_DECORATORS = {"property", "cached_property", "computed_field"}
 NO_VALUE = {"None", "NoReturn", "Never"}
@@ -160,10 +161,34 @@ def _followed_by_docstring(body: list[ast.stmt]) -> Iterator[tuple[ast.stmt, boo
         yield node, _is_docstring(following)
 
 
+def _module_bodies(body: list[ast.stmt]) -> Iterator[list[ast.stmt]]:
+    """The module body and the bodies of its top-level ``if``/``try``/``with`` blocks.
+
+    Args:
+        body: A module body (or a block's body, for the recursion).
+
+    Yields:
+        Each statement list whose assignments define module-level names.
+    """
+    yield body
+    for node in body:
+        blocks: list[list[ast.stmt]] = []
+        match node:
+            case ast.If(body=then, orelse=orelse):
+                blocks = [then, orelse]
+            case ast.Try(body=tried, orelse=orelse, finalbody=final, handlers=handlers):
+                blocks = [tried, orelse, final, *(handler.body for handler in handlers)]
+            case ast.With(body=inner):
+                blocks = [inner]
+        for block in blocks:
+            yield from _module_bodies(block)
+
+
 def _assignments(tree: ast.Module) -> Iterator[tuple[ast.stmt, bool, str, bool, bool]]:
     """Module-level assignments to names, one per assigned name.
 
-    ``A, B = 1, 2`` yields both names (as untyped). Type definitions (``NewType``, ``TypeVar``)
+    ``A, B = 1, 2`` and ``A = B = 1`` yield both names (as untyped), and assignments inside
+    top-level ``if``/``try``/``with`` blocks count. Type definitions (``NewType``, ``TypeVar``)
     are not values and are skipped.
 
     Args:
@@ -173,19 +198,21 @@ def _assignments(tree: ast.Module) -> Iterator[tuple[ast.stmt, bool, str, bool, 
         The statement, whether a docstring follows it, the name, whether it is annotated
         ``Final`` and whether that annotation names the type (``Final[int]``).
     """
-    for node, documented in _followed_by_docstring(tree.body):
-        match node:
-            case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation):
-                final = _name(annotation) == "Final"
-                yield node, documented, name, final, final and isinstance(annotation, ast.Subscript)
-            case ast.Assign(value=ast.Call(func=func)) if _name(func) in {"NewType", "TypeVar"}:
-                continue
-            case ast.Assign(targets=[ast.Name(id=name)]):
-                yield node, documented, name, False, False
-            case ast.Assign(targets=[ast.Tuple(elts=names)]):
-                for target in names:
-                    if isinstance(target, ast.Name):
-                        yield node, documented, target.id, False, False
+    for body in _module_bodies(tree.body):
+        for node, documented in _followed_by_docstring(body):
+            match node:
+                case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation):
+                    final = _name(annotation) == "Final"
+                    typed = final and isinstance(annotation, ast.Subscript)
+                    yield node, documented, name, final, typed
+                case ast.Assign(value=ast.Call(func=func)) if _name(func) in {"NewType", "TypeVar"}:
+                    continue
+                case ast.Assign(targets=targets):
+                    for target in targets:
+                        names = target.elts if isinstance(target, ast.Tuple) else [target]
+                        for each in names:
+                            if isinstance(each, ast.Name):
+                                yield node, documented, each.id, False, False
 
 
 def _check_constants(path: PurePosixPath, tree: ast.Module) -> Iterator[Violation]:
@@ -315,6 +342,8 @@ def _returns_value(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         annotation = function.returns
         if isinstance(annotation, ast.Constant) and annotation.value is None:
             return False
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            return annotation.value.strip() not in NO_VALUE  # a string annotation, `-> "None"`
         return _name(annotation) not in NO_VALUE
     return any(
         isinstance(node, ast.Return) and node.value is not None for node in _own_nodes(function)
@@ -408,16 +437,35 @@ def _check_function(
         )
 
 
-def _dataclass_decorator(node: ast.ClassDef) -> ast.expr | None:
+def _dataclass_names(tree: ast.Module) -> set[str]:
+    """Names a module uses for ``dataclass``, aliases included.
+
+    Args:
+        tree: The parsed module.
+
+    Returns:
+        ``dataclass`` and every ``from dataclasses import dataclass as <alias>`` (pydantic's too).
+    """
+    return {"dataclass"} | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module in DATACLASS_MODULES
+        for alias in node.names
+        if alias.name == "dataclass" and alias.asname
+    }
+
+
+def _dataclass_decorator(node: ast.ClassDef, names: set[str]) -> ast.expr | None:
     """Find a class's ``@dataclass`` decorator.
 
     Args:
         node: The class definition.
+        names: What the module calls ``dataclass`` (see ``_dataclass_names``).
 
     Returns:
         The decorator expression, or None for a class that is not a dataclass.
     """
-    return next((d for d in node.decorator_list if _name(d) == "dataclass"), None)
+    return next((d for d in node.decorator_list if _name(d) in names), None)
 
 
 def _markers(lines: list[str], decorator: ast.expr) -> dict[str, str]:
@@ -670,12 +718,13 @@ def check(modules: list[_Module]) -> list[Violation]:
     for module in modules:
         lines = module.source.splitlines()
         found.extend(_check_constants(module.path, module.tree))
+        dataclass_names = _dataclass_names(module.tree)
         for function, method, qualname in _functions(module.tree, in_class=False, prefix=""):
             found.extend(_check_function(module.path, function, method=method, qualname=qualname))
         dotted = _dotted(module.path)
         for node, qualname in _classes(module.tree, prefix=""):
             key = (dotted, node.name)
-            decorator = _dataclass_decorator(node)
+            decorator = _dataclass_decorator(node, dataclass_names)
             if decorator is not None:
                 found.extend(_check_dataclass(module.path, lines, node, decorator))
             if decorator is not None or key in models:
@@ -771,6 +820,8 @@ def _sources() -> Iterable[Path]:
 # code gets no entry: the list only shrinks (an entry that no longer fails must be deleted), and
 # only the docstring rules may appear in it. Emptying it is tracked in its own issue.
 BASELINE = Path(__file__).parent / "conventions_baseline.txt"
+# The most entries the baseline may hold. Lower it when you delete lines; never raise it.
+BASELINE_CEILING = 3368
 BASELINE_RULES = {
     "function-without-docstring",
     "docstring-missing-args",
@@ -827,6 +878,7 @@ def test_the_code_base_follows_the_conventions() -> None:
 def test_the_baseline_only_shrinks() -> None:
     known = _baseline()
     assert {key.rsplit(" ", 1)[-1] for key in known} <= BASELINE_RULES
+    assert len(known) <= BASELINE_CEILING, "new code must follow the conventions, not the baseline"
     stale = known - {_key(v) for v in _code_base()}
     assert not stale, f"fixed, now remove them from {BASELINE.name}: {sorted(stale)}"
 

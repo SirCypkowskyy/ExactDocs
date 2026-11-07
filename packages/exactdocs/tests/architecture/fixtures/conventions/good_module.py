@@ -4,6 +4,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from dataclasses import dataclass as dc
 from typing import ClassVar, NoReturn, overload
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -153,3 +154,15 @@ def same(value: int | str) -> int | str:
         ``value``.
     """
     return value
+
+
+def quoted() -> "None":
+    """A string annotation of ``None`` returns nothing."""
+
+
+@dc(frozen=True, slots=True, kw_only=True)
+class Aliased:
+    """`dataclass` under another name, with every flag."""
+
+    value: int
+    """The value."""

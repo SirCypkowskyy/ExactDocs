@@ -14,3 +14,14 @@ LOW, HIGH = 1, 9  # expect: constant-outside-constants
 """Several at once are constants, too."""
 UserId = NewType("UserId", str)
 """A type, not a constant."""
+FIRST = SECOND = 1  # expect: constant-outside-constants
+"""Chained: both names are constants."""
+try:
+    TRIED: Final[int] = 1  # expect: constant-outside-constants
+    """Defined in a module-level try block."""
+except ImportError:
+    TRIED_TOO: Final[int] = 2  # expect: constant-outside-constants
+    """Defined in its handler."""
+if FIRST:
+    BRANCHED: Final[int] = 3  # expect: constant-outside-constants
+    """Defined in a module-level if block."""

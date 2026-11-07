@@ -2,6 +2,7 @@
 
 import dataclasses
 from dataclasses import dataclass
+from dataclasses import dataclass as dc
 
 
 @dataclass  # expect: dataclass-flags
@@ -27,3 +28,8 @@ class ExplicitlyMutable:
 @dataclass(slots=True, kw_only=True)  # conventions: allow-dict -- not the missing flag  # expect: dataclass-flags
 class WrongMarker:
     """The marker excuses `slots`, but `frozen` is missing."""
+
+
+@dc(frozen=True)  # expect: dataclass-flags
+class Aliased:
+    """`dataclass` imported under another name."""

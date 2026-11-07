@@ -648,7 +648,11 @@ that last step, which is one transaction in the catalog.
   so a value that needs a domain type is keyed by the enum's values (`"queued"`, not
   `JobState.QUEUED`) or becomes a method. Module-level framework objects (SQLAlchemy tables and
   clauses, a `TypeAdapter`, a parser, a lock) are not constants: they stay with the adapter that
-  uses them and are named in lower case. Enum members and `__all__` are not constants either.
+  uses them and are named in lower case. Lower case is reserved for such objects: a fixed value
+  (a number, a string, a pattern, a set or mapping of literals) is a constant whatever its name,
+  and the checker only sees it when it is `UPPER_CASE` or `Final`, so write it that way. Enum
+  members and `__all__` are not constants. A chained assignment (`A = B = 1`) and an assignment in
+  a module-level `if`/`try`/`with` block define constants too.
 - **Private by default.** A module, function, class or constant that is not part of its package's
   public API is private (`_name`); what other packages use is re-exported by the package's
   `__init__.py` and listed in `__all__`. Within a domain, a private name may be imported from the

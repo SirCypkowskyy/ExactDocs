@@ -29,3 +29,8 @@ def numbers() -> Iterator[int]:  # expect: docstring-missing-returns
         Not the right section for a generator.
     """
     yield 1
+
+
+def quoted() -> "int":  # expect: docstring-missing-returns
+    """A string annotation that names a value."""
+    return 1
