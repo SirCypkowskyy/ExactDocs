@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import text
 
+from databases import SEARCH_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
@@ -22,6 +23,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryLibraryModes,
     InMemorySearchIndex,
 )
+from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex, _statements
 from exactdocs.retrieval.constants import _SEARCH
@@ -144,12 +146,13 @@ class World:
         )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SEARCH_BACKENDS])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     clock = Clock()
 
     def build(
-        chunks: ChunkRepository, search: InMemorySearchIndex | SqliteSearchIndex
+        chunks: ChunkRepository,
+        search: InMemorySearchIndex | SqliteSearchIndex | PostgresSearchIndex,
     ) -> RetrievalModule:
         return RetrievalModule.build(
             defaults=InMemoryDefaultVersions(),
@@ -183,9 +186,16 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             build(memory, memory_index), memory_index, clock, entries, forget, "memory", age
         )
         return
+    if request.param.startswith("postgres"):
+        request.getfixturevalue("on_" + request.param)
     container = Container.build(Settings())
-    async with container.running():
-        index = SqliteSearchIndex(engine=container.engine)
+    async with container.running(jobs=False):
+        postgres = request.param.startswith("postgres")
+        index: SqliteSearchIndex | PostgresSearchIndex = (
+            PostgresSearchIndex(engine=container.engine)
+            if postgres
+            else SqliteSearchIndex(engine=container.engine)
+        )
 
         async def count() -> int:
             async with container.engine.connect() as connection:
@@ -197,14 +207,17 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             async with container.engine.begin() as connection:
                 await connection.execute(
                     text(
-                        "DELETE FROM retrieval_search "
-                        "WHERE rowid = (SELECT min(id) FROM retrieval_chunks)"
+                        "DELETE FROM retrieval_search WHERE chunk_id = "
+                        "(SELECT min(id) FROM retrieval_chunks)"
+                        if postgres
+                        else "DELETE FROM retrieval_search WHERE rowid = "
+                        "(SELECT min(id) FROM retrieval_chunks)"
                     )
                 )
 
         async def age() -> None:
             async with container.engine.begin() as connection:
-                await connection.execute(text("UPDATE retrieval_search_format SET format = 1"))
+                await connection.execute(text("UPDATE retrieval_search_format SET format = 0"))
 
         yield World(
             build(SqliteChunkRepository(engine=container.engine), index),
@@ -212,7 +225,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             clock,
             count,
             lose_one,
-            "sqlite",
+            request.param,
             age,
         )
 
@@ -276,6 +289,33 @@ async def test_special_characters_are_dropped_and_the_words_still_match(world: W
 
     assert await world.find("m14", '"retry_policy" NEAR (*') != []
     assert await world.find("m14", "()*") == []
+
+
+async def test_words_in_any_script_are_found_whatever_the_database_locale(
+    world: World,
+) -> None:
+    # `postgres_c` is a database in the C locale, whose `[[:alnum:]]` only knows ASCII.
+    await world.index(
+        "m1",
+        "main",
+        {
+            "fr.md": ("fr", [section("Desserts", "La crème brûlée se sert froide.")]),
+            "el.md": ("el", [section("Αρχή", "ωμέγα σημαίνει μεγάλο.")]),
+            "ja.md": ("ja", [section("概要", "日本語 の 説明 です")]),
+            "en.md": ("en", [section("Other", "Nothing to see here.")]),
+        },
+    )
+
+    for query, snippet in [
+        ("brûlée", "La crème brûlée"),
+        ("crème", "La crème brûlée"),
+        ("ωμέγα", "ωμέγα σημαίνει"),
+        ("日本語", "日本語"),
+    ]:
+        found = await world.find("m1", query)
+        assert [hit.snippet[: len(snippet)] for hit in found] == [snippet], (query, found)
+        start, end = found[0].highlights[0]
+        assert found[0].snippet[start:end] == query
 
 
 async def test_identifier_parts_match_prose_and_the_whole_matches_code(world: World) -> None:
@@ -478,7 +518,7 @@ async def test_a_heading_match_outranks_many_body_matches(world: World) -> None:
 
 
 async def test_a_section_naming_a_term_outranks_the_sub_sections_under_it(world: World) -> None:
-    if world.engine != "sqlite":
+    if world.engine == "memory":
         pytest.skip("the memory reference does not weigh a heading's ancestors")
     child = ChunkIn(
         heading_path=["Guide", "Docker", "Troubleshooting"],
@@ -504,8 +544,8 @@ async def test_a_section_naming_a_term_outranks_the_sub_sections_under_it(world:
 
 
 async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -> None:
-    if world.engine != "sqlite":
-        pytest.skip("length normalisation is BM25's; the memory reference only counts terms")
+    if world.engine == "memory":
+        pytest.skip("the memory reference only counts terms; the database engines normalise length")
     await world.index(
         "m1",
         "main",
@@ -529,7 +569,7 @@ async def test_the_search_plan_materializes_the_ranking_and_probes_manifests_by_
     O(hits x manifests); measured, an extra covering index made that plan win and was slower.
     """
     container = Container.build(Settings())
-    async with container.running():
+    async with container.running(jobs=False):
         statement = _statements("EXPLAIN QUERY PLAN " + _SEARCH)[None]
         params = {
             "heading_weight": 1.0,

@@ -66,6 +66,8 @@ def upgrade() -> None:
         """
     )
     op.drop_table("retrieval_chunks_old")
+    if op.get_bind().dialect.name != "sqlite":
+        return  # FTS5 is SQLite's; PostgreSQL gets its own index in 0c4e8a2f6b19
 
     # `-_.` stay inside a token so `max_retries` and `--dry-run` are found whole (see
     # `identifier_tokens`). The rowid is `retrieval_chunks.id`.
@@ -101,6 +103,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name != "sqlite":
+        return
     op.execute("DROP TRIGGER retrieval_chunks_search_delete")
     op.execute("DROP TABLE retrieval_search")
     # The id column stays: it is harmless and rebuilding the table again buys nothing.

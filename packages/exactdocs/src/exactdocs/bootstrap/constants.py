@@ -92,8 +92,37 @@ FRIENDLY: Final[dict[str, str]] = {
 # ---------------------------------------------------------------- container
 WORK_DIR: Final[str] = "work"
 """Under the data dir: one folder per running git fetch."""
+PROCESS_WORK_PREFIX: Final[str] = "process-"
+"""On PostgreSQL each process keeps its fetch folders under `work/process-*` (``workdirs.py``)."""
+CLAIM_TRIES: Final[int] = 100
+"""How often a process tries to create and lock its work folder while sweeps race it."""
+CLAIM_PAUSE_SECONDS: Final[float] = 0.01
+"""The pause between two tries."""
+PROCESS_WORK_OWNER: Final[str] = ".owner"
+"""The file in a process folder its process keeps locked (``flock``) for as long as it lives."""
 KNOWN_HOSTS_FILE: Final[str] = "known_hosts"
 """Under the data dir: SSH host keys, the big three pre-seeded."""
+SHUTDOWN_GRACE_SECONDS: Final[int] = 30
+"""On PostgreSQL, how long `serve` lets open connections finish when it stops (uvicorn's
+`timeout_graceful_shutdown`), so a process that lost its executor slot is gone soon."""
+EXECUTOR_PREFIX: Final[str] = "exactdocs-"
+"""On PostgreSQL each server process runs DBOS as ``exactdocs-<slot>`` (``executors.py``)."""
+EXECUTOR_LOCKS: Final[int] = 0x45584443
+"""First key of the two-key PostgreSQL advisory locks that hold the executor slots (the second is
+the slot); two-key locks never collide with the one-key locks of ``WRITE_LOCK`` and the others."""
+SLOT_KEEPALIVES: Final[dict[str, int]] = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+    "tcp_user_timeout": 10_000,
+}
+"""libpq TCP keepalives of the connection that holds a process's executor slot: it idles for the
+process's whole life, and a NAT or load balancer would otherwise drop it unnoticed. The user
+timeout (ms) ends a check whose packets a vanished host never acknowledges."""
+MAX_EXECUTORS: Final[int] = 1024
+"""Slots tried before a process gives up: more server processes on one database than that is a
+mistake, not a deployment."""
 JOBS_FILE: Final[str] = (
     "jobs.sqlite"  # under the data dir: DBOS's workflows, the durable steps of jobs
 )
@@ -126,6 +155,26 @@ BUSY_TIMEOUT_MS: Final[int] = 5000
 """How long SQLite waits for a lock held by another connection before it gives up."""
 MIN_SQLITE: Final[tuple[int, ...]] = (3, 35)
 """Search uses `WITH ... AS MATERIALIZED`"""
+POSTGRES_DRIVER: Final[str] = "postgresql+psycopg"
+"""The one PostgreSQL driver: psycopg 3, async. DBOS already depends on it."""
+POSTGRES_DRIVERS: Final[frozenset[str]] = frozenset({"postgresql", POSTGRES_DRIVER})
+"""How `EXACTDOCS_DATABASE_URL` may name PostgreSQL; both mean psycopg 3."""
+MIN_POSTGRES: Final[int] = 140000
+"""`server_version_num` of PostgreSQL 14, the oldest supported (generated columns, `FORCE`)."""
+WRITE_LOCK: Final[int] = 0x45584443_00000001
+"""PostgreSQL advisory lock taken by a writing transaction that asks for ``begin_immediate``:
+those transactions take turns, as SQLite's ``BEGIN IMMEDIATE`` makes them."""
+WRITE_LOCK_TIMEOUT_MS: Final[int] = 30_000
+"""How long a ``begin_immediate`` transaction on PostgreSQL waits for its turn (``WRITE_LOCK``)
+before it fails with ``WriteTurnTimeoutError``; SQLite's own wait is ``BUSY_TIMEOUT_MS``."""
+LOCK_NOT_AVAILABLE: Final[str] = "55P03"
+"""PostgreSQL's SQLSTATE for a lock wait that hit ``lock_timeout``."""
+MIGRATION_LOCK: Final[int] = 0x45584443_00000002
+"""PostgreSQL advisory lock held while the schema is migrated: processes starting together
+migrate one after the other."""
+COLLATED_PREFIXES: Final[tuple[str, ...]] = ("catalog_", "identity_", "ingestion_", "retrieval_")
+"""Tables whose text columns get the "C" collation on PostgreSQL, so text compares and sorts by
+code point, as SQLite's BINARY collation does, whatever the database's locale."""
 
 # ---------------------------------------------------------------- http
 WEB_DIST: Final[Path] = Path(__file__).parent.parent / "_web"

@@ -1,9 +1,10 @@
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from databases import SECRET_KEY, PostgresDatabase, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
@@ -75,6 +76,32 @@ PLACEHOLDER_ADMIN = Account(
 
 # The admin is signed in with this session, planted directly (signing in would cost a hash).
 DEMO_COOKIE = "demo-session-token"
+
+
+@pytest.fixture
+def on_postgres(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """Point ``Settings()`` at a new, empty PostgreSQL database for this test.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database() as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
+
+
+@pytest.fixture
+def on_postgres_c(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """As ``on_postgres``, on a database created with ``LC_CTYPE`` and ``LC_COLLATE`` ``C``.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database(c_locale=True) as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
 
 
 @pytest.fixture(autouse=True)

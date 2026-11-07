@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from exactdocs.ingestion.adapters.driven.dbos import (
 )
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
-from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
+from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker, SlotState
 from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW, JobKind
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ScheduledChecks
 from exactdocs.ingestion.models import Job, JobId, JobState
@@ -386,3 +387,31 @@ async def test_the_schedule_is_paused_while_no_library_has_one(tmp_path: Path, e
             return bool(ticks)
 
         await eventually(ticked, seconds=15)
+
+
+async def test_after_a_lost_slot_threads_still_run_and_the_worker_stops_cleanly(
+    tmp_path: Path,
+) -> None:
+    class Taken:
+        claim_grace = 15.0
+
+        def claim(self) -> AbstractAsyncContextManager[str]:
+            raise NotImplementedError
+
+        async def keep(self) -> SlotState:
+            return SlotState.LOST  # another process holds the slot now
+
+        def orphaned(
+            self, executor_ids: Collection[str]
+        ) -> AbstractAsyncContextManager[Collection[str]]:
+            raise NotImplementedError
+
+    stopped: list[str] = []
+    module = module_of(InMemoryJobRepository(), {})
+    worker = replace(worker_of(module, tmp_path), on_slot_lost=lambda: stopped.append("stop"))
+
+    async with worker.running():  # leaving it is the lifespan's shutdown: it must not raise
+        assert await worker.check_slot("exactdocs-0", Taken()) is SlotState.LOST
+        assert await asyncio.to_thread(sum, [1, 2]) == 3  # DBOS's pool is gone, a new one runs
+    assert await asyncio.to_thread(sum, [3, 4]) == 7
+    assert stopped == ["stop"]
