@@ -154,6 +154,26 @@ def test_braces_and_wildcards_in_detail(pattern: str, path: str, expected: bool)
 
 
 @pytest.mark.parametrize(
+    ("include", "exclude", "path", "expected"),
+    [
+        (["docs/[draft]"], [], "docs/[draft]/a.md", True),  # a bracketed name is a folder (#234)
+        (["docs/[draft]/"], [], "docs/[draft]/a.md", True),
+        (["app/[locale]"], [], "app/[locale]/guide/b.mdx", True),
+        (["docs/[draft]"], [], "docs/d/a.md", False),  # `[` is literal, not a class
+        (["docs/[draft].md"], [], "docs/[draft].md", True),
+        (["docs/"], ["docs/[draft]"], "docs/[draft]/a.md", False),
+        (["docs/"], ["docs/[draft]/"], "docs/[draft]/a.md", False),
+        (["docs/"], ["docs/[draft]"], "docs/draft/a.md", True),
+        (["[slug]/*.md"], [], "[slug]/a.md", True),
+    ],
+)
+def test_brackets_are_plain_characters(
+    include: list[str], exclude: list[str], path: str, *, expected: bool
+) -> None:
+    assert PathSelection.of(include, exclude).selects(path) is expected
+
+
+@pytest.mark.parametrize(
     ("pattern", "path"),
     [
         ("/".join(["**"] * 60) + "/zzz.md", "a/" * 200 + "q.md"),  # 120 stacked globstars

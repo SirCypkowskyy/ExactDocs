@@ -253,8 +253,11 @@ or go.
 """
 
 # ---------------------------------------------------------------- path patterns
-GLOB_CHARS: Final[frozenset[str]] = frozenset("*?{[")
-"""Characters that make a path pattern a glob rather than a plain path."""
+GLOB_CHARS: Final[frozenset[str]] = frozenset("*?{")
+"""Characters that make a path pattern a glob rather than a plain path.
+
+``[`` is not one: there are no character classes, so ``app/[locale]`` is a folder name (#234).
+"""
 ANY: Final[str] = "*"
 """Matches any run of characters in a path segment; as a token it is the 1-tuple ``("*",)``."""
 ONE: Final[str] = "?"
