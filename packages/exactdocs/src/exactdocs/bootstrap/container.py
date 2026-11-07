@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import signal
 import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, nullcontext
@@ -232,6 +234,14 @@ def _library_locks(engine: AsyncEngine, purpose: str) -> LibraryLocks:
     return TagLocks()
 
 
+def _stop_this_process() -> None:
+    """Stop the server as ``SIGTERM`` does: another process took this one's executor slot.
+
+    The orchestrator (or the operator) starts it again, and it takes a free slot then.
+    """
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 def _dbos_database(settings: Settings, engine: AsyncEngine) -> dict[str, Any]:
     """Return where DBOS keeps its workflows: the app's PostgreSQL database, or its SQLite file.
 
@@ -249,7 +259,8 @@ def _dbos_database(settings: Settings, engine: AsyncEngine) -> dict[str, Any]:
         return {
             "system_database_url": engine.url.render_as_string(hide_password=False),
             "system_schema": settings.dbos_system_schema,
-            "executors": PostgresExecutorSlots(engine=engine),
+            "executors": PostgresExecutorSlots(engine=engine, schema=settings.dbos_system_schema),
+            "on_slot_lost": _stop_this_process,
         }
     # NullPool: a connection one of DBOS's threads still holds when it stops is closed.
     return {"database": settings.data_dir / JOBS_FILE, "engine_options": {"poolclass": NullPool}}

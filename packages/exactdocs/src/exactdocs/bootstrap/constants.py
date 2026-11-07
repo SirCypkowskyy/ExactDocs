@@ -105,6 +105,14 @@ EXECUTOR_PREFIX: Final[str] = "exactdocs-"
 EXECUTOR_LOCKS: Final[int] = 0x45584443
 """First key of the two-key PostgreSQL advisory locks that hold the executor slots (the second is
 the slot); two-key locks never collide with the one-key locks of ``WRITE_LOCK`` and the others."""
+SLOT_KEEPALIVES: Final[dict[str, int]] = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+}
+"""libpq TCP keepalives of the connection that holds a process's executor slot: it idles for the
+process's whole life, and a NAT or load balancer would otherwise drop it unnoticed."""
 MAX_EXECUTORS: Final[int] = 1024
 """Slots tried before a process gives up: more server processes on one database than that is a
 mistake, not a deployment."""

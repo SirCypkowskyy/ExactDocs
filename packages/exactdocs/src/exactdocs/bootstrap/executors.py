@@ -9,18 +9,33 @@ lock is released, and the next process to start takes that slot and resumes its 
 worker adopts the workflows of slots nobody took again (``orphaned``).
 """
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator, Collection
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, field
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy import NullPool, column, literal, select, table, text
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from exactdocs.bootstrap.constants import EXECUTOR_LOCKS, EXECUTOR_PREFIX, MAX_EXECUTORS
+from exactdocs.bootstrap.constants import (
+    EXECUTOR_LOCKS,
+    EXECUTOR_PREFIX,
+    MAX_EXECUTORS,
+    SLOT_KEEPALIVES,
+)
 from exactdocs.bootstrap.database import StartupError
+from exactdocs.ingestion.adapters.driving.dbos_worker import SlotState
+
+log = logging.getLogger(__name__)
 
 _try_lock = text("SELECT pg_try_advisory_lock(:space, :slot)")
 _unlock = text("SELECT pg_advisory_unlock(:space, :slot)")
+_holds = text(
+    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = :space"
+    " AND objid = :slot AND objsubid = 2 AND pid = pg_backend_pid() AND granted"
+)
 
 
 def _slot(executor_id: str) -> int | None:
@@ -38,12 +53,39 @@ def _slot(executor_id: str) -> int | None:
     return int(number)
 
 
+async def _release(connection: AsyncConnection, slot: int) -> None:
+    """Unlock the slot and close the connection; a dead connection has released it already.
+
+    Args:
+        connection: The connection that holds the slot.
+        slot: The slot.
+    """
+    with suppress(SQLAlchemyError, OSError):
+        await connection.execute(_unlock, {"space": EXECUTOR_LOCKS, "slot": slot})
+        await connection.commit()
+    with suppress(SQLAlchemyError, OSError):
+        await connection.close()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PostgresExecutorSlots:
-    """Implements the job worker's ``ExecutorSlots`` with PostgreSQL advisory locks."""
+    """Implements the job worker's ``ExecutorSlots`` with PostgreSQL advisory locks.
+
+    The slot is held by a connection of its own (not the app's pool), with TCP keepalives so
+    that a NAT or a load balancer does not drop it while it idles. The worker asks ``keep`` every
+    few seconds whether it still holds it: a connection can die while the process lives (a
+    server restart, a failover, ``idle_session_timeout``), and PostgreSQL then frees the slot.
+    """
 
     engine: AsyncEngine
     """The database the processes share."""
+    schema: str = "dbos"
+    """DBOS's schema: ``claim`` looks there for the pending workflows of the slot it takes."""
+    claim_grace: float = 15.0
+    """How long ``claim`` waits before it returns a slot whose executor left pending workflows:
+    a process that lost the slot but still runs them notices within this time and stops."""
+    _held: dict[str, object] = field(default_factory=dict, init=False, repr=False)
+    """The slot held now, its connection and the engine that connection comes from."""
 
     @asynccontextmanager
     async def claim(self) -> AsyncGenerator[str]:
@@ -55,17 +97,69 @@ class PostgresExecutorSlots:
         Raises:
             StartupError: Every slot is taken.
         """
-        async with self.engine.connect() as connection:
-            for slot in range(MAX_EXECUTORS):
-                if await self._try(connection, slot):
-                    try:
-                        yield f"{EXECUTOR_PREFIX}{slot}"
-                    finally:
-                        await connection.execute(_unlock, {"space": EXECUTOR_LOCKS, "slot": slot})
-                        await connection.commit()
-                    return
-        message = f"{MAX_EXECUTORS} ExactDocs processes already use this database."
-        raise StartupError(message)
+        engine = create_async_engine(
+            self.engine.url, poolclass=NullPool, connect_args=dict(SLOT_KEEPALIVES)
+        )
+        try:
+            connection = await engine.connect()
+            slot = None
+            for candidate in range(MAX_EXECUTORS):
+                if await self._try(connection, candidate):
+                    slot = candidate
+                    break
+            if slot is None:
+                await connection.close()
+                message = f"{MAX_EXECUTORS} ExactDocs processes already use this database."
+                raise StartupError(message)
+            self._held.update(slot=slot, connection=connection, engine=engine)
+            executor_id = f"{EXECUTOR_PREFIX}{slot}"
+            try:
+                if await self._left_work(executor_id):
+                    await asyncio.sleep(self.claim_grace)
+                yield executor_id
+            finally:
+                held = self._held.pop("connection", connection)
+                self._held.clear()
+                if isinstance(held, AsyncConnection):
+                    await _release(held, slot)
+        finally:
+            await engine.dispose()
+
+    async def keep(self) -> SlotState:
+        """Check that this process still holds its slot; take it again if it was freed.
+
+        Returns:
+            ``held``; ``retaken`` when the slot was lost and taken again (the worker then checks
+            nobody adopted its jobs meanwhile); ``lost`` when another process holds it now.
+        """
+        slot, connection, engine = (
+            self._held.get("slot"),
+            self._held.get("connection"),
+            self._held.get("engine"),
+        )
+        if not isinstance(slot, int) or not isinstance(engine, AsyncEngine):
+            return SlotState.LOST
+        if isinstance(connection, AsyncConnection):
+            try:
+                held = await connection.scalar(_holds, {"space": EXECUTOR_LOCKS, "slot": slot})
+                await connection.commit()
+            except DBAPIError, OSError:
+                held = 0
+            if held:
+                return SlotState.HELD
+            with suppress(SQLAlchemyError, OSError):
+                await connection.invalidate()
+        try:
+            fresh = await engine.connect()
+            if await self._try(fresh, slot):
+                self._held["connection"] = fresh
+                log.warning("executor slot %d was lost and is held again", slot)
+                return SlotState.RETAKEN
+            await fresh.close()
+        except DBAPIError, OSError:
+            log.exception("could not take executor slot %d again", slot)
+        self._held.pop("connection", None)
+        return SlotState.LOST
 
     @asynccontextmanager
     async def orphaned(self, executor_ids: Collection[str]) -> AsyncGenerator[Collection[str]]:
@@ -86,6 +180,31 @@ class PostgresExecutorSlots:
                 for slot in held:
                     await connection.execute(_unlock, {"space": EXECUTOR_LOCKS, "slot": slot})
                 await connection.commit()
+
+    async def _left_work(self, executor_id: str) -> bool:
+        """Tell whether the executor has pending workflows (``False`` before DBOS's tables exist).
+
+        Args:
+            executor_id: The executor whose slot was just taken.
+
+        Returns:
+            Whether a process that held the slot may still be running them.
+        """
+        statuses = table(
+            "workflow_status", column("executor_id"), column("status"), schema=self.schema
+        )
+        query = (
+            select(literal(1))
+            .select_from(statuses)
+            .where(statuses.c.executor_id == executor_id, statuses.c.status == "PENDING")
+            .limit(1)
+        )
+        try:
+            async with self.engine.connect() as connection:
+                found = await connection.scalar(query)
+        except DBAPIError:
+            return False
+        return found is not None
 
     @staticmethod
     async def _try(connection: AsyncConnection, slot: int) -> bool:

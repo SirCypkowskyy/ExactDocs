@@ -28,6 +28,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
+from exactdocs.ingestion.adapters.driving.dbos_worker import SlotState
 from import_child import big_repository, page, run
 
 if ADMIN_URL is None:
@@ -287,3 +288,36 @@ async def test_a_writer_that_waits_too_long_for_its_turn_fails_clearly(
                 await waiter.execute(text("SELECT 1"))
     async with second.execution_options(begin_immediate=True).begin() as later:
         assert await later.scalar(text("SHOW lock_timeout")) == "0"  # only the turn waits
+
+
+async def _drop_slot_connection(engine: AsyncEngine, slot: int) -> None:
+    """Kill the backend that holds the slot, as a failover or an idle timeout would."""
+    async with engine.connect() as connection:
+        killed = await connection.scalar(
+            text(
+                "SELECT count(pg_terminate_backend(pid)) FROM pg_locks"
+                " WHERE locktype = 'advisory' AND classid = 1163412547 AND objid = :slot"
+                " AND objsubid = 2"
+            ),
+            {"slot": slot},
+        )
+        await connection.commit()
+    assert killed == 1
+    await asyncio.sleep(0.1)  # the server ends the backend asynchronously
+
+
+async def test_a_process_whose_slot_connection_died_takes_it_back_or_stops(
+    engines: tuple[AsyncEngine, AsyncEngine],
+) -> None:
+    first, second = (PostgresExecutorSlots(engine=e) for e in engines)
+
+    async with first.claim() as mine:  # its release must not fail on a dead connection
+        assert await first.keep() is SlotState.HELD
+        await _drop_slot_connection(engines[0], 0)
+        assert await first.keep() is SlotState.RETAKEN  # nobody took it meanwhile
+        assert await first.keep() is SlotState.HELD
+
+        await _drop_slot_connection(engines[0], 0)
+        async with second.claim() as theirs:  # a process starting now gets the free slot
+            assert theirs == mine
+            assert await first.keep() is SlotState.LOST  # so this one must stop

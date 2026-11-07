@@ -418,7 +418,7 @@ chunks until the new ones are in place.
 
 ### Upgrading
 
-Start the new version on the same data directory (`docker pull` and recreate the container, or
+On PostgreSQL, stop every process first (see [PostgreSQL](#postgresql)). Start the new version on the same data directory (`docker pull` and recreate the container, or
 `uvx --refresh exactdocs serve`): the database is migrated on start and every library keeps
 serving; nothing is imported again. CI proves it for each change, from the previous release's data
 directory. When a release changes how the search index is built, its notes have a **Requires
@@ -491,8 +491,10 @@ A team's instance can keep everything in PostgreSQL 14 or newer instead of the S
 then run several server processes on it: in one container (`WEB_CONCURRENCY`), in several, or on
 several hosts behind a load balancer. Every process serves the web UI, the API and MCP, and runs
 jobs; a job runs once, in whichever process takes it first, and at most one per library at a time.
-A process that dies with running jobs leaves them to the next one that starts, which resumes them
-at their last completed step.
+A process that dies with running jobs leaves them to the next one that starts, or after about 15 s
+to any running process, which resumes them at their last completed step. A process that loses its
+connection to the database long enough for another one to take over its jobs stops itself (as
+`SIGTERM` does), so that no job runs twice; let your orchestrator restart it.
 
 - `EXACTDOCS_DATABASE_URL=postgresql://user:password@host:5432/exactdocs` (`postgresql+psycopg://`
   means the same). The role needs to own the database, or at least to create tables and a schema
@@ -503,11 +505,20 @@ at their last completed step.
   generate its own key and could not open the credentials another one stored.
 - Every process still has its own data directory for its git work folders and `known_hosts`;
   nothing in it has to be shared or backed up.
-- Back up with PostgreSQL's own tools (`pg_dump -Fc exactdocs > exactdocs.dump`, then
-  `pg_restore`); `exactdocs backup` and `restore` copy a SQLite file only.
+- Back up with PostgreSQL's own tools (`pg_dump -Fc exactdocs > exactdocs.dump`); `exactdocs
+  backup` and `restore` copy a SQLite file only. Stop every ExactDocs process before a
+  `pg_restore`, and start them once it is done.
+- **Upgrade with every process stopped.** The new version migrates the schema when its first
+  process starts, and older processes only check the schema when they start, so stop them all,
+  then start the new version. This also matters when a release changes how jobs run (its notes
+  say so): an older process would otherwise keep running jobs the new one cannot resume.
 - Search uses PostgreSQL's full-text search (`tsvector`, the `simple` configuration, ranked with
-  `ts_rank_cd` over the same column weights). It finds what SQLite's BM25 finds, but may order
-  close matches differently.
+  `ts_rank_cd` over the same column weights, words cut as SQLite's index cuts them). It is not
+  BM25, but the shared ranking suite passes on it as on SQLite.
+- Writes that must not interleave (storing and activating a version, indexing it) take turns
+  across all processes, as on SQLite, so several processes serve more readers but do not import
+  faster. A writer that waits more than 30 s for its turn gives up with an error, as SQLite does
+  after its own wait.
 - Sign-in throttling counts failures per process (#253).
 
 Several processes on one PostgreSQL database, verified in CI (`deploy/compose.postgres.yaml`):

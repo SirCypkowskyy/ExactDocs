@@ -150,11 +150,18 @@ only holds each process's git work folders and `known_hosts`. What changes:
 - **Turn-taking.** A transaction that asks for `begin_immediate` (SQLite's `BEGIN IMMEDIATE`, one
   writer at a time) takes a transaction-level advisory lock (`WRITE_LOCK`) on PostgreSQL, so the
   read-then-write transactions that rely on it (the first admin, activations, the search index)
-  keep that guarantee across processes. `migrate()` runs in one transaction under another
-  advisory lock: processes starting together migrate one after the other.
+  keep that guarantee across processes. A turn waits at most `WRITE_LOCK_TIMEOUT_MS` (30 s,
+  `SET LOCAL lock_timeout`), then fails with `WriteTurnTimeoutError`, as SQLite gives up after
+  `BUSY_TIMEOUT_MS`. **The trade-off is SQLite's single writer:** every such transaction of every
+  process takes turns on one key, so more processes serve more reads but do not import faster.
+  Per-library keys (the transactions mostly touch one library) are the way to lift that when it
+  matters. `migrate()` runs in one transaction under another advisory lock: processes starting
+  together migrate one after the other.
 - **Text compares like SQLite's.** After migrating, every `text` column of ExactDocs' tables gets
   the "C" collation (code-point order, as SQLite's `BINARY`), whatever the database's locale, so
-  listings sort the same on both. Revisions keep creating plain `Text` columns.
+  listings sort the same on both. Revisions keep creating plain `Text` columns; the column keeps
+  its exact type (`format_type`). A column a generated column or a view reads cannot change type,
+  so such a column is created with `Text(collation="C")` in its revision (as `0c4e8a2f6b19` does).
 - **One Alembic history.** The revisions run on both: `render_as_batch` is SQLite's only, partial
   indexes carry `postgresql_where` next to `sqlite_where`, the FTS5 steps are skipped on
   PostgreSQL, and `0c4e8a2f6b19` creates PostgreSQL's search table instead (a no-op on SQLite).
@@ -162,8 +169,12 @@ only holds each process's git work folders and `known_hosts`. What changes:
   `retrieval_search` keeps FTS5's four columns per chunk (a cascading foreign key replaces the
   delete trigger) and a generated `tsvector` with the `simple` configuration, labels A to D for
   heading, path, text and identifiers, ranked with `ts_rank_cd` over FTS5's weights scaled to 0..1
-  and length normalisation 1; snippets come from `ts_headline`. It is not BM25: close matches may
-  rank differently (ParadeDB's `pg_search`, true BM25, is #104). `exactdocs reindex` rebuilds it
+  and length normalisation 1, plus the rank of the query's identifiers (`retry_policy`) matched as
+  whole words, as BM25 weighs a rare whole token high; snippets come from `ts_headline`. Every
+  column passes through the SQL function `retrieval_search_words` first, so PostgreSQL's parser
+  cuts words as FTS5's `tokenchars '-_.'` does (`/v1/tokens` holds `tokens`, an underscore stays
+  inside a word). It is not BM25, but the shared ranking suite (`tests/retrieval/ranking`) passes
+  on it with no listed difference (ParadeDB's `pg_search`, true BM25, is #104). `exactdocs reindex` rebuilds it
   the same way as FTS5's (`retrieval_search_next`, then a swap in one transaction).
 - **Jobs and locks across processes:** see *Several processes on PostgreSQL* under
   [Background jobs](#background-jobs).
@@ -535,20 +546,39 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   servers may share the database. Each process runs DBOS on the shared queue (DBOS claims a queued
   workflow in one transaction, so a job runs once, and the partition limit of one per library
   holds across processes) under an **executor slot** (`bootstrap/executors.py`): the lowest slot
-  `n` whose two-key advisory lock (`EXECUTOR_LOCKS`, `n`) is free, held by a connection for the
-  process's lifetime, gives the executor ID `exactdocs-<n>`. A process that dies releases it; the
-  next one to start takes the lowest free slot, often the same, and DBOS resumes that executor's
-  pending workflows. Slots no new process takes (fewer processes than before) are adopted: at
-  start and every 30 s the worker lists the pending job workflows of other executors, takes the
-  locks of those that are free (so no process holds them, and no other can adopt them meanwhile),
-  lists their workflows again and re-queues them (`resume_workflows`). Workflows of a live
-  executor are never touched. `RecoverJobs` stays safe: a running job has a pending workflow,
-  whichever process runs it. Re-tags and an import's activation, and settings edits, take turns
+  `n` whose two-key advisory lock (`EXECUTOR_LOCKS`, `n`) is free gives the executor ID
+  `exactdocs-<n>`. The lock is held by a connection of its own (not the pool), with TCP keepalives
+  (`SLOT_KEEPALIVES`), for the process's lifetime. A process that dies releases it; the next one
+  to start takes the lowest free slot, often the same, waits `claim_grace` (15 s) if that executor
+  left pending workflows, and DBOS resumes them.
+  - **Watchdog.** A connection can die while its process lives (a failover, a NAT timeout,
+    `idle_session_timeout`), which frees the slot. Every 5 s (`slot_check_interval`) the worker
+    checks in `pg_locks` that its own backend still holds it. If not, it takes it again when it is
+    free, and goes on only if every job it runs is still its own pending workflow. Otherwise, or
+    when another process holds the slot now, it cancels its jobs and stops the process
+    (`SIGTERM`), so they run elsewhere and not twice.
+  - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
+    watchdog round the worker lists the pending job workflows of other executors and takes the
+    locks of the free slots (so no process holds them, and no other can adopt them meanwhile). A
+    slot must have stayed free for `adopt_grace` (15 s) first, which gives a live process whose
+    connection dropped time to take it back. It then lists their workflows again and re-queues
+    them (`resume_workflows`).
+  - **Start.** Recovery (`sort_workflows`) deletes or recovers only the workflows of this process's
+    executor and of free slots: a live process's workflows, of any `STEPS_VERSION`, are never
+    touched, and `RecoverJobs` leaves their jobs alone. A release that changes `STEPS_VERSION`
+    still needs every process stopped before the upgrade (README, *Upgrading*): an older process
+    would keep running jobs the new build cannot resume.
+  - **Scheduled ticks.** DBOS starts a tick only if its workflow ID (`sched-<name>-<time>`) is new,
+    and each process's scheduler may come up to a tenth of an interval late. On PostgreSQL the
+    tick's workflow is therefore kept for `tick_retention` (two intervals, at least 10 minutes)
+    before the worker deletes it, so a tick runs once across processes. Re-tags and an import's activation, and settings edits, take turns
   through `PostgresLibraryLocks` (`ingestion.adapters.driven.postgres`): a session-level advisory
   lock per purpose and library, held on a connection of its own while the work runs (released by
   PostgreSQL if the process dies), behind an in-process `asyncio.Lock` so waiters do not each hold
-  a connection. Fetch folders are swept only past the longest fetch, so a process never removes
-  another's live one. The sign-in throttle (`InMemoryFailedSignInLog`) stays per process.
+  a connection. Each process fetches in a `work/process-*` folder of its own, which it creates and
+  `flock`s in one step when it starts running (then checks the locked file is still the folder's);
+  a starting process removes only the folders whose lock it can take, while it holds it. The
+  sign-in throttle (`InMemoryFailedSignInLog`) stays per process.
 - **The scheduled check (SYNC-02).** The worker also keeps a DBOS schedule
   (`exactdocs-scheduled-checks`, `EXACTDOCS_AUTO_SYNC_SCHEDULE`, a cron expression with seconds,
   every minute by default) whose workflow runs `RunScheduledChecks` outside its own workflow
