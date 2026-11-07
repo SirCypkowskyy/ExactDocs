@@ -205,10 +205,10 @@ jobs:
           EXACTDOCS_IMAGE: exactdocs:ci
           COMPOSE_PROJECT_NAME: exactdocs-ci-pg
         run: |
-          # The runner VMs have Docker but may predate the compose plugin (deploy/runners installs
-          # docker-compose-v2 now); Ubuntu's package provides `docker compose`.
+          # The runner VMs declare their tools in deploy/runners/create-vms.sh; CI never installs any.
           docker compose version >/dev/null 2>&1 || {
-            sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends docker-compose-v2
+            echo "::error::this runner lacks the docker compose plugin; re-provision it with deploy/runners/create-vms.sh (or apt-get install docker-compose-v2 on the VM, see deploy/runners/README.md)"
+            exit 1
           }
           export POSTGRES_PASSWORD=$(openssl rand -hex 16) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
           cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML

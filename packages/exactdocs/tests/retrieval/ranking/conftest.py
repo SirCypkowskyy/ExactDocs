@@ -2,7 +2,8 @@
 
 To run the suite on another engine (hybrid retrieval, ParadeDB), add its name to ``ENGINES`` and
 build its ``Container`` in ``open_container``: the cases and the assertions do not change.
-``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set.
+``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set, and
+``postgres_fts_c`` runs it again on a database in the ``C`` locale.
 """
 
 import asyncio
@@ -33,7 +34,7 @@ from fixture_repo import DocsRepo, git
 
 LIBRARY = "/fixture/docs-repo"
 VERSIONS = {"v1.3.0": RefKind.TAG, "v1.4.0": RefKind.TAG, "next": RefKind.BRANCH}
-ENGINES = ["fts5", *(["postgres_fts"] if ADMIN_URL else [])]
+ENGINES = ["fts5", *(["postgres_fts", "postgres_fts_c"] if ADMIN_URL else [])]
 _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
 
 
@@ -50,7 +51,7 @@ class _Progress:
 def open_container(engine: str, data_dir: Path) -> Container:
     """The app's container for ``engine``; every engine shares the import and the search port."""
     assert engine in ENGINES, engine
-    if engine == "postgres_fts":
+    if engine.startswith("postgres_fts"):
         return Container.build(
             Settings(data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY)
         )
@@ -118,8 +119,9 @@ def imported(
     """
     data_dir = tmp_path_factory.mktemp("ranking")
     with ExitStack() as stack:
-        if request.param == "postgres_fts":
-            _DATABASES[request.param] = stack.enter_context(postgres_database()).url
+        if request.param.startswith("postgres_fts"):
+            database = postgres_database(c_locale=request.param.endswith("_c"))
+            _DATABASES[request.param] = stack.enter_context(database).url
         asyncio.run(_import_all(request.param, data_dir, docs_repo))
         yield request.param, data_dir
 

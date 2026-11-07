@@ -23,6 +23,8 @@ if ADMIN_URL is None and os.environ.get("EXACTDOCS_REQUIRE_POSTGRES") == "1":
 
 SQL_BACKENDS = ["sqlite", "postgres"] if ADMIN_URL else ["sqlite"]
 """The SQL backends the contract tests run on here."""
+SEARCH_BACKENDS = [*SQL_BACKENDS, *(["postgres_c"] if ADMIN_URL else [])]
+"""The search index's contract also runs on a PostgreSQL database in the ``C`` locale."""
 
 # A fixed, valid key: every process of one test shares it, as a deployment's must.
 SECRET_KEY = "contract-tests-secret-key-0123456789abcdef"
@@ -43,11 +45,15 @@ def _admin() -> psycopg.Connection:
 
 
 @contextmanager
-def postgres_database(*, owner_without_createdb: bool = False) -> Generator[PostgresDatabase]:
+def postgres_database(
+    *, owner_without_createdb: bool = False, c_locale: bool = False
+) -> Generator[PostgresDatabase]:
     """Create an empty database, yield it, then drop it (and its role) whatever happened.
 
     ``owner_without_createdb`` creates a login role that owns the database but may not create
     databases (``NOCREATEDB``), as on managed PostgreSQL, and connects as that role.
+    ``c_locale`` creates it with ``LC_COLLATE``/``LC_CTYPE`` ``C`` (``initdb --locale=C``), where
+    character classes such as ``[[:alnum:]]`` only know ASCII.
 
     Yields:
         The database's name and URL.
@@ -67,6 +73,13 @@ def postgres_database(*, owner_without_createdb: bool = False) -> Generator[Post
                 sql.SQL("CREATE DATABASE {} OWNER {}").format(
                     sql.Identifier(name), sql.Identifier(role)
                 )
+            )
+        elif c_locale:
+            admin.execute(
+                sql.SQL(
+                    "CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8'"
+                    " LC_COLLATE 'C' LC_CTYPE 'C'"
+                ).format(sql.Identifier(name))
             )
         else:
             admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))

@@ -100,6 +100,9 @@ PROCESS_WORK_OWNER: Final[str] = ".owner"
 """The file in a process folder its process keeps locked (``flock``) for as long as it lives."""
 KNOWN_HOSTS_FILE: Final[str] = "known_hosts"
 """Under the data dir: SSH host keys, the big three pre-seeded."""
+SHUTDOWN_GRACE_SECONDS: Final[int] = 30
+"""On PostgreSQL, how long `serve` lets open connections finish when it stops (uvicorn's
+`timeout_graceful_shutdown`), so a process that lost its executor slot is gone soon."""
 EXECUTOR_PREFIX: Final[str] = "exactdocs-"
 """On PostgreSQL each server process runs DBOS as ``exactdocs-<slot>`` (``executors.py``)."""
 EXECUTOR_LOCKS: Final[int] = 0x45584443
@@ -110,9 +113,11 @@ SLOT_KEEPALIVES: Final[dict[str, int]] = {
     "keepalives_idle": 30,
     "keepalives_interval": 10,
     "keepalives_count": 3,
+    "tcp_user_timeout": 10_000,
 }
 """libpq TCP keepalives of the connection that holds a process's executor slot: it idles for the
-process's whole life, and a NAT or load balancer would otherwise drop it unnoticed."""
+process's whole life, and a NAT or load balancer would otherwise drop it unnoticed. The user
+timeout (ms) ends a check whose packets a vanished host never acknowledges."""
 MAX_EXECUTORS: Final[int] = 1024
 """Slots tried before a process gives up: more server processes on one database than that is a
 mistake, not a deployment."""

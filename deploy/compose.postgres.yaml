@@ -3,6 +3,7 @@
 #   docker compose -f compose.postgres.yaml up -d
 services:
   db:
+    restart: unless-stopped
     # PostgreSQL 17 with pg_search and pgvector; any PostgreSQL 14 or newer works as well.
     image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
     environment:
@@ -15,6 +16,8 @@ services:
       retries: 30
     volumes: ["exactdocs-db:/var/lib/postgresql/data"]
   exactdocs:
+    # A process whose executor slot another one took stops itself; this brings it back.
+    restart: unless-stopped
     image: ${EXACTDOCS_IMAGE:-ghcr.io/sircypkowskyy/exactdocs:latest}
     depends_on:
       db: { condition: service_healthy }

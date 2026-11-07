@@ -316,11 +316,18 @@ def _upgrade_postgres(connection: Connection, location: Path) -> None:
         location: The Alembic revisions.
 
     Raises:
-        StartupError: The server is older than PostgreSQL 14.
+        StartupError: The server is older than PostgreSQL 14, or the database is not UTF8.
     """
     version = connection.exec_driver_sql("SHOW server_version_num").scalar_one()
     if int(version) < MIN_POSTGRES:
         message = f"PostgreSQL {version} is too old: ExactDocs needs PostgreSQL 14 or newer."
+        raise StartupError(message)
+    encoding = connection.exec_driver_sql("SHOW server_encoding").scalar_one()
+    if encoding != "UTF8":
+        message = (
+            f"The PostgreSQL database is encoded in {encoding}: ExactDocs needs UTF8 "
+            "(CREATE DATABASE ... ENCODING 'UTF8')."
+        )
         raise StartupError(message)
     connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({MIGRATION_LOCK})")
     config = alembic_config(location)

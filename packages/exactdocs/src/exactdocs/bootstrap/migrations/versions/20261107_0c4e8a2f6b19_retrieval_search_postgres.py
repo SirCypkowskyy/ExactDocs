@@ -25,15 +25,19 @@ branch_labels = None
 depends_on = None
 
 _TEXT = sa.Text(collation="C")  # never sorted; "C" so `migrate` leaves them as they are
-# Frozen copy of the adapter's function (`retrieval.constants._PG_WORDS`). PostgreSQL's parser
-# reads `/v1/tokens` as one file name and splits `retry_policy` at the underscore. FTS5 keeps
-# `-_.` inside a word and splits at everything else: so everything else becomes a space, and an
-# underscore inside a word a hyphen, which the parser keeps whole (`retry-policy`) and in parts.
+# The adapter's queries call this function (`retrieval.constants._PG_DOCUMENT`, `_PG_QUERY`).
+# PostgreSQL's parser reads `/v1/tokens` as one file name and splits `retry_policy` at the
+# underscore. FTS5 keeps `-_.` inside a word and splits at everything else: so everything else
+# becomes a space, and an underscore inside a word a hyphen, which the parser keeps whole
+# (`retry-policy`) and in parts. A word character is an ASCII letter or digit or any non-ASCII
+# character, spelled out rather than `[[:alnum:]]`: that class follows the database's LC_CTYPE,
+# and under `C` it would drop every accented, Greek or CJK word (the parser itself keeps them).
 _WORDS = r"""
     CREATE FUNCTION retrieval_search_words(words text) RETURNS text
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-    RETURN regexp_replace(regexp_replace(words, '[^[:alnum:]_.-]+', ' ', 'g'),
-                          '([[:alnum:]])_(?=[[:alnum:]])', '\1-', 'g')
+    RETURN regexp_replace(
+        regexp_replace(words, '[^A-Za-z0-9_.\u0080-\U0010FFFF-]+', ' ', 'g'),
+        '([A-Za-z0-9\u0080-\U0010FFFF])_(?=[A-Za-z0-9\u0080-\U0010FFFF])', '\1-', 'g')
 """
 _DOCUMENT = (
     "setweight(to_tsvector('simple'::regconfig, retrieval_search_words(heading)), 'A')"

@@ -11,6 +11,17 @@ runs other production containers and a job with Docker access on the host could 
 | Scope | this repository only |
 | Tooling | Docker + buildx + compose + QEMU (amd64 images are emulated), git, gh, jq; uv, Node and pnpm come from setup actions |
 
+## Existing VMs
+
+`create-vms.sh` only provisions new VMs. When it gains a package, install it once on the running
+ones, e.g. for the compose plugin the PostgreSQL smoke step needs (#103):
+
+```bash
+for vm in exactdocs-runner-1 exactdocs-runner-2; do
+  sudo lxc exec "$vm" -- sh -c 'apt-get update -q && apt-get install -y -q docker-compose-v2'
+done
+```
+
 ## Setup
 
 From a workstation with `gh` logged in (NVIDIA Sync's SSH config provides the `dellpromaxgb10.local` host):

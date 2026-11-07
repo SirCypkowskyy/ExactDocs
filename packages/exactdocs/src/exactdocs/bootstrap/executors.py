@@ -81,6 +81,8 @@ class PostgresExecutorSlots:
     """The database the processes share."""
     schema: str = "dbos"
     """DBOS's schema: ``claim`` looks there for the pending workflows of the slot it takes."""
+    check_timeout: float = 4.0
+    """Bound on each database round trip of ``keep`` (below the worker's check interval)."""
     claim_grace: float = 15.0
     """How long ``claim`` waits before it returns a slot whose executor left pending workflows:
     a process that lost the slot but still runs them notices within this time and stops."""
@@ -115,6 +117,12 @@ class PostgresExecutorSlots:
             executor_id = f"{EXECUTOR_PREFIX}{slot}"
             try:
                 if await self._left_work(executor_id):
+                    log.warning(
+                        "executor slot %s left pending jobs: waiting %.0f s before taking it"
+                        " over, so a process that lost it can stop first",
+                        executor_id,
+                        self.claim_grace,
+                    )
                     await asyncio.sleep(self.claim_grace)
                 yield executor_id
             finally:
@@ -128,9 +136,13 @@ class PostgresExecutorSlots:
     async def keep(self) -> SlotState:
         """Check that this process still holds its slot; take it again if it was freed.
 
+        Each database round trip is bounded by ``check_timeout``: a connection to a host that
+        no longer answers (a failover) must not hold the worker past the adoption grace.
+
         Returns:
             ``held``; ``retaken`` when the slot was lost and taken again (the worker then checks
-            nobody adopted its jobs meanwhile); ``lost`` when another process holds it now.
+            nobody adopted its jobs meanwhile); ``lost`` when another process holds it now;
+            ``unknown`` when the database cannot be reached to tell.
         """
         slot, connection, engine = (
             self._held.get("slot"),
@@ -141,25 +153,33 @@ class PostgresExecutorSlots:
             return SlotState.LOST
         if isinstance(connection, AsyncConnection):
             try:
-                held = await connection.scalar(_holds, {"space": EXECUTOR_LOCKS, "slot": slot})
-                await connection.commit()
-            except DBAPIError, OSError:
-                held = 0
+                async with asyncio.timeout(self.check_timeout):
+                    held = await connection.scalar(_holds, {"space": EXECUTOR_LOCKS, "slot": slot})
+                    await connection.commit()
+            except DBAPIError, OSError, TimeoutError:
+                held = None
             if held:
                 return SlotState.HELD
+            self._held.pop("connection", None)
             with suppress(SQLAlchemyError, OSError):
                 await connection.invalidate()
+        # Another process's `orphaned()` may hold this free slot for a moment while it lists
+        # workflows; a retake that meets it reports `lost` and this process stops, though
+        # nobody adopted anything. That errs on the safe side and is left as it is.
         try:
-            fresh = await engine.connect()
-            if await self._try(fresh, slot):
-                self._held["connection"] = fresh
-                log.warning("executor slot %d was lost and is held again", slot)
-                return SlotState.RETAKEN
-            await fresh.close()
-        except DBAPIError, OSError:
-            log.exception("could not take executor slot %d again", slot)
-        self._held.pop("connection", None)
-        return SlotState.LOST
+            async with asyncio.timeout(self.check_timeout):
+                fresh = await engine.connect()
+                taken = await self._try(fresh, slot)
+        except DBAPIError, OSError, TimeoutError:
+            log.warning("cannot reach the database to check executor slot %d", slot)
+            return SlotState.UNKNOWN
+        if not taken:
+            with suppress(SQLAlchemyError, OSError):
+                await fresh.close()
+            return SlotState.LOST
+        self._held["connection"] = fresh
+        log.warning("executor slot %d was lost and is held again", slot)
+        return SlotState.RETAKEN
 
     @asynccontextmanager
     async def orphaned(self, executor_ids: Collection[str]) -> AsyncGenerator[Collection[str]]:

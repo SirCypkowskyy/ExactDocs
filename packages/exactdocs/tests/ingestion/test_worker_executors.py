@@ -4,9 +4,10 @@ DBOS's class methods are replaced by fakes here; ``tests/bootstrap/test_postgres
 same paths against a real database and real processes.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -149,19 +150,91 @@ async def test_a_slot_taken_back_in_time_is_not_adopted(monkeypatch: pytest.Monk
     assert resumed == []
 
 
-async def test_a_lost_slot_stops_the_jobs_and_the_process() -> None:
+@pytest.fixture
+def no_dbos(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record what the worker asks of DBOS when it stops (no DBOS runs in these tests).
+
+    Returns:
+        The calls, in order.
+    """
+    calls: list[str] = []
+
+    def destroy() -> None:
+        calls.append("destroy")
+
+    async def resume(ids: list[str], *, queue_name: str) -> None:
+        calls.append(f"resume {','.join(ids)} on {queue_name}")
+
+    monkeypatch.setattr(dbos_worker.DBOS, "destroy", destroy)
+    monkeypatch.setattr(dbos_worker.DBOS, "resume_workflows_async", resume)
+    return calls
+
+
+async def test_a_lost_slot_stops_dbos_and_the_process(no_dbos: list[str]) -> None:
     lost: list[str] = []
     slots = FakeSlots(states=[SlotState.HELD, SlotState.LOST])
     subject = worker(slots, lost)
 
-    assert await subject.check_slot("exactdocs-0", slots)
-    assert not await subject.check_slot("exactdocs-0", slots)
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.HELD
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
 
+    assert no_dbos == ["destroy"]  # its queue threads stop: nothing is dequeued here any more
     assert lost == ["stop"]
 
 
+async def test_no_job_starts_after_the_slot_is_lost(no_dbos: list[str]) -> None:
+    started: list[str] = []
+
+    async def run_job(job_id: str) -> None:
+        started.append(job_id)
+
+    slots = FakeSlots(states=[SlotState.LOST])
+    subject = replace(worker(slots, []), run_job=run_job)
+    await subject.check_slot("exactdocs-0", slots)
+
+    with pytest.raises(asyncio.CancelledError):  # the workflow stays pending...
+        await subject.run_workflow("job-late")
+
+    assert started == []
+    await subject.check_slot("exactdocs-0", FakeSlots(states=[SlotState.LOST]))
+    assert "resume job-late on q" in no_dbos  # ...and is queued again for another process
+
+
+async def test_an_unreachable_database_is_waited_out_before_the_slot_counts_as_lost(
+    no_dbos: list[str],
+) -> None:
+    now = [0.0]
+    lost: list[str] = []
+    slots = FakeSlots(states=[SlotState.UNKNOWN, SlotState.UNKNOWN, SlotState.HELD])
+    subject = worker(slots, lost, now=now)
+
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
+    now[0] += 9  # under the grace (10 s here)
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.HELD  # back in time
+    assert (lost, no_dbos) == ([], [])
+
+    slots.states += [SlotState.UNKNOWN, SlotState.UNKNOWN]
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
+    now[0] += 11  # unconfirmed past the grace: another process may have adopted the jobs
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
+    assert lost == ["stop"]
+
+
+async def test_a_slot_check_that_hangs_counts_as_unknown() -> None:
+    class Hanging(FakeSlots):
+        async def keep(self) -> SlotState:
+            await asyncio.sleep(60)
+            return SlotState.HELD
+
+    slots = Hanging()
+    subject = replace(worker(slots, []), slot_check_timeout=0.05)
+
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
+
+
 async def test_a_retaken_slot_whose_jobs_were_adopted_meanwhile_counts_as_lost(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, no_dbos: list[str]
 ) -> None:
     async def status(job_id: str) -> Any:
         return workflow(job_id, "exactdocs-3", "PENDING")  # another process runs it now
@@ -172,8 +245,9 @@ async def test_a_retaken_slot_whose_jobs_were_adopted_meanwhile_counts_as_lost(
     subject = worker(slots, lost)
     subject.job_ids.add("job-1")
 
-    assert not await subject.check_slot("exactdocs-0", slots)
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
     assert lost == ["stop"]
+    assert no_dbos == ["destroy"]
 
 
 async def test_a_retaken_slot_with_its_jobs_still_its_own_goes_on(
@@ -188,7 +262,7 @@ async def test_a_retaken_slot_with_its_jobs_still_its_own_goes_on(
     subject = worker(slots, lost)
     subject.job_ids.add("job-1")
 
-    assert await subject.check_slot("exactdocs-0", slots)
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.HELD
     assert lost == []
 
 

@@ -257,7 +257,8 @@ _PG_DOCUMENT: Final[str] = (
 """The computed `document` column: the `simple` configuration (no stemming or stop words, like
 FTS5's `unicode61`), heading A, path B, text C, identifiers D (as revision 0c4e8a2f6b19). Each
 column goes through `retrieval_search_words` (that revision's SQL function) first: everything but
-letters, digits and `-_.` becomes a space and an underscore inside a word a hyphen, so PostgreSQL's
+ASCII letters and digits, non-ASCII characters (whatever the database's LC_CTYPE) and `-_.` becomes
+a space and an underscore inside a word a hyphen, so PostgreSQL's
 parser cuts words as FTS5's `tokenchars '-_.'` does (`/v1/tokens` holds `tokens`; `retry_policy`
 stays whole as `retry-policy`, its parts as well)."""
 _PG_CREATE_NEXT: Final[str] = f"""
@@ -293,7 +294,8 @@ _PG_QUERY: Final[str] = """
             '(' || plainto_tsquery('simple', retrieval_search_words(term))::text || ')', ' | ')
         ) AS query,
         CAST(string_agg(quote_literal(retrieval_search_words(term)), ' | ')
-             FILTER (WHERE term ~ '[[:alnum:]][-_.][[:alnum:]]') AS tsquery) AS whole
+             FILTER (WHERE term ~ ('[A-Za-z0-9\\u0080-\\U0010FFFF][-_.]'
+                                   || '[A-Za-z0-9\\u0080-\\U0010FFFF]')) AS tsquery) AS whole
     FROM unnest(CAST(:terms AS text[])) AS term
     WHERE numnode(plainto_tsquery('simple', retrieval_search_words(term))) > 0
 """

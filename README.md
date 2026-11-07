@@ -501,14 +501,18 @@ dependencies; nothing of it is imported while no model is configured.
 
 ### PostgreSQL
 
-A team's instance can keep everything in PostgreSQL 14 or newer instead of the SQLite file, and
+A team's instance can keep everything in PostgreSQL 14 or newer (a UTF8 database, in any locale)
+instead of the SQLite file, and
 then run several server processes on it: in one container (`WEB_CONCURRENCY`), in several, or on
 several hosts behind a load balancer. Every process serves the web UI, the API and MCP, and runs
 jobs; a job runs once, in whichever process takes it first, and at most one per library at a time.
 A process that dies with running jobs leaves them to the next one that starts, or after about 15 s
-to any running process, which resumes them at their last completed step. A process that loses its
-connection to the database long enough for another one to take over its jobs stops itself (as
-`SIGTERM` does), so that no job runs twice; let your orchestrator restart it.
+to any running process, which resumes them at their last completed step. A short database outage
+or failover is waited out. But a process that could not confirm its executor slot for 15 s, or whose
+slot another process has taken meanwhile, stops taking jobs and stops itself (as `SIGTERM` does), so
+that no job runs twice: run it with a restart policy (`restart: unless-stopped` in the example
+below, a Deployment in Kubernetes). A process that starts after a crash waits 15 s before it
+resumes the jobs the crashed one left (it logs why).
 
 - `EXACTDOCS_DATABASE_URL=postgresql://user:password@host:5432/exactdocs` (`postgresql+psycopg://`
   means the same). The role needs to own the database, or at least to create tables and a schema
@@ -544,6 +548,7 @@ Several processes on one PostgreSQL database, verified in CI (`deploy/compose.po
 #   docker compose -f compose.postgres.yaml up -d
 services:
   db:
+    restart: unless-stopped
     # PostgreSQL 17 with pg_search and pgvector; any PostgreSQL 14 or newer works as well.
     image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
     environment:
@@ -556,6 +561,8 @@ services:
       retries: 30
     volumes: ["exactdocs-db:/var/lib/postgresql/data"]
   exactdocs:
+    # A process whose executor slot another one took stops itself; this brings it back.
+    restart: unless-stopped
     image: ${EXACTDOCS_IMAGE:-ghcr.io/sircypkowskyy/exactdocs:latest}
     depends_on:
       db: { condition: service_healthy }

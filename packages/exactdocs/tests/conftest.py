@@ -91,6 +91,19 @@ def on_postgres(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
         yield database
 
 
+@pytest.fixture
+def on_postgres_c(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """As ``on_postgres``, on a database created with ``LC_CTYPE`` and ``LC_COLLATE`` ``C``.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database(c_locale=True) as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
+
+
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Never touch the real data directory: every test starts on an empty one."""

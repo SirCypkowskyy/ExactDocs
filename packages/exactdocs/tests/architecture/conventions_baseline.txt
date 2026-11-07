@@ -1775,7 +1775,7 @@ packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJ
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._ended docstring-missing-returns
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._forget docstring-missing-args
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._forgetting field-without-docstring
-packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._run docstring-missing-args
+packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.run_workflow docstring-missing-args
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._running field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._stop function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.concurrency field-without-docstring

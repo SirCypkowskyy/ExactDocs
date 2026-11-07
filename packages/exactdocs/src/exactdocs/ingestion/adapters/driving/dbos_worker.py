@@ -72,7 +72,9 @@ class SlotState(StrEnum):
     RETAKEN = "retaken"
     """The slot was lost (its connection died) and this process holds it again."""
     LOST = "lost"
-    """Another process holds the slot now, or it cannot be taken again."""
+    """Another process holds the slot now."""
+    UNKNOWN = "unknown"
+    """The database cannot be reached to tell (an outage, a failover in progress)."""
 
 
 class ExecutorSlots(Protocol):
@@ -156,6 +158,9 @@ class DbosJobWorker:
     adopt_grace: float = 15.0
     """With ``executors``: how long a slot must stay free before its jobs are adopted, so that a
     process whose slot connection merely dropped can take it again first."""
+    slot_check_timeout: float = 4.0
+    """Bound on one slot check (``keep`` and the job check after a retake), well under
+    ``adopt_grace - slot_check_interval``: a check that hangs counts as ``unknown``."""
     on_slot_lost: Callable[[], None] | None = None
     """Called when another process took this one's slot: the composition root stops the
     process (its jobs are then another executor's, and must not run here as well)."""
@@ -165,6 +170,12 @@ class DbosJobWorker:
     monotonic: Callable[[], float] = time.monotonic
     """The clock ``adopt_grace`` is measured with (tests pass their own)."""
     _suspects: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _unconfirmed: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    """Since when (``monotonic``) the slot could not be confirmed, while it cannot."""
+    _lost: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+    """Set once the slot is lost: no job starts here any more."""
+    _refused: set[str] = field(default_factory=set, init=False, repr=False)
+    """Jobs DBOS handed over after the slot was lost: queued again for another process."""
     """Executors whose slots were seen free, and since when (``time.monotonic``)."""
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
 
@@ -212,7 +223,7 @@ class DbosJobWorker:
                 Args:
                     job_id: The job's ID, also the workflow's.
                 """
-                await self._run(job_id)
+                await self.run_workflow(job_id)
 
             async def tick(scheduled_at: datetime, context: object) -> None:
                 """Run one tick of the scheduled checks: the schedule's workflow.
@@ -297,32 +308,66 @@ class DbosJobWorker:
         while True:
             await asyncio.sleep(self.slot_check_interval)
             try:
-                if not await self.check_slot(executor_id, executors):
+                state = await self.check_slot(executor_id, executors)
+                if state is SlotState.LOST:
                     return
-                await self.adopt_orphans(executor_id, executors)
+                if state is SlotState.HELD:
+                    await self.adopt_orphans(executor_id, executors)
             except Exception:  # the next round tries again
                 log.exception("could not check executor slot %s", executor_id)
 
-    async def check_slot(self, executor_id: str, executors: ExecutorSlots) -> bool:
-        """Keep the slot; when it is lost, stop this process's jobs and report it.
+    async def check_slot(self, executor_id: str, executors: ExecutorSlots) -> SlotState:
+        """Keep the slot; when it is lost, stop taking and running jobs and report it.
+
+        A database that cannot be reached is not a lost slot: the worker waits, adopting
+        nothing, and only gives up once the slot went unconfirmed for ``adopt_grace`` (another
+        process may have adopted its jobs by then). A slot another process holds is lost at once.
 
         Args:
             executor_id: This process's executor ID.
             executors: The slots.
 
         Returns:
-            Whether this process may go on running jobs under its executor ID.
+            ``held`` (go on), ``unknown`` (go on, adopt nothing) or ``lost`` (stopped).
         """
-        state = await executors.keep()
-        if state is SlotState.RETAKEN and not await self._still_ours(executor_id):
+        try:
+            state = await asyncio.wait_for(executors.keep(), self.slot_check_timeout)
+        except TimeoutError:
+            state = SlotState.UNKNOWN
+        if state is SlotState.RETAKEN:
+            try:
+                ours = await asyncio.wait_for(
+                    self._still_ours(executor_id), self.slot_check_timeout
+                )
+            except TimeoutError:
+                ours = False
+            state = SlotState.HELD if ours else SlotState.LOST
+        if state is SlotState.UNKNOWN:
+            since = self._unconfirmed.setdefault("since", self.monotonic())
+            if self.monotonic() - since < self.adopt_grace:
+                return SlotState.UNKNOWN
             state = SlotState.LOST
-        if state is not SlotState.LOST:
-            return True
-        log.error("executor slot %s was taken by another process: stopping jobs here", executor_id)
-        await self._cancel(set(self._running))
+        self._unconfirmed.clear()
+        if state is SlotState.HELD:
+            return SlotState.HELD
+        log.error("executor slot %s is lost: no more jobs run in this process", executor_id)
+        await self._halt()
         if self.on_slot_lost is not None:
             self.on_slot_lost()
-        return False
+        return SlotState.LOST
+
+    async def _halt(self) -> None:
+        """Stop taking jobs first, then cancel the running ones and stop DBOS's threads.
+
+        A job DBOS still hands over is refused (its workflow stays pending) and queued again,
+        so the process that now holds this executor ID does not inherit it unnoticed.
+        """
+        self._lost.set()
+        await self._cancel(set(self._running))
+        if self._refused:
+            with suppress(Exception):
+                await DBOS.resume_workflows_async(sorted(self._refused), queue_name=self.queue)
+        await asyncio.to_thread(DBOS.destroy)
 
     async def _still_ours(self, executor_id: str) -> bool:
         """Tell whether every job running here is still this executor's pending workflow.
@@ -389,8 +434,15 @@ class DbosJobWorker:
             load_output=False,
         )
 
-    async def _run(self, job_id: str) -> None:
-        """Run the job (the workflow); a resumed workflow skips the steps it completed."""
+    async def run_workflow(self, job_id: str) -> None:
+        """Run the job (the workflow); a resumed workflow skips the steps it completed.
+
+        Once the slot is lost no job starts: the workflow ends cancelled, stays pending, and
+        ``_halt`` queues it again for another process.
+        """
+        if self._lost.is_set():
+            self._refused.add(job_id)
+            raise asyncio.CancelledError
         task = asyncio.current_task()
         if task is not None:
             self._running.add(task)

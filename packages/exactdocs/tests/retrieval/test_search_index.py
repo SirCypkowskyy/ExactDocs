@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import text
 
-from databases import SQL_BACKENDS
+from databases import SEARCH_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import (
@@ -146,7 +146,7 @@ class World:
         )
 
 
-@pytest.fixture(params=["memory", *SQL_BACKENDS])
+@pytest.fixture(params=["memory", *SEARCH_BACKENDS])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     clock = Clock()
 
@@ -186,11 +186,11 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             build(memory, memory_index), memory_index, clock, entries, forget, "memory", age
         )
         return
-    if request.param == "postgres":
-        request.getfixturevalue("on_postgres")
+    if request.param.startswith("postgres"):
+        request.getfixturevalue("on_" + request.param)
     container = Container.build(Settings())
     async with container.running(jobs=False):
-        postgres = request.param == "postgres"
+        postgres = request.param.startswith("postgres")
         index: SqliteSearchIndex | PostgresSearchIndex = (
             PostgresSearchIndex(engine=container.engine)
             if postgres
@@ -289,6 +289,33 @@ async def test_special_characters_are_dropped_and_the_words_still_match(world: W
 
     assert await world.find("m14", '"retry_policy" NEAR (*') != []
     assert await world.find("m14", "()*") == []
+
+
+async def test_words_in_any_script_are_found_whatever_the_database_locale(
+    world: World,
+) -> None:
+    # `postgres_c` is a database in the C locale, whose `[[:alnum:]]` only knows ASCII.
+    await world.index(
+        "m1",
+        "main",
+        {
+            "fr.md": ("fr", [section("Desserts", "La crème brûlée se sert froide.")]),
+            "el.md": ("el", [section("Αρχή", "ωμέγα σημαίνει μεγάλο.")]),
+            "ja.md": ("ja", [section("概要", "日本語 の 説明 です")]),
+            "en.md": ("en", [section("Other", "Nothing to see here.")]),
+        },
+    )
+
+    for query, snippet in [
+        ("brûlée", "La crème brûlée"),
+        ("crème", "La crème brûlée"),
+        ("ωμέγα", "ωμέγα σημαίνει"),
+        ("日本語", "日本語"),
+    ]:
+        found = await world.find("m1", query)
+        assert [hit.snippet[: len(snippet)] for hit in found] == [snippet], (query, found)
+        start, end = found[0].highlights[0]
+        assert found[0].snippet[start:end] == query
 
 
 async def test_identifier_parts_match_prose_and_the_whole_matches_code(world: World) -> None:

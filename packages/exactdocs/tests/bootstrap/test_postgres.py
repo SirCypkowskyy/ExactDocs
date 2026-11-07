@@ -10,12 +10,15 @@ import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import psycopg
 import pytest
+from psycopg import sql
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from databases import ADMIN_URL
+from databases import ADMIN_URL, PostgresDatabase
 from exactdocs.bootstrap import database
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
@@ -321,3 +324,39 @@ async def test_a_process_whose_slot_connection_died_takes_it_back_or_stops(
         async with second.claim() as theirs:  # a process starting now gets the free slot
             assert theirs == mine
             assert await first.keep() is SlotState.LOST  # so this one must stop
+
+
+async def test_a_database_that_cannot_be_reached_leaves_the_slot_unknown_not_lost(
+    engines: tuple[AsyncEngine, AsyncEngine], on_postgres: PostgresDatabase
+) -> None:
+    slots = PostgresExecutorSlots(engine=engines[0], check_timeout=2)
+    admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
+
+    def allow(*, connections: bool) -> None:
+        with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
+            a.execute(
+                sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS {}").format(
+                    sql.Identifier(on_postgres.name), sql.Literal(connections)
+                )
+            )
+
+    async with slots.claim():
+        allow(connections=False)  # an outage: nobody can connect, and the slot's connection dies
+        try:
+            await _drop_slot_connection_as_admin(on_postgres.name)
+            assert await slots.keep() is SlotState.UNKNOWN
+        finally:
+            allow(connections=True)
+        assert await slots.keep() is SlotState.RETAKEN  # nobody else took it meanwhile
+
+
+async def _drop_slot_connection_as_admin(database: str) -> None:
+    """Kill every backend on the database, from outside it."""
+    admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
+    with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
+        a.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+            " WHERE datname = %s AND pid <> pg_backend_pid()",
+            (database,),
+        )
+    await asyncio.sleep(0.1)
