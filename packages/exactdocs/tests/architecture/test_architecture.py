@@ -38,6 +38,14 @@ FRAMEWORKS = [
     "dbos*",
     "argon2*",
     *DATABASE_LIBRARIES,
+    # The AI stack (the `[ai]` and `[local]` extras): adapters and bootstrap only, imported once
+    # a model is configured (docs/decisions/ai-retrieval.md, "Where the code lives").
+    "pydantic_ai*",
+    "pydantic_monty*",
+    "fastembed*",
+    "onnxruntime*",
+    "sqlite_vec*",
+    "pgvector*",
 ]
 
 

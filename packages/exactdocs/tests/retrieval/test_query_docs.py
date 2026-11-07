@@ -7,6 +7,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driving.mcp import format_docs, format_rules
@@ -99,6 +100,7 @@ async def build(
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
         query_docs_token_budget=budget,
     )
     for manifest, ref, items in [("m1", "v1", old), ("m2", "v2", new)]:

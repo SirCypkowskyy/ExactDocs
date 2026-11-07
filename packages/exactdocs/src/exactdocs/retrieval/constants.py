@@ -259,6 +259,12 @@ SEARCH_DURATION_BUCKETS: Final[tuple[float, ...]] = (
 )  # fmt: skip
 """Bucket bounds of the search duration histogram, in seconds (a stage can take a millisecond)."""
 
+# ---------------------------------------------------------------- models (retrieval modes)
+DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "hybrid", "bm25")
+"""The default mode when neither the call, the library nor the instance names one: the first that
+can run. Agentic is never a default; a call, a library or the instance must choose it.
+"""
+
 ARTICLE_OUTLINE_DESCRIPTION: Final[str] = (
     "Outline one article of a version: its heading tree, a chunk ID per heading, no text.\n\n"
     "A fraction of the tokens of `read_article`: use it to see what an article covers, then "
