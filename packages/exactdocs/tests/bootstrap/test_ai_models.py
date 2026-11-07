@@ -849,3 +849,30 @@ async def test_the_sdks_are_warmed_at_start_when_any_profile_exists(
         assert warmed == []
     async with profile_only.running(jobs=False):
         assert warmed == [True]
+
+
+async def test_a_failed_sdk_load_at_start_is_a_warning_not_a_stop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(name: str) -> object:
+        message = f"cannot import name 'secret' from 'openai' ({name})"
+        raise ImportError(message)
+
+    monkeypatch.delitem(sys.modules, AI_SDK_MODULE)
+    monkeypatch.setattr(ai_models.importlib, "import_module", broken)
+    container = Container.build(
+        Settings(
+            data_dir=tmp_path,
+            ai=AiSettings.model_validate(
+                {"providers": {"rr": {"kind": "tei", "base_url": "http://tei.internal:8080"}}}
+            ),
+        )
+    )
+
+    async with container.running(jobs=False):
+        pass
+
+    warnings = [r for r in caplog.records if "could not be loaded" in r.getMessage()]
+    assert [r.levelname for r in warnings] == ["WARNING"]
+    assert "(ImportError)" in warnings[0].getMessage()
+    assert "openai" not in caplog.text

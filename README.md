@@ -603,9 +603,9 @@ or 32 for TEI), never a library name, a version or a user. A reranker that times
 answers something unusable never fails a search: results keep their order with `reranked: false`
 and `fallback_reason` `reranker_timeout` or `reranker_failed`, and the failure is logged without
 the query. With a `limit` above `top_n`, the reranked results come first and the rest follow in the
-mode's order, with the mode's scores (not comparable with the reranker's). With any role
-or provider profile configured, the provider SDKs are loaded in a worker thread at start, so the
-first search never waits for them. Whatever the reranker raises (an HTTP client closed under the
+mode's order, with the mode's scores (not comparable with the reranker's). With any
+provider profile other than `local` configured, the provider SDKs are loaded in a worker thread at
+start, so the first search never waits for them; a load that fails is a warning, never a stop. Whatever the reranker raises (an HTTP client closed under the
 call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. The hybrid, HyDE
 and agentic pipelines arrive with #91 onwards.
 

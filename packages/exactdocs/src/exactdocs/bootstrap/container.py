@@ -105,7 +105,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
-from exactdocs.retrieval.models import RerankLimits, RetrievalMode
+from exactdocs.retrieval.models import ProviderKind, RerankLimits, RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs_kernel import DomainError, SystemClock
 
@@ -137,21 +137,20 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
     return configured
 
 
-async def _warm_ai(settings: Settings, retrieval: RetrievalModule) -> None:
+async def _warm_ai(retrieval: RetrievalModule) -> None:
     """Load the provider SDKs in a worker thread at start when a model may be called.
 
-    That is when an instance role is configured, or when any provider profile exists (configured,
-    or stored over the REST API): a library's own role can only name an existing profile. The
-    first search that calls a model would otherwise import them (seconds) inside its reranker
-    timeout. With no role and no profile nothing is loaded (RUN-02).
+    That is when a provider profile other than ``local`` exists (configured, or stored over the
+    REST API): every role, the instance's or a library's own, names an existing profile, and
+    ``local`` models (#245) need none of these SDKs. The first search that calls a model would
+    otherwise import them (seconds) inside its reranker timeout. With no such profile nothing is
+    loaded (RUN-02). A failed load never stops the start (``PydanticAiModels.warm``).
 
     Args:
-        settings: The runtime configuration.
         retrieval: Lists the provider profiles (reading them imports no SDK).
     """
-    ai = settings.ai
-    roles = any(role.model for role in (ai.embedding, ai.reranker, ai.llm, ai.judge))
-    if roles or (await retrieval.list_providers()).providers:
+    profiles = (await retrieval.list_providers()).providers
+    if any(p.kind is not ProviderKind.LOCAL for p in profiles):
         await PydanticAiModels().warm()
 
 
@@ -410,7 +409,7 @@ class ReadOnlyContainer:
             raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
-            await _warm_ai(self.settings, self.retrieval)
+            await _warm_ai(self.retrieval)
             yield
         finally:
             try:
@@ -612,7 +611,7 @@ class Container:
             raise RuntimeError(message)
         try:
             await migrate(self.engine)
-            await _warm_ai(self.settings, self.retrieval)
+            await _warm_ai(self.retrieval)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
                 stored = (

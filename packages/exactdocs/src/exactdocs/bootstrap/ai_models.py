@@ -114,13 +114,23 @@ class PydanticAiModels:
     async def warm(self) -> None:
         """Load the SDK side in a worker thread, so no request waits for it on the event loop.
 
-        Called at start when an AI role is configured; a no-op once loaded or without the
-        ``[ai]`` extra (a profile's call then says what to install).
+        Called at start when a provider profile exists; a no-op once loaded or without the
+        ``[ai]`` extra (a profile's call then says what to install). A load that fails (a partly
+        installed extra) never stops the start: it is logged as a warning with the error's class
+        only, and each later call to a model fails and falls back as usual.
         """
         if AI_SDK_MODULE in sys.modules or not _installed("pydantic_ai"):
             return
         started = time.perf_counter()
-        await asyncio.to_thread(importlib.import_module, AI_SDK_MODULE)
+        load = asyncio.ensure_future(asyncio.to_thread(importlib.import_module, AI_SDK_MODULE))
+        await asyncio.wait({load})  # returns the outcome without raising it
+        if (error := load.exception()) is not None:
+            logger.warning(
+                "AI provider SDKs could not be loaded (%s): calls to a model will fail and "
+                "searches fall back to what needs none",
+                type(error).__name__,
+            )
+            return
         logger.info("AI provider SDKs loaded in %.1fs", time.perf_counter() - started)
 
     async def _sdk(self, profile: ProviderProfile) -> ModuleType:

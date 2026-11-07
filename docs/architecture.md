@@ -910,8 +910,8 @@ builds the library's reranker through `AiProviders.reranker_for` (the `ModelFact
 the library settings `RetrievalModes.choose` read once for the search, and calls it. Any build
 failure, and anything the call raises (a client closed under it, an `ExceptionGroup` of its
 batches), is re-raised as a `RerankerError` naming only the exception's class; cancellation passes
-through. The provider SDKs are loaded in a worker thread: at start when a role or any profile is
-configured (`Container.running`, `PydanticAiModels.warm`), else on first use, never on the event
+through. The provider SDKs are loaded in a worker thread: at start when a profile other than `local`
+exists (a failed load is logged as a warning and never stops the start) (`Container.running`, `PydanticAiModels.warm`), else on first use, never on the event
 loop. `models.reorder` orders the scored head by score (ties keep the
 mode's order) and keeps the rest after it; the use case then cuts to the limit
 (`PipelineAnswer.cut`). A timeout, a `RerankerError` or a `ProviderUnsupportedError` keeps the
