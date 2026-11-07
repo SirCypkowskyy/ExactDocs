@@ -28,18 +28,24 @@ from sqlalchemy.pool import ConnectionPoolEntry
 from exactdocs.bootstrap.constants import (
     BUSY_TIMEOUT_MS,
     COLLATED_PREFIXES,
+    LOCK_NOT_AVAILABLE,
     MIGRATION_LOCK,
     MIGRATIONS,
     MIN_POSTGRES,
     MIN_SQLITE,
     POSTGRES_DRIVER,
     WRITE_LOCK,
+    WRITE_LOCK_TIMEOUT_MS,
 )
 from exactdocs.bootstrap.settings import Settings
 
 
 class StartupError(RuntimeError):
     """The instance cannot start with this configuration; the message says what to change."""
+
+
+class WriteTurnTimeoutError(RuntimeError):
+    """On PostgreSQL, a writing transaction waited longer than ``WRITE_LOCK_TIMEOUT_MS``."""
 
 
 def alembic_config(location: Path = MIGRATIONS) -> Config:
@@ -155,13 +161,28 @@ def _begin_postgres(connection: Connection) -> None:
     SQLite has one writer at a time and the adapters rely on ``BEGIN IMMEDIATE`` to make a
     read-then-write atomic (the first admin, a manifest's activation). On PostgreSQL the same
     transactions take one transaction-level advisory lock, released at commit or rollback, so
-    they keep that guarantee across every process using the database.
+    they keep that guarantee across every process using the database. A turn waits at most
+    ``WRITE_LOCK_TIMEOUT_MS``, as SQLite waits ``BUSY_TIMEOUT_MS``, then fails with
+    ``WriteTurnTimeoutError``. The price is SQLite's too: one writing transaction at a time,
+    whatever the number of processes.
 
     Args:
         connection: The connection whose transaction begins.
     """
-    if connection.get_execution_options().get("begin_immediate", False):
+    if not connection.get_execution_options().get("begin_immediate", False):
+        return
+    connection.exec_driver_sql(f"SET LOCAL lock_timeout = {WRITE_LOCK_TIMEOUT_MS}")
+    try:
         connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({WRITE_LOCK})")
+    except OperationalError as error:
+        if getattr(error.orig, "sqlstate", None) != LOCK_NOT_AVAILABLE:
+            raise
+        message = (
+            f"Another ExactDocs process kept the database's write turn for over "
+            f"{WRITE_LOCK_TIMEOUT_MS // 1000} s; try again."
+        )
+        raise WriteTurnTimeoutError(message) from error
+    connection.exec_driver_sql("SET LOCAL lock_timeout = DEFAULT")
 
 
 def is_postgres(engine: AsyncEngine) -> bool:
@@ -314,29 +335,40 @@ def _collate_by_code_point(connection: Connection) -> None:
     SQLite compares text byte by byte; a PostgreSQL database usually has a locale's collation
     (``en_US.utf8``), under which ``B`` sorts after ``a`` and listings would come out in another
     order. Revisions create plain ``Text`` columns, so this runs after every migration and only
-    changes the columns that are not "C" yet (a new revision's, or every column of a new database).
+    changes the columns that are not "C" yet (a new revision's, or every column of a new database),
+    keeping their exact type (``varchar(n)`` too). A column a generated column or a view reads
+    cannot change type and is left alone: give such a column ``Text(collation="C")`` in its
+    revision, as ``0c4e8a2f6b19`` does.
 
     Args:
         connection: A connection inside the migration's transaction.
     """
     rows = connection.execute(
         text(
-            "SELECT c.table_name, c.column_name, c.data_type FROM information_schema.columns c"
-            " JOIN information_schema.tables t"
-            "  ON t.table_schema = c.table_schema AND t.table_name = c.table_name"
-            " WHERE c.table_schema = current_schema() AND t.table_type = 'BASE TABLE'"
-            " AND c.data_type IN ('text', 'character varying')"
-            " AND left(c.table_name, strpos(c.table_name, '_')) = ANY(:prefixes)"
-            " AND coalesce(c.collation_name, '') <> 'C'"
-            " ORDER BY c.table_name, c.ordinal_position"
+            "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod)"
+            " FROM pg_attribute a"
+            " JOIN pg_class c ON c.oid = a.attrelid"
+            " JOIN pg_type t ON t.oid = a.atttypid"
+            " WHERE c.relnamespace = current_schema()::regnamespace AND c.relkind = 'r'"
+            " AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''"
+            " AND t.typcategory = 'S'"
+            " AND a.attcollation <> (SELECT oid FROM pg_collation WHERE collname = 'C'"
+            "  AND collnamespace = 'pg_catalog'::regnamespace)"
+            " AND left(c.relname, strpos(c.relname, '_')) = ANY(:prefixes)"
+            # A column a generated column or a view reads cannot change type: those keep theirs.
+            " AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.refobjid = a.attrelid"
+            "  AND d.refobjsubid = a.attnum"
+            "  AND (d.classid = 'pg_rewrite'::regclass"
+            "  OR (d.classid = 'pg_attrdef'::regclass AND d.deptype = 'n')))"
+            " ORDER BY c.relname, a.attnum"
         ),
         {"prefixes": list(COLLATED_PREFIXES)},
     ).all()
     preparer = connection.dialect.identifier_preparer
-    for table, column, data_type in rows:
+    for table, column, column_type in rows:
         connection.exec_driver_sql(
             f"ALTER TABLE {preparer.quote(table)} ALTER COLUMN {preparer.quote(column)}"
-            f' TYPE {data_type} COLLATE "C"'
+            f' TYPE {column_type} COLLATE "C"'
         )
 
 
@@ -432,19 +464,18 @@ def _refuse_revision(
     Raises:
         StartupError: The database is behind, empty or ahead of this build.
     """
-    path = where
     if revision == head:
         return
     if revision and revision not in {r.revision for r in script.walk_revisions()}:
         message = (
-            f"The ExactDocs database at {path} was migrated by a newer ExactDocs (revision "
+            f"The ExactDocs database at {where} was migrated by a newer ExactDocs (revision "
             f"{revision}; this one knows up to {head}). Upgrade this ExactDocs "
             "(for uvx: `uvx --refresh exactdocs`)."
         )
         raise StartupError(message)
     found = f"at revision {revision}" if revision else "empty"
     message = (
-        f"The ExactDocs database at {path} is {found}, but this version needs {head}. "
+        f"The ExactDocs database at {where} is {found}, but this version needs {head}. "
         "Start `exactdocs serve` to migrate it, then try again."
     )
     raise StartupError(message)

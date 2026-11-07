@@ -9,52 +9,83 @@ a process that starts removes the folders whose lock it can take: their owner is
 
 import fcntl
 import os
+import secrets
 import shutil
-import tempfile
+import time
 from collections.abc import Generator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
 
-from exactdocs.bootstrap.constants import PROCESS_WORK_OWNER, PROCESS_WORK_PREFIX
+from exactdocs.bootstrap.constants import (
+    CLAIM_PAUSE_SECONDS,
+    CLAIM_TRIES,
+    PROCESS_WORK_OWNER,
+    PROCESS_WORK_PREFIX,
+)
 
 
 def new_work_root(work: Path) -> Path:
-    """Create a folder for this process's fetches under ``work`` (``held`` claims it).
+    """Name a folder for this process's fetches under ``work``; ``held`` creates and claims it.
 
     Args:
         work: The data directory's ``work`` folder.
 
     Returns:
-        The new folder. Until it is held, a sweep may remove it: the git adapter creates its
-        work root again before each fetch.
+        The folder's path (not created yet).
     """
-    work.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=PROCESS_WORK_PREFIX, dir=work))
+    return work / f"{PROCESS_WORK_PREFIX}{secrets.token_hex(8)}"
 
 
 @contextmanager
 def held(folder: Path) -> Generator[None]:
-    """Lock the folder's owner file while the context runs, then remove the folder.
+    """Create the folder and lock its owner file while the context runs, then remove it.
+
+    Creating, locking and checking happen in that order, again until they hold together: a
+    sweep that removed the folder in between (it found no owner, or took the lock first) leaves
+    this process's lock on a file that is gone, which the check notices.
 
     Args:
-        folder: A folder ``new_work_root`` made.
+        folder: A folder ``new_work_root`` named.
 
     Yields:
         Nothing, while the folder is this process's.
+
+    Raises:
+        OSError: The folder could not be claimed (it kept disappearing).
     """
-    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (folder / PROCESS_WORK_OWNER).open("w", encoding="utf-8") as owner:
-        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)  # ours: nobody else takes it
-        owner.write(f"{os.getpid()}\n")
-        owner.flush()
+    owner = folder / PROCESS_WORK_OWNER
+    for _ in range(CLAIM_TRIES):
         try:
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+            descriptor = os.open(owner, os.O_RDWR | os.O_CREAT, 0o600)
+        except FileNotFoundError:
+            continue  # swept between the two steps
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            linked = owner.stat().st_ino == os.fstat(descriptor).st_ino
+        except BlockingIOError, FileNotFoundError:
+            linked = False  # a sweep holds or held it
+        if not linked:
+            os.close(descriptor)
+            time.sleep(CLAIM_PAUSE_SECONDS)
+            continue
+        try:
+            os.write(descriptor, f"{os.getpid()}\n".encode())
             yield
         finally:
             shutil.rmtree(folder, ignore_errors=True)
+            os.close(descriptor)
+        return
+    message = f"could not claim the work folder {folder}"
+    raise OSError(message)
 
 
 def sweep_abandoned_work(work_root: Path) -> None:
     """Remove the process folders under ``work_root`` whose process is gone (blocking: in a thread).
+
+    A folder whose owner file this sweep can lock, or that has none, belongs to no live process.
+    It is removed while the lock is held, so its process (if it is starting) notices and claims
+    it again. The sweep never creates an owner file.
 
     Args:
         work_root: The data directory's ``work`` folder.
@@ -65,11 +96,17 @@ def sweep_abandoned_work(work_root: Path) -> None:
         if folder.is_symlink() or not folder.is_dir():
             continue
         try:
-            with (folder / PROCESS_WORK_OWNER).open("a", encoding="utf-8") as owner:
-                fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            continue  # a live process holds it
+            descriptor = os.open(folder / PROCESS_WORK_OWNER, os.O_RDWR)
+        except FileNotFoundError:
+            shutil.rmtree(folder, ignore_errors=True)
+            continue
         except OSError:
-            pass  # no owner file: it died while creating the folder
-        with suppress(OSError):
-            shutil.rmtree(folder)
+            continue
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass  # a live process holds it
+        else:
+            shutil.rmtree(folder, ignore_errors=True)
+        finally:
+            os.close(descriptor)

@@ -16,8 +16,15 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from databases import ADMIN_URL
+from exactdocs.bootstrap import database
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
-from exactdocs.bootstrap.database import StartupError, current_revision, migrate, open_database
+from exactdocs.bootstrap.database import (
+    StartupError,
+    WriteTurnTimeoutError,
+    current_revision,
+    migrate,
+    open_database,
+)
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
@@ -236,3 +243,47 @@ async def test_the_stdio_server_reads_postgresql_but_cannot_write_to_it() -> Non
     async with container.running(), container.engine.connect() as connection:
         with pytest.raises(DBAPIError, match="read-only transaction"):
             await connection.execute(text("DELETE FROM catalog_libraries"))
+
+
+async def test_collation_keeps_a_column_s_type_and_skips_what_generated_columns_read(
+    engines: tuple[AsyncEngine, AsyncEngine],
+) -> None:
+    engine, _ = engines
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE TABLE catalog_later (short varchar(5), read text,"
+                " words tsvector GENERATED ALWAYS AS (to_tsvector('simple', read)) STORED)"
+            )
+        )
+    await migrate(engine)  # as a later revision's columns would be collated
+
+    async with engine.connect() as connection:
+        columns = (
+            await connection.execute(
+                text(
+                    "SELECT column_name, data_type, character_maximum_length, collation_name"
+                    " FROM information_schema.columns WHERE table_name = 'catalog_later'"
+                    " AND column_name IN ('short', 'read') ORDER BY column_name"
+                )
+            )
+        ).all()
+
+    assert [tuple(c) for c in columns] == [
+        ("read", "text", None, None),
+        ("short", "character varying", 5, "C"),
+    ]
+
+
+async def test_a_writer_that_waits_too_long_for_its_turn_fails_clearly(
+    engines: tuple[AsyncEngine, AsyncEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(database, "WRITE_LOCK_TIMEOUT_MS", 200)
+    first, second = engines
+    async with first.execution_options(begin_immediate=True).begin() as holder:
+        await holder.execute(text("SELECT 1"))
+        with pytest.raises(WriteTurnTimeoutError, match="write turn"):
+            async with second.execution_options(begin_immediate=True).begin() as waiter:
+                await waiter.execute(text("SELECT 1"))
+    async with second.execution_options(begin_immediate=True).begin() as later:
+        assert await later.scalar(text("SHOW lock_timeout")) == "0"  # only the turn waits

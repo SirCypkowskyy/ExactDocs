@@ -92,6 +92,10 @@ WORK_DIR: Final[str] = "work"
 """Under the data dir: one folder per running git fetch."""
 PROCESS_WORK_PREFIX: Final[str] = "process-"
 """On PostgreSQL each process keeps its fetch folders under `work/process-*` (``workdirs.py``)."""
+CLAIM_TRIES: Final[int] = 100
+"""How often a process tries to create and lock its work folder while sweeps race it."""
+CLAIM_PAUSE_SECONDS: Final[float] = 0.01
+"""The pause between two tries."""
 PROCESS_WORK_OWNER: Final[str] = ".owner"
 """The file in a process folder its process keeps locked (``flock``) for as long as it lives."""
 KNOWN_HOSTS_FILE: Final[str] = "known_hosts"
@@ -145,6 +149,11 @@ MIN_POSTGRES: Final[int] = 140000
 WRITE_LOCK: Final[int] = 0x45584443_00000001
 """PostgreSQL advisory lock taken by a writing transaction that asks for ``begin_immediate``:
 those transactions take turns, as SQLite's ``BEGIN IMMEDIATE`` makes them."""
+WRITE_LOCK_TIMEOUT_MS: Final[int] = 30_000
+"""How long a ``begin_immediate`` transaction on PostgreSQL waits for its turn (``WRITE_LOCK``)
+before it fails with ``WriteTurnTimeoutError``; SQLite's own wait is ``BUSY_TIMEOUT_MS``."""
+LOCK_NOT_AVAILABLE: Final[str] = "55P03"
+"""PostgreSQL's SQLSTATE for a lock wait that hit ``lock_timeout``."""
 MIGRATION_LOCK: Final[int] = 0x45584443_00000002
 """PostgreSQL advisory lock held while the schema is migrated: processes starting together
 migrate one after the other."""
