@@ -642,7 +642,8 @@ room for its 9 MB.)
 - **Scrubbing:** unless the operator opted in to query text, spans pass `ScrubbingExporter` on
   their way out: the query-text values in `url.query` become `REDACTED`, and exception events and
   error statuses lose their message and stack trace (a pydantic `ValidationError` quotes its
-  `input_value`), keeping the exception type.
+  `input_value`), keeping the exception type; FastMCP's `enduser.id` and `enduser.scope` (who
+  called) are dropped. Health and readiness probes (`PROBE_PATHS`) get no request span.
 - **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
   for the search and one per stage (`version`, `rank`, `chunks`), in its mode. The query text is a
   separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without

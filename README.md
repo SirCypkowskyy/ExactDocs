@@ -619,7 +619,8 @@ the `OTEL_*` variables alone exports nothing. The metrics are FastAPI's request 
 the values of `q`, `query`, `libraryName` and `url` (a repository URL may hold a token) in request
 URLs are replaced with `REDACTED`; and an error keeps its exception type but not its message or
 stack trace, which can quote the input (a refused, over-long query is named in its validation
-error). LLM calls will be traced without their prompts and answers (pydantic-ai's
+error). MCP spans also lose FastMCP's `enduser.id` and `enduser.scope` (the calling token's
+client ID and scopes), which would tie the searches to a person. LLM calls will be traced without their prompts and answers (pydantic-ai's
 `include_content=False`) once the AI retrieval modes exist.
 
 **Access logs are not covered.** uvicorn's access log on stdout (`GET /api/v1/...?q=... 200`)

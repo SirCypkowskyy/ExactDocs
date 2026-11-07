@@ -28,6 +28,7 @@ from exactdocs.bootstrap.constants import (
     QUERY_TEXT_PARAMETERS,
     REDACTED,
     SCRUBBED_EXCEPTION_ATTRIBUTES,
+    SCRUBBED_SPAN_ATTRIBUTES,
     SERVICE_NAME,
     URL_QUERY_ATTRIBUTE,
 )
@@ -105,10 +106,11 @@ def redact_query(query: str) -> str:
 
 
 def scrub(span: ReadableSpan) -> ReadableSpan:
-    """Return the span without query text: redacted ``url.query``, no exception text.
+    """Return the span without query text: redacted ``url.query``, no exception text, no caller.
 
     The exception's type stays (``exception.type`` and the span's error status); its message and
-    stack trace go: a validation error quotes the value it refused, e.g. the query.
+    stack trace go: a validation error quotes the value it refused, e.g. the query. FastMCP's
+    ``enduser.id`` and ``enduser.scope`` (who called) go as well.
 
     Args:
         span: A finished span.
@@ -116,7 +118,11 @@ def scrub(span: ReadableSpan) -> ReadableSpan:
     Returns:
         A copy of it, scrubbed.
     """
-    attributes = dict(span.attributes or {})
+    attributes = {
+        key: value
+        for key, value in (span.attributes or {}).items()
+        if key not in SCRUBBED_SPAN_ATTRIBUTES
+    }
     query = attributes.get(URL_QUERY_ATTRIBUTE)
     if isinstance(query, str):
         attributes[URL_QUERY_ATTRIBUTE] = redact_query(query)

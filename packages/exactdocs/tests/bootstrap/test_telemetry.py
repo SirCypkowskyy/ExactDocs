@@ -102,6 +102,16 @@ def test_a_request_span_keeps_its_path_but_loses_the_query_text() -> None:
     }
 
 
+def test_an_mcp_span_does_not_say_who_called() -> None:
+    provider, exporter = provider_with()
+
+    attributes = {"mcp.method.name": "tools/call", "enduser.id": "acct-1", "enduser.scope": "read"}
+    provider.get_tracer("t").start_span("tools/call search_docs", attributes=attributes).end()
+
+    (span,) = recorded(exporter)
+    assert dict(scrub(span).attributes or {}) == {"mcp.method.name": "tools/call"}
+
+
 def test_a_failed_span_keeps_the_exception_type_but_not_its_text() -> None:
     provider, exporter = provider_with()
     error = ValueError(f"1 validation error: input_value='{QUERY}'")
@@ -125,6 +135,7 @@ def test_a_failed_span_keeps_the_exception_type_but_not_its_text() -> None:
 def test_health_checks_get_no_request_span() -> None:
     assert is_untraced({"type": "http", "path": "/api/health"})
     assert is_untraced({"type": "http", "path": "/healthz"})
+    assert is_untraced({"type": "http", "path": "/readyz"})
     assert not is_untraced({"type": "http", "path": "/api/v1/search"})
 
 
@@ -382,6 +393,8 @@ async def test_traces_reach_the_collector_without_query_text(
     received = collector.received()
     for text in [QUERY, LIBRARY_NAME, "LONGSECRET77", REFUSED]:
         assert text.encode() not in received, text
+    # Nor who called: no MCP span names the caller.
+    assert not [s for s in spans if {"enduser.id", "enduser.scope"} & s.attributes.keys()]
 
 
 @pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
@@ -398,8 +411,9 @@ async def test_the_query_text_is_kept_only_when_the_operator_opted_in(
     request = next(s for s in spans if s.attributes.get("http.route") == SEARCH_ROUTE)
     assert f"q={QUERY}" in str(request.attributes["url.query"])
     # So the scrubbing is what keeps the refused inputs out by default: here they arrive.
-    collector.wait_for(lambda found: len(tool_calls(found)) >= 3)
+    calls = tool_calls(collector.wait_for(lambda found: len(tool_calls(found)) >= 3))
     assert b"LONGSECRET77" in collector.received()
+    assert any("enduser.id" in s.attributes for s in calls), [s.attributes for s in calls]
 
 
 @pytest.mark.skipif(bool(os.environ.get(RUN)), reason="this is the run itself")

@@ -17,7 +17,7 @@ from exactdocs.bootstrap.constants import (
     JOB_TRACER_NAME,
     OTLP_ENDPOINT_VARIABLE,
     OTLP_MODULE,
-    UNTRACED_PATHS,
+    PROBE_PATHS,
 )
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.models import Job, JobKind
@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 def start_telemetry(settings: Settings) -> None:
     """Set up the trace export when ``EXACTDOCS_TELEMETRY=otlp``; do nothing otherwise.
+
+    The providers are process-wide and OpenTelemetry does not let them be replaced: a second app
+    built in the same process (tests) keeps what the first set up, its query-text setting
+    included, and a warning says so. Run each telemetry configuration in a process of its own.
 
     Args:
         settings: The runtime configuration.
@@ -87,7 +91,7 @@ def is_untraced(scope: MutableMapping[str, Any]) -> bool:
     Returns:
         Whether the request is a health check.
     """
-    return scope.get("path") in UNTRACED_PATHS
+    return scope.get("path") in PROBE_PATHS
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

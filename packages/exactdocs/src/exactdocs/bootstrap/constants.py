@@ -228,11 +228,13 @@ With neither set, that signal is not exported (there is no default collector).
 """
 EXPORTER_VARIABLE: Final[str] = "OTEL_{}_EXPORTER"
 """``OTEL_TRACES_EXPORTER`` / ``OTEL_METRICS_EXPORTER``: ``none`` turns that signal off."""
-UNTRACED_PATHS: Final[frozenset[str]] = frozenset({"/api/health", "/healthz", "/readyz"})
-"""Health checks: polled every few seconds by orchestrators, so they get no request span."""
 QUERY_TEXT_PARAMETERS: Final[frozenset[str]] = frozenset({"q", "query", "libraryName", "url"})
 """URL query parameters whose value is search input (or a repository URL that may carry a token):
 redacted from request spans unless the operator opted in to query text.
+"""
+SCRUBBED_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset({"enduser.id", "enduser.scope"})
+"""Who called (FastMCP puts the token's client ID and scopes on every MCP span): left out unless
+the operator opted in, like the query text they would tie to a person.
 """
 SCRUBBED_EXCEPTION_ATTRIBUTES: Final[frozenset[str]] = frozenset(
     {"exception.message", "exception.stacktrace"}
