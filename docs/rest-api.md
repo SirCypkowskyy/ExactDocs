@@ -55,6 +55,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
+- **Outlines**: `GET /libraries/{owner}/{repo}/outline?path=&ref=` returns an article's heading tree
+  (`sections`, each with `heading`, `chunk_id`, `anchor` and `children`; `preamble_chunk_id` for
+  text before the first heading) with no body text, from exactly that version (MCP:
+  `article_outline`). The tree is made from the chunks, so headings the chunking config merged
+  into a chunk are not in it. A version that is not imported, or a path it lacks, is 404 `not_found`.
 - **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
   carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.
 - **Manual tags**: `PUT /libraries/{owner}/{repo}/tags?path=` with `{"tags": [...]}` (at most 20,

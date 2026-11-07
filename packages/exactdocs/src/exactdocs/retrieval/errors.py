@@ -61,6 +61,26 @@ class ChunkNotFoundError(NotFoundError):
         self.chunk_id = chunk_id
 
 
+class ArticleNotFoundError(NotFoundError):
+    """The version has no article at this path (it may be in another version: never used)."""
+
+    def __init__(self, library: str, version: str, path: str) -> None:
+        """Name the path and the version that lacks it.
+
+        Args:
+            library: The library ID.
+            version: The exact ref that was asked or defaulted to.
+            path: The article path asked for, repository-shaped text quoted as data.
+        """
+        super().__init__(
+            f"no article {_data(path)} in {library}@{version}; "
+            "find article paths with list_articles or search_docs"
+        )
+        self.library = library
+        self.version = version
+        self.path = path
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MovedSection:
     """Where the section of a stale chunk ID lives in the active manifest of its version.

@@ -116,6 +116,7 @@ def step_every_tool(context: Context) -> None:
     hit = found["result"]["structuredContent"]["results"][0]
     call("read_chunk", {"chunk_id": hit["chunk_id"]})
     call("read_article", {"library": library, "ref": "v1.4.0", "path": hit["article_path"]})
+    call("article_outline", {"library": library, "ref": "v1.4.0", "path": hit["article_path"]})
     call("query-docs", {"libraryId": f"{library}/v1.4.0", "query": "retry_policy"})
     process.stdin.close()
     process.communicate(timeout=60)
@@ -128,6 +129,7 @@ def step_every_answer(context: Context) -> None:
         "search_docs",
         "read_chunk",
         "read_article",
+        "article_outline",
         "query-docs",
     }
     for name, answer in context.stdio_tool_answers.items():

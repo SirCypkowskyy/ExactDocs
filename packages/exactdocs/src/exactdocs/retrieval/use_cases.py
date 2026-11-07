@@ -20,6 +20,8 @@ from exactdocs.retrieval.constants import (
     UNKNOWN_MANIFEST_GRACE,
 )
 from exactdocs.retrieval.dtos import (
+    ArticleOutlineOut,
+    ArticleOutlineQuery,
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
@@ -51,6 +53,7 @@ from exactdocs.retrieval.dtos import (
     SetChunkOut,
 )
 from exactdocs.retrieval.errors import (
+    ArticleNotFoundError,
     ChunkNotFoundError,
     MovedSection,
     StaleChunkError,
@@ -78,6 +81,7 @@ from exactdocs.retrieval.models import (
     article_chunk_rows,
     language_first,
     name_match,
+    outline,
     rank_matches,
 )
 from exactdocs.retrieval.ports.driven import (
@@ -457,6 +461,39 @@ class ReadChunkUseCase:
             heading_path=match.heading_path,
             anchor=match.anchor,
             text_changed=match.content_hash != old.chunk.content_hash,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArticleOutlineUseCase:
+    """Implements ``ports.driving.ArticleOutline``."""
+
+    versions: SearchableVersions
+    """Which version answers: the exact ref, or the default one."""
+    chunks: ChunkRepository
+    """The article's chunk rows in that version's active manifest."""
+
+    async def __call__(self, query: ArticleOutlineQuery) -> ArticleOutlineOut:
+        """Build the outline from the article's chunk rows in the version's active manifest.
+
+        Args:
+            query: The library, the exact ref (or none for the default version) and the path.
+
+        Returns:
+            The heading tree with a chunk ID per heading and the version that answered.
+
+        Raises:
+            VersionNotIndexedError: The version is not imported or has no active manifest.
+            ArticleNotFoundError: The version has no article at this path.
+        """
+        version = await self.versions.find(query.library, query.ref)
+        if version is None:
+            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+        sections = await self.chunks.article(version.manifest_id, query.path)
+        if not sections:
+            raise ArticleNotFoundError(version.library, version.version, query.path)
+        return ArticleOutlineOut.from_model(
+            version, query.path, outline(sections), chunks=len(sections)
         )
 
 

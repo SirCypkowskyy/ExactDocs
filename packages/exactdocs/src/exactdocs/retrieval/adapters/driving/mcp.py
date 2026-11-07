@@ -9,6 +9,7 @@ from mcp.types import TextContent, ToolAnnotations
 from pydantic import Field
 
 from exactdocs.retrieval.constants import (
+    ARTICLE_OUTLINE_DESCRIPTION,
     MAX_QUERY,
     MAX_TAGS,
     POINTER_TEXT,
@@ -17,6 +18,9 @@ from exactdocs.retrieval.constants import (
 )
 from exactdocs.retrieval.dtos import (
     MAX_NAME,
+    MAX_PATH,
+    ArticleOutlineOut,
+    ArticleOutlineQuery,
     ChunkOut,
     DocSectionOut,
     LibraryMatchOut,
@@ -32,6 +36,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import (
+    ArticleOutline,
     QueryDocs,
     ReadChunk,
     ResolveLibraryId,
@@ -118,6 +123,7 @@ def register_tools(
     search_docs: SearchDocs,
     search_all_libraries: SearchAllLibraries,
     read_chunk: ReadChunk,
+    article_outline: ArticleOutline,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
 ) -> None:
@@ -260,6 +266,48 @@ def register_tools(
             ],
             structured_content=chunk.model_dump(mode="json"),
         )
+
+    @mcp.tool(
+        name="article_outline",
+        annotations=ToolAnnotations(title="Outline an article", **TOOL_HINTS),
+        description=ARTICLE_OUTLINE_DESCRIPTION,
+    )
+    async def article_outline_tool(
+        library: Annotated[
+            str,
+            Field(
+                pattern=LIBRARY_ID_PATTERN,
+                max_length=MAX_NAME,
+                description="Library ID, e.g. '/facebook/react'",
+            ),
+        ],
+        path: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=MAX_PATH,
+                description="Article path from list_articles/search_docs, e.g. 'docs/guide/a.md'",
+            ),
+        ],
+        ref: Annotated[
+            str | None,
+            Field(
+                max_length=MAX_NAME,
+                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+            ),
+        ] = None,
+    ) -> ArticleOutlineOut:
+        """Return the outline of one article of one version (the description is the tool's).
+
+        Args:
+            library: Library ID.
+            path: Article path in that version.
+            ref: Exact imported ref; ``None`` for the default version.
+
+        Returns:
+            The heading tree with a chunk ID per heading.
+        """
+        return await article_outline(ArticleOutlineQuery(library=library, ref=ref, path=path))
 
     @mcp.tool(
         name="resolve-library-id",

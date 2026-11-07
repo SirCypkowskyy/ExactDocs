@@ -10,6 +10,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchTracer,
 )
 from exactdocs.retrieval.ports.driving import (
+    ArticleOutline,
     CollectChunks,
     DiscardPendingChunks,
     GetChunkSets,
@@ -26,6 +27,7 @@ from exactdocs.retrieval.ports.driving import (
 
 __all__ = [
     "ActiveManifests",
+    "ArticleOutline",
     "ChunkRepository",
     "CollectChunks",
     "DefaultVersions",

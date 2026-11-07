@@ -3,6 +3,8 @@
 from typing import Protocol
 
 from exactdocs.retrieval.dtos import (
+    ArticleOutlineOut,
+    ArticleOutlineQuery,
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
@@ -87,6 +89,26 @@ class ReadChunk(Protocol):
 
     async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
         """Run the use case."""
+        ...
+
+
+class ArticleOutline(Protocol):
+    """Return an article's heading tree with the chunk ID of each heading, without any text.
+
+    Version is a hard filter: raises ``VersionNotIndexedError`` for a version that is not
+    imported and ``ArticleNotFoundError`` for a path the version does not have, never answering
+    from another version. Needs no AI configuration: it reads only stored chunk rows.
+    """
+
+    async def __call__(self, query: ArticleOutlineQuery) -> ArticleOutlineOut:
+        """Run the use case.
+
+        Args:
+            query: The library, the exact ref (or none for the default version) and the path.
+
+        Returns:
+            The heading tree with a chunk ID per heading and the version that answered.
+        """
         ...
 
 

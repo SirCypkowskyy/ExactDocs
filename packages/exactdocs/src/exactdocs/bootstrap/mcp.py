@@ -123,8 +123,9 @@ def _build(
             "version's tree, then search_docs (one library) or search_all_docs (every library); "
             "resolve-library-id turns a name into a library ID and query-docs returns docs "
             "for one (context7-compatible); "
-            "read_article returns a whole article and read_chunk one chunk "
-            "(use the chunk IDs search_docs gives); the article resource template "
+            "read_article returns a whole article, article_outline only its headings with a "
+            "chunk ID each, and read_chunk one chunk (use the chunk IDs search_docs or "
+            "article_outline gives); the article resource template "
             "exactdocs://{owner}/{repo}/{path}?ref=<ref> reads an article too, and resources/list "
             "shows a truncated sample of each default version's articles only (see its _meta). "
             "Pass an exact ref (none means "
@@ -164,6 +165,7 @@ def _build(
         search_docs=retrieval.search_docs,
         search_all_libraries=retrieval.search_all_libraries,
         read_chunk=retrieval.read_chunk,
+        article_outline=retrieval.article_outline,
         resolve_library_id=retrieval.resolve_library_id,
         query_docs=retrieval.query_docs,
     )
