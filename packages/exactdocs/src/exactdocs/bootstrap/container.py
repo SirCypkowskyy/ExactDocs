@@ -3,7 +3,7 @@ import logging
 import os
 import signal
 import threading
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,6 +98,7 @@ from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, SqliteLibraryModes
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.models import RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs_kernel import SystemClock
@@ -111,6 +112,7 @@ def _build_read_side(
     *,
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
+    vector_extension: Callable[[], str] | None = None,
 ) -> tuple[CatalogModule, RetrievalModule]:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -119,6 +121,7 @@ def _build_read_side(
         settings: The runtime configuration.
         model_roles: The configured model roles (tests; none until #241 reads them).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
+        vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
 
     Returns:
         The two modules.
@@ -134,6 +137,15 @@ def _build_read_side(
         PostgresSearchIndex(engine=engine)
         if is_postgres(engine)
         else SqliteSearchIndex(engine=engine)
+    )
+    # On PostgreSQL there is no vector store yet (pgvector is #243): the hybrid modes report
+    # themselves unavailable and fall back to BM25, as without an embedding model.
+    vectors = (
+        None
+        if is_postgres(engine)
+        else SqliteVectorIndex(engine=engine)
+        if vector_extension is None
+        else SqliteVectorIndex(engine=engine, extension=vector_extension)
     )
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
@@ -158,6 +170,7 @@ def _build_read_side(
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
+        vectors=vectors,
     )
     return catalog, retrieval
 
@@ -355,6 +368,7 @@ class Container:
         chunker: Chunker | None = None,
         model_roles: ModelRoles | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
+        vector_extension: Callable[[], str] | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -364,7 +378,8 @@ class Container:
         fetching and for detecting renames (tests; a given ``gateway`` detects none unless
         ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
         ``model_roles`` and ``pipelines`` stand in for configured models and the AI retrieval
-        modes (tests, until #241 configures them). A missing
+        modes (tests, until #241 configures them); ``vector_extension`` finds sqlite-vec's
+        extension (tests: one that cannot load). A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
         """
@@ -379,7 +394,11 @@ class Container:
             tree = tree or git
         vault = SqliteCredentialVault(engine=engine, box=_secret_box(settings))
         catalog, retrieval = _build_read_side(
-            engine, settings, model_roles=model_roles, pipelines=pipelines
+            engine,
+            settings,
+            model_roles=model_roles,
+            pipelines=pipelines,
+            vector_extension=vector_extension,
         )
         index = RetrievalChunkIndex(
             index_manifest=retrieval.index_manifest,

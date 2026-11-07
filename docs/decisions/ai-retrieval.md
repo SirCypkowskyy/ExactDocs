@@ -200,7 +200,11 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
   vectors of 1,024 dimensions, p95 under 150 ms) fails on a real instance. Exact search also
   avoids pgvector's 2,000-dimension index limit.
 - **sqlite-vec 0.1.9** (2026-03-31, the latest stable; 0.1.10 is still alpha) is loaded per
-  connection only once a space exists. It replaces the earlier "numpy brute force" decision:
+  connection, by the first search on that connection or by the availability check, which runs
+  only once an embedding model is configured (so that hybrid can be reported unavailable before
+  any space exists); with no embedding model it is never imported. A connection that searches
+  also gets `PRAGMA mmap_size` (1 GiB of address space), which cut the p95 of #242's benchmark by
+  about a fifth. It replaces the earlier "numpy brute force" decision:
   the distance runs in SQL, next to the manifest join, and numpy is not needed. Verified on uv's
   Python 3.14 build (`enable_load_extension`, `vec_distance_cosine`, `vec0`); the image runs
   `python:3.14-slim-trixie`, so #242 repeats the check in the built image. A Python built

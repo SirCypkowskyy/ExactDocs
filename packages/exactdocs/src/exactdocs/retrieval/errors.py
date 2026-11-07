@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from exactdocs.retrieval.constants import MAX_DATA_CHARS, MAX_HEADING_CHARS, MAX_HEADINGS
-from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
+from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
 
 
 def _data(text: str, limit: int = MAX_DATA_CHARS) -> str:
@@ -30,15 +30,25 @@ class UnavailableModeError(ValidationError):
     """The asked retrieval mode is unknown, or cannot run on this instance now.
 
     ``missing_roles`` names the model roles it needs that are not configured; it is empty for an
-    unknown mode, or for one whose pipeline this build does not have yet.
+    unknown mode, or for one whose pipeline this build does not have yet. ``vector_store`` is
+    False when the mode needs the vector store and it cannot be loaded here.
     """
 
     code = "mode_unavailable"
 
-    def __init__(self, mode: str, available: list[str], missing_roles: list[str]) -> None:
+    def __init__(
+        self,
+        mode: str,
+        available: list[str],
+        missing_roles: list[str],
+        *,
+        vector_store: bool = True,
+    ) -> None:
         if missing_roles:
             plural = "s" if len(missing_roles) > 1 else ""
             why = f": it needs the {' and '.join(missing_roles)} role{plural}, not configured"
+        elif not vector_store:
+            why = ": the vector store is unavailable (sqlite-vec cannot be loaded by this Python)"
         else:
             why = ""
         super().__init__(
@@ -48,6 +58,7 @@ class UnavailableModeError(ValidationError):
         self.mode = mode
         self.available = available
         self.missing_roles = missing_roles
+        self.vector_store = vector_store
 
 
 class UnknownLibraryError(NotFoundError):
@@ -184,4 +195,78 @@ class ChunkSetMismatchError(ConflictError):
         super().__init__(
             f"chunk set ({blob_sha!r}, {config_hash!r}) is stored with different chunks; "
             "give the new chunking a new config_hash"
+        )
+
+
+class InvalidEmbeddingSpaceError(ValidationError):
+    """An embedding space cannot be described this way (no model, or dimensions out of range)."""
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong.
+
+        Args:
+            reason: Which part of the description is invalid.
+        """
+        super().__init__(f"invalid embedding space: {reason}")
+        self.reason = reason
+
+
+class UnknownEmbeddingSpaceError(NotFoundError):
+    """No embedding space has this ID."""
+
+    def __init__(self, space_id: int) -> None:
+        """Name the space that was asked for.
+
+        Args:
+            space_id: The ID as asked.
+        """
+        super().__init__(f"no embedding space {space_id}")
+        self.space_id = space_id
+
+
+class RetiredEmbeddingSpaceError(ConflictError):
+    """The embedding space was retired: its vectors are gone and it takes no new ones."""
+
+    def __init__(self, space_id: int) -> None:
+        """Name the retired space.
+
+        Args:
+            space_id: The space's ID.
+        """
+        super().__init__(f"embedding space {space_id} is retired")
+        self.space_id = space_id
+
+
+class VectorDimensionError(ValidationError):
+    """A vector does not have the dimensions of its space: it was made by another model."""
+
+    def __init__(self, expected: int, got: int) -> None:
+        """Say how many dimensions the space has and how many the vector had.
+
+        Args:
+            expected: The space's dimensions.
+            got: The vector's length.
+        """
+        super().__init__(f"the vector has {got} dimensions; the embedding space has {expected}")
+        self.expected = expected
+        self.got = got
+
+
+class InvalidVectorError(ValidationError):
+    """A vector has no direction (all zeros) or a value that is not a finite number."""
+
+    def __init__(self) -> None:
+        """Say what a vector must be."""
+        super().__init__("a vector must hold finite numbers, not all zero")
+
+
+class VectorStoreUnavailableError(DomainError):
+    """The vector store cannot search here (sqlite-vec cannot be loaded); BM25 still can."""
+
+    code = "vector_store_unavailable"
+
+    def __init__(self) -> None:
+        """Say why the store cannot search."""
+        super().__init__(
+            "the vector store is unavailable: sqlite-vec cannot be loaded by this Python"
         )

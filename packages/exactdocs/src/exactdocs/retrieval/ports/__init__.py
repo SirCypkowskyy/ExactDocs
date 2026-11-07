@@ -12,6 +12,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchIndex,
     SearchIndexMaintenance,
     SearchTracer,
+    VectorIndex,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -22,6 +23,7 @@ from exactdocs.retrieval.ports.driving import (
     GetLibraryRetrieval,
     GetSearchIndexState,
     IndexManifest,
+    OpenEmbeddingSpace,
     QueryDocs,
     ReadChunk,
     RebuildSearchIndex,
@@ -48,6 +50,7 @@ __all__ = [
     "Libraries",
     "LibraryModes",
     "ModelRoles",
+    "OpenEmbeddingSpace",
     "QueryDocs",
     "ReadChunk",
     "RebuildSearchIndex",
@@ -62,4 +65,5 @@ __all__ = [
     "SearchTracer",
     "SearchableVersions",
     "SetLibraryRetrieval",
+    "VectorIndex",
 ]

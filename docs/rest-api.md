@@ -304,7 +304,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Retrieval mode** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with `{"mode": "hybrid"}`
   sets the mode the library's searches use when a call names none (`null` clears it: the
   instance's `EXACTDOCS_AI__MODE` applies, else the best mode configured). The mode must be
-  available now: 422 `mode_unavailable` names the model role it needs that is not configured.
+  available now: 422 `mode_unavailable` names the model role it needs that is not configured, or
+  says the vector store is unavailable (sqlite-vec cannot be loaded; `fallback_reason`
+  `vector_store_unavailable` where a setting is skipped for that reason).
   `GET .../retrieval` returns the setting with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
   `available_modes` and the `configured_roles`. 404 for an unknown library. A search's own `mode`

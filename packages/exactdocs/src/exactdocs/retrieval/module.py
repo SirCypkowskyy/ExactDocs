@@ -18,6 +18,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchIndex,
     SearchIndexMaintenance,
     SearchTracer,
+    VectorIndex,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -28,6 +29,7 @@ from exactdocs.retrieval.ports.driving import (
     GetLibraryRetrieval,
     GetSearchIndexState,
     IndexManifest,
+    OpenEmbeddingSpace,
     QueryDocs,
     ReadChunk,
     RebuildSearchIndex,
@@ -49,6 +51,7 @@ from exactdocs.retrieval.use_cases import (
     GetSearchIndexStateUseCase,
     IndexManifestUseCase,
     NoModelRoles,
+    OpenEmbeddingSpaceUseCase,
     QueryDocsUseCase,
     ReadChunkUseCase,
     RebuildSearchIndexUseCase,
@@ -89,6 +92,8 @@ class RetrievalModule:
     """Sets or clears a library's retrieval mode."""
     forget_library: ForgetLibrary
     """Drops what retrieval keeps for a removed library."""
+    open_embedding_space: OpenEmbeddingSpace
+    """Finds the embedding space of a model, or creates one when the model changed."""
 
     @classmethod
     def build(
@@ -110,13 +115,15 @@ class RetrievalModule:
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
         tracer: SearchTracer | None = None,
+        vectors: VectorIndex | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         ``tracer`` observes every search and its stages; without it nothing is recorded.
         ``roles`` says which model roles are configured (none without it); ``pipelines`` adds
         retrieval modes beside ``bm25``, which is always there. A mode can run when it has a
-        pipeline and its roles are configured.
+        pipeline and its roles are configured, and, for the hybrid modes, when ``vectors`` (the
+        vector store) can search.
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -125,6 +132,7 @@ class RetrievalModule:
             roles=roles or NoModelRoles(),
             library_modes=library_modes,
             instance_mode=instance_mode,
+            vectors=vectors,
         )
         return cls(
             search_docs=SearchDocsUseCase(
@@ -166,4 +174,5 @@ class RetrievalModule:
             get_library_retrieval=GetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
             set_library_retrieval=SetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
             forget_library=ForgetLibraryUseCase(library_modes=library_modes),
+            open_embedding_space=OpenEmbeddingSpaceUseCase(vectors=vectors, clock=clock),
         )
