@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Protocol
 
 from croniter import croniter
-from dbos import DBOS, DBOSConfig, WorkflowStatus
+from dbos import DBOS, DBOSClient, DBOSConfig, WorkflowStatus
 
 from exactdocs.ingestion.constants import EVERY_MINUTE, SCHEDULE_WORKFLOW
 from exactdocs.ingestion.constants._jobs import (
@@ -177,6 +177,8 @@ class DbosJobWorker:
     """Set once the slot is lost: no job starts here any more."""
     _refused: set[str] = field(default_factory=set, init=False, repr=False)
     """Jobs DBOS handed over after the slot was lost: queued again for another process."""
+    _destroyed: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+    """Set once DBOS was stopped in this run: teardown does not stop it twice."""
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
 
     @asynccontextmanager
@@ -214,6 +216,9 @@ class DbosJobWorker:
         Yields:
             Nothing, while jobs run.
         """
+        self._destroyed.clear()
+        self._lost.clear()
+        self._refused.clear()
         DBOS(config=self._config(executor_id))
         try:
 
@@ -263,10 +268,8 @@ class DbosJobWorker:
         finally:
             await self._stop()
             await self._cancel(self._forgetting)  # the next start deletes what they had left
-            await asyncio.to_thread(DBOS.destroy, destroy_registry=True)
+            await self._destroy_dbos()
             await self._cancel(self._running | self._forgetting)
-            # DBOS shut its pool down; `asyncio.to_thread` needs one after the worker stops.
-            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(_THREADS))
 
     def _config(self, executor_id: str | None) -> DBOSConfig:
         """Return DBOS's configuration: its system database, executor and limits.
@@ -320,8 +323,9 @@ class DbosJobWorker:
         """Keep the slot; when it is lost, stop taking and running jobs and report it.
 
         A database that cannot be reached is not a lost slot: the worker waits, adopting
-        nothing, and only gives up once the slot went unconfirmed for ``adopt_grace`` (another
-        process may have adopted its jobs by then). A slot another process holds is lost at once.
+        nothing, and gives up once the slot went unconfirmed for ``adopt_grace`` less two check
+        intervals, so it has stopped before another process can adopt its jobs. A slot another
+        process holds is lost at once.
 
         Args:
             executor_id: This process's executor ID.
@@ -344,7 +348,7 @@ class DbosJobWorker:
             state = SlotState.HELD if ours else SlotState.LOST
         if state is SlotState.UNKNOWN:
             since = self._unconfirmed.setdefault("since", self.monotonic())
-            if self.monotonic() - since < self.adopt_grace:
+            if self.monotonic() - since < self.adopt_grace - 2 * self.slot_check_interval:
                 return SlotState.UNKNOWN
             state = SlotState.LOST
         self._unconfirmed.clear()
@@ -357,17 +361,58 @@ class DbosJobWorker:
         return SlotState.LOST
 
     async def _halt(self) -> None:
-        """Stop taking jobs first, then cancel the running ones and stop DBOS's threads.
+        """Stop taking jobs, cancel the running ones, stop DBOS, then queue the refused jobs again.
 
-        A job DBOS still hands over is refused (its workflow stays pending) and queued again,
-        so the process that now holds this executor ID does not inherit it unnoticed.
+        From the moment the flag is set, a job DBOS still hands over is refused (its workflow
+        stays pending, under this executor ID, which another process now holds). Once DBOS's
+        threads are stopped nothing more can be handed over, so the refused jobs are queued
+        again then, through a ``DBOSClient``: the process that now holds the ID would otherwise
+        only find them when it restarts.
+
+        Narrow windows remain. A job DBOS dequeued but whose workflow had not started when DBOS
+        stopped is neither run nor refused: it stays pending under this ID until the process
+        holding the ID restarts. And a job that was running when the slot was lost may have run
+        a step here while its adopter ran it too (DBOS's ``owner_xid`` fencing stops this copy at
+        its next step).
         """
         self._lost.set()
         await self._cancel(set(self._running))
-        if self._refused:
-            with suppress(Exception):
-                await DBOS.resume_workflows_async(sorted(self._refused), queue_name=self.queue)
-        await asyncio.to_thread(DBOS.destroy)
+        await self._destroy_dbos()
+        refused = sorted(self._refused)
+        if refused and self.system_database_url is not None:
+            try:
+                await asyncio.to_thread(self._requeue, refused)
+            except Exception:
+                log.exception("could not queue jobs %s again", ", ".join(refused))
+
+    async def _destroy_dbos(self) -> None:
+        """Stop DBOS (once: ``_halt`` may have done it already) and give the loop a new pool.
+
+        DBOS made its own pool the loop's default executor and shuts it down: without a new
+        one ``asyncio.to_thread`` would fail for the rest of the process.
+        """
+        if self._destroyed.is_set():
+            return
+        self._destroyed.set()
+        try:
+            await asyncio.to_thread(DBOS.destroy, destroy_registry=True)
+        finally:
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(_THREADS))
+
+    def _requeue(self, workflow_ids: list[str]) -> None:
+        """Queue workflows again from outside DBOS, which this process no longer runs.
+
+        Args:
+            workflow_ids: Pending workflows nobody runs.
+        """
+        client = DBOSClient(
+            system_database_url=self.system_database_url,
+            dbos_system_schema=self.system_schema,
+        )
+        try:
+            client.resume_workflows(workflow_ids, queue_name=self.queue)
+        finally:
+            client.destroy()
 
     async def _still_ours(self, executor_id: str) -> bool:
         """Tell whether every job running here is still this executor's pending workflow.

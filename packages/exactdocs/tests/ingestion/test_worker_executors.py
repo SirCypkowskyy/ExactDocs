@@ -64,6 +64,7 @@ def worker(
         workflow="w",
         version="v2",
         adopt_grace=10,
+        slot_check_interval=1,
         on_slot_lost=None if lost is None else lambda: lost.append("stop"),
         monotonic=(lambda: now[0]) if now is not None else lambda: 0.0,
     )
@@ -159,14 +160,21 @@ def no_dbos(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """
     calls: list[str] = []
 
-    def destroy() -> None:
+    def destroy(**_: object) -> None:
         calls.append("destroy")
 
-    async def resume(ids: list[str], *, queue_name: str) -> None:
-        calls.append(f"resume {','.join(ids)} on {queue_name}")
+    class Client:
+        def __init__(self, **options: object) -> None:
+            assert options["dbos_system_schema"] == "dbos"
+
+        def resume_workflows(self, ids: list[str], *, queue_name: str) -> None:
+            calls.append(f"resume {','.join(ids)} on {queue_name}")
+
+        def destroy(self) -> None:
+            calls.append("client closed")
 
     monkeypatch.setattr(dbos_worker.DBOS, "destroy", destroy)
-    monkeypatch.setattr(dbos_worker.DBOS, "resume_workflows_async", resume)
+    monkeypatch.setattr(dbos_worker, "DBOSClient", Client)
     return calls
 
 
@@ -197,7 +205,8 @@ async def test_no_job_starts_after_the_slot_is_lost(no_dbos: list[str]) -> None:
 
     assert started == []
     await subject.check_slot("exactdocs-0", FakeSlots(states=[SlotState.LOST]))
-    assert "resume job-late on q" in no_dbos  # ...and is queued again for another process
+    # ...and is queued again for another process, once DBOS stopped handing jobs over
+    assert no_dbos == ["destroy", "resume job-late on q", "client closed"]
 
 
 async def test_an_unreachable_database_is_waited_out_before_the_slot_counts_as_lost(
@@ -209,14 +218,14 @@ async def test_an_unreachable_database_is_waited_out_before_the_slot_counts_as_l
     subject = worker(slots, lost, now=now)
 
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
-    now[0] += 9  # under the grace (10 s here)
+    now[0] += 7  # under the grace less two check intervals (10 - 2 x 1 s here)
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.HELD  # back in time
     assert (lost, no_dbos) == ([], [])
 
     slots.states += [SlotState.UNKNOWN, SlotState.UNKNOWN]
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
-    now[0] += 11  # unconfirmed past the grace: another process may have adopted the jobs
+    now[0] += 8  # it must stop before another process could adopt its jobs
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
     assert lost == ["stop"]
 
