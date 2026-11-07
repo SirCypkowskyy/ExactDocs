@@ -177,9 +177,11 @@ jobs:
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
       # #242: the vector store needs a Python that loads SQLite extensions. The image's Python
-      # (python:3.14-slim-trixie) is checked natively here (arm64); amd64 cannot run Python under
-      # QEMU, and was checked by hand on an amd64 host (PR of #242). The base image has no `[ai]`
-      # extra, so the locked sqlite-vec wheel for the image's platform goes on PYTHONPATH.
+      # (python:3.14-slim-trixie) is checked natively here (arm64). amd64 cannot be checked on this
+      # runner: tried once in #257 (run 42399925910), `docker run --platform linux/amd64` of the
+      # image's python3 died with "x86_64-binfmt-P: QEMU internal SIGSEGV" and then hung until
+      # killed. It was checked by hand on an amd64 host instead (PR #257). The base image has no
+      # `[ai]` extra, so the locked sqlite-vec wheel for the image's platform goes on PYTHONPATH.
       - name: sqlite-vec loads and searches in the image's Python
         run: |
           pin=$(uv export --frozen --no-hashes --no-header --no-annotate --no-emit-workspace \
@@ -189,32 +191,6 @@ jobs:
           docker run --rm -i --network none --read-only --tmpfs /tmp --cap-drop ALL \
             -v "$RUNNER_TEMP/sqlite-vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
             --entrypoint python exactdocs:ci - < deploy/check_sqlite_vec.py
-      # TEMPORARY (#242 review round 1): try the amd64 check under QEMU once, to record whether
-      # Python 3.14 runs there. Only the runtime-tools stage exists for amd64 (no app), so this
-      # loads sqlite-vec with plain sqlite3.
-      # The first try (run 42395764483) printed nothing for over 10 minutes: bounded now.
-      - name: "TEMPORARY: sqlite-vec under QEMU (amd64)"
-        continue-on-error: true
-        timeout-minutes: 4
-        run: |
-          uv pip install --target "$RUNNER_TEMP/sqlite-vec-amd64" --no-deps --python-version 3.14 \
-            --python-platform x86_64-unknown-linux-gnu "$(uv export --frozen --no-hashes --no-header \
-            --no-annotate --no-emit-workspace --no-dev --package exactdocs --extra ai | grep '^sqlite-vec==')"
-          timeout 180 docker run --rm --platform linux/amd64 --network none \
-            -v "$RUNNER_TEMP/sqlite-vec-amd64:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
-            --entrypoint python3 exactdocs:ci-amd64 -c "import sqlite3, sqlite_vec; \
-          c = sqlite3.connect(':memory:'); c.enable_load_extension(True); sqlite_vec.load(c); \
-          print(c.execute('select vec_version(), sqlite_version()').fetchone())" 2>&1 \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-      # TEMPORARY (#242 review round 1): the vector benchmark (50,000 x 1,024, one manifest) in the
-      # built image, on this runner; p50/p95 go to the job summary.
-      - name: "TEMPORARY: vector search benchmark in the image"
-        timeout-minutes: 8
-        run: |
-          docker run --rm -i --network none --read-only --tmpfs /tmp:size=2g --cap-drop ALL \
-            -v "$RUNNER_TEMP/sqlite-vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
-            -e TMPDIR=/tmp --entrypoint python exactdocs:ci - \
-            < packages/exactdocs/tests/retrieval/bench_vector_index.py | tee -a "$GITHUB_STEP_SUMMARY"
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
