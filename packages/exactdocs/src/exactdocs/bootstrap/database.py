@@ -15,7 +15,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, event, text
+from sqlalchemy import Connection, event
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
@@ -211,14 +211,45 @@ async def current_revision(engine: AsyncEngine) -> str | None:
         )
 
 
-async def ping(engine: AsyncEngine) -> None:
-    """Run the cheapest query there is, proving a connection can be made and used.
+def schema_head() -> str | None:
+    """Return the Alembic head revision this build migrates to.
+
+    Returns:
+        The head revision, or ``None`` if there are no revisions.
+    """
+    return ScriptDirectory.from_config(alembic_config()).get_current_head()
+
+
+def database_file(engine: AsyncEngine) -> Path | None:
+    """Return the file the engine's SQLite database lives in.
 
     Args:
-        engine: The database to ask; a ``SQLAlchemyError`` means it cannot be reached.
+        engine: The database engine.
+
+    Returns:
+        The path, or ``None`` for an in-memory database.
     """
-    async with engine.connect() as connection:
-        await connection.execute(text("SELECT 1"))
+    database = engine.url.database
+    if not database or database == ":memory:":
+        return None
+    if database.startswith("file:"):  # the read-only engine's URI form
+        return Path(unquote(urlparse(database).path))
+    return Path(database)
+
+
+def database_file_missing(engine: AsyncEngine) -> bool:
+    """Tell, without connecting, whether the database file is gone.
+
+    Connecting to a missing SQLite file would create an empty one, so probes ask this first.
+
+    Args:
+        engine: The database engine.
+
+    Returns:
+        ``True`` when the engine has a file and it does not exist.
+    """
+    path = database_file(engine)
+    return path is not None and not path.is_file()
 
 
 async def check_schema_is_current(engine: AsyncEngine) -> None:

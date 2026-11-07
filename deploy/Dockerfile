@@ -140,9 +140,10 @@ USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 3000
-# Readiness: unhealthy while the database does not answer (README *Health checks*).
-HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/readyz', timeout=2)"]
+# Readiness: unhealthy while the database does not answer (README *Health checks*). The client
+# waits 3 s, longer than readiness waits for the database (2 s), so a 503 and its reason arrive.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/readyz', timeout=3)"]
 ENTRYPOINT ["tini", "--", "exactdocs"]
 CMD ["serve"]
 # Metadata last: it changes on every build and must not invalidate the layers above.

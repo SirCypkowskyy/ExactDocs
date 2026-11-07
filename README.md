@@ -563,18 +563,33 @@ flowchart TD
 
 ### Health checks
 
-Two probes answer without sign-in (also before the first account exists), for Docker, Kubernetes
-or a load balancer:
+Two probes answer `GET` and `HEAD` without sign-in (also before the first account exists), for
+Docker, Kubernetes or a load balancer:
 
 | Path | Answers | Use it for |
 |---|---|---|
-| `GET /healthz` | `200` while the process runs, even when the database does not answer: `status`, `version`, `database_reachable`, and (when reachable) `schema_revision`, `search_index_format`, `reindex_required` | liveness: restart the process when it stops answering |
-| `GET /readyz` | `200 {"status": "ready"}` when the database answers a query within 2 s, else `503 {"status": "not_ready", "reason": ...}` | readiness: send traffic only while it is ready |
+| `/healthz` | `200` while the process runs, whatever the database does, within about 0.3 s: `status`, `version`, `database_reachable`, and (when the database answered in time) `schema_revision`, `search_index_format`, `reindex_required` (`null` when unknown) | liveness: restart the process when it stops answering |
+| `/readyz` | `200 {"status": "ready"}` when the database file exists, answers within 2 s and is at this version's schema, else `503 {"status": "not_ready", "reason": ...}` | readiness: send traffic only while it is ready |
 
-`/api/health` is an alias of `/healthz`, kept for existing clients. The Docker image's
-`HEALTHCHECK` asks `/readyz`. Like every route, the probes check the `Host` header: a
-Kubernetes `httpGet` probe sends the pod IP, so set `httpHeaders: [{name: Host, value: localhost}]`
-on it (or list the host in `EXACTDOCS_ALLOWED_HOSTS`).
+`/api/health` is an alias of `/healthz`, kept for existing clients. Neither probe creates a
+missing database file.
+
+The probes answer whatever the `Host` header says, so a Kubernetes `httpGet` probe (which sends
+the pod IP) needs no extra header. Only exact `GET`/`HEAD` requests on these three paths skip the
+DNS-rebinding guard, and `/healthz` then answers just `{"status": "ok"}`: the version and the
+database details go only to a `Host` the instance trusts (`localhost` or
+`EXACTDOCS_ALLOWED_HOSTS`). Probe timeouts:
+
+```yaml
+livenessProbe:  {httpGet: {path: /healthz, port: 3000}, timeoutSeconds: 1, periodSeconds: 10}
+readinessProbe: {httpGet: {path: /readyz, port: 3000}, timeoutSeconds: 3, periodSeconds: 10}
+```
+
+The Docker image's `HEALTHCHECK` asks `/readyz`, so `docker compose`'s
+`depends_on: condition: service_healthy` waits for a usable database. Plain Docker only marks the
+container unhealthy; Docker Swarm, or an autoheal sidecar, restarts an unhealthy container, so
+there a database outage longer than a few checks turns into restarts. With SQLite on a local
+volume that is what you want: a restart reopens the file.
 
 ## Privacy and observability
 
