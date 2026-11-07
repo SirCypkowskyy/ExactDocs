@@ -567,9 +567,12 @@ cannot."""
 PGVECTOR_MODULE: Final[str] = "pgvector.sqlalchemy"
 """The SQLAlchemy type of pgvector's Python package (``[ai]`` extra), imported only by a store
 that is used (an embedding model is configured)."""
-TRANSIENT_SQLSTATES: Final[tuple[str, ...]] = ("08", "40", "53", "55", "57")
-"""SQLSTATE classes of a failure that may pass (connection, rollback, resources, lock, operator
-intervention): checking for pgvector is tried again next time instead of being given up."""
+TRANSIENT_SQLSTATES: Final[tuple[str, ...]] = ("08", "25006", "40", "53", "55", "57")
+"""SQLSTATE classes of a failure that may pass (connection, a read-only transaction, rollback,
+resources, lock, operator intervention): checking for pgvector is tried again next time instead
+of being given up."""
+_PG_READ_ONLY: Final[str] = "SELECT current_setting('transaction_read_only')"
+"""``on`` in a process that only reads (``serve --stdio``): it may not create the extension."""
 _PG_EXTENSION_SCHEMA: Final[str] = (
     "SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
     "WHERE e.extname = :name"
@@ -590,6 +593,9 @@ _PG_VECTOR_INLINE: Final[str] = "ALTER TABLE {table} ALTER COLUMN embedding SET 
 fits in a page: a search reads every vector of a manifest, and fetching each from TOAST made
 #242's benchmark (50,000 vectors of 1,024 dimensions) about 2.5 times slower. A vector too large
 for a page (over about 2,000 dimensions) still goes to TOAST."""
+_PG_VECTOR_ANALYZE: Final[str] = "ANALYZE {table}"
+"""Gives the planner a space's statistics when it is activated: right after it was filled, before
+autovacuum got to it, the manifest join was planned as a nested loop (about 5 times slower)."""
 _PG_VECTOR_UPSERT: Final[str] = (
     "INSERT INTO {table} (chunk_key, embedding) "
     "VALUES (:key, CAST(:embedding AS {schema}.vector)) "

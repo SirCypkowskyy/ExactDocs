@@ -300,15 +300,19 @@ only holds each process's git work folders and `known_hosts`. What changes:
   stays in its row instead of TOAST (2.5 times faster on #242's benchmark; larger ones still go to
   TOAST). Search is exact, `<=>` over one manifest's chunks with the same join, tag conditions,
   clamping and order as on SQLite, and no index, so the 2,000-dimension limit of pgvector's
-  indexes does not apply. The extension is looked up once per process, in a write turn (two
-  processes never create it together), when the store is first needed: the type and operator are
-  qualified with the extension's schema (`public`, `extensions` on Supabase). When it is missing it
-  is created (`CREATE EXTENSION IF NOT EXISTS vector`); when that fails (pgvector is not a trusted
-  extension, so a role that is not superuser cannot), the store reports unavailable with a
-  sentence saying what to run, logs it, and `/healthz` names `vector` in `vector_store_missing`.
-  A failure that may pass (the database unreachable) is not kept. pgvector's Python package
-  (`[ai]` extra) is imported then, for its SQLAlchemy type. `bootstrap.container.vector_index`
-  picks the store by the database's dialect.
+  indexes does not apply. When the store is first needed, a plain read finds the extension and
+  its schema (no write turn, so a probe or the first search does not queue behind writers); the
+  type and operator are qualified with that schema (`public`, `extensions` on Supabase), and the
+  answer is kept for the process's life. When it is missing, a process that may write creates it
+  in a write turn (`CREATE EXTENSION IF NOT EXISTS vector`; two processes never create it
+  together). When that fails (pgvector is not a trusted extension, so a role that is not
+  superuser cannot), the store reports unavailable with a sentence saying what to run, logs it,
+  keeps that answer, and `/healthz` names `vector` in `vector_store_missing`. A read-only process
+  (`serve --stdio`) never creates it: it reports "not created yet" and looks again at the next
+  check, as it does after a failure that may pass (the database unreachable, a write turn that
+  timed out). Activating a space runs `ANALYZE` on its table, so the first searches after an embed
+  are planned with statistics. pgvector's Python package (`[ai]` extra) is imported then, for its
+  SQLAlchemy type. `bootstrap.container.vector_index` picks the store by the database's dialect.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.

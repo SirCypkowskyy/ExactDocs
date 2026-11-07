@@ -101,6 +101,8 @@ async def main(chunks: int, dimensions: int) -> None:
                     },
                 )
             written = time.perf_counter() - started
+            # As embed jobs do: activating a filled space gives PostgreSQL its statistics.
+            await vectors.activate_space(space.id, T0)
             took = []
             for q in range(QUERIES):
                 query = _vector(-q - 1, dimensions)

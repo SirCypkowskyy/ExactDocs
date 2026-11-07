@@ -36,6 +36,8 @@ from exactdocs.retrieval.adapters.driven.vector_tables import (
 from exactdocs.retrieval.constants import (
     _PG_EXTENSION_CREATE,
     _PG_EXTENSION_SCHEMA,
+    _PG_READ_ONLY,
+    _PG_VECTOR_ANALYZE,
     _PG_VECTOR_CREATE,
     _PG_VECTOR_INLINE,
     _PG_VECTOR_NEAREST,
@@ -78,6 +80,19 @@ def _pgvector_type() -> TypeEngine[Any]:
         A ``VECTOR``: it sends a list of floats as pgvector's text form.
     """
     return importlib.import_module(PGVECTOR_MODULE).VECTOR()
+
+
+def _first_line(error: DBAPIError) -> str:
+    """Return the first line of what the database answered.
+
+    Args:
+        error: The failure.
+
+    Returns:
+        Its message, without PostgreSQL's detail lines.
+    """
+    lines = str(error.orig).strip().splitlines()
+    return lines[0] if lines else type(error.orig).__name__
 
 
 def _transient(error: DBAPIError) -> bool:
@@ -202,6 +217,10 @@ class PostgresVectorIndex:
                     activated_at=iso(space.activated_at or at),
                 )
             )
+            # It was just filled: searches must not wait for autovacuum to get good plans.
+            await connection.exec_driver_sql(
+                _PG_VECTOR_ANALYZE.format(table=vector_table(space_id))
+            )
             row = (
                 await connection.execute(select(spaces_table).where(spaces_table.c.id == space_id))
             ).one()
@@ -234,13 +253,16 @@ class PostgresVectorIndex:
         Returns:
             How many were stored.
         """
-        schema = await self._schema()  # before the write turn: finding it may take one
+        # Everything that needs no turn comes first: finding the extension may take one, and
+        # checking the vectors should not keep the other writers waiting.
+        dimensions = await self._dimensions_of(space_id)
+        checked = {k: checked_vector(v, dimensions) for k, v in vectors.items()}
+        schema = await self._schema()
         statement = text(
             _PG_VECTOR_UPSERT.format(table=vector_table(space_id), schema=schema)
         ).bindparams(bindparam("embedding", type_=self.vector_type()))
         async with self._write() as connection:
-            space = await self._live(connection, space_id)
-            checked = {k: checked_vector(v, space.spec.dimensions) for k, v in vectors.items()}
+            await self._live(connection, space_id)  # not retired meanwhile
             ids = await chunk_ids(connection, list(checked))
             rows = [{"key": ids[k], "embedding": list(checked[k])} for k in checked if k in ids]
             if rows:
@@ -290,12 +312,8 @@ class PostgresVectorIndex:
             The nearest chunks, nearest first, ties by chunk ID.
         """
         schema = await self._schema()
+        checked = checked_vector(query, await self._dimensions_of(space_id))
         async with self.engine.connect() as connection:
-            if space_id not in self._dimensions:
-                self._dimensions[space_id] = (
-                    await self._live(connection, space_id)
-                ).spec.dimensions
-            checked = checked_vector(query, self._dimensions[space_id])
             tags = POSTGRES_TAG_CONDITIONS[tag_filter.match if tag_filter.tags else None]
             statement = text(
                 _PG_VECTOR_NEAREST.format(table=vector_table(space_id), schema=schema, tags=tags)
@@ -361,15 +379,20 @@ class PostgresVectorIndex:
     async def _schema(self) -> str:
         """Find the schema of pgvector's extension, creating the extension if it is not there.
 
-        Tried once per process (in a write turn, so two processes never create it together):
-        the answer, or why it cannot be had, is kept. The schema is quoted, ready for SQL.
+        A plain read first (no write turn): once the extension is there, that is all it takes,
+        and the answer is kept for the life of the process. Only when it is missing, and this
+        process may write, it takes the write turn (two processes never create it together)
+        and creates it. What cannot change by itself (the role may not create it, the server
+        does not have pgvector) is kept too; a read-only process (``serve --stdio``), a busy
+        write turn or an unreachable database is asked again next time. The schema is quoted,
+        ready for SQL.
 
         Returns:
             The quoted schema, e.g. ``public``.
 
         Raises:
             VectorStoreUnavailableError: The ``[ai]`` extra is missing, or the extension is not
-                in the database and cannot be created here.
+                in the database and cannot be created here (now).
         """
         if "schema" in self._found:
             return self._found["schema"]
@@ -380,13 +403,57 @@ class PostgresVectorIndex:
         except ImportError as exc:
             self._found["missing"] = "pgvector's Python package (the [ai] extra) is not installed"
             raise VectorStoreUnavailableError(self._found["missing"]) from exc
+        schema, read_only = await self._look()
+        if schema is None and read_only:
+            reason = (
+                f'the PostgreSQL extension "{self.extension}" (pgvector) is not created yet in '
+                "this database, and this process only reads: waiting for the ExactDocs server to "
+                f"create it (or a superuser: CREATE EXTENSION {self.extension})"
+            )
+            raise VectorStoreUnavailableError(reason)
+        if schema is None:
+            schema = await self._create()
+        self._found["schema"] = schema
+        return schema
+
+    async def _look(self) -> tuple[str | None, bool]:
+        """Read where the extension is, and whether this process's transactions are read-only.
+
+        Returns:
+            The quoted schema (``None`` when the extension is not in the database), and whether
+            this process may not write.
+
+        Raises:
+            VectorStoreUnavailableError: The database did not answer (not kept).
+        """
+        try:
+            async with self.engine.connect() as connection:
+                schema = await connection.scalar(
+                    text(_PG_EXTENSION_SCHEMA), {"name": self.extension}
+                )
+                read_only = await connection.scalar(text(_PG_READ_ONLY))
+                preparer = connection.dialect.identifier_preparer
+        except DBAPIError as exc:
+            reason = f"the database did not answer: {_first_line(exc)}"
+            raise VectorStoreUnavailableError(reason) from exc
+        return (None if schema is None else preparer.quote(str(schema))), read_only == "on"
+
+    async def _create(self) -> str:
+        """Create the extension in a write turn (it may have been created meanwhile).
+
+        Returns:
+            The quoted schema it is in.
+
+        Raises:
+            VectorStoreUnavailableError: It cannot be created; kept unless it may pass.
+        """
         try:
             async with self._write() as connection:
-                schema = await self._install(connection)
+                return await self._install(connection)
         except DBAPIError as exc:
             reason = (
                 f'the PostgreSQL extension "{self.extension}" (pgvector) is not in this database '
-                f"and could not be created: {str(exc.orig).strip().splitlines()[0]}. "
+                f"and could not be created: {_first_line(exc)}. "
                 f"A superuser can run CREATE EXTENSION {self.extension} in this database "
                 "(then restart ExactDocs); until then hybrid search answers with BM25"
             )
@@ -394,8 +461,11 @@ class PostgresVectorIndex:
                 self._found["missing"] = reason
                 logger.warning("vector search is off: %s", reason)
             raise VectorStoreUnavailableError(reason) from exc
-        self._found["schema"] = schema
-        return schema
+        except RuntimeError as exc:
+            # The write turn timed out (bootstrap's WriteTurnTimeoutError, which a domain
+            # adapter cannot import): another process writes for long; ask again next time.
+            reason = f"the extension could not be created now: {exc}"
+            raise VectorStoreUnavailableError(reason) from exc
 
     async def _install(self, connection: AsyncConnection) -> str:
         """Find the extension's schema; create the extension first when it is not there.
@@ -414,6 +484,21 @@ class PostgresVectorIndex:
             schema = await connection.scalar(text(_PG_EXTENSION_SCHEMA), name)
             logger.info("created the PostgreSQL extension %r for vector search", self.extension)
         return connection.dialect.identifier_preparer.quote(str(schema))
+
+    async def _dimensions_of(self, space_id: EmbeddingSpaceId) -> int:
+        """Return a space's dimensions, read once (a spec never changes).
+
+        Args:
+            space_id: The space.
+
+        Returns:
+            Its dimensions.
+        """
+        if space_id not in self._dimensions:
+            async with self.engine.connect() as connection:
+                space = await self._live(connection, space_id)
+            self._dimensions[space_id] = space.spec.dimensions
+        return self._dimensions[space_id]
 
     async def _find(
         self, connection: AsyncConnection, space_id: EmbeddingSpaceId

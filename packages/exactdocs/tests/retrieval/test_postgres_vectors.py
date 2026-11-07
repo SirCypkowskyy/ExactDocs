@@ -4,6 +4,7 @@ These run only with ``EXACTDOCS_TEST_POSTGRES_URL`` (CI: ParadeDB, which ships p
 behaviour every vector store shares is in ``test_vector_index.py``.
 """
 
+import asyncio
 import math
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
@@ -16,11 +17,18 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from databases import ADMIN_URL, SECRET_KEY, PostgresDatabase, postgres_database
+from exactdocs.bootstrap import database
+from exactdocs.bootstrap.constants import WRITE_LOCK
 from exactdocs.bootstrap.container import Container, vector_index
+from exactdocs.bootstrap.database import open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.errors import RetiredEmbeddingSpaceError, VectorStoreUnavailableError
+from exactdocs.retrieval.errors import (
+    RetiredEmbeddingSpaceError,
+    VectorDimensionError,
+    VectorStoreUnavailableError,
+)
 from exactdocs.retrieval.models import (
     Chunk,
     ChunkId,
@@ -257,3 +265,84 @@ async def test_a_new_process_can_write_and_search_first_thing(engine: AsyncEngin
     )
 
     assert (stored, [h.chunk_id for h in hits]) == (1, ["c0"])
+
+
+# ---------------------------------------------------------------- review round 1
+
+
+async def test_a_read_only_process_waits_for_the_extension_instead_of_giving_up(
+    on_postgres: PostgresDatabase,
+) -> None:
+    # `serve --stdio` reads through a read-only engine: it may not create the extension, and
+    # must see it once the server has.
+    _as_admin(on_postgres, "DROP EXTENSION IF EXISTS vector CASCADE")
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        reader = open_database(Settings(), read_only=True)
+        try:
+            store = PostgresVectorIndex(engine=reader)
+            assert not await store.available()
+            with pytest.raises(VectorStoreUnavailableError, match="not created yet") as error:
+                await store.create_space(SPEC, T0)
+            assert "restart" not in str(error.value)
+
+            assert await PostgresVectorIndex(engine=container.engine).available()  # the server
+            seen = await store.available()
+        finally:
+            await reader.dispose()
+
+    assert seen
+
+
+async def test_a_present_extension_is_found_without_waiting_for_the_write_turn(
+    on_postgres: PostgresDatabase, engine: AsyncEngine
+) -> None:
+    _as_admin(on_postgres, "CREATE EXTENSION IF NOT EXISTS vector")
+    async with engine.begin() as holder:  # another process holds the write turn
+        await holder.execute(text(f"SELECT pg_advisory_xact_lock({WRITE_LOCK})"))
+        assert await asyncio.wait_for(PostgresVectorIndex(engine=engine).available(), 5)
+
+
+async def test_a_write_turn_that_times_out_falls_back_and_is_tried_again(
+    on_postgres: PostgresDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as_admin(on_postgres, "DROP EXTENSION IF EXISTS vector CASCADE")
+    monkeypatch.setattr(database, "WRITE_LOCK_TIMEOUT_MS", 200)
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        store = PostgresVectorIndex(engine=container.engine)
+        async with container.engine.connect() as holder:
+            await holder.execute(text(f"SELECT pg_advisory_lock({WRITE_LOCK})"))
+            busy = await store.available()
+            await holder.execute(text(f"SELECT pg_advisory_unlock({WRITE_LOCK})"))
+        later = await store.available()
+
+    assert (busy, later) == (False, True)
+
+
+async def test_activating_a_space_gives_the_planner_its_statistics(engine: AsyncEngine) -> None:
+    await _store_manifest(engine, chunks=3)
+    vectors = PostgresVectorIndex(engine=engine)
+    space = await vectors.create_space(SPEC, T0)
+    await vectors.upsert(space.id, {("b1", "cfg", i): [1, i, 0] for i in range(3)})
+
+    await vectors.activate_space(space.id, T0)
+
+    analyzed = await _rows(
+        engine,
+        "SELECT last_analyze IS NOT NULL OR last_autoanalyze IS NOT NULL"
+        " FROM pg_stat_user_tables WHERE relname = :table",
+        table=f"retrieval_vec_{space.id}",
+    )
+    assert analyzed == [(True,)]
+
+
+async def test_an_invalid_vector_is_refused_before_the_write_turn(engine: AsyncEngine) -> None:
+    await _store_manifest(engine)
+    vectors = PostgresVectorIndex(engine=engine)
+    space = await vectors.create_space(SPEC, T0)
+
+    async with engine.begin() as holder:  # validating needs no turn: it fails at once
+        await holder.execute(text(f"SELECT pg_advisory_xact_lock({WRITE_LOCK})"))
+        with pytest.raises(VectorDimensionError):
+            await asyncio.wait_for(vectors.upsert(space.id, {("b1", "cfg", 0): [1, 0]}), 5)
