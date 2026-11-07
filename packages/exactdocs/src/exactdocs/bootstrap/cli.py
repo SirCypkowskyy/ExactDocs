@@ -3,11 +3,14 @@
 import asyncio
 import getpass
 import os
+import shutil
 import sys
+import tempfile
 import time
 from collections.abc import AsyncGenerator, Coroutine
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 
 import uvicorn
@@ -17,6 +20,12 @@ from pydantic import SecretStr, ValidationError
 
 from exactdocs import __version__
 from exactdocs.bootstrap import cli_library as lib
+from exactdocs.bootstrap.backup import (
+    BackupError,
+    BackupSummary,
+    create_backup,
+    restore_backup,
+)
 from exactdocs.bootstrap.cli_library import exit_code
 from exactdocs.bootstrap.client import (
     ApiClient,
@@ -854,6 +863,120 @@ def reindex() -> None:
         f"Search index rebuilt in format {rebuilt.format} ({was}): "
         f"{rebuilt.entries} chunks in {seconds:.1f} s.\n"
     )
+
+
+@app.command
+def backup(
+    path: Annotated[
+        str,
+        Parameter(
+            help="Archive to write (.tar.gz), which must not exist; `-` for stdout.",
+            allow_leading_hyphen=True,
+        ),
+    ],
+    *,
+    include_secret_key: Annotated[
+        bool,
+        Parameter(
+            help="Also store secret.key. The archive then opens the stored repository "
+            "credentials: keep it as safe as the key."
+        ),
+    ] = False,
+) -> None:
+    """Write a consistent backup of the instance while the server keeps serving.
+
+    Local: reads the data directory (EXACTDOCS_DATA_DIR), so run it where the server runs (in
+    Docker: `docker exec <container> exactdocs backup - > exactdocs.tar.gz`). The archive holds
+    the database (libraries, versions, settings, accounts, tokens), the durable job steps and
+    known_hosts; secret.key only with --include-secret-key.
+
+    Args:
+        path: Archive to write (.tar.gz), which must not exist; `-` for stdout.
+        include_secret_key: Also store secret.key. The archive then opens the stored repository
+            credentials: keep it as safe as the key.
+    """
+    settings = Settings()
+    to_stdout = path == "-"
+    report = sys.stderr if to_stdout else sys.stdout
+    try:
+        summary = (
+            _backup_to_stdout(settings, include_secret_key=include_secret_key)
+            if to_stdout
+            else create_backup(settings, Path(path), include_secret_key=include_secret_key)
+        )
+    except BackupError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
+    where = "stdout" if to_stdout else str(summary.path)
+    report.write(
+        f"Backed up {', '.join(summary.members)} (schema {summary.schema_revision}, "
+        f"{summary.size} bytes) to {where}.\n"
+    )
+    if not include_secret_key:
+        report.write(
+            "secret.key is not in it: keep the key (or EXACTDOCS_SECRET_KEY) apart, or stored "
+            "repository credentials must be sent again after a restore.\n"
+        )
+
+
+def _backup_to_stdout(settings: Settings, *, include_secret_key: bool) -> BackupSummary:
+    """Write the archive to a temporary file, then copy it to stdout.
+
+    Args:
+        settings: Where the instance keeps its data.
+        include_secret_key: Also store ``secret.key``.
+
+    Returns:
+        What was written (its path no longer exists).
+    """
+    # In the data dir: writable wherever the server runs (a container may have no usable /tmp).
+    with tempfile.TemporaryDirectory(dir=settings.data_dir, prefix=".exactdocs-backup-") as tmp:
+        summary = create_backup(
+            settings, Path(tmp) / "backup.tar.gz", include_secret_key=include_secret_key
+        )
+        with summary.path.open("rb") as archive:
+            shutil.copyfileobj(archive, sys.stdout.buffer)
+        sys.stdout.buffer.flush()
+    return summary
+
+
+@app.command
+def restore(
+    path: Annotated[str, Parameter(help="Archive written by `exactdocs backup`.")],
+) -> None:
+    """Restore a backup into an empty data directory, migrating it to this version.
+
+    Local: writes to the data directory (EXACTDOCS_DATA_DIR), which must hold no instance yet;
+    stop the server first. A backup from a newer release is refused. Start `exactdocs serve`
+    afterwards.
+
+    Args:
+        path: Archive written by `exactdocs backup`.
+    """
+    settings = Settings()
+    try:
+        summary = asyncio.run(restore_backup(settings, Path(path)))
+    except (BackupError, StartupError, OSError) as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
+    migrated = (
+        f", migrated {summary.schema_from} -> {summary.schema_to}"
+        if summary.schema_to != summary.schema_from
+        else ""
+    )
+    sys.stdout.write(
+        f"Restored {', '.join(summary.members)} from ExactDocs {summary.version} into "
+        f"{settings.data_dir}{migrated}.\n"
+    )
+    if "secret.key" not in summary.members and not settings.secret_key:
+        sys.stdout.write(
+            "The backup holds no secret.key: stored repository credentials open only with the "
+            f"key they were sealed with. Copy that secret.key into {settings.data_dir} (or set "
+            "EXACTDOCS_SECRET_KEY) before `exactdocs serve`; otherwise their libraries keep "
+            "serving and ask for the credential again.\n"
+        )
+    if summary.reindex_required:
+        sys.stdout.write("The search index is in an older format: run `exactdocs reindex`.\n")
 
 
 async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltIndexOut]:
