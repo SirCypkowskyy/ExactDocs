@@ -1,0 +1,476 @@
+# AI retrieval decisions
+
+| | |
+|---|---|
+| **Status** | Accepted, 2026-11-07 |
+| **Scope** | Milestone *Next: AI retrieval* (#89 to #104, #241 to #246); sign-in for #105 and #106 (recorded here, built in *Next: Teams & integrations*) |
+| **Issue** | #240 |
+| **Decided by** | The owner decided the databases, the LLM providers and the sign-in providers; the rest was proposed in #240 and is open to change in review |
+
+This record fixes how ExactDocs adds embeddings, rerankers and LLMs on top of BM25, where their
+vectors live, how operators configure them, what they cost and what leaves the instance. Each
+issue of the milestone points here instead of deciding these again. The short form is in the
+[Decisions](../user-stories.md#decisions) table; the architecture of what is built today is in
+[Architecture](../architecture.md).
+
+## Context
+
+- ExactDocs is a BM25 search server by default and must stay one: a 384 MB image within a 400 MB
+  budget, a model-free wheel and image checked by CI (RUN-02, [Size and model-free
+  budgets](../releasing.md#size-and-model-free-budgets)), and no outbound connection but git.
+- The owner decided: **databases** are local SQLite with vector search inside SQLite, PostgreSQL
+  with pgvector, and Supabase (managed PostgreSQL with pgvector); **LLM providers** are a custom
+  OpenAI-compatible API (base URL plus an optional key), OpenAI, OpenRouter, Anthropic, Azure
+  OpenAI, Google Vertex AI and other popular platforms; **sign-in** (Teams) is custom OIDC, OAuth,
+  ADFS and GitHub with organization and team membership checks, GitHub Enterprise Server (GHE)
+  included.
+- The earlier plan named pydantic-ai and its harness, float32 BLOBs with numpy for SQLite vectors,
+  `OpenAICompatibleProvider` for custom endpoints, FastMCP's rate-limit middleware, and "no
+  in-process models". Checking the current releases changed several of these (below).
+
+## Summary
+
+| Topic | Decision |
+|---|---|
+| Chat and agents | **pydantic-ai-slim 2.60.0** models and providers, one profile per endpoint; harness 0.60.0 for Code Mode, spend limits and guardrails |
+| Embeddings | Our own `Embeddings` port; adapters over `pydantic_ai.Embedder` (remote) and **fastembed** (local) |
+| Rerankers | Our own `Reranker` port; Cohere-compatible and TEI HTTP adapters, fastembed cross-encoder, or an LLM judge |
+| Vector store | One `VectorIndex` port; **sqlite-vec** on SQLite, **pgvector** on PostgreSQL and Supabase; one table per embedding space, exact search scoped to the manifest |
+| Databases | SQLite (default), PostgreSQL on **psycopg 3** (#103), ParadeDB for BM25 (#104), Supabase as "PostgreSQL without pg_search" (#244) |
+| Packaging | `exactdocs[ai]` and `exactdocs[local]` extras; images **base** (400 MB), **-ai** (560 MB), **-local** (950 MB, models included) |
+| Configuration | Named provider profiles and roles in env or a TOML file; UI-managed profiles with keys sealed by the existing secret box; per-library overrides except the embedding model |
+| Offline | Nothing configured: nothing imported, nothing sent. `-local`: no network needed at all |
+| Cost | Token and USD budgets per instance, library and user, daily and monthly, in a database-backed harness `SpendStore`; rate limits inside retrieval; a limit degrades search, never fails it |
+| Telemetry | pydantic-ai's OpenTelemetry instrumentation with `include_content=False`; `gen_ai.*` metrics without library, user or query labels |
+| Evals | Pydantic Evals on the fixture libraries; wrong-version rate 0 is a hard gate; real local models in CI, LLMs only with test models or by hand |
+| Sign-in (Teams) | Several named providers: `oidc` (ADFS included), `oauth2`, `github` (GHE base URL, org and team membership via the GitHub API) |
+
+## Databases
+
+- **SQLite** stays the default: one file in the data directory, vectors in it too (one backup).
+- **PostgreSQL** (#103) moves into this milestone. Driver: **psycopg 3** async
+  (`postgresql+psycopg://`), already in the image as a DBOS dependency, so it costs nothing;
+  asyncpg would add about 32 MB and a second driver. DBOS keeps its system database on the same
+  PostgreSQL, which is what makes several server processes safe.
+- **BM25 on PostgreSQL** is ParadeDB `pg_search` (#104), as decided before. The CI image
+  (`paradedb/paradedb`) also bundles pgvector.
+- **Supabase** (#244) is supported as a PostgreSQL database, nothing more: no Supabase SDK, Auth or
+  Storage. It has pgvector (in the `extensions` schema) but not `pg_search`, so a third adapter of
+  the search port uses PostgreSQL full-text search (`tsvector` with the `simple` configuration on
+  the same identifier-expanded column, ranked with `ts_rank_cd`) whenever `pg_search` is missing.
+  It is not true BM25: the shared ranking suite runs on it and lists any expected-order
+  difference. Connections need `sslmode=require` and a session (direct, or the pooler in session
+  mode on port 5432); the transaction-mode pooler breaks prepared statements and DBOS, so it is
+  refused at start.
+
+## Provider abstraction
+
+### Chat and agents: pydantic-ai
+
+Every LLM call (HyDE #94, judge #96, agentic #98) is a pydantic-ai `Agent` on a model built from a
+**provider profile** (#241). pydantic-ai already speaks every API the owner listed, handles
+retries, usage, cost (bundled `genai-prices` data) and OpenTelemetry, and the harness adds Code
+Mode, `SpendLimits` and guardrails. A profile has a `kind`:
+
+| Profile `kind` | pydantic-ai provider | Chat model class | Embeddings | SDK in `[ai]` |
+|---|---|---|---|---|
+| `openai-compatible` (custom: base URL, optional key) | `OpenAIProvider(base_url=…, api_key=…)` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
+| `openai` | `OpenAIProvider` | `OpenAIResponsesModel` | `OpenAIEmbeddingModel` | `openai` |
+| `openrouter` | `OpenRouterProvider` | `OpenRouterModel` | `OpenAIEmbeddingModel` on the same provider | `openai` |
+| `anthropic` | `AnthropicProvider` (optional `base_url` for gateways) | `AnthropicModel` | none: Anthropic has no embedding API | `anthropic` |
+| `azure` (Azure OpenAI) | `AzureProvider(azure_endpoint, api_version, api_key)`; the model name is the deployment | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
+| `google-vertex` (Vertex AI) | `GoogleCloudProvider(project, location, credentials)`: a service-account file, workload identity / ADC, or an Express-mode key | `GoogleModel` | `GoogleEmbeddingModel` | `google-genai` |
+| `google` (Gemini API) | `GoogleProvider(api_key)` | `GoogleModel` | `GoogleEmbeddingModel` | `google-genai` |
+| `ollama` | `OllamaProvider(base_url)` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
+| `litellm` (gateway) | `LiteLLMProvider` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
+| `deepseek`, `together`, `fireworks`, `cerebras`, `github` (Models), `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba` | pydantic-ai's provider of that name | `OpenAIChatModel` | where the platform has them | `openai` |
+| `bedrock`, `groq`, `mistral`, `cohere`, `xai`, `huggingface` | pydantic-ai's provider of that name | its own model class | per platform | **not included**: each needs its own SDK |
+| `local` | none | none (use `ollama` for a local LLM) | fastembed (#245) | `[local]` extra |
+
+- **Custom endpoints** use `OpenAIProvider(base_url=…, api_key=…)` with `OpenAIChatModel` (Chat
+  Completions, the most widely implemented API). pydantic-ai's `OpenAICompatibleProvider`,
+  named in the first plan, is an internal base class in 2.60.0, not an entry point.
+- **Platforms whose SDK is not included** (Bedrock pulls boto3, the others their own clients)
+  are reached through their OpenAI-compatible endpoint as `openai-compatible`, through a LiteLLM
+  gateway, or, with `uvx`, by adding the SDK: `uvx --from 'exactdocs[ai]' --with
+  'pydantic-ai-slim[bedrock]==2.60.0' exactdocs serve`. The images do not include them.
+- **One HTTP client per profile** on `httpx2` (what pydantic-ai 2.60.0 uses): proxy on the
+  transport (a retrying transport stops httpx reading `HTTPS_PROXY`), extra headers (values masked
+  in logs), exactly one retry layer, and an overall `request_timeout`.
+
+### Embeddings: a small port with two kinds of adapter
+
+pydantic-ai 2.60.0 has `Embedder` with OpenAI (and every OpenAI-compatible provider), Cohere,
+Bedrock, Google/Vertex, Voyage and sentence-transformers models. On Python 3.14 the Voyage and
+sentence-transformers extras are not installable (their requirements stop at 3.13), and our code
+never subclasses third-party bases (the only inheritance in the codebase is exceptions), so a
+local model cannot be added as an `EmbeddingModel` subclass. Hence retrieval declares its own
+**`Embeddings` driven port** (embed documents, embed a query, model identity, dimensions), with:
+
+- an adapter over `pydantic_ai.Embedder` for every remote kind above that has embeddings; it
+  batches inputs itself (`batch_size`) and sets `EmbeddingSettings(dimensions=…)` when the model
+  supports shortening;
+- a fastembed adapter for `local` (#245).
+
+### Rerankers
+
+pydantic-ai has no rerank API. Retrieval declares a **`Reranker` driven port** (query and
+candidates in, scores out) with three adapters: HTTP in the Cohere-compatible `/v2/rerank`
+dialect (Cohere, Jina, Voyage, vLLM, LiteLLM, Azure AI Foundry) or the TEI `/rerank` dialect
+(#93), fastembed's `TextCrossEncoder` (#245), and an LLM **judge** on any chat profile (#96).
+
+## Local and offline models
+
+- **fastembed 0.9.0 on ONNX Runtime 1.31.0** (CPU) in an `exactdocs[local]` extra: embeddings
+  (`TextEmbedding`) and a cross-encoder (`TextCrossEncoder`) without torch. sentence-transformers
+  was rejected: it needs torch (hundreds of MB) and is not installable from pydantic-ai on 3.14.
+- **Defaults:** `BAAI/bge-small-en-v1.5` (384 dimensions, 67 MB quantized ONNX) and
+  `Xenova/ms-marco-MiniLM-L-6-v2` (91 MB). Other fastembed models can be configured; the eval
+  suite decides whether the defaults change.
+- **No download at run time.** `exactdocs models pull` is the only command that contacts the
+  Hugging Face Hub; it stores models under `<data dir>/models`. At run time models load from that
+  path with `HF_HUB_OFFLINE=1`; a missing model disables the role at start with a message, it is
+  never fetched.
+- A local **LLM** is out of scope for in-process inference: use the `ollama` kind (or vLLM,
+  llama.cpp's server, LM Studio as `openai-compatible`).
+
+### Image variants
+
+Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which the image keeps):
+
+| Variant | Contents | Estimated | Budget |
+|---|---|---|---|
+| `exactdocs:<v>` | as today: BM25, SQLite and PostgreSQL | 384 MB | **400 MB** (unchanged) |
+| `exactdocs:<v>-ai` | `exactdocs[ai]`: +141 MB (`anthropic` 17, `openai` 16, `pydantic_monty` 12, `pydantic_ai` 10, google-genai about 11, harness 6, ...) | 526 MB | **560 MB** |
+| `exactdocs:<v>-local` | `exactdocs[ai,local]`: +196 MB (`onnxruntime` 63, numpy 57, pillow 20, tokenizers 12, ...) and the two default models (158 MB) in `/opt/exactdocs/models` | 882 MB | **950 MB** |
+
+- The base image and the wheel stay **model-free** (RUN-02): the `ML_PACKAGES` checks keep
+  ignoring `extra ==` requirements, and also apply to the `-ai` image; only `-local` may hold
+  ONNX Runtime and model files.
+- `uvx exactdocs` stays BM25-only; `uvx --from 'exactdocs[ai]' exactdocs serve` and
+  `'exactdocs[ai,local]'` add the extras.
+- `[ai]` lists `pydantic-ai-harness` and `pydantic-monty` instead of
+  `pydantic-ai-harness[codemode]`: that extra also pulls a DuckDuckGo search client (`ddgs`,
+  `primp`, `lxml`: about 27 MB) that Code Mode does not import.
+- CI builds the three targets of one Dockerfile and checks each budget (#246); the budgets are
+  replaced by CI measurements plus about 7 % headroom when #246 lands.
+
+## Vector store
+
+- **One driven port, `VectorIndex`** (#242): create or retire a space, upsert and delete vectors by
+  chunk key, find the nearest chunks within one manifest, report a manifest's coverage. In-memory,
+  SQLite (#242) and pgvector (#243) adapters run one contract test.
+- **Embedding space.** A space is one (profile kind, model, dimensions, input format version)
+  and is recorded in `retrieval_embedding_spaces` with its state (`building`, `active`,
+  `retired`). Its vectors live in **one table per space** (`retrieval_vec_<space>`), created and
+  dropped by the adapter, like the search index tables of `exactdocs reindex`. A table per space
+  gives a fixed `vector(<dimensions>)` type on PostgreSQL and makes mixing two models impossible.
+- **Keys and dedup.** A vector belongs to a `retrieval_chunks` row, which is already shared by
+  every version holding the same blob with the same chunking, so a blob is embedded once. Garbage
+  collection removes vectors with their chunk sets.
+- **Search is exact, scoped to the manifest.** Every query is pinned to one version, so it scans
+  at most that version's chunks (thousands to tens of thousands): sqlite-vec's
+  `vec_distance_cosine` over float32 BLOBs, pgvector's `<=>`. No ANN index: exact results keep
+  evals reproducible and need no tuning. HNSW per space is a follow-up if #242's benchmark (50,000
+  vectors of 1,024 dimensions, p95 under 150 ms) fails on a real instance. Exact search also
+  avoids pgvector's 2,000-dimension index limit.
+- **sqlite-vec 0.1.9** (2026-03-31, the latest stable; 0.1.10 is still alpha) is loaded per
+  connection only once a space exists. It replaces the earlier "numpy brute force" decision:
+  the distance runs in SQL, next to the manifest join, and numpy is not needed. Verified on uv's
+  Python 3.14 build (`enable_load_extension`, `vec_distance_cosine`, `vec0`). A Python built
+  without loadable extensions reports hybrid as unavailable instead of failing.
+- **Model change.** Changing the embedding model, its dimensions or the input format creates a
+  new space and queues `embed` jobs. Until a version is covered by the new space it answers BM25
+  with `fallback_reason: embedding_in_progress` (the old space cannot be queried without the old
+  model). The old space is retired and dropped once the new one covers every version. Changing
+  only a base URL keeps the space; `exactdocs ai reembed` forces a new one.
+- **What is embedded:** the chunk's article title and heading path, then its text (input format
+  1). Queries are embedded as queries where the model distinguishes them.
+
+## Configuration
+
+**Instance level, in the environment or a TOML file.** Settings gain an `ai` section read from
+`EXACTDOCS_AI__...` variables (pydantic-settings, `__` as the nesting delimiter) and an optional
+TOML file named by `EXACTDOCS_CONFIG_FILE`; the environment wins. The file holds no secrets: a
+key in it is refused, keys come from the environment, from `api_key_file` (Docker and Kubernetes
+secrets), or from the UI.
+
+```toml
+# exactdocs.toml (EXACTDOCS_CONFIG_FILE=/etc/exactdocs/exactdocs.toml)
+[ai.providers.corp]                     # a company gateway
+kind = "openai-compatible"
+base_url = "https://llm.example.com/v1"
+api_key_file = "/run/secrets/corp_llm_key"
+headers = { "X-Team" = "docs" }
+proxy = "http://proxy.example.com:3128"
+request_timeout = 30
+
+[ai.providers.vertex]
+kind = "google-vertex"
+project = "acme-ml"
+location = "europe-west4"
+credentials_file = "/run/secrets/vertex.json"
+
+[ai.providers.offline]
+kind = "local"                          # needs the [local] extra and `exactdocs models pull`
+
+[ai.embedding]
+model = "corp:text-embedding-3-small"   # <profile>:<model>, instance-wide only
+dimensions = 1024                       # optional
+batch_size = 64
+
+[ai.reranker]
+model = "offline:Xenova/ms-marco-MiniLM-L-6-v2"
+top_n = 32
+
+[ai.llm]
+model = "vertex:gemini-2.5-flash"
+
+[ai.judge]                              # optional, defaults to [ai.llm]
+model = "corp:gpt-4.1-mini"
+
+[ai.budgets]
+daily_usd = 10
+monthly_embedding_usd = 50
+per_library_daily_usd = 2
+per_user_daily_usd = 1
+llm_searches_per_minute = 30
+
+[ai.prices."corp:gpt-4.1-mini"]         # only for models genai-prices does not know
+input_usd_per_mtok = 0.40
+output_usd_per_mtok = 1.60
+```
+
+The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compatible`,
+`EXACTDOCS_AI__PROVIDERS__CORP__API_KEY=…`, `EXACTDOCS_AI__LLM__MODEL=corp:gpt-4.1-mini`.
+
+- **Roles:** `embedding`, `reranker`, `llm`, `judge`; a role is `<profile>:<model>`. What is set
+  decides which modes are available (#89), as in [Lightweight by
+  default](../user-stories.md#lightweight-by-default).
+- **Profiles managed in the UI or REST** (`/api/v1/ai/providers`, admin only, #241) are stored by
+  retrieval, with their keys **sealed by the existing Fernet secret box** (`EXACTDOCS_SECRET_KEY`,
+  the one that seals repository credentials). A key is never returned; without a secret key the
+  UI refuses to store one. Profiles from the environment or the file are shown read-only.
+  Retrieval declares its own small secret-box port; bootstrap wires the same adapter into it.
+- **Per-library overrides** (stored by retrieval, edited by the library owner, #102): AI on or
+  off (off: nothing of the library is ever sent to a provider), retrieval mode, the `llm`, `judge`
+  and `reranker` profile and model, rerank `top_n`, agentic limits, and budgets no higher than the
+  instance's. **Not** the embedding model: one space per instance keeps cross-library search
+  (E5-06) comparable and the storage simple.
+- **Precedence** for the mode stays call, then library, then instance, then the best available.
+
+## Offline and no-outbound guarantees
+
+| Situation | Guarantee | Proved by |
+|---|---|---|
+| Nothing configured (any install) | No module of `[ai]` or `[local]` is imported, sqlite-vec is not loaded, no connection is opened except to git remotes | the model-free test, extended with a socket guard (#241) |
+| `[ai]` installed, nothing configured | Same as above | same test with the extra installed |
+| A provider configured | Connections only to that profile's base URL (and, for Vertex, Google's token endpoint); no telemetry to any vendor (no Logfire); `genai-prices` data is the bundled copy, never updated over the network | socket-guard test allowing only the mock endpoint (#241) |
+| `local` roles | No connection at all; models load from disk with `HF_HUB_OFFLINE=1`; only `exactdocs models pull` contacts the Hub | test with sockets blocked (#245); `-local` smoke test with `--network none` (#246) |
+| A library with AI off | No chunk, query or instruction file of it reaches any provider; its searches answer BM25 | scenario in #241 and #91 |
+
+What leaves the instance when a role is set: **embedding** receives chunk text (in background
+jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
+**llm** (HyDE, agentic) receives query text and the docs the agent opens. Library names, user
+identities and tokens are never sent.
+
+## Cost and budgets
+
+- **Accounting.** Every model call records input and output tokens and its price in USD:
+  pydantic-ai's bundled `genai-prices` data, or the operator's per-model price
+  (`[ai.prices]`). A USD budget on a model with no known price is refused at start; tokens are
+  always counted. Local models cost nothing but their tokens are counted.
+- **Budgets** (#95): token and USD limits per instance, per library and per user (the token's
+  account; stdio MCP counts to instance and library), per UTC day and month, enforced with the
+  harness `SpendLimits` over a database-backed **`SpendStore`** (a `retrieval_ai_spend` table
+  with an atomic upsert per scope and window). The harness store is a `Protocol`, so our adapter
+  implements it structurally and works on SQLite and PostgreSQL, across processes. A check runs
+  before each call, so a burst can overshoot by at most the calls already in flight.
+- **Per-call limits:** pydantic-ai `UsageLimits` on every call; for the agent also
+  `max_tool_calls` and Monty's resource limits.
+- **Rate limit:** LLM searches per minute per caller, enforced inside retrieval so it covers
+  REST, HTTP MCP and stdio alike. It replaces FastMCP's `SlidingWindowRateLimitingMiddleware`,
+  which only sees MCP and limits every tool, not just the expensive ones.
+- **Degrade, never fail.** A budget or rate limit skips the LLM step and answers with the next
+  cheaper mode, saying why (`fallback_reason`: `llm_budget_reached`, `llm_rate_limited`). An
+  exhausted embedding budget stops the `embed` job (`ai_budget_reached`), retried when the window
+  resets, while BM25 keeps answering.
+- **Visibility:** `GET /api/v1/ai/usage` and the UI (#102) show spend and budget left per scope;
+  `exactdocs ai estimate` prints the tokens and USD of embedding every version before it starts.
+
+## Telemetry
+
+- pydantic-ai's own OpenTelemetry instrumentation, `InstrumentationSettings(include_content=False)`,
+  on the global providers that `bootstrap/otel_sdk.py` sets up (never Logfire, see
+  [Telemetry](../architecture.md#telemetry)). Spans for model and embedding calls nest under the
+  existing `retrieval.<search>` spans, with new stages `embed_query`, `hyde`, `rerank`, `judge` and
+  `agent`; agent tool calls nest inside `run_code`.
+- **No prompt text, ever.** `include_content=False` is the first guard; `ScrubbingExporter` also
+  drops `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions` and
+  tool-call arguments as a second one. `EXACTDOCS_TELEMETRY_QUERY_TEXT` keeps covering the query
+  text of request spans only; it never turns prompts on.
+- **Metrics** (OTLP and `/metrics`): pydantic-ai's `gen_ai.client.token.usage`,
+  `gen_ai.client.operation.duration` and `operation.cost`; ours: `exactdocs.ai.fallbacks` (by mode
+  and reason), `exactdocs.ai.cache_hits`, `exactdocs.embedding.backlog` (chunks waiting). Labels
+  are bounded: provider kind, model (from configuration), operation, role, token type. Never the
+  library, version, user or query, as for the existing metrics.
+
+## Evaluation
+
+- **Pydantic Evals 2.60.0** (dev dependency group, not an extra), datasets in the repository: the
+  fixture library's expected queries plus natural-language questions, each with the expected
+  version, article path and heading (#90).
+- **Metrics per mode:** recall@1/5/10, MRR, **wrong-version rate**, p50 and p95 latency, tokens and
+  USD per question, as a JSON report and a CI job summary.
+- **Tiers.** Every PR runs BM25 (gating). A CI job with `[local]` and cached ONNX models runs
+  `hybrid` and rerank for real, without any secret (report-only on PRs, compared with the
+  baseline stored on `develop`). LLM modes run in tests with `TestModel` / `FunctionModel`; with a
+  real provider only by a manual `workflow_dispatch` that has the key. No live endpoint is ever
+  needed for CI to pass.
+- **Gates.** Wrong-version rate must be 0 for every mode; recall@5 may not drop more than 2 points
+  below the baseline. A mode becomes a default only when it beats BM25 recall@5 by at least
+  5 points with wrong-version rate 0. Agentic runs are also checked from their traces (#99).
+
+## Where the code lives
+
+- Everything stays in the **retrieval** domain: ports `Embeddings`, `Reranker`, `VectorIndex`,
+  `SpendStore`-shaped usage ledger, HyDE writer, judge and agent explorer; pydantic-ai, fastembed,
+  sqlite-vec and pgvector only in `retrieval/adapters/driven/`. The architecture test adds them
+  to the list of frameworks the core may not import.
+- Building a pydantic-ai model from a profile is wiring, so it lives in `bootstrap` (a provider
+  factory), which imports it only when a role is configured.
+- Embedding runs are an `embed` ingestion job kind (resumable steps per batch), reaching
+  retrieval through a bridge, like indexing does today. No new domain: a separate package
+  (`packages/exactdocs-retrieval-ai`) is the fallback if the extras ever need their own release
+  cadence.
+
+## Order of work
+
+Each wave can be built in parallel; an issue starts when everything it depends on is merged. The
+issues hold the authoritative `Depends on` lines.
+
+| Wave | Issues | Depends on |
+|---|---|---|
+| 0 | #240 this record | - |
+| 1 | #89 modes and the `[ai]` extra; #97 `article_outline`; #103 PostgreSQL | merged MVP issues |
+| 2 | #241 AI providers; #242 vector store on SQLite; #90 eval suite; #104 ParadeDB BM25 | #89; #89; #89; #103 |
+| 3 | #91 embeddings; #93 reranker; #243 pgvector | #241 + #242; #241; #242 + #103 |
+| 4 | #92 hybrid; #95 budgets; #245 local models; #244 Supabase | #91; #241 + #91; #91 + #93; #104 + #243 |
+| 5 | #94 HyDE; #98 agentic; #102 UI; #246 image variants | #92 + #95; #97 + #95; #89 + #95 + #241; #241 + #245 |
+| 6 | #96 judge; #99 guardrails; #100 cache; #101 repo guidance | #93 + #94 + #95; #98; #98 (+ #92); #98 |
+| Teams | #105 sign-in after #103; #106 MCP OAuth after #105 | |
+
+The longest chain is #89 → #241 → #91 → #95 → #94 → #96 (and #89 → #242 → #91). Budgets (#95)
+now come **before** HyDE, so no LLM call ships unmetered.
+
+```mermaid
+flowchart LR
+    i89["#89 modes + extra"] --> i241["#241 providers"]
+    i89 --> i242["#242 vectors SQLite"]
+    i89 --> i90["#90 evals"]
+    i97["#97 outline"] --> i98
+    i103["#103 PostgreSQL"] --> i104["#104 ParadeDB"]
+    i103 --> i243
+    i241 --> i91["#91 embeddings"]
+    i242 --> i91
+    i242 --> i243["#243 pgvector"]
+    i241 --> i93["#93 reranker"]
+    i91 --> i92["#92 hybrid"]
+    i91 --> i95["#95 budgets"]
+    i241 --> i95
+    i91 --> i245["#245 local models"]
+    i93 --> i245
+    i104 --> i244["#244 Supabase"]
+    i243 --> i244
+    i92 --> i94["#94 HyDE"]
+    i95 --> i94
+    i95 --> i98["#98 agentic"]
+    i245 --> i246["#246 image variants"]
+    i94 --> i96["#96 judge"]
+    i93 --> i96
+    i98 --> i99["#99 guardrails"]
+    i98 --> i100["#100 cache"]
+    i98 --> i101["#101 repo guidance"]
+    i95 --> i102["#102 UI"]
+```
+
+## Sign-in for the Teams milestone
+
+Recorded now so the PostgreSQL and provider work does not paint it into a corner; built in #105
+and #106.
+
+- **Several named providers** at once, next to local accounts (the local admin stays as
+  break-glass). Each has a `kind`:
+    - **`oidc`**: discovery from `<issuer>/.well-known/openid-configuration`, authorization code
+      with PKCE, the ID token checked against the JWKS, configurable claims for username, email and
+      groups. Works for Keycloak, Entra ID, Okta, Google, Auth0 and the like.
+    - **ADFS is `oidc`** (ADFS 2016 and later; issuer `https://<host>/adfs`). Its quirks are
+      configuration: the username from `upn` or `unique_name`, groups from the `group` claim that an
+      issuance transform rule must emit (documented).
+    - **`oauth2`**: for providers without OIDC; authorize, token and userinfo URLs and claim paths
+      for subject, username, email and groups.
+    - **`github`**: an OAuth App at a configurable base URL, `https://github.com` or a **GHE**
+      host (API at `<base>/api/v3`), scopes `read:user read:org`. Access requires an `active`
+      membership in an allowed organization (`GET /user/memberships/orgs/{org}`) and, when teams
+      are listed, in an allowed team (`GET /orgs/{org}/teams/{team_slug}/memberships/{username}`).
+      Each allowed team becomes the ExactDocs group `github:<org>/<team>`.
+- **Membership follows the provider.** Groups and memberships are refreshed at every sign-in and
+  every `revalidate_minutes` (default 60) with the user's provider token, sealed by the secret
+  box. A revoked token or a lost membership ends the session. When the provider cannot be
+  reached, the session lasts at most `revalidate_grace_minutes` (default 1,440), then access is
+  refused (fail closed).
+- **Libraries:** Authlib for the web sign-in (already in the lock through FastMCP; floor
+  `authlib>=1.9.1`, released 2026-10-14). For MCP (#106), one provider is chosen
+  (`EXACTDOCS_MCP_OAUTH_PROVIDER`): FastMCP `OIDCProxy` for `oidc` (ADFS included), `OAuthProxy`
+  with the provider's endpoints for `oauth2` and `github` (FastMCP's `GitHubProvider` hard-codes
+  github.com), each with our token verifier applying the same membership checks, combined with
+  API tokens through `MultiAuth`.
+- **Out of scope:** SAML, GitHub Apps (instead of OAuth Apps), SCIM provisioning.
+
+## Pinned dependencies
+
+Every version below was released at least two weeks before 2026-11-07 and checked on PyPI
+(release date of its first file; a wheel for CPython 3.14 or a pure-Python wheel exists). They
+install together with the current lock (`httpx2` 2.16, `fastmcp` 4.1.6, `opentelemetry` 1.45).
+
+| Package | Version | Released | Where |
+|---|---|---|---|
+| `pydantic-ai-slim[openai,anthropic,google]` | 2.60.0 | 2026-10-23 | `[ai]` |
+| `pydantic-ai-harness` | 0.60.0 (requires `pydantic-ai-slim==2.60.0`) | 2026-10-23 | `[ai]` |
+| `pydantic-monty` | 1.3.0 | 2026-10-22 | `[ai]` (Code Mode sandbox) |
+| `sqlite-vec` | 0.1.9 | 2026-03-31 | `[ai]` |
+| `pgvector` (Python) | 0.5.1 | 2026-10-09 | `[ai]` |
+| `fastembed` | 0.9.0 | 2026-10-07 | `[local]` |
+| `onnxruntime` | 1.31.0 | 2026-10-09 | `[local]` |
+| `pydantic-evals` | 2.60.0 | 2026-10-23 | dev group |
+| `psycopg[binary]` | 3.3.6 (already locked through DBOS) | 2026-09-18 | default |
+| `authlib` | >= 1.9.1 (locked 1.9.3 through FastMCP) | 2026-10-14 | default (Teams) |
+
+Transitive pins of note: `genai-prices` 0.1.13 (pydantic-ai's floor, 2026-10-15), `numpy` 2.5.4
+(2026-10-10) and `huggingface-hub` 1.33.0 (2026-09-24, fastembed requires < 2.0) under `[local]`.
+Newer releases exist (pydantic-ai-slim 2.6x, harness 0.66, onnxruntime 1.31.1); they are taken by
+Dependabot-style bumps once two weeks old, with the eval suite as the check.
+
+## Consequences
+
+- Operators choose an image: base for BM25, `-ai` for hosted models, `-local` for air-gapped
+  semantic search. The base image and `uvx exactdocs` do not grow.
+- PostgreSQL and Supabase arrive before teams and roles, so a shared database exists before
+  sign-in (#105) needs one.
+- Three search adapters (FTS5, pg_search, PostgreSQL full-text) and two vector adapters must keep
+  passing one ranking suite and one contract test.
+- A model change makes hybrid answer BM25 per version until re-embedding finishes; this is
+  visible (`fallback_reason`) and never mixes vectors.
+
+## Rejected options
+
+| Option | Why not |
+|---|---|
+| numpy brute force over BLOBs on SQLite (earlier decision) | sqlite-vec does the same exact search in SQL, next to the manifest join, in a 214 KB wheel; numpy is 57 MB |
+| `vec0` virtual tables or an ANN index | Every query is scoped to one manifest, which a join expresses and a partition key does not; exact search is fast enough there and reproducible |
+| sentence-transformers / torch for local models | Hundreds of MB, and not installable through pydantic-ai on Python 3.14 |
+| Putting `[ai]` in the base image | +141 MB over a 400 MB budget that is already 96 % used, for installs that only use BM25 |
+| asyncpg | About 32 MB more and a second PostgreSQL driver next to psycopg, which DBOS already needs |
+| A separate `ai` domain | Every consumer is retrieval; a domain would need bridges for each call without isolating anything |
+| FastMCP rate-limit middleware for LLM limits | Covers MCP only and every tool, and answers with an error instead of degrading |
+| A Supabase SDK or Supabase Auth | Only the database is needed; sign-in follows the Teams decisions |
