@@ -508,7 +508,7 @@ several hosts behind a load balancer. Every process serves the web UI, the API a
 jobs; a job runs once, in whichever process takes it first, and at most one per library at a time.
 A process that dies with running jobs leaves them to the next one that starts, or after about 15 s
 to any running process, which resumes them at their last completed step. A short database outage
-or failover is waited out. But a process that could not confirm its executor slot for 15 s, or whose
+or failover is waited out. But a process that could not confirm its executor slot for 5 s, or whose
 slot another process has taken meanwhile, stops taking jobs and stops itself (as `SIGTERM` does), so
 that no job runs twice: run it with a restart policy (`restart: unless-stopped` in the example
 below, a Deployment in Kubernetes). A process that starts after a crash waits 15 s before it

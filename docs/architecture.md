@@ -561,11 +561,13 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     (the slot connection also has `tcp_user_timeout`), so a host that stopped answering cannot
     hold the check past the adoption grace. If the slot is free it takes it again, and goes on
     only if every job it runs is still its own pending workflow. A database that cannot be
-    reached is `unknown`: the worker adopts nothing and waits, and gives up only once the slot
-    stayed unconfirmed for `adopt_grace`. When another process holds the slot (or after that
-    wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands over is
-    refused and queued again), cancels the running ones, stops DBOS's threads, then stops the
-    process with `SIGTERM`; `serve` bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and
+    reached is `unknown`: the worker adopts nothing and waits, and gives up once the slot stayed
+    unconfirmed for `adopt_grace` less two check intervals, before another process can adopt
+    its jobs. When another process holds the slot (or after that wait) the slot is lost: the
+    worker first stops taking jobs (a job DBOS still hands over is refused), cancels the running
+    ones, stops DBOS (and gives the event loop a new thread pool, as its normal teardown does),
+    then queues the refused jobs again through a `DBOSClient`, and stops the process with
+    `SIGTERM`; `serve` bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and
     a restart policy brings it back.
   - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
     watchdog round the worker lists the pending job workflows of other executors and takes the
