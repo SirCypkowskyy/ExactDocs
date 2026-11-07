@@ -18,7 +18,7 @@ the image.
 just eval                       # every mode; those that cannot run are listed with the reason
 just eval --modes bm25          # one mode
 just eval --report out.json     # JSON report elsewhere (default: reports/evals/retrieval.json)
-just eval --baseline develop.json --ratchet   # what CI does, with develop's baseline
+just eval --baseline develop.json --ratchet --reference-dataset develop.yaml   # what CI does
 just eval --configured-models --local-roles embedding,reranker   # local models from EXACTDOCS_AI__...
 just eval --help
 ```
@@ -27,7 +27,9 @@ It builds the fixture repository in a temporary directory, imports `v1.3.0`, `v1
 with the real importer, then asks `search_docs` for the top 10 of every question in each mode, and
 reads every returned chunk back with `read_chunk`. It prints a Markdown summary, appends it to
 `$GITHUB_STEP_SUMMARY` when that is set, writes the JSON report, and exits with 1 when a gate
-fails (2 for a usage error, such as a `--baseline` path that does not exist).
+fails (2 for a usage error, such as a `--baseline` or `--reference-dataset` path that does not
+exist). A case whose version or expected section the fixture does not have fails the suite too,
+rather than counting as a miss.
 
 By default the run is **model-free**: the app is built with no model role, whatever
 `EXACTDOCS_AI__...` configures, so only BM25 runs. `--configured-models` uses the configured
@@ -60,7 +62,8 @@ is a question pinned to one version, and the section that answers it:
   the wrong-version rate only: whatever a mode returns for it must still be of that version.
 
 To add a case, add it to the YAML; a test checks that its section exists in that version. If the
-content it needs is missing, extend the fixture as its README says.
+content it needs is missing, extend the fixture as its README says. Then rewrite the baseline
+([Changing the dataset](#changing-the-dataset)).
 
 ## Metrics
 
@@ -92,15 +95,19 @@ cheaper mode answered (`fallbacks`).
   the suite for BM25 and is a warning for the report-only modes. A gating mode with no baseline
   entry is a warning (its recall is then not gated).
 - **The stored baseline only moves up** (`--ratchet`, on in CI): the branch's `baseline.json` may
-  not store a lower BM25 recall@5 than `develop`'s.
+  not store a lower BM25 recall@5 than `develop`'s, and a value it raises must be what the run
+  measures (a stored recall@5 above the measured one fails).
+- Both compare with `develop`'s baseline only **on the same dataset**; when the dataset changed,
+  see [Changing the dataset](#changing-the-dataset).
 - A question whose search raises fails the suite.
 - **A mode becomes a default only when the suite shows it beats BM25's recall@5 by at least
   5 points with a wrong-version rate of 0.** The report marks such a mode `eligible_as_default`;
   changing the default order (`DEFAULT_MODE_ORDER`) without that is not accepted.
 
 The baseline is `packages/exactdocs/evals/retrieval_eval/baseline.json`: recall@1/5/10, MRR and
-the wrong-version rate of each mode that ran (no latency, which depends on the machine). CI compares
-with the copy on `develop`, checked out on its own (that one file), so a pull request cannot lower
+the wrong-version rate of each mode that ran (no latency, which depends on the machine), and the
+`dataset` fingerprint they were measured on. CI compares with the copy on `develop`, checked out on
+its own (that file and `develop`'s `dataset.yaml`), so a pull request cannot lower
 the bar it is measured against; a failed checkout fails the job. Only when `develop` has no
 `baseline.json` at all does CI compare with the branch's own, with a warning in the summary. A
 change that improves ranking refreshes it in the same pull request, where the diff shows the new
@@ -109,6 +116,40 @@ numbers:
 ```bash
 just eval --write-baseline
 ```
+
+## Changing the dataset
+
+The fingerprint (`sha256:...` in `baseline.json`) is a hash of what the dataset states: each
+case's question (`inputs`, defaults left out) and the version, article and heading path of each
+section it expects. Renaming, reordering or commenting cases keeps it, and so does a new field with
+a default in the dataset's models; adding, removing or changing a question or an expected section
+changes it. Numbers measured on different datasets are not comparable (harder questions lower
+recall without anything getting worse), so:
+
+1. Change `dataset.yaml` (see [The dataset](#the-dataset)).
+2. Run `just eval --write-baseline` and commit the new `baseline.json` in the same pull request.
+   It records the new fingerprint and the recall measured on the new dataset, which may be lower.
+3. In CI, `develop`'s baseline has another fingerprint, so the baseline is **reset**:
+    - the drop gate compares with the branch's `baseline.json`, and the ratchet against `develop`
+      is off; once the pull request is merged it starts again from the new baseline;
+    - the branch's stored recall@5 must be exactly what the run measures, neither above nor below,
+      since it becomes the next bar;
+    - **`develop`'s dataset is still run**, with the branch's code, and gated against `develop`'s
+      baseline as usual (`--reference-dataset`; its summary is *Retrieval eval on the reference
+      dataset*). A question of the old dataset whose version or section the fixture no longer has
+      fails the run instead of being skipped. So rewording or adding a question cannot hide a
+      ranking regression: the old questions still catch it;
+    - the reset is reported as a warning annotation on the pull request's checks (*Eval baseline
+      reset*) and in the job summary (**Baseline reset: the dataset changed (...)**).
+
+If `baseline.json` was not rewritten, its fingerprint is not the dataset's and CI fails with
+"was recorded for dataset ..., not this one".
+
+**The fixture is not part of the fingerprint.** A change to the fixture docs repository
+(`packages/exactdocs/tests/fixtures/docs-repo`), such as a new distractor article, is gated like a
+ranking change: recall@5 may not drop more than 2 points below `develop`'s baseline, and there is
+no reset path (a reset still runs `develop`'s dataset against `develop`'s baseline, on the new
+fixture). A fixture change has to keep BM25's recall@5 within those 2 points.
 
 ## Tiers
 

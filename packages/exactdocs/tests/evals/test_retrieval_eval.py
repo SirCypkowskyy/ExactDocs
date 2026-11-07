@@ -1,7 +1,7 @@
 """The retrieval eval suite: its dataset, its metrics, its gates, and BM25 on the real import."""
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,15 +23,18 @@ from exactdocs.retrieval.models import (
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
 from retrieval_eval.cli import main
-from retrieval_eval.dataset import Answer, Hit, Question, load_dataset
+from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import model_free_container, run_on_fixture
 from retrieval_eval.suite import (
     BASELINE_FILE,
     MODES,
+    Comparison,
     ModeMetrics,
     ModeOutcome,
+    StoredBaseline,
     Tier,
     baseline_of,
+    compare,
     evaluate_mode,
     judge,
     markdown,
@@ -156,7 +159,7 @@ V2_HIT = Hit(version="v2.0.0", article="docs/guide/resilience.md", heading_path=
 async def _judged(retriever: Any, baseline: dict[str, float] | None = None) -> ModeOutcome:
     dataset = with_evaluators(load_dataset())
     outcome = await evaluate_mode(dataset, BM25, retriever)
-    report = judge(dataset.name, len(dataset.cases), [outcome], baseline or {})
+    report = judge(dataset.name, len(dataset.cases), [outcome], Comparison(baseline=baseline or {}))
     return report.modes[0]
 
 
@@ -177,7 +180,7 @@ async def test_one_result_of_another_version_fails_the_suite_whatever_the_recall
     retriever = Perfect(extra={"v1.4.0: retry_policy": [V2_HIT]})
     outcome = await evaluate_mode(dataset, BM25, retriever)
 
-    report = judge(dataset.name, len(dataset.cases), [outcome], {"bm25": 0.5})
+    report = judge(dataset.name, len(dataset.cases), [outcome], Comparison(baseline={"bm25": 0.5}))
 
     assert not report.passed
     assert outcome.metrics is not None
@@ -234,7 +237,7 @@ async def test_a_question_that_raises_fails_the_suite() -> None:
     dataset = with_evaluators(load_dataset())
     outcome = await evaluate_mode(dataset, BM25, Broken())
 
-    report = judge(dataset.name, len(dataset.cases), [outcome], {})
+    report = judge(dataset.name, len(dataset.cases), [outcome], Comparison())
 
     assert not report.passed
     assert len(outcome.errors) == len(dataset.cases)
@@ -259,7 +262,7 @@ def _ran(mode: Any, recall_at_5: float, *, wrong: list[str] | None = None) -> Mo
 def test_bm25_recall_at_5_may_drop_at_most_two_points_below_the_baseline(
     recall_at_5: float, passed: bool
 ) -> None:
-    report = judge("retrieval", 10, [_ran(BM25, recall_at_5)], {"bm25": 0.90})
+    report = judge("retrieval", 10, [_ran(BM25, recall_at_5)], Comparison(baseline={"bm25": 0.90}))
 
     assert report.passed is passed
     assert report.modes[0].baseline_recall_at_5 == pytest.approx(0.90)
@@ -268,7 +271,10 @@ def test_bm25_recall_at_5_may_drop_at_most_two_points_below_the_baseline(
 
 def test_a_report_only_mode_that_drops_warns_without_failing() -> None:
     report = judge(
-        "retrieval", 10, [_ran(BM25, 0.9), _ran(HYBRID, 0.5)], {"bm25": 0.9, "hybrid": 0.9}
+        "retrieval",
+        10,
+        [_ran(BM25, 0.9), _ran(HYBRID, 0.5)],
+        Comparison(baseline={"bm25": 0.9, "hybrid": 0.9}),
     )
 
     assert report.passed
@@ -278,7 +284,7 @@ def test_a_report_only_mode_that_drops_warns_without_failing() -> None:
 
 
 def test_a_report_only_mode_with_a_wrong_version_still_fails() -> None:
-    report = judge("retrieval", 10, [_ran(BM25, 0.9), _ran(HYBRID, 1.0, wrong=["x"])], {})
+    report = judge("retrieval", 10, [_ran(BM25, 0.9), _ran(HYBRID, 1.0, wrong=["x"])], Comparison())
 
     assert not report.passed
     assert report.modes[1].eligible_as_default is False
@@ -288,14 +294,14 @@ def test_a_report_only_mode_with_a_wrong_version_still_fails() -> None:
 def test_a_mode_may_become_a_default_only_when_it_beats_bm25_by_five_points(
     hybrid: float, eligible: bool
 ) -> None:
-    report = judge("retrieval", 10, [_ran(BM25, 0.9), _ran(HYBRID, hybrid)], {})
+    report = judge("retrieval", 10, [_ran(BM25, 0.9), _ran(HYBRID, hybrid)], Comparison())
 
     assert report.modes[0].eligible_as_default is None
     assert report.modes[1].eligible_as_default is eligible
 
 
 def test_a_gating_mode_without_a_baseline_entry_warns() -> None:
-    report = judge("retrieval", 10, [_ran(BM25, 0.9)], {"hybrid": 0.5})
+    report = judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison(baseline={"hybrid": 0.5}))
 
     assert report.passed
     assert report.warnings == ["bm25: no baseline to compare with, so its recall@5 is not gated"]
@@ -306,7 +312,8 @@ def test_a_gating_mode_without_a_baseline_entry_warns() -> None:
                            ({}, False)],
 )  # fmt: skip
 def test_the_stored_baseline_may_only_move_up(stored: dict[str, float], passed: bool) -> None:
-    report = judge("retrieval", 10, [_ran(BM25, 0.9)], {"bm25": 0.90}, stored=stored)
+    comparison = Comparison(baseline={"bm25": 0.90}, ratchet=stored)
+    report = judge("retrieval", 10, [_ran(BM25, 0.9)], comparison)
 
     assert report.passed is passed
     if not passed:
@@ -314,13 +321,15 @@ def test_the_stored_baseline_may_only_move_up(stored: dict[str, float], passed: 
 
 
 def test_the_baseline_keeps_ranking_metrics_not_latency(tmp_path: Path) -> None:
-    report = judge("retrieval", 10, [_ran(BM25, 0.9)], {})
+    report = judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison(), fingerprint="sha256:abc")
     path = tmp_path / "baseline.json"
     path.write_text(baseline_of(report), encoding="utf-8")
 
-    assert read_baseline(path) == {"bm25": 0.9}
+    assert read_baseline(path) == StoredBaseline(
+        recall_at_5={"bm25": 0.9}, dataset="sha256:abc", source=str(path)
+    )
     assert "latency_p50_ms" not in json.loads(path.read_text(encoding="utf-8"))["modes"]["bm25"]
-    assert read_baseline(tmp_path / "missing.json") == {}
+    assert read_baseline(tmp_path / "missing.json") == StoredBaseline(recall_at_5={})
 
 
 def test_the_summary_has_a_row_per_mode_and_the_verdict() -> None:
@@ -329,7 +338,10 @@ def test_the_summary_has_a_row_per_mode_and_the_verdict() -> None:
         reason="needs the embedding role, not configured",
     )  # fmt: skip
     report = judge(
-        "retrieval", 10, [_ran(BM25, 0.9, wrong=["v1.4.0: q: v2.0.0 a > b"]), unavailable], {}
+        "retrieval",
+        10,
+        [_ran(BM25, 0.9, wrong=["v1.4.0: q: v2.0.0 a > b"]), unavailable],
+        Comparison(),
     )
 
     text = markdown(report)
@@ -350,7 +362,7 @@ async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_res
         docs_repo,
         tmp_path / "data",
         build=model_free_container,
-        baseline=read_baseline(BASELINE_FILE),
+        comparison=Comparison(baseline=read_baseline(BASELINE_FILE).recall_at_5),
     )
 
     assert report.passed, report.problems
@@ -359,7 +371,7 @@ async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_res
     assert bm25.status == "ran"
     assert bm25.metrics is not None
     assert bm25.metrics.wrong_version_rate == 0
-    assert bm25.metrics.recall_at_5 >= read_baseline(BASELINE_FILE)["bm25"] - 0.02
+    assert bm25.metrics.recall_at_5 >= read_baseline(BASELINE_FILE).recall_at_5["bm25"] - 0.02
     assert bm25.fallbacks == 0
     assert [(o.mode, o.status, o.reason) for o in others] == [
         (RetrievalMode.HYBRID, "unavailable", "needs the embedding role, not configured"),
@@ -503,7 +515,7 @@ async def test_a_chunk_of_another_version_in_a_real_answer_fails_the_suite(
             modes=[BM25],
         )
 
-    report = judge("retrieval", len(load_dataset().cases), outcomes, {})
+    report = judge("retrieval", len(load_dataset().cases), outcomes, Comparison())
 
     assert not report.passed
     assert outcomes[0].wrong_version_cases == [
@@ -590,7 +602,8 @@ def test_the_command_refuses_a_baseline_it_was_given_that_does_not_exist(tmp_pat
 
 def test_the_command_fails_when_the_branch_lowers_the_baseline(tmp_path: Path) -> None:
     higher = tmp_path / "develop.json"
-    higher.write_text(json.dumps({"modes": {"bm25": {"recall_at_5": 0.99}}}), encoding="utf-8")
+    data = {"dataset": fingerprint(load_dataset()), "modes": {"bm25": {"recall_at_5": 0.99}}}
+    higher.write_text(json.dumps(data), encoding="utf-8")
 
     code = main([
         "--modes", "bm25", "--baseline", str(higher), "--ratchet",
@@ -600,3 +613,282 @@ def test_the_command_fails_when_the_branch_lowers_the_baseline(tmp_path: Path) -
     assert code == 1
     report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
     assert any("the baseline only moves up" in p for p in report["problems"])
+
+
+def test_the_command_resets_the_baseline_when_develop_measured_another_dataset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    develop = tmp_path / "develop.json"
+    data = {"dataset": "sha256:older", "modes": {"bm25": {"recall_at_5": 0.99}}}
+    develop.write_text(json.dumps(data), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+
+    code = main([
+        "--modes", "bm25", "--baseline", str(develop), "--ratchet",
+        "--report", str(tmp_path / "r.json"), "--summary", str(summary),
+    ])  # fmt: skip
+
+    assert code == 0
+    report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert report["baseline"] == "packages/exactdocs/evals/retrieval_eval/baseline.json"
+    assert report["fingerprint"] == fingerprint(load_dataset())
+    assert "**Baseline reset:** the dataset changed (sha256:older to " in summary.read_text(
+        encoding="utf-8"
+    )
+    # A warning annotation, so the reset shows on the pull request's checks too.
+    assert "::warning title=Eval baseline reset::the dataset changed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("develop_recall", "code"), [(0.92, 0), (0.99, 1)])
+def test_on_a_reset_the_reference_dataset_is_still_gated_against_the_reference_baseline(
+    tmp_path: Path, develop_recall: float, code: int
+) -> None:
+    develop = tmp_path / "develop.json"
+    data = {"dataset": "sha256:older", "modes": {"bm25": {"recall_at_5": develop_recall}}}
+    develop.write_text(json.dumps(data), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+
+    result = main([
+        "--modes", "bm25", "--baseline", str(develop), "--ratchet",
+        "--reference-dataset", str(DATASET_FILE),
+        "--report", str(tmp_path / "r.json"), "--summary", str(summary),
+    ])  # fmt: skip
+
+    assert result == code
+    assert json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))["passed"] is True
+    reference = json.loads((tmp_path / "r-reference.json").read_text(encoding="utf-8"))
+    assert reference["passed"] is (code == 0)
+    assert reference["baseline_reset"] is None
+    verdict = "passed" if code == 0 else "failed"
+    assert f"## Retrieval eval on the reference dataset: {verdict}" in summary.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_command_refuses_a_reference_dataset_that_does_not_exist(tmp_path: Path) -> None:
+    assert main(["--reference-dataset", str(tmp_path / "typo.yaml")]) == 2
+
+
+async def test_a_case_the_fixture_cannot_answer_fails_loudly(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    old = tmp_path / "dataset.yaml"
+    old.write_text(
+        """name: retrieval
+cases:
+- name: gone version
+  inputs: {query: snake_case, version: v0.9.0}
+  expected_output: {hits: []}
+- name: gone section
+  inputs: {query: snake_case, version: v1.4.0}
+  expected_output:
+    hits:
+    - {version: v1.4.0, article: docs/reference/naming.md, heading_path: [Naming conventions, x]}
+- name: gone article
+  inputs: {query: snake_case, version: v1.4.0}
+  expected_output:
+    hits:
+    - {version: v1.4.0, article: docs/gone.md, heading_path: [Gone]}
+""",
+        encoding="utf-8",
+    )
+
+    report = await run_on_fixture(docs_repo, tmp_path / "data", dataset_file=old)
+
+    assert not report.passed
+    assert report.problems[:3] == [
+        "gone version: the fixture has no version v0.9.0",
+        (
+            "gone section: the fixture has no section v1.4.0:docs/reference/naming.md "
+            "Naming conventions > x"
+        ),
+        "gone article: the fixture has no section v1.4.0:docs/gone.md Gone",
+    ]
+
+
+# ---------------------------------------------------------------- the dataset's fingerprint
+
+
+def test_the_stored_baseline_was_recorded_for_the_dataset_in_the_repository() -> None:
+    assert read_baseline(BASELINE_FILE).dataset == fingerprint(load_dataset())
+
+
+def test_the_fingerprint_follows_questions_and_expectations_not_names_or_order() -> None:
+    dataset = load_dataset()
+    before = fingerprint(dataset)
+    first, second, *rest = dataset.cases
+    dataset.cases = [second, replace(first, name="renamed"), *rest]
+
+    assert fingerprint(dataset) == before
+    assert before.startswith("sha256:")
+
+    harder = replace(first, inputs=first.inputs.model_copy(update={"query": "x"}))
+    dataset.cases = [harder, second, *rest]
+    assert fingerprint(dataset) != before
+
+    no_answer = replace(first, expected_output=Answer(hits=[]))
+    dataset.cases = [no_answer, second, *rest]
+    assert fingerprint(dataset) != before
+
+
+def test_the_fingerprint_ignores_defaults_and_fields_the_dataset_does_not_state(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dataset.yaml"
+    path.write_text(
+        """name: retrieval
+cases:
+- name: one
+  inputs: {query: snake_case, version: v1.4.0}
+  expected_output:
+    hits:
+    - {version: v1.4.0, article: docs/reference/naming.md, heading_path: [Naming conventions]}
+- name: two
+  inputs: {query: nothing, version: next, tags: [a]}
+  expected_output: {hits: []}
+""",
+        encoding="utf-8",
+    )
+    dataset = load_dataset(path)
+    pinned = fingerprint(dataset)
+    one, two = dataset.cases
+    assert one.expected_output is not None
+
+    # Pinned: a field added to Question, Answer or Hit with a default must not move it.
+    assert pinned == "sha256:5d2cb488a370fc1e"
+    dataset.cases = [
+        replace(
+            one,
+            inputs=one.inputs.model_copy(update={"tags_match": "any"}),
+            expected_output=one.expected_output.model_copy(
+                update={
+                    "pinned_commit": "abc",
+                    "answered_by": "bm25",
+                    "search_ms": 1.0,
+                    "hits": [one.expected_output.hits[0].model_copy(update={"commit_sha": "abc"})],
+                }
+            ),
+        ),
+        two,
+    ]
+    assert fingerprint(dataset) == pinned
+
+
+def _stored(recall: float, dataset: str, source: str) -> StoredBaseline:
+    return StoredBaseline(recall_at_5={"bm25": recall}, dataset=dataset, source=source)
+
+
+def test_on_the_same_dataset_the_drop_gate_and_the_ratchet_use_develops_baseline() -> None:
+    comparison = compare(
+        "sha256:a", _stored(0.9, "sha256:a", "develop"), _stored(0.8, "sha256:a", "branch"),
+        ratchet=True,
+    )  # fmt: skip
+    report = judge("retrieval", 10, [_ran(BM25, 0.9)], comparison)
+
+    assert comparison.baseline == {"bm25": 0.9}
+    assert report.baseline == "develop"
+    assert report.baseline_reset is None
+    assert report.problems == [
+        (
+            "bm25: the branch's baseline.json stores recall@5 80.0, below the 90.0 it is compared "
+            "with; the baseline only moves up"
+        )
+    ]
+
+
+def test_a_changed_dataset_compares_with_the_branchs_baseline_and_says_so() -> None:
+    comparison = compare(
+        "sha256:b", _stored(0.9, "sha256:a", "develop"), _stored(0.5, "sha256:b", "branch"),
+        ratchet=True,
+    )  # fmt: skip
+    report = judge("retrieval", 10, [_ran(BM25, 0.5)], comparison, fingerprint="sha256:b")
+
+    assert report.passed, report.problems
+    assert report.baseline == "branch"
+    assert report.modes[0].baseline_recall_at_5 == pytest.approx(0.5)
+    assert report.baseline_reset == (
+        "the dataset changed (sha256:a to sha256:b): recall@5 is compared with the branch's "
+        "`branch` instead of the reference baseline, and the ratchet starts again from it"
+    )
+    assert "- **Baseline reset:** the dataset changed" in markdown(report)
+    assert "(`sha256:b`)" in markdown(report)
+
+
+def test_a_reference_without_a_fingerprint_counts_as_another_dataset() -> None:
+    comparison = compare(
+        "sha256:b", StoredBaseline(recall_at_5={"bm25": 0.9}, source="develop"),
+        _stored(0.5, "sha256:b", "branch"), ratchet=True,
+    )  # fmt: skip
+
+    assert comparison.baseline == {"bm25": 0.5}
+    assert comparison.reset is not None
+    assert comparison.reset.startswith(
+        "the reference baseline has no dataset fingerprint yet (it was written before "
+        "fingerprints), so it may measure another dataset than this one (sha256:b)"
+    )
+
+
+def test_the_branch_baseline_must_be_recorded_for_the_dataset_it_is_measured_on() -> None:
+    comparison = compare(
+        "sha256:c", _stored(0.9, "sha256:a", "develop"), _stored(0.5, "sha256:b", "branch"),
+        ratchet=True,
+    )  # fmt: skip
+    report = judge("retrieval", 10, [_ran(BM25, 0.5)], comparison)
+
+    assert not report.passed
+    assert report.problems == [
+        (
+            "branch was recorded for dataset sha256:b, not this one (sha256:c): run "
+            "`just eval --write-baseline`"
+        )
+    ]
+    # Once: no per-mode "no baseline to compare with" on top of it.
+    assert report.warnings == [
+        (
+            "no baseline was recorded for this dataset (sha256:c), so recall@5 is not gated: run "
+            "`just eval --write-baseline`"
+        )
+    ]
+
+
+def test_without_the_ratchet_a_stale_baseline_only_warns() -> None:
+    stale = _stored(0.9, "sha256:a", "baseline.json")
+    report = judge("retrieval", 10, [_ran(BM25, 0.5)], compare("sha256:b", stale, stale,
+                                                                ratchet=False))  # fmt: skip
+
+    assert report.passed
+    assert len(report.warnings) == 1
+    assert report.warnings[0].startswith("no baseline was recorded for this dataset (sha256:b)")
+
+
+@pytest.mark.parametrize(
+    ("develop", "dataset", "stored", "measured", "problem"),
+    [
+        (0.95, "sha256:a", 0.95, 0.94, None),  # kept from develop: the drop gate allows it
+        (0.80, "sha256:a", 0.95, 0.94, "above the 94.0"),  # raised: must be measured
+        (0.95, "sha256:old", 0.95, 0.94, "above the 94.0"),  # reset: must be measured
+        (0.92, "sha256:old", 0.50, 0.70, "below the 70.0"),  # reset: the next bar, not lower
+        (0.92, "sha256:old", 0.70, 0.70, None),
+    ],
+)
+def test_a_stored_recall_the_run_does_not_back_up_fails(
+    develop: float, dataset: str, stored: float, measured: float, problem: str | None
+) -> None:
+    comparison = compare(
+        "sha256:a", _stored(develop, dataset, "develop"), _stored(stored, "sha256:a", "branch"),
+        ratchet=True,
+    )  # fmt: skip
+    report = judge("retrieval", 10, [_ran(BM25, measured)], comparison)
+
+    assert report.passed is (problem is None), report.problems
+    if problem is not None:
+        assert report.problems == [
+            (
+                f"bm25: the branch's baseline.json stores recall@5 {stored * 100:.1f}, {problem} "
+                "measured on the same dataset: run `just eval --write-baseline`"
+            )
+        ]
+
+
+def test_a_mode_without_any_baseline_gets_no_per_mode_warning() -> None:
+    assert judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison()).warnings == []
