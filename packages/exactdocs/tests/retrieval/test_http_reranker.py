@@ -209,3 +209,12 @@ async def test_one_failed_batch_fails_the_call_with_a_reranker_error() -> None:
 
     with pytest.raises(RerankerError, match="HTTP 500"):
         await _reranker(second_fails, []).rerank("q", documents)
+
+
+async def test_a_closed_client_is_a_reranker_error() -> None:
+    client = httpx2.AsyncClient()
+    await client.aclose()  # the profile's client, closed when the profile changed
+    reranker = HttpReranker(client=client, base_url="https://rerank.example.com/v2", model="m")
+
+    with pytest.raises(RerankerError, match="RuntimeError"):
+        await reranker.rerank("q", ["a"] * (COHERE_RERANK_BATCH + 1))

@@ -156,7 +156,7 @@ from exactdocs.retrieval.ports.driven import (
     SecretBox,
     VectorIndex,
 )
-from exactdocs_kernel import NOTICE, Clock, DomainError, SealedTextUnreadableError
+from exactdocs_kernel import NOTICE, Clock
 
 logger = logging.getLogger(__name__)
 
@@ -469,7 +469,7 @@ class Reranking:
         try:
             async with asyncio.timeout(self.limits.timeout):
                 reranker = await self._reranker(version.library, choice.library_ai)
-                scores = await reranker.rerank(query, texts)
+                scores = await _called(reranker, query, texts)
         except TimeoutError:
             logger.warning(
                 "the reranker of %s did not answer within %ss: the search keeps its order",
@@ -505,19 +505,65 @@ class Reranking:
             The reranker.
 
         Raises:
-            RerankerError: No reranker resolves for the library, or building it failed (the
-                profile cannot rerank here, its key does not open, its key file cannot be read).
+            RerankerError: No reranker resolves for the library, or building it failed, for
+                whatever reason (the profile cannot rerank here, its key does not open, its key
+                file cannot be read, a partly installed SDK).
         """
         try:
             reranker = await self.providers.reranker_for(library, ai)
-        except (DomainError, SealedTextUnreadableError, OSError) as error:
+        except Exception as error:  # a reranker problem never fails a search; re-raised as ours
             # Never the error's text: only its kind, which holds no key, URL or path.
-            reason = f"it could not be built ({type(error).__name__})"
-            raise RerankerError(reason) from None
+            reason = f"it could not be built ({_kind(error)})"
+            raise RerankerError(reason) from error
         if reranker is None:
             reason = "no reranker resolves for the library"
             raise RerankerError(reason)
         return reranker
+
+
+async def _called(reranker: Reranker, query: str, texts: Sequence[str]) -> Sequence[float]:
+    """Call the reranker; whatever it raises becomes a ``RerankerError``.
+
+    An adapter should raise only ``RerankerError``, but an HTTP client closed under a call (its
+    profile was edited or deleted meanwhile) raises ``RuntimeError``, and a ``TaskGroup`` wraps
+    errors in an ``ExceptionGroup``: none of it may fail the search. Cancellation (the timeout)
+    is not an ``Exception`` and passes through.
+
+    Args:
+        reranker: The library's reranker.
+        query: The query text.
+        texts: The candidates' text.
+
+    Returns:
+        Its scores.
+
+    Raises:
+        RerankerError: The call failed, however; its text names only the kind of failure.
+    """
+    try:
+        return await reranker.rerank(query, texts)
+    except RerankerError:
+        raise
+    except Exception as error:  # a reranker problem never fails a search; re-raised as ours
+        reason = f"it failed ({_kind(error)})"
+        raise RerankerError(reason) from error
+
+
+def _kind(error: Exception) -> str:
+    """Name what went wrong without its text: the class, or the first one an exception group holds.
+
+    Args:
+        error: The error.
+
+    Returns:
+        Its class name (``RuntimeError``), never its message.
+    """
+    while isinstance(error, ExceptionGroup) and error.exceptions:
+        first = error.exceptions[0]
+        if not isinstance(first, Exception):
+            break
+        error = first
+    return type(error).__name__
 
 
 async def _chunks_of(

@@ -908,8 +908,9 @@ counted in `coverage.candidates`), then, under `asyncio.timeout` (`[ai.reranker]
 builds the library's reranker through `AiProviders.reranker_for` (the `ModelFactory`'s
 `reranker`, typed as the `Reranker` driven port: query and documents in, one score each out) from
 the library settings `RetrievalModes.choose` read once for the search, and calls it. Any build
-failure (`DomainError`, a sealed key that no longer opens, an unreadable key file) becomes a
-`RerankerError`. The provider SDKs are loaded in a worker thread: at start when a role is
+failure, and anything the call raises (a client closed under it, an `ExceptionGroup` of its
+batches), is re-raised as a `RerankerError` naming only the exception's class; cancellation passes
+through. The provider SDKs are loaded in a worker thread: at start when a role or any profile is
 configured (`Container.running`, `PydanticAiModels.warm`), else on first use, never on the event
 loop. `models.reorder` orders the scored head by score (ties keep the
 mode's order) and keeps the rest after it; the use case then cuts to the limit

@@ -137,18 +137,21 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
     return configured
 
 
-async def _warm_ai(settings: Settings) -> None:
-    """Load the provider SDKs in a worker thread at start when an AI role is configured.
+async def _warm_ai(settings: Settings, retrieval: RetrievalModule) -> None:
+    """Load the provider SDKs in a worker thread at start when a model may be called.
 
-    The first search that calls a model would otherwise import them (seconds) on the event loop,
-    stalling every other request, and spend its reranker timeout on it. With no role configured
-    nothing is loaded (RUN-02).
+    That is when an instance role is configured, or when any provider profile exists (configured,
+    or stored over the REST API): a library's own role can only name an existing profile. The
+    first search that calls a model would otherwise import them (seconds) inside its reranker
+    timeout. With no role and no profile nothing is loaded (RUN-02).
 
     Args:
         settings: The runtime configuration.
+        retrieval: Lists the provider profiles (reading them imports no SDK).
     """
     ai = settings.ai
-    if any(role.model for role in (ai.embedding, ai.reranker, ai.llm, ai.judge)):
+    roles = any(role.model for role in (ai.embedding, ai.reranker, ai.llm, ai.judge))
+    if roles or (await retrieval.list_providers()).providers:
         await PydanticAiModels().warm()
 
 
@@ -407,7 +410,7 @@ class ReadOnlyContainer:
             raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
-            await _warm_ai(self.settings)
+            await _warm_ai(self.settings, self.retrieval)
             yield
         finally:
             try:
@@ -609,7 +612,7 @@ class Container:
             raise RuntimeError(message)
         try:
             await migrate(self.engine)
-            await _warm_ai(self.settings)
+            await _warm_ai(self.settings, self.retrieval)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
                 stored = (

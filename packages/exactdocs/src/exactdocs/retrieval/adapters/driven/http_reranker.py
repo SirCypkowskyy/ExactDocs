@@ -111,7 +111,9 @@ class HttpReranker:
             response = await self.client.post(
                 self.base_url.rstrip("/") + "/rerank", json=body, headers=headers
             )
-        except httpx2.HTTPError as error:  # its text may hold the URL: only the kind is told
+        except (httpx2.HTTPError, RuntimeError) as error:
+            # Its text may hold the URL: only the kind is told. RuntimeError: the profile's client
+            # was closed under the call (the profile was edited or deleted meanwhile).
             raise RerankerError(type(error).__name__) from None
         if response.is_error:
             status = f"HTTP {response.status_code}"

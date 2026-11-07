@@ -11,8 +11,10 @@ from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 
+import httpx2
 import pytest
 
+from exactdocs.retrieval.adapters.driven.http_reranker import HttpReranker
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
@@ -55,7 +57,7 @@ from exactdocs.retrieval.models import (
     reorder,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports.driven import RetrievalPipeline
+from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline
 from exactdocs.retrieval.use_cases import Bm25Pipeline
 from exactdocs_kernel import SealedTextUnreadableError
 
@@ -93,7 +95,7 @@ class ScriptedReranker:
     """Records each call; scores the documents with ``score`` (reversed order by default)."""
 
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
-    fail: Exception | None = None
+    fail: BaseException | None = None
     hang: bool = False
     scores: list[float] | None = None
 
@@ -118,6 +120,8 @@ class FakeFactory:
     fail: Exception | None = None
     """Raised while building, as a key that no longer opens would be."""
     build_seconds: float = 0.0
+    instead: Reranker | None = None
+    """Handed out instead of the scripted reranker (a real adapter)."""
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
@@ -128,12 +132,14 @@ class FakeFactory:
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         return (profile.name, model)
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> ScriptedReranker:
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
         if self.refuse:
             raise ProviderUnsupportedError(profile.name, "kind has no rerank API")
         if self.fail is not None:
             raise self.fail
         await asyncio.sleep(self.build_seconds)
+        if self.instead is not None:
+            return self.instead
         self.built.append((profile.name, model))
         return self.reranker_double
 
@@ -545,6 +551,66 @@ async def test_chunks_are_read_once_and_library_settings_once_per_search(
     assert len(result.results) == 3
     assert len(read) == 1  # the reranker's read serves the shown results too
     assert len(settings_read) == 1
+
+
+async def test_a_closed_http_client_keeps_the_order_and_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world(limits=RerankLimits(top_n=5))
+    client = httpx2.AsyncClient()
+    await client.aclose()  # the profile was edited or deleted while the search ran
+    world.factory.instead = HttpReranker(
+        client=client, base_url="https://rerank.example.com/v2", model="rerank-v3.5"
+    )
+    found = await _unreranked(3)
+
+    result = await _search(world)
+
+    assert [r.chunk_id for r in result.results] == found
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_FAILED)
+    assert "RuntimeError" in caplog.text
+    assert QUERY not in caplog.text.replace("retrieval", "")
+
+
+@pytest.mark.parametrize(
+    ("failure", "kind"),
+    [
+        (RuntimeError("client closed"), "RuntimeError"),
+        (ExceptionGroup("batches", [RuntimeError("client closed")]), "RuntimeError"),
+        (KeyError("boom"), "KeyError"),
+    ],
+    ids=["runtime-error", "exception-group", "anything"],
+)
+async def test_whatever_a_reranker_raises_keeps_the_order_and_names_only_its_kind(
+    failure: Exception, kind: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    world = await _world(reranker=ScriptedReranker(fail=failure))
+
+    result = await _search(world)
+
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_FAILED)
+    assert f"it failed ({kind})" in caplog.text
+    assert "client closed" not in caplog.text
+
+
+async def test_a_partly_installed_sdk_keeps_the_order_and_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world()
+    world.factory.fail = ImportError("cannot import name 'x' from 'openai'")
+
+    result = await _search(world)
+
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_FAILED)
+    assert "could not be built (ImportError)" in caplog.text
+    assert "openai" not in caplog.text
+
+
+async def test_a_cancelled_search_stays_cancelled() -> None:
+    world = await _world(reranker=ScriptedReranker(fail=asyncio.CancelledError()))
+
+    with pytest.raises(asyncio.CancelledError):
+        await _search(world)
 
 
 # ---------------------------------------------------------------- tracing
