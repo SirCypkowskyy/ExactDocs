@@ -13,6 +13,11 @@ from pathlib import Path
 
 import pytest
 from anthropic import AsyncAnthropicVertex
+from azure.identity import (
+    EnvironmentCredential,
+    ManagedIdentityCredential,
+    WorkloadIdentityCredential,
+)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from google.oauth2.credentials import Credentials
@@ -20,9 +25,14 @@ from google.oauth2.credentials import Credentials
 from exactdocs.bootstrap import ai_sdk
 from exactdocs.bootstrap.ai_endpoint import Endpoint
 from exactdocs.bootstrap.ai_models import PydanticAiModels, configured_ai
-from exactdocs.bootstrap.ai_sdk import ForeignHostError, _anthropic_client, _openai_provider
+from exactdocs.bootstrap.ai_sdk import (
+    ForeignHostError,
+    _anthropic_client,
+    _official_url,
+    _openai_provider,
+)
 from exactdocs.bootstrap.settings import AiSettings
-from exactdocs.retrieval.errors import InvalidProviderError
+from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
@@ -417,7 +427,11 @@ async def test_the_client_is_rebuilt_when_the_profile_changes(fake: FakeGateway)
 def test_unsupported_names_what_to_install() -> None:
     models = PydanticAiModels()
     bedrock = ProviderProfile(
-        name="b", kind=ProviderKind.ANTHROPIC, platform=AnthropicPlatform.BEDROCK, location="x"
+        name="b",
+        kind=ProviderKind.ANTHROPIC,
+        origin=ProfileOrigin.CONFIGURATION,
+        platform=AnthropicPlatform.BEDROCK,
+        location="x",
     )
     gateway_profile = ProviderProfile(
         name="g", kind=ProviderKind.OPENAI_COMPATIBLE, base_url="https://x"
@@ -618,3 +632,43 @@ def test_the_servers_cloud_identity_only_reaches_the_official_endpoint(
     profile = ProviderProfile(name="cloud", origin=ProfileOrigin.CONFIGURATION, **fields, **ambient)
 
     assert ai_sdk.base_url(profile) == official
+
+
+@pytest.mark.parametrize(
+    ("host", "domain"),
+    [
+        ("evil.example/x?.openai.azure.com", "azure.com"),
+        ("x@evil.services.ai.azure.com", "azure.com"),
+        ("a.evil.com", "azure.com"),
+        ("evil.example#.googleapis.com", "googleapis.com"),
+        ("bedrock-runtime.x%2Fevil.amazonaws.com", "amazonaws.com"),
+    ],
+)
+def test_a_derived_host_outside_the_providers_domain_is_refused(host: str, domain: str) -> None:
+    profile = ProviderProfile(name="p", kind=ProviderKind.OPENAI_COMPATIBLE, base_url="https://x")
+
+    with pytest.raises(ProviderUnsupportedError, match=f"under {domain}"):
+        _official_url(profile, host, "/", domain)
+
+
+def test_the_profiles_proxy_goes_only_to_the_credentials_that_call_entra_id() -> None:
+    profile = ProviderProfile(
+        name="azure",
+        kind=ProviderKind.AZURE,
+        origin=ProfileOrigin.CONFIGURATION,
+        resource="acme",
+        api_version="v",
+        auth=AzureAuth.ENTRA,
+        proxy="http://proxy.example.com:3128",
+    )
+    proxies = {"proxies": {"http": profile.proxy, "https": profile.proxy}}
+
+    plain = ai_sdk.entra_chain(profile, {})
+    federated = ai_sdk.entra_chain(profile, {"AZURE_FEDERATED_TOKEN_FILE": "/var/run/token"})
+
+    assert plain == [(EnvironmentCredential, proxies), (ManagedIdentityCredential, {})]
+    assert federated == [
+        (EnvironmentCredential, proxies),
+        (WorkloadIdentityCredential, proxies),
+        (ManagedIdentityCredential, {}),  # IMDS / IDENTITY_ENDPOINT: never through the proxy
+    ]

@@ -17,15 +17,23 @@ import asyncio
 import importlib
 import logging
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import google.auth
 import httpx2
 from anthropic import AnthropicError, AsyncAnthropic, AsyncAnthropicVertex
+from azure.core.credentials import TokenCredential
 from azure.core.exceptions import AzureError
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import (
+    ChainedTokenCredential,
+    EnvironmentCredential,
+    ManagedIdentityCredential,
+    WorkloadIdentityCredential,
+    get_bearer_token_provider,
+)
 from google.auth.credentials import Credentials
 from google.auth.exceptions import GoogleAuthError
 from google.genai.errors import APIError as GoogleAPIError
@@ -74,6 +82,7 @@ from exactdocs.bootstrap.constants import (
     CHECK_MAX_TOKENS,
     CHECK_PROMPT,
     DEFAULT_BASE_URLS,
+    DERIVED_HOST,
     GOOGLE_SCOPE,
     NO_KEY,
     SDK_HEADER_VARIABLES,
@@ -163,10 +172,10 @@ def base_url(profile: ProviderProfile) -> str:
         return _anthropic_base_url(profile)
     if kind is ProviderKind.GOOGLE_VERTEX:
         return profile.base_url or _vertex_base_url(
-            profile.location, express=profile.key is not KeySource.NONE
+            profile, express=profile.key is not KeySource.NONE
         )
     if kind is ProviderKind.AZURE and profile.resource:
-        return f"https://{profile.resource}.openai.azure.com"
+        return _official_url(profile, f"{profile.resource}.openai.azure.com", "", "azure.com")
     if profile.base_url:
         return profile.base_url
     if kind.value in DEFAULT_BASE_URLS:
@@ -187,34 +196,62 @@ def _anthropic_base_url(profile: ProviderProfile) -> str:
         case AnthropicPlatform.API:
             return profile.base_url or DEFAULT_BASE_URLS["anthropic"]
         case AnthropicPlatform.VERTEX:
-            return _vertex_base_url(profile.location, express=False) + "v1"
+            return _vertex_base_url(profile, express=False) + "v1"
         case AnthropicPlatform.FOUNDRY:
-            return (
-                profile.base_url or f"https://{profile.resource}.services.ai.azure.com/anthropic/"
-            )
+            if profile.base_url:
+                return profile.base_url
+            host = f"{profile.resource}.services.ai.azure.com"
+            return _official_url(profile, host, "/anthropic/", "azure.com")
         case AnthropicPlatform.BEDROCK:
-            return f"https://bedrock-runtime.{profile.location}.amazonaws.com"
+            host = f"bedrock-runtime.{profile.location}.amazonaws.com"
+            return _official_url(profile, host, "", "amazonaws.com")
 
 
-def _vertex_base_url(location: str | None, *, express: bool) -> str:
+def _vertex_base_url(profile: ProviderProfile, *, express: bool) -> str:
     """Vertex AI's endpoint for a location, as the Google and Anthropic SDKs derive it.
 
     Args:
-        location: The location (``global``, ``us``, ``eu`` or a region).
+        profile: The profile; its ``location`` is ``global``, ``us``, ``eu`` or a region.
         express: Vertex Express mode (a key, no location): the global endpoint.
 
     Returns:
         The base URL, ending in ``/``.
     """
-    if express and not location:
-        return "https://aiplatform.googleapis.com/"
-    match location:
-        case "global" | None:
-            return "https://aiplatform.googleapis.com/"
-        case "us" | "eu":
-            return f"https://aiplatform.{location}.rep.googleapis.com/"
-        case _:
-            return f"https://{location}-aiplatform.googleapis.com/"
+    location = profile.location
+    if (express and not location) or location in {"global", None}:
+        host = "aiplatform.googleapis.com"
+    elif location in {"us", "eu"}:
+        host = f"aiplatform.{location}.rep.googleapis.com"
+    else:
+        host = f"{location}-aiplatform.googleapis.com"
+    return _official_url(profile, host, "/", "googleapis.com")
+
+
+def _official_url(profile: ProviderProfile, host: str, path: str, domain: str) -> str:
+    """Build a derived endpoint with a URL constructor, then check it is the provider's own.
+
+    ``resource`` and ``location`` are single DNS labels already (``ProviderProfile``); this is
+    the second guard: the constructor percent-encodes anything that could end the host, and the
+    host must then end in the provider's domain.
+
+    Args:
+        profile: The profile.
+        host: The host, built from the profile's fields.
+        path: The path (``/`` or ``""``).
+        domain: The provider's domain (``googleapis.com``, ``azure.com``, ``amazonaws.com``).
+
+    Returns:
+        The URL.
+
+    Raises:
+        ProviderUnsupportedError: The host is not under the provider's domain.
+    """
+    url = httpx2.URL(scheme="https", host=host, path=path or "/")
+    if not (url.host.endswith(f".{domain}") and DERIVED_HOST.fullmatch(url.host)):
+        reason = f"its endpoint would not be under {domain}"
+        raise ProviderUnsupportedError(profile.name, reason)
+    text = str(url)
+    return text if path else text.rstrip("/")
 
 
 def read_key(
@@ -301,16 +338,41 @@ def _openai_client(endpoint: Endpoint) -> AsyncOpenAI:
     )
 
 
+def entra_chain(
+    profile: ProviderProfile, environ: Mapping[str, str]
+) -> list[tuple[type[TokenCredential], dict[str, Any]]]:
+    """The Entra ID credentials to try, in order, each with its arguments.
+
+    A client secret or certificate (``AZURE_CLIENT_SECRET`` / ``AZURE_CLIENT_CERTIFICATE_PATH``),
+    workload identity when its token file is configured, then managed identity: the identity
+    the operator chose with ``auth = "entra"``. The developer tools (Azure CLI, PowerShell,
+    VS Code) are not tried: a server never signs in as a person. The profile's ``proxy`` goes
+    only to the credentials that call ``login.microsoftonline.com``; managed identity talks to a
+    link-local or local endpoint (IMDS, ``IDENTITY_ENDPOINT``) that a proxy cannot reach.
+
+    Args:
+        profile: The profile.
+        environ: The process environment (the Entra ID variables).
+
+    Returns:
+        ``(credential class, keyword arguments)`` pairs.
+    """
+    via_proxy: dict[str, Any] = (
+        {"proxies": {"http": profile.proxy, "https": profile.proxy}} if profile.proxy else {}
+    )
+    chain: list[tuple[type[TokenCredential], dict[str, Any]]] = [(EnvironmentCredential, via_proxy)]
+    if environ.get("AZURE_FEDERATED_TOKEN_FILE"):
+        chain.append((WorkloadIdentityCredential, via_proxy))
+    chain.append((ManagedIdentityCredential, {}))
+    return chain
+
+
 def entra_token_provider(profile: ProviderProfile) -> Callable[[], str]:
-    """Entra ID tokens through the sync credential (``azure.identity.aio`` would need aiohttp).
+    """Entra ID tokens through the sync credentials (``azure.identity.aio`` would need aiohttp).
 
     Built once per profile (``ai_models`` keeps it on the endpoint), so its token cache lives
-    as long as the profile: the credential asks Entra ID or the managed-identity endpoint again
-    only when the token is about to expire, about once an hour. Managed identity, workload
-    identity or a client secret from the environment: the Entra ID variables are the identity
-    the operator chose with ``auth = "entra"``. The developer tools (Azure CLI, PowerShell,
-    VS Code) are left out: a server never signs in as a person. The profile's proxy carries the
-    token requests too.
+    as long as the profile: Entra ID or the managed-identity endpoint is asked again only when
+    the token is about to expire, about once an hour.
 
     Args:
         profile: The profile.
@@ -318,18 +380,8 @@ def entra_token_provider(profile: ProviderProfile) -> Callable[[], str]:
     Returns:
         A callable returning a bearer token.
     """
-    proxies = {"http": profile.proxy, "https": profile.proxy} if profile.proxy else None
-    credential = DefaultAzureCredential(
-        exclude_cli_credential=True,
-        exclude_developer_cli_credential=True,
-        exclude_powershell_credential=True,
-        exclude_visual_studio_code_credential=True,
-        exclude_shared_token_cache_credential=True,
-        exclude_interactive_browser_credential=True,
-        exclude_broker_credential=True,
-        proxies=proxies,
-    )
-    return get_bearer_token_provider(credential, AZURE_SCOPE)
+    credentials = [kind(**arguments) for kind, arguments in entra_chain(profile, os.environ)]
+    return get_bearer_token_provider(ChainedTokenCredential(*credentials), AZURE_SCOPE)
 
 
 def _azure_client(endpoint: Endpoint) -> AsyncAzureOpenAI:

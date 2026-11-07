@@ -164,8 +164,9 @@ async def test_a_configured_profile_is_listed_read_only_and_cannot_be_changed(
             "location": "l",
             "credentials": "adc",
         },
+        {"kind": "anthropic", "platform": "bedrock", "location": "eu-central-1"},
     ],
-    ids=["adc", "credentials file", "azure entra", "foundry entra", "claude on vertex"],
+    ids=["adc", "credentials file", "azure entra", "foundry entra", "claude on vertex", "bedrock"],
 )
 async def test_the_servers_cloud_identity_cannot_be_used_over_rest(
     body: dict, fake: FakeGateway
@@ -211,6 +212,22 @@ async def test_a_credential_header_is_refused_over_rest_and_in_the_file(
     with pytest.raises(StartupError, match="use the key field") as error:
         Container.build(Settings())
     assert "sk-in-the-file" not in str(error.value)
+
+
+@pytest.mark.parametrize("injection", ["evil.example/x?", "a.evil.com", "x@evil", "x%2Fevil"])
+async def test_a_resource_that_would_change_the_host_is_refused_over_rest(injection: str) -> None:
+    body = {
+        "name": "az",
+        "kind": "azure",
+        "resource": injection,
+        "api_version": "v",
+        "api_key": "k",
+    }
+    async with _client(Container.build(Settings())) as client:
+        response = await client.post(PROVIDERS, json=body)
+
+    assert response.status_code == 422, response.text
+    assert "resource must be a single name" in response.json()["detail"]
 
 
 async def test_an_invalid_profile_is_refused_with_its_reason() -> None:

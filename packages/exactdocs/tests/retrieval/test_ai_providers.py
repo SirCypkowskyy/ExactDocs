@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from pydantic import SecretStr
+from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
@@ -135,6 +136,7 @@ VALID = {
     },
     "claude on bedrock": {
         "kind": ProviderKind.ANTHROPIC,
+        "origin": ProfileOrigin.CONFIGURATION,
         "platform": AnthropicPlatform.BEDROCK,
         "location": "eu-central-1",
     },
@@ -301,6 +303,82 @@ def test_an_invalid_profile_is_refused_with_its_reason(
 ) -> None:
     with pytest.raises(InvalidProviderError, match=reason):
         _profile(**fields)
+
+
+INJECTIONS = ["evil.example/x?", "a.evil.com", "x@evil", "x%2Fevil", "evil.example#", "-x"]
+DERIVED = {
+    "azure resource": (
+        {"kind": ProviderKind.AZURE, "api_version": "v", "key": KeySource.ENVIRONMENT},
+        "resource",
+    ),
+    "foundry resource": (
+        {
+            "kind": ProviderKind.ANTHROPIC,
+            "platform": AnthropicPlatform.FOUNDRY,
+            "key": KeySource.ENVIRONMENT,
+        },
+        "resource",
+    ),
+    "vertex location": (
+        {
+            "kind": ProviderKind.GOOGLE_VERTEX,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "project": "p",
+            "adc": True,
+        },
+        "location",
+    ),
+    "vertex project": (
+        {
+            "kind": ProviderKind.GOOGLE_VERTEX,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "location": "global",
+            "adc": True,
+        },
+        "project",
+    ),
+    "claude on vertex location": (
+        {
+            "kind": ProviderKind.ANTHROPIC,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "platform": AnthropicPlatform.VERTEX,
+            "project": "p",
+            "adc": True,
+        },
+        "location",
+    ),
+    "bedrock region": (
+        {
+            "kind": ProviderKind.ANTHROPIC,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "platform": AnthropicPlatform.BEDROCK,
+        },
+        "location",
+    ),
+}
+
+
+@pytest.mark.parametrize("injection", INJECTIONS)
+@pytest.mark.parametrize(("fields", "field_name"), DERIVED.values(), ids=DERIVED.keys())
+def test_a_field_that_builds_an_endpoint_is_one_dns_label(
+    fields: dict[str, Any], field_name: str, injection: str
+) -> None:
+    with pytest.raises(InvalidProviderError, match=f"{field_name} must be a single name"):
+        _profile(**fields, **{field_name: injection})
+
+
+def test_claude_on_bedrock_is_the_servers_aws_identity_so_configuration_only() -> None:
+    bedrock = {
+        "kind": ProviderKind.ANTHROPIC,
+        "platform": AnthropicPlatform.BEDROCK,
+        "location": "eu-central-1",
+    }
+
+    with pytest.raises(InvalidProviderError, match="configure them in the environment"):
+        _profile(**bedrock)
+    with pytest.raises(InvalidProviderError, match="takes no base_url"):
+        _profile(**bedrock, origin=ProfileOrigin.CONFIGURATION, base_url="https://evil.example")
+    assert _profile(**bedrock, origin=ProfileOrigin.CONFIGURATION).uses_ambient_identity
 
 
 def test_a_kind_whose_sdk_is_not_included_points_to_the_openai_compatible_endpoint() -> None:
@@ -799,3 +877,26 @@ async def test_library_overrides_are_stored_and_forgotten(
     assert await modes.mode_of("/acme/payments") is None
     await modes.forget("/acme/PAYMENTS")
     assert await modes.ai_of("/acme/payments") == LibraryAi()
+
+
+async def test_a_stored_profile_that_no_longer_validates_is_skipped_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        profiles = SqliteProviderProfiles(engine=container.engine)
+        await profiles.save(_profile(name="good", base_url="https://gw.example.com/v1"))
+        async with container.engine.begin() as connection:  # a row written by an older release
+            await connection.execute(
+                text(
+                    "INSERT INTO retrieval_ai_providers (name, kind, settings) VALUES "
+                    "('old', 'azure', :settings)"
+                ),
+                {"settings": '{"resource": "evil.example/x?", "api_version": "v"}'},
+            )
+
+        listed = [p.name for p in await profiles.all()]
+        old = await profiles.get("old")
+
+    assert (listed, old) == (["good"], None)
+    assert "stored AI provider 'old' is no longer valid" in caplog.text

@@ -25,6 +25,7 @@ from exactdocs.retrieval.constants import (
     DEFAULT_MODE_ORDER,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
+    DNS_LABEL,
     HEADER_NAME,
     MASK,
     MAX_HEADER_VALUE,
@@ -1129,6 +1130,13 @@ class ProviderProfile:
             self._fail(f"request_timeout must be above 0 and at most {MAX_REQUEST_TIMEOUT:g}")
         if not 0 <= self.max_retries <= MAX_RETRIES:
             self._fail(f"max_retries must be between 0 and {MAX_RETRIES}")
+        for field_name in ("resource", "location", "project"):
+            value = getattr(self, field_name)
+            if value is not None and not DNS_LABEL.fullmatch(value):
+                self._fail(
+                    f"{field_name} must be a single name of letters, digits and inner hyphens "
+                    "(63 at most): it becomes part of the endpoint's host or path"
+                )
         self._check_headers()
 
     def _check_headers(self) -> None:
@@ -1186,8 +1194,9 @@ class ProviderProfile:
             return
         if self.origin is ProfileOrigin.API:
             self._fail(
-                'credentials = "adc", credentials_file and auth = "entra" use the server\'s own '
-                "cloud identity: configure them in the environment or the configuration file"
+                'credentials = "adc", credentials_file, auth = "entra" and Claude on Bedrock '
+                "use the server's own cloud identity: configure them in the environment or the "
+                "configuration file"
             )
         if self.base_url:
             self._fail(
@@ -1200,9 +1209,15 @@ class ProviderProfile:
         """Say whether calls are signed with the server's own cloud identity.
 
         Returns:
-            True with ``credentials = "adc"``, a ``credentials_file`` or ``auth = "entra"``.
+            True with ``credentials = "adc"``, a ``credentials_file``, ``auth = "entra"``, or
+            Claude on Bedrock (signed with the server's AWS identity: boto3's default chain or
+            ``AWS_BEARER_TOKEN_BEDROCK``).
         """
-        return self.adc or bool(self.credentials_file) or self.auth is AzureAuth.ENTRA
+        bedrock = (
+            self.kind is ProviderKind.ANTHROPIC
+            and self.anthropic_platform is AnthropicPlatform.BEDROCK
+        )
+        return self.adc or bool(self.credentials_file) or self.auth is AzureAuth.ENTRA or bedrock
 
     @property
     def _derived_endpoint(self) -> bool:

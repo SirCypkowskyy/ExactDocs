@@ -300,6 +300,10 @@ _KIND_FIELDS: Final[dict[str, frozenset[str]]] = {
 """Which of ``_OPTIONAL_KIND_FIELDS`` a kind (an Anthropic platform: ``anthropic/<platform>``)
 may set; any other kind sets none.
 """
+DNS_LABEL: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", re.IGNORECASE)
+"""One DNS label: ``resource``, ``location`` and ``project`` become part of an endpoint's host or
+path, so nothing that could end the host (``.``, ``/``, ``?``, ``#``, ``@``, ``%``) gets in.
+"""
 MAX_MODEL_NAME: Final[int] = 200
 """Longest model name a role or a check may name."""
 MAX_MODEL_REF: Final[int] = 264

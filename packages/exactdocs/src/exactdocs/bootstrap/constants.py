@@ -338,6 +338,8 @@ DEFAULT_BASE_URLS: Final[dict[str, str]] = {
 """The endpoint of each hosted kind, passed explicitly (pydantic-ai's own defaults, 2.60.0) so no
 SDK ever falls back to a ``*_BASE_URL`` environment variable.
 """
+DERIVED_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9.-]+")
+"""What a host derived from ``resource`` or ``location`` may hold once built."""
 NO_KEY: Final[str] = "unused"
 """The key sent by a profile without one, instead of letting an SDK read ``*_API_KEY``."""
 AZURE_SCOPE: Final[str] = "https://cognitiveservices.azure.com/.default"
