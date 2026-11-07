@@ -1,9 +1,12 @@
 """OPS-01: every search and each of its stages is a span, in its mode; query text only on opt-in."""
 
+import contextlib
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -230,3 +233,63 @@ def test_the_adapter_records_the_query_text_only_when_told_to() -> None:
     _, search = spans_of(record_query_text=True)
 
     assert search["exactdocs.query"] == QUERY
+
+
+# ----------------------------------------------------------------- metrics
+
+
+def search_metrics(*, record_query_text: bool, fail: bool = False) -> list[dict[str, object]]:
+    """Time a search and its rank stage (failing, if asked) and return the recorded points."""
+    reader = InMemoryMetricReader()
+    tracer = OpenTelemetrySearchTracer(
+        record_query_text=record_query_text,
+        provider=TracerProvider(),
+        meter_provider=MeterProvider(metric_readers=[reader]),
+    )
+    with (
+        contextlib.suppress(VersionNotIndexedError),
+        tracer.span("search_docs", mode="bm25", query=QUERY, library=LIB, ref="v1.4.0"),
+        tracer.span("search_docs.rank", mode="bm25"),
+    ):
+        if fail:
+            raise VersionNotIndexedError(LIB, "v1.4.0")
+    data = reader.get_metrics_data()
+    assert data is not None
+    return [
+        {"name": metric.name, "count": point.count, **dict(point.attributes or {})}
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        for point in metric.data.data_points
+        if isinstance(point, HistogramDataPoint)
+    ]
+
+
+def test_every_search_and_stage_is_timed_by_mode_without_library_or_query() -> None:
+    points = search_metrics(record_query_text=True)  # even with the query text opted in
+
+    assert sorted(points, key=str) == sorted(
+        [
+            {
+                "name": "exactdocs.search.duration",
+                "count": 1,
+                "exactdocs.search": "search_docs",
+                "exactdocs.search.stage": "total",
+                "exactdocs.retrieval.mode": "bm25",
+            },
+            {
+                "name": "exactdocs.search.duration",
+                "count": 1,
+                "exactdocs.search": "search_docs",
+                "exactdocs.search.stage": "rank",
+                "exactdocs.retrieval.mode": "bm25",
+            },
+        ],
+        key=str,
+    )
+
+
+def test_a_failed_search_is_timed_with_its_error_type() -> None:
+    points = search_metrics(record_query_text=False, fail=True)
+
+    assert {p["error.type"] for p in points} == {"VersionNotIndexedError"}

@@ -190,6 +190,11 @@ opentelemetry-instrumentation) was about 9 MB of that, which is part of why the 
 The 15.6 MB left is about 4 %: the next dependency that needs room should first look for something
 to drop.
 
+**Prometheus since E10-08 (#88): about +0.6 MB.** `opentelemetry-exporter-prometheus` and
+`prometheus-client` (pure Python, no dependencies of their own) add about 0.57 MB with their
+compiled bytecode, measured in a clean virtualenv; imported only when `EXACTDOCS_METRICS` is on.
+CI's *Docker image* job reports the exact size.
+
 ## Image scan
 
 Every PR (CI job *Docker image*) and every release scans the built image with

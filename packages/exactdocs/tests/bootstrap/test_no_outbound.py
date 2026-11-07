@@ -29,7 +29,10 @@ What is *observed* and what is only *pinned*:
   the defaults, in a hostile environment, and finds neither the SDK nor a provider.
 - Telemetry on (OPS-01): ``test_with_telemetry_on_...`` runs the loop again, in its own process
   (the providers are global) and in a network namespace where available, with a loopback
-  collector: the spans reach it, and nothing else is contacted.
+  collector and Prometheus metrics on: the spans reach it, and nothing else is contacted.
+- Metrics alone (``EXACTDOCS_METRICS``) are pulled, never pushed: ``test_with_metrics_on_...``
+  starts the app in a hostile ``OTEL_*`` environment and finds no exporting thread and no
+  connection; ``prometheus_client`` is not even imported while metrics are off.
 """
 
 import asyncio
@@ -378,8 +381,9 @@ def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str
         "with TestClient(app, base_url='http://localhost') as client:\n"
         "    assert client.get('/api/health').status_code == 200\n"
         "assert settings.check_for_updates == 'off', settings.check_for_updates\n"
-        "assert 'exactdocs.bootstrap.otlp' not in sys.modules\n"
-        "loaded = [m for m in sys.modules if m.startswith(('logfire', 'opentelemetry.sdk'))]\n"
+        "assert 'exactdocs.bootstrap.otel_sdk' not in sys.modules\n"
+        "loaded = [m for m in sys.modules\n"
+        "          if m.startswith(('logfire', 'opentelemetry.sdk', 'prometheus_client'))]\n"
         "assert not loaded, loaded\n"
         "assert type(trace.get_tracer_provider()).__name__ == 'ProxyTracerProvider'\n"
         "assert type(metrics.get_meter_provider()).__name__ == '_ProxyMeterProvider'\n"
@@ -388,7 +392,7 @@ def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in {"FASTMCP_CHECK_FOR_UPDATES", "EXACTDOCS_TELEMETRY"}
+        if k not in {"FASTMCP_CHECK_FOR_UPDATES", "EXACTDOCS_TELEMETRY", "EXACTDOCS_METRICS"}
     }
     # A collector in the environment is not enough: EXACTDOCS_TELEMETRY=otlp turns tracing on.
     env |= {
@@ -405,6 +409,49 @@ def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str
     }
     if inherited:
         env["FASTMCP_CHECK_FOR_UPDATES"] = inherited
+    run = subprocess.run(
+        [sys.executable, "-I", "-c", code], env=env, capture_output=True, text=True, check=False
+    )
+    assert run.returncode == 0, run.stderr
+
+
+def test_with_metrics_on_a_fresh_process_only_answers_scrapes() -> None:
+    """``EXACTDOCS_METRICS`` alone adds a pull endpoint and nothing that sends: no trace provider,
+    no exporting thread, even with a collector and exporters asked for in the environment, and
+    no connection or lookup (the scrape runs in-process). In its own process: the providers are
+    global.
+    """
+    code = (
+        "import socket, threading\n"
+        "def refuse(*args, **kwargs):\n"
+        "    raise OSError('outbound refused')\n"
+        "socket.socket.connect = socket.socket.connect_ex = refuse\n"
+        "socket.socket.sendto = socket.socket.sendmsg = refuse\n"
+        "socket.getaddrinfo = refuse\n"
+        "from fastapi.testclient import TestClient\n"
+        "from opentelemetry import metrics, trace\n"
+        "from exactdocs.bootstrap.container import Container\n"
+        "from exactdocs.bootstrap.http import create_app\n"
+        "from exactdocs.bootstrap.settings import Settings\n"
+        "app = create_app(Container.build(Settings()))\n"
+        "with TestClient(app, base_url='http://localhost') as client:\n"
+        "    assert client.get('/api/health').status_code == 200\n"
+        "    scraped = client.get('/metrics')\n"
+        "    assert scraped.status_code == 200, scraped.text\n"
+        "assert type(trace.get_tracer_provider()).__name__ == 'ProxyTracerProvider'\n"
+        "assert type(metrics.get_meter_provider()).__name__ == 'MeterProvider'\n"
+        "# No exporting thread: neither a periodic metric reader nor a batch span processor.\n"
+        "exporting = [t.name for t in threading.enumerate() if t.name.startswith('Otel')]\n"
+        "assert not exporting, exporting\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "EXACTDOCS_TELEMETRY"}
+    env |= {
+        "EXACTDOCS_METRICS": "true",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{NOWHERE}:4318",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "FASTAPI_OTEL_AUTO_CONFIGURE": "true",
+    }
     run = subprocess.run(
         [sys.executable, "-I", "-c", code], env=env, capture_output=True, text=True, check=False
     )
@@ -437,6 +484,7 @@ def telemetry_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[Collector]:
     """
     with collecting() as collector:
         monkeypatch.setenv("EXACTDOCS_TELEMETRY", "otlp")
+        monkeypatch.setenv("EXACTDOCS_METRICS", "true")  # the Prometheus reader sends nothing
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.url)
         monkeypatch.setenv("OTEL_BSP_SCHEDULE_DELAY", "50")  # export within the test
         yield collector

@@ -244,3 +244,17 @@ MODE_ATTRIBUTE: Final[str] = "exactdocs.retrieval.mode"
 """The span attribute naming the retrieval mode (``bm25``)."""
 QUERY_ATTRIBUTE: Final[str] = "exactdocs.query"
 """The span attribute holding the query text, set only when the operator opted in."""
+SEARCH_DURATION_METRIC: Final[str] = "exactdocs.search.duration"
+"""Histogram of how long searches and their stages took, by search, stage and mode."""
+SEARCH_ATTRIBUTE: Final[str] = "exactdocs.search"
+"""The metric attribute naming the search (``search_docs``, ``query_docs``...)."""
+STAGE_ATTRIBUTE: Final[str] = "exactdocs.search.stage"
+"""The metric attribute naming the stage (``version``, ``rank``, ``chunks``) or ``total``."""
+WHOLE_SEARCH: Final[str] = "total"
+"""The stage of the measurement that covers a whole search."""
+ERROR_TYPE_ATTRIBUTE: Final[str] = "error.type"
+"""The metric attribute naming the exception class of a failed search (semantic conventions)."""
+SEARCH_DURATION_BUCKETS: Final[tuple[float, ...]] = (
+    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 10,
+)  # fmt: skip
+"""Bucket bounds of the search duration histogram, in seconds (a stage can take a millisecond)."""

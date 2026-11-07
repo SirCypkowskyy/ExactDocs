@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     default: queries can hold code, names or secrets, and traces are read by more people.
     """
     metrics: bool = False
+    """Serve Prometheus metrics at `/metrics` (request, search and job metrics, LLM usage once the
+    AI modes exist; no query text, library or caller), behind the Host allowlist. `serve` only;
+    with `EXACTDOCS_TELEMETRY=otlp` too, the same metrics also go to the collector.
+    """
+    metrics_token: SecretStr | None = None
+    """When set, `/metrics` answers only `Authorization: Bearer <this token>` (401 otherwise).
+    Unset, it needs no credentials. Surrounding whitespace and newlines are trimmed, as Prometheus
+    trims its `credentials_file`; blank counts as unset.
+    """
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,
     # `*.example.com`) and browser origins (e.g. `https://docs.example.com`), comma-separated.
     allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -96,6 +105,25 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_secret_key_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("metrics_token", mode="before")
+    @classmethod
+    def _trimmed_metrics_token(cls, value: object) -> object:
+        """Trim the token as Prometheus trims its ``credentials_file``; blank is unset.
+
+        A token kept in a file usually ends in a newline: kept, every scrape would get a 401.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The token without surrounding whitespace, or ``None`` when nothing is left.
+        """
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @field_validator("allowed_hosts", "allowed_origins", mode="before")
     @classmethod
