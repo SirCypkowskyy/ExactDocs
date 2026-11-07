@@ -198,6 +198,155 @@ class ChunkSetMismatchError(ConflictError):
         )
 
 
+class InvalidProviderError(ValidationError):
+    """A provider profile is not valid for its kind (a missing endpoint, an unknown kind...).
+
+    The message never repeats a key or a header value: only names and fixed texts.
+    """
+
+    code = "invalid_provider"
+
+    def __init__(self, name: str, reason: str) -> None:
+        """Say which profile and why.
+
+        Args:
+            name: The profile, quoted as untrusted text.
+            reason: A fixed text naming the field.
+        """
+        super().__init__(f"provider {_data(name)}: {reason}")
+        self.name = name
+
+
+class InvalidModelRefError(ValidationError):
+    """A role's model is not written ``<profile>:<model>``."""
+
+    code = "invalid_model"
+
+    def __init__(self, text: str) -> None:
+        """Quote what was written.
+
+        Args:
+            text: The text, quoted as untrusted text.
+        """
+        super().__init__(
+            f"model {_data(text)} must be written <profile>:<model>, e.g. corp:gpt-4.1-mini"
+        )
+        self.text = text
+
+
+class UnknownProviderError(NotFoundError):
+    """No provider profile has this name."""
+
+    code = "unknown_provider"
+
+    def __init__(self, name: str) -> None:
+        """Name the profile that was asked for.
+
+        Args:
+            name: The name as asked, quoted as untrusted text.
+        """
+        super().__init__(f"no AI provider {_data(name)}")
+        self.name = name
+
+
+class ProviderExistsError(ConflictError):
+    """A profile of this name exists already."""
+
+    code = "provider_exists"
+
+    def __init__(self, name: str) -> None:
+        """Name the profile.
+
+        Args:
+            name: The profile's name.
+        """
+        super().__init__(f"AI provider {_data(name)} exists already; change it with PUT")
+        self.name = name
+
+
+class ProviderReadOnlyError(ConflictError):
+    """The profile comes from the environment or the configuration file: change it there."""
+
+    code = "provider_read_only"
+
+    def __init__(self, name: str) -> None:
+        """Name the profile.
+
+        Args:
+            name: The profile's name.
+        """
+        super().__init__(
+            f"AI provider {_data(name)} is configured in the environment or the configuration "
+            "file; change it there"
+        )
+        self.name = name
+
+
+class ProviderInUseError(ConflictError):
+    """An instance role still uses the profile."""
+
+    code = "provider_in_use"
+
+    def __init__(self, name: str, roles: Sequence[str]) -> None:
+        """Name the profile and the roles that use it.
+
+        Args:
+            name: The profile's name.
+            roles: The roles set to one of its models.
+        """
+        super().__init__(
+            f"AI provider {_data(name)} is used by the {', '.join(roles)} role; "
+            "point the role elsewhere first"
+        )
+        self.name = name
+
+
+class SecretKeyRequiredError(ValidationError):
+    """A key cannot be stored: this process has no secret key to seal it with."""
+
+    code = "secret_key_required"
+
+    def __init__(self) -> None:
+        """Say how to set a secret key."""
+        super().__init__(
+            "a provider key can only be stored with a secret key (EXACTDOCS_SECRET_KEY or the "
+            "data directory's secret.key); set one, or configure the provider in the environment"
+        )
+
+
+class ProviderUnsupportedError(ValidationError):
+    """This installation cannot call the profile's kind (an extra or an SDK is missing)."""
+
+    code = "provider_unsupported"
+
+    def __init__(self, name: str, reason: str) -> None:
+        """Say which profile and what is missing.
+
+        Args:
+            name: The profile, quoted as untrusted text.
+            reason: A fixed text naming what to install.
+        """
+        super().__init__(f"provider {_data(name)}: {reason}")
+        self.name = name
+
+
+class NothingToCheckError(ValidationError):
+    """A check named no model, and no role uses the profile."""
+
+    code = "nothing_to_check"
+
+    def __init__(self, name: str) -> None:
+        """Name the profile.
+
+        Args:
+            name: The profile's name.
+        """
+        super().__init__(
+            f"no role uses AI provider {_data(name)}; name a role and a model to check"
+        )
+        self.name = name
+
+
 class InvalidEmbeddingSpaceError(ValidationError):
     """An embedding space cannot be described this way (no model, or dimensions out of range)."""
 

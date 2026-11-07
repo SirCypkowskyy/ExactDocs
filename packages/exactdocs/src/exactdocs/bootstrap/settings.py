@@ -1,15 +1,115 @@
+import os
+import tomllib
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from croniter import croniter
 from platformdirs import user_data_path
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    InitSettingsSource,
+    NoDecode,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    SettingsError,
+)
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 
-from exactdocs.bootstrap.constants import LOCAL_HOSTS, POSTGRES_DRIVER, POSTGRES_DRIVERS
-from exactdocs.retrieval.models import RetrievalMode
+from exactdocs.bootstrap.constants import (
+    LOCAL_HOSTS,
+    POSTGRES_DRIVER,
+    POSTGRES_DRIVERS,
+    SECRETS_REFUSED_IN_FILE,
+    SETTINGS_FILE_VARIABLE,
+)
+from exactdocs.retrieval.constants import DEFAULT_REQUEST_TIMEOUT, DEFAULT_RETRIES
+from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RetrievalMode
+
+
+class ProviderSettings(BaseModel):
+    """A provider profile: ``EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>``, ``[ai.providers.<name>]``.
+
+    See docs/decisions/ai-retrieval.md (*Provider abstraction*) for what each kind needs. The
+    TOML file may not hold ``api_key``: use ``api_key_file`` or the environment.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    kind: str
+    """`openai-compatible`, `openai`, `openrouter`, `anthropic`, `azure`, `google-vertex`,
+    `google`, `ollama`, `vllm`, `litellm`, `local`, or one of pydantic-ai's OpenAI-API providers.
+    """
+    base_url: str | None = None
+    """The endpoint; required for `openai-compatible`, `ollama`, `vllm`, `litellm` and `azure`."""
+    api_key: SecretStr | None = None
+    """The key (environment only, never the TOML file)."""
+    api_key_file: Path | None = None
+    """A file holding the key (Docker and Kubernetes secrets), read at every call."""
+    headers: dict[str, str] = Field(default_factory=dict, repr=False)
+    """Extra headers of every call (masked in logs, never shown). No credentials: `Authorization`,
+    `Cookie`, `*-key`, `*-token` and the like are refused; use `api_key` or `api_key_file`.
+    """
+    proxy: str | None = None
+    """An HTTP(S) proxy for this profile only; the environment's proxy variables are not read."""
+    request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+    """Overall timeout of one call, in seconds."""
+    max_retries: int = DEFAULT_RETRIES
+    """Retries of one call (the SDK's: the one retry layer)."""
+    api_version: str | None = None
+    """Azure OpenAI's API version."""
+    project: str | None = None
+    """Google Cloud project (`google-vertex`, `anthropic` with `platform = "vertex"`)."""
+    location: str | None = None
+    """Google Cloud location, or the AWS region of Claude on Bedrock."""
+    credentials_file: Path | None = None
+    """A Google service-account file (configuration only; the endpoint is then Google's own)."""
+    credentials: Literal["adc"] | None = None
+    """`adc`: Google Application Default Credentials, used only when set here."""
+    platform: AnthropicPlatform | None = None
+    """`anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock` (needs boto3)."""
+    auth: AzureAuth | None = None
+    """`azure`, and `anthropic` on `foundry`: `key` (default) or `entra` (Entra ID)."""
+    resource: str | None = None
+    """Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."""
+
+    @field_validator(
+        "api_key",
+        "api_key_file",
+        "base_url",
+        "proxy",
+        "api_version",
+        "project",
+        "location",
+        "credentials_file",
+        "resource",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """Treat a blank value as unset (``EXACTDOCS_AI__PROVIDERS__X__BASE_URL=``).
+
+        Args:
+            value: The raw value.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class RoleSettings(BaseModel):
+    """One model role: ``EXACTDOCS_AI__<ROLE>__MODEL`` or ``[ai.<role>]``.
+
+    Fields the later issues read (``dimensions``, ``batch_size``, ``top_n``) are accepted and kept
+    for them; nothing reads them yet.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="allow")
+
+    model: str | None = None
+    """`<profile>:<model>`, e.g. `corp:gpt-4.1-mini`."""
 
 
 class AiSettings(BaseModel):
@@ -23,6 +123,17 @@ class AiSettings(BaseModel):
     mode the configured models allow (BM25 with none). A mode whose model is not configured falls
     back to the best one, and the results say so (`fallback_reason` `mode_unavailable`).
     """
+
+    providers: dict[str, ProviderSettings] = Field(default_factory=dict)
+    """Named provider profiles (`EXACTDOCS_AI__PROVIDERS__<NAME>__...`); read-only over REST."""
+    embedding: RoleSettings = Field(default_factory=RoleSettings)
+    """The embedding role, instance-wide only (`EXACTDOCS_AI__EMBEDDING__MODEL`)."""
+    reranker: RoleSettings = Field(default_factory=RoleSettings)
+    """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`)."""
+    llm: RoleSettings = Field(default_factory=RoleSettings)
+    """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
+    judge: RoleSettings = Field(default_factory=RoleSettings)
+    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`); the LLM role when unset."""
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -104,8 +215,8 @@ class Settings(BaseSettings):
     # undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
     query_docs_token_budget: int = Field(default=10_000, ge=500)
     ai: AiSettings = Field(default_factory=AiSettings)
-    """AI retrieval (`EXACTDOCS_AI__...`, docs/decisions/ai-retrieval.md). #241 adds the provider
-    profiles and roles here.
+    """AI retrieval (`EXACTDOCS_AI__...`, or `[ai]` in the `EXACTDOCS_CONFIG_FILE` TOML file;
+    docs/decisions/ai-retrieval.md): the instance mode, provider profiles and model roles.
     """
     # `otlp`: traces and metrics over OTLP/HTTP to the collector the standard
     # `OTEL_EXPORTER_OTLP_ENDPOINT` names. Off: no telemetry SDK is set up, nothing is exported.
@@ -134,6 +245,36 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     # Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`).
     forwarded_allow_ips: str = "127.0.0.1,::1"
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Read the arguments, the environment, ``.env``, then the ``EXACTDOCS_CONFIG_FILE`` TOML.
+
+        Earlier sources win, field by field: the environment over the file.
+
+        Args:
+            settings_cls: The settings class.
+            init_settings: Arguments given to ``Settings(...)``.
+            env_settings: ``EXACTDOCS_*`` variables.
+            dotenv_settings: A ``.env`` file.
+            file_secret_settings: The secrets directory.
+
+        Returns:
+            The sources, highest priority first.
+        """
+        sources = [init_settings, env_settings, dotenv_settings]
+        if path := os.environ.get(SETTINGS_FILE_VARIABLE, "").strip():
+            sources.append(
+                InitSettingsSource(settings_cls, init_kwargs=read_config_file(Path(path)))
+            )
+        return (*sources, file_secret_settings)
 
     @field_validator("auto_sync_schedule")
     @classmethod
@@ -207,3 +348,40 @@ class Settings(BaseSettings):
     def trusted_hosts(self) -> list[str]:
         """Host names the app answers to: localhost plus the configured ones."""
         return [*LOCAL_HOSTS, *self.allowed_hosts]
+
+
+def read_config_file(path: Path) -> dict[str, Any]:
+    """Read the TOML configuration file, refusing secrets in it.
+
+    Args:
+        path: ``EXACTDOCS_CONFIG_FILE``.
+
+    Returns:
+        Its settings, as nested tables.
+
+    Raises:
+        SettingsError: The file cannot be read, is not TOML, or holds a key or a secret.
+    """
+    try:
+        data = tomllib.loads(path.read_text("utf-8"))
+    except OSError as error:
+        message = f"{SETTINGS_FILE_VARIABLE} names {path}, which cannot be read ({error.strerror})"
+        raise SettingsError(message) from None
+    except tomllib.TOMLDecodeError as error:
+        message = f"{SETTINGS_FILE_VARIABLE}: {path} is not valid TOML ({error})"
+        raise SettingsError(message) from None
+    found = sorted(SECRETS_REFUSED_IN_FILE & data.keys())
+    providers = data.get("ai", {}).get("providers", {})
+    if isinstance(providers, dict):
+        found += [
+            f"ai.providers.{name}.api_key"
+            for name, table in providers.items()
+            if isinstance(table, dict) and "api_key" in table
+        ]
+    if found:
+        message = (
+            f"{path} holds secrets ({', '.join(found)}): keep keys out of the configuration file; "
+            "use api_key_file or the environment (EXACTDOCS_AI__PROVIDERS__<NAME>__API_KEY)"
+        )
+        raise SettingsError(message)
+    return data

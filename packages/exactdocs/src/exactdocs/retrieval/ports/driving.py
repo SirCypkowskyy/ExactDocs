@@ -5,6 +5,7 @@ from typing import Protocol
 from exactdocs.retrieval.dtos import (
     ArticleOutlineOut,
     ArticleOutlineQuery,
+    CheckProviderCommand,
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
@@ -16,7 +17,11 @@ from exactdocs.retrieval.dtos import (
     IndexedManifestOut,
     IndexManifestCommand,
     LibraryRetrievalOut,
+    ModelChecksOut,
     OpenEmbeddingSpaceCommand,
+    ProviderListOut,
+    ProviderNameQuery,
+    ProviderOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -27,6 +32,8 @@ from exactdocs.retrieval.dtos import (
     ResolveLibraryIdResult,
     RetagArticlesCommand,
     RetaggedChunks,
+    RoleListOut,
+    SaveProviderCommand,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
@@ -251,6 +258,110 @@ class ForgetLibrary(Protocol):
 
         Args:
             command: The removed library.
+        """
+        ...
+
+
+class ListProviders(Protocol):
+    """List every AI provider profile: configured ones (read-only) and stored ones."""
+
+    async def __call__(self) -> ProviderListOut:
+        """Run the use case.
+
+        Returns:
+            The profiles, without keys or header values.
+        """
+        ...
+
+
+class GetProvider(Protocol):
+    """Read one AI provider profile. Raises ``UnknownProviderError``."""
+
+    async def __call__(self, query: ProviderNameQuery) -> ProviderOut:
+        """Run the use case.
+
+        Args:
+            query: The profile's name.
+
+        Returns:
+            The profile, without its key or header values.
+        """
+        ...
+
+
+class SaveProvider(Protocol):
+    """Create or replace a profile over the REST API; its key is sealed, never returned.
+
+    Raises ``InvalidProviderError``, ``ProviderExistsError`` (create), ``ProviderReadOnlyError``
+    (a configured name), ``ProviderUnsupportedError`` and ``SecretKeyRequiredError``.
+    """
+
+    async def __call__(self, command: SaveProviderCommand) -> ProviderOut:
+        """Run the use case.
+
+        Args:
+            command: The profile.
+
+        Returns:
+            The stored profile, without its key.
+        """
+        ...
+
+
+class DeleteProvider(Protocol):
+    """Delete a stored profile.
+
+    Raises ``UnknownProviderError``, ``ProviderReadOnlyError`` and ``ProviderInUseError`` (an
+    instance role uses it).
+    """
+
+    async def __call__(self, command: ProviderNameQuery) -> None:
+        """Run the use case.
+
+        Args:
+            command: The profile's name.
+        """
+        ...
+
+
+class CheckProvider(Protocol):
+    """Make one minimal call per role that uses a profile (or to a model named).
+
+    Raises ``UnknownProviderError`` and ``NothingToCheckError``.
+    """
+
+    async def __call__(self, command: CheckProviderCommand) -> ModelChecksOut:
+        """Run the use case.
+
+        Args:
+            command: The profile, and optionally a role and a model.
+
+        Returns:
+            One check per call.
+        """
+        ...
+
+
+class CheckRoles(Protocol):
+    """Make one minimal call per configured instance role (``exactdocs ai check``)."""
+
+    async def __call__(self) -> ModelChecksOut:
+        """Run the use case.
+
+        Returns:
+            One check per role that is set; none when no role is.
+        """
+        ...
+
+
+class ListRoles(Protocol):
+    """Show the instance's roles and the model each uses."""
+
+    async def __call__(self) -> RoleListOut:
+        """Run the use case.
+
+        Returns:
+            One entry per role.
         """
         ...
 

@@ -301,17 +301,61 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   These are the codes adding a version answers, not the sync's own `repo_unreachable` /
   `auth_failed`: a script that branches on codes handles both sets.
 
-- **Retrieval mode** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with `{"mode": "hybrid"}`
-  sets the mode the library's searches use when a call names none (`null` clears it: the
-  instance's `EXACTDOCS_AI__MODE` applies, else the best mode configured). The mode must be
-  available now: 422 `mode_unavailable` names the model role it needs that is not configured, or
+- **Retrieval mode and AI overrides** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with
+  `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null}`
+  replaces the library's settings (every field is optional; an omitted one takes its default).
+  `mode` is the mode its searches use when a call names none (`null`: the instance's
+  `EXACTDOCS_AI__MODE` applies, else the best mode configured); it must be available with the
+  settings sent: 422 `mode_unavailable` names the model role it needs that is not configured, or
   says the vector store is unavailable (sqlite-vec cannot be loaded; `fallback_reason`
   `vector_store_unavailable` where a setting is skipped for that reason).
-  `GET .../retrieval` returns the setting with `instance_mode`, the `effective_mode` a search
+  `ai_enabled: false` sends nothing of the library to any AI provider: its searches are BM25.
+  `llm`, `judge` and `reranker` (`<profile>:<model>`) replace the instance's role for this library
+  (404 `unknown_provider` for a profile that does not exist, 422 `invalid_model` when not written
+  `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
+  `GET .../retrieval` returns the settings with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
-  `available_modes` and the `configured_roles`. 404 for an unknown library. A search's own `mode`
-  (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable one is a 422
-  `mode_unavailable` as well.
+  `available_modes` and the `configured_roles` of the library. 404 for an unknown library. A
+  search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
+  one is a 422 `mode_unavailable` as well.
+
+### AI providers
+
+Admins only (every account is one until library roles exist). See [AI retrieval
+decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
+
+- `GET /ai/providers`: every profile, the environment's and the TOML file's first
+  (`origin: configuration`, `read_only: true`), then those stored here (`origin: api`). Never a
+  key or a header value: `key` says where the key comes from (`none`, `sealed`, `file`,
+  `environment`), `header_names` lists the headers; `roles` lists the instance roles that use the
+  profile, `unsupported` says what this installation lacks to call it.
+- `POST /ai/providers` (201) with `{"name": "gw", "kind": "openai-compatible", "base_url": ...,
+  "api_key": ...}`: create one (409 `provider_exists`). `PUT /ai/providers/{name}`: create or
+  replace (no `name` in the body). The key is sealed with the instance's secret key and never
+  returned; without `api_key` the stored key is kept (`keep_key: false` removes it), unless the
+  endpoint (kind, platform, `base_url`, `resource`, `project`, `location`, `proxy`) changed: then
+  422 `invalid_provider` asks for the key again, so a stored key never follows a profile
+  elsewhere. 409 `provider_read_only` for a configured name; 422 `invalid_provider` with the field
+  at fault; 422 `provider_unsupported` when this installation cannot call the kind (the `[ai]`
+  extra, boto3 for Bedrock); 422 `secret_key_required` for a key when the process has no secret
+  key. A change counts at the next call, without a restart. The server's own cloud identity
+  (`credentials: "adc"`, `credentials_file`, `auth: "entra"`, Claude on Bedrock) is refused here with 422
+  `invalid_provider`: it is configured in the environment or the TOML file only, without a
+  `base_url`. Extra `headers` that carry a credential (`Authorization`, `Cookie`, `x-api-key`,
+  `api-key`, `*-key`, `*-token`, `*-secret`, `*-password`) are refused too: the key goes in
+  `api_key`. `resource`, `location` and `project` must each be one DNS label (422
+  `invalid_provider` otherwise): they become part of the endpoint's host or path.
+- `GET /ai/providers/{name}`; `DELETE /ai/providers/{name}` (204; 409 `provider_in_use` while an
+  instance role uses it; a library override naming it stops counting until it exists again).
+- `POST /ai/providers/{name}/check`, optionally with `{"role": "embedding", "model": "e5"}`: one
+  minimal call per instance role that uses the profile (or to the model named), each reported as
+  `{"role", "profile", "model", "status": "ok" | "error", "latency_ms", "served_model",
+  "dimensions", "error"}`. A failed call is a check with `status: error` (its text never holds a
+  key), not a failed request; 422 `nothing_to_check` when no role uses the profile and no model is
+  named.
+- `GET /ai/roles`: the instance roles (`embedding`, `reranker`, `llm`, `judge`), each with its
+  `model` (`<profile>:<model>`), its `source` (`instance`, or `llm` for a judge that defaults to
+  the LLM) and whether its profile exists.
 
 ## Jobs, access and health
 

@@ -23,7 +23,7 @@ from exactdocs_kernel import (
 DEFAULT_TOKEN_DAYS: Final[int] = 90
 """Lifetime of an API token created on the command line when ``--days`` is not given."""
 LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"serve", "reindex", "backup", "restore", "admin create", "admin reset-password"}
+    {"serve", "reindex", "backup", "restore", "admin create", "admin reset-password", "ai check"}
 )
 """CLI commands that work on the local data directory instead of calling a server."""
 
@@ -59,8 +59,10 @@ URL_VARIABLE: Final[str] = "EXACTDOCS_URL"
 """Environment variable with the server's URL for the CLI client."""
 TOKEN_VARIABLE: Final[str] = "EXACTDOCS_TOKEN"  # ruff: ignore[hardcoded-password-string] (a name)
 """Environment variable with the API token for the CLI client."""
-CONFIG_FILE_VARIABLE: Final[str] = "EXACTDOCS_CONFIG_FILE"
-"""Environment variable that points the CLI client at another config file."""
+CONFIG_FILE_VARIABLE: Final[str] = "EXACTDOCS_CLIENT_CONFIG"
+"""Environment variable that points the CLI client at another credentials file (it was
+``EXACTDOCS_CONFIG_FILE`` before that became the server's TOML configuration file, #241).
+"""
 DEFAULT_PORTS: Final[dict[str, int]] = {"http": 80, "https": 443}
 """The port each URL scheme implies, so ``https://x`` and ``https://x:443`` are one server."""
 MAX_TOKEN_NAME_LENGTH: Final[int] = (
@@ -255,6 +257,12 @@ CREDENTIALS_KEY_PURPOSE: Final[bytes] = b"exactdocs credentials v1"
 Each use of the secret box has its own context, so its key serves nothing else; never change this
 one: every stored credential is sealed with the key derived from it.
 """
+AI_KEYS_PURPOSE: Final[bytes] = b"exactdocs ai provider keys v1"
+"""HKDF context (``purpose``) of the key that seals the AI provider keys stored over the REST API.
+
+Its own context: a provider key never opens with the credentials' key, nor the reverse. Never
+change it: every stored provider key is sealed with the key derived from it.
+"""
 _OWNER_ONLY: Final[int] = 0o600
 """File mode of the secret key file: readable by its owner only."""
 
@@ -347,3 +355,65 @@ JOB_DURATION_BUCKETS: Final[tuple[float, ...]] = (
     0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600,
 )  # fmt: skip
 """Bucket bounds of the job duration histogram, in seconds: from a no-op sync to a large import."""
+
+
+# ---------------------------------------------------------------- settings / ai_models (#241)
+SETTINGS_FILE_VARIABLE: Final[str] = "EXACTDOCS_CONFIG_FILE"
+"""Names the server's optional TOML configuration file; the environment wins over it. The CLI
+client's credentials file is another one (``CONFIG_FILE_VARIABLE``).
+"""
+SECRETS_REFUSED_IN_FILE: Final[frozenset[str]] = frozenset(
+    {"secret_key", "secret_key_previous", "metrics_token"}
+)
+"""Top-level settings the configuration file may not hold: secrets come from the environment."""
+DEFAULT_BASE_URLS: Final[dict[str, str]] = {
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "anthropic": "https://api.anthropic.com",
+    "google": "https://generativelanguage.googleapis.com/",
+    "deepseek": "https://api.deepseek.com",
+    "together": "https://api.together.xyz/v1",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
+    "cerebras": "https://api.cerebras.ai/v1",
+    "github": "https://models.github.ai/inference",  # pydantic-ai's provider is deprecated
+    "vercel": "https://ai-gateway.vercel.sh/v1",
+    "moonshotai": "https://api.moonshot.ai/v1",
+    "heroku": "https://us.inference.heroku.com/v1",
+    "nebius": "https://api.studio.nebius.com/v1",
+    "ovhcloud": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    "sambanova": "https://api.sambanova.ai/v1",
+    "alibaba": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+}
+"""The endpoint of each hosted kind, passed explicitly (pydantic-ai's own defaults, 2.60.0) so no
+SDK ever falls back to a ``*_BASE_URL`` environment variable.
+"""
+AZURE_OPENAI_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9-]+\.openai\.azure\.com")
+"""An Azure OpenAI endpoint derived from ``resource``."""
+FOUNDRY_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9-]+\.services\.ai\.azure\.com")
+"""An Azure AI Foundry endpoint derived from ``resource``."""
+BEDROCK_HOST: Final[re.Pattern[str]] = re.compile(r"bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com")
+"""An Amazon Bedrock runtime endpoint derived from ``location`` (the AWS region)."""
+VERTEX_HOST: Final[re.Pattern[str]] = re.compile(
+    r"(aiplatform|[a-z0-9-]+-aiplatform|aiplatform\.(us|eu)\.rep)\.googleapis\.com"
+)
+"""A Vertex AI endpoint: global, regional (``<location>-aiplatform``) or multi-region."""
+NO_KEY: Final[str] = "unused"
+"""The key sent by a profile without one, instead of letting an SDK read ``*_API_KEY``."""
+AZURE_SCOPE: Final[str] = "https://cognitiveservices.azure.com/.default"
+"""The Entra ID scope of Azure OpenAI and Azure AI Foundry tokens."""
+GOOGLE_SCOPE: Final[str] = "https://www.googleapis.com/auth/cloud-platform"
+"""The scope of Google service-account and ADC credentials (Vertex AI)."""
+AMBIENT_HEADERS: Final[frozenset[str]] = frozenset({"openai-organization", "openai-project"})
+"""Headers the OpenAI SDK fills from ``OPENAI_ORG_ID`` / ``OPENAI_PROJECT_ID``: dropped from every
+call unless the profile's own headers set them.
+"""
+SDK_HEADER_VARIABLES: Final[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS", "ANTHROPIC_CUSTOM_HEADERS")
+"""Variables the OpenAI and Anthropic SDKs merge into every request after the key: removed from
+the process before any SDK client is built.
+"""
+CHECK_PROMPT: Final[str] = "Reply with the single word OK."
+"""What ``exactdocs ai check`` asks a chat model."""
+CHECK_MAX_TOKENS: Final[int] = 16
+"""Output cap of a chat model check."""
+CHECK_TEXT: Final[str] = "ExactDocs connectivity check"
+"""What a check embeds, and reranks against itself."""

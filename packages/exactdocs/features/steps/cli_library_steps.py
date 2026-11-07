@@ -29,7 +29,7 @@ def run(context: Context, line: str, *, stdin: str = "", tty: bool = False) -> N
     output, errors = io.StringIO(), io.StringIO()
     standard_in = io.StringIO(stdin)
     standard_in.isatty = lambda: tty  # ty: ignore[invalid-assignment]
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}
     context.exit_code = 0
     with (
         patch.dict(os.environ, env),

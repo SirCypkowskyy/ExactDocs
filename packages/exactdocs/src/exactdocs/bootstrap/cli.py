@@ -60,7 +60,7 @@ from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGT
 from exactdocs.identity.dtos import CreateFirstAdminCommand, ResetPasswordCommand
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
-from exactdocs.retrieval.dtos import RebuiltIndexOut, SearchIndexStateOut
+from exactdocs.retrieval.dtos import ModelChecksOut, RebuiltIndexOut, SearchIndexStateOut
 from exactdocs_kernel import DomainError
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
@@ -872,6 +872,53 @@ def reindex() -> None:
         f"Search index rebuilt in format {rebuilt.format} ({was}): "
         f"{rebuilt.entries} chunks in {seconds:.1f} s.\n"
     )
+
+
+ai = App(name="ai", help="AI providers and model roles (local: reads this server's settings).")
+app.command(ai)
+
+
+@ai.command(name="check")
+def ai_check() -> None:
+    """Make one minimal call per configured model role and report latency, model and dimensions.
+
+    Local: reads this server's settings (EXACTDOCS_AI__..., EXACTDOCS_CONFIG_FILE) and the profiles
+    stored in its database, so run it where the server runs (in Docker: `docker exec <container>
+    exactdocs ai check`). Keys are never printed. Exits 1 when a role fails, 2 when none is set.
+    """
+    checks = _run(_ai_check(Settings()))
+    if not checks.checks:
+        sys.stdout.write(
+            "No model role is configured: searches use BM25. Set EXACTDOCS_AI__<ROLE>__MODEL "
+            "(see docs/decisions/ai-retrieval.md).\n"
+        )
+        raise SystemExit(EXIT_USAGE)
+    for check in checks.checks:
+        role = check.role.value if check.role else "model"
+        if check.status == "ok":
+            dimensions = f", {check.dimensions} dimensions" if check.dimensions else ""
+            sys.stdout.write(
+                f"{role}: ok  {check.profile}:{check.model} answered as {check.served_model} "
+                f"in {check.latency_ms:.0f} ms{dimensions}\n"
+            )
+        else:
+            sys.stdout.write(f"{role}: error  {check.profile}:{check.model}: {check.error}\n")
+    if not checks.ok:
+        raise SystemExit(EXIT_FAILED)
+
+
+async def _ai_check(settings: Settings) -> ModelChecksOut:
+    """Check every configured role against the local database's profiles.
+
+    Args:
+        settings: The server's settings.
+
+    Returns:
+        One check per role that is set.
+    """
+    container = _build(settings)
+    async with container.running(jobs=False):  # migrates first, as `serve` would
+        return await container.retrieval.check_roles()
 
 
 @app.command

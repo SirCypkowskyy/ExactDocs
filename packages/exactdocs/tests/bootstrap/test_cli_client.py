@@ -147,7 +147,7 @@ def test_the_config_file_is_private_and_the_token_never_printed(tmp_path: Path) 
 def test_flags_beat_environment_beat_the_file(tmp_path: Path) -> None:
     file = tmp_path / "c.json"
     store(file, ClientConfig(url=URL, token="from-file"))
-    env = {"EXACTDOCS_CONFIG_FILE": str(file)}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(file)}
 
     assert ClientConfig.resolve(env=env) == ClientConfig(url=URL, token="from-file")
     env |= {"EXACTDOCS_URL": "https://env.example.com", "EXACTDOCS_TOKEN": "from-env"}
@@ -159,7 +159,7 @@ def test_flags_beat_environment_beat_the_file(tmp_path: Path) -> None:
 def test_a_stored_token_is_never_sent_to_another_server(tmp_path: Path) -> None:
     file = tmp_path / "c.json"
     store(file, ClientConfig(url=URL, token="from-file"))
-    env = {"EXACTDOCS_CONFIG_FILE": str(file), "EXACTDOCS_URL": "https://other.example.com"}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(file), "EXACTDOCS_URL": "https://other.example.com"}
 
     with pytest.raises(ClientError, match=r"not logged in to https://other\.example\.com"):
         ClientConfig.resolve(env=env)
@@ -167,7 +167,7 @@ def test_a_stored_token_is_never_sent_to_another_server(tmp_path: Path) -> None:
 
 def test_nothing_configured_says_how_to_log_in(tmp_path: Path) -> None:
     with pytest.raises(ClientError, match="exactdocs login"):
-        ClientConfig.resolve(env={"EXACTDOCS_CONFIG_FILE": str(tmp_path / "none.json")})
+        ClientConfig.resolve(env={"EXACTDOCS_CLIENT_CONFIG": str(tmp_path / "none.json")})
 
 
 def test_the_default_config_path_is_in_the_user_config_dir() -> None:
@@ -249,7 +249,7 @@ def test_urls_are_normalized_in_every_part() -> None:
 def test_a_stored_token_matches_another_spelling_of_its_url(tmp_path: Path) -> None:
     file = tmp_path / "c.json"
     store(file, ClientConfig(url=normalize_url("https://Docs.example.com"), token="t"))
-    env = {"EXACTDOCS_CONFIG_FILE": str(file), "EXACTDOCS_URL": "https://docs.example.com:443"}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(file), "EXACTDOCS_URL": "https://docs.example.com:443"}
 
     assert ClientConfig.resolve(env=env).token == "t"
 
