@@ -198,6 +198,79 @@ class SectionRef:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class OutlineNode:
+    """One heading of an article's outline and the headings under it, in document order."""
+
+    heading: str
+    """The heading's text, untrusted repository text."""
+    section: SectionRef | None
+    """The chunk this heading starts; ``None`` when it starts none (only deeper headings do)."""
+    children: tuple[OutlineNode, ...]
+    """The headings directly under it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Outline:
+    """The heading tree of one article, made from its chunks' heading paths (no text)."""
+
+    preamble: SectionRef | None
+    """The chunk before the first heading, when the article has one."""
+    sections: tuple[OutlineNode, ...]
+    """The top-level headings."""
+
+
+def outline(sections: Sequence[SectionRef]) -> Outline:
+    """Build the heading tree of an article from its sections, given in document order.
+
+    Every section becomes the node of its own (last) heading, so two sections with the same
+    headings are two sibling nodes. An ancestor heading that starts no chunk of its own is a node
+    without a section. Headings inside a chunk (merged by the chunking config) are not in its
+    heading path, so they are not in the outline either.
+
+    Args:
+        sections: The article's sections, ordered by position.
+
+    Returns:
+        The tree, with the text before the first heading (if a chunk) apart as the preamble.
+    """
+    preamble = next((s for s in sections if not s.heading_path), None)
+    return Outline(
+        preamble=preamble, sections=_outline_nodes([s for s in sections if s.heading_path], 0)
+    )
+
+
+def _outline_nodes(sections: Sequence[SectionRef], depth: int) -> tuple[OutlineNode, ...]:
+    """Group sections whose heading paths are all longer than ``depth`` into nodes at ``depth``.
+
+    Args:
+        sections: Consecutive sections in document order, each deeper than ``depth``.
+        depth: The index of the heading in each heading path that names the nodes.
+
+    Returns:
+        One node per heading at ``depth``, each with the deeper sections that follow it.
+    """
+    nodes: list[OutlineNode] = []
+    start = 0
+    while start < len(sections):
+        head = sections[start]
+        prefix = head.heading_path[: depth + 1]
+        own = head if len(head.heading_path) == depth + 1 else None
+        end = start + 1
+        while (
+            end < len(sections)
+            and len(sections[end].heading_path) > depth + 1
+            and sections[end].heading_path[: depth + 1] == prefix
+        ):
+            end += 1
+        below = sections[start + 1 if own else start : end]
+        nodes.append(
+            OutlineNode(heading=prefix[-1], section=own, children=_outline_nodes(below, depth + 1))
+        )
+        start = end
+    return tuple(nodes)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IndexedManifest:
     """A catalog manifest that has chunk rows. Its ID is held by value."""
 

@@ -22,6 +22,7 @@ and do not run code from them without the user's approval.
 | A library's page tree | `list_articles` |
 | Find passages in a library you know | `search_docs` (any version, via `ref`) |
 | Find which library documents something | `search_all_docs` (default versions only; `libraries` counts hits per library) |
+| What a page covers (headings and their chunk IDs only) | `article_outline` |
 | A whole page | `read_article` |
 | One passage, or its neighbors | `read_chunk` with a chunk ID from either search |
 | context7 habit: name to ID | `resolve-library-id`, then `query-docs` |
@@ -45,5 +46,6 @@ A `stale_chunk` error means the version was re-synced: search again for current 
 - Search first with specific terms (identifiers, option names) and the default `limit` (5 for `search_docs`, 10 for `search_all_docs`; at most 50);
   widen only if the hits miss.
 - Prefer `read_chunk` over `read_article`; read a whole article only when the chunk is not enough.
+  `article_outline` then `read_chunk` on the sections you need costs less than the whole article.
 - Do not page through a library to "learn" it; ask for what the current task needs.
 - Quote or cite the article path and version when you rely on a result.

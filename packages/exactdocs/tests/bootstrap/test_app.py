@@ -255,6 +255,7 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
         "search_all_docs",
         "read_article",
         "read_chunk",
+        "article_outline",
         "resolve-library-id",
         "query-docs",
     }

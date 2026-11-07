@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogArticleSuggestions,
     CatalogCollector,
     CatalogDefaultVersions,
     CatalogImportedTags,
@@ -30,7 +31,13 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
-from exactdocs.bootstrap.constants import JOBS_FILE, KNOWN_HOSTS_FILE, WORK_DIR
+from exactdocs.bootstrap.constants import (
+    CREDENTIALS_KEY_PURPOSE,
+    JOBS_FILE,
+    KEY_FILE,
+    KNOWN_HOSTS_FILE,
+    WORK_DIR,
+)
 from exactdocs.bootstrap.database import (
     StartupError,
     check_schema_is_current,
@@ -39,6 +46,7 @@ from exactdocs.bootstrap.database import (
     open_database,
 )
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
@@ -68,14 +76,13 @@ from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, swee
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
-from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
     SqliteJobRepository,
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
-from exactdocs.ingestion.constants import KEY_FILE, QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
+from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -124,6 +131,7 @@ def _build_read_side(
         search=search,
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
+        suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
     )
@@ -175,8 +183,11 @@ def _secret_box(settings: Settings) -> FernetSecretBox:
             return FernetSecretBox.from_secrets(
                 settings.secret_key.get_secret_value(),
                 *([previous.get_secret_value()] if previous else []),
+                purpose=CREDENTIALS_KEY_PURPOSE,
             )
-        return FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
+        return FernetSecretBox.from_file(
+            settings.data_dir / KEY_FILE, purpose=CREDENTIALS_KEY_PURPOSE
+        )
     except ValueError as error:
         raise StartupError(str(error)) from None
 

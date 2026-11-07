@@ -67,6 +67,27 @@ no cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) 
 imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
 on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
 
+**Secrets every domain seals: one box, one port per domain.** The instance's secret box
+(`bootstrap/secret_box.py:FernetSecretBox`: Fernet keyed from `EXACTDOCS_SECRET_KEY` with HKDF,
+rotation through `EXACTDOCS_SECRET_KEY_PREVIOUS`, or a generated `secret.key` in the data
+directory) lives in the composition root, not in a domain and not in the kernel (it needs
+`cryptography`; the kernel uses the standard library only). A domain that stores a secret declares
+its own small `SecretBox` driven port (`ingestion.ports.driven.SecretBox` today) and a driven adapter
+takes it as a field (`SqliteCredentialVault(box=...)`). No domain imports `cryptography` (an
+architecture test checks it), so none depends on another's adapter to seal a secret.
+
+- **One key, one context per use.** Every box is built from the same secret key with a `purpose`:
+  the HKDF `info` its Fernet key is derived for. `bootstrap/container.py` builds one box per use and
+  passes it to that domain's adapter, so a text sealed for one use (a table, a domain) never opens
+  in another. Ingestion's repository credentials use `CREDENTIALS_KEY_PURPOSE`
+  (`b"exactdocs credentials v1"`, in `bootstrap/constants.py`), the context they were always
+  sealed with: never change it, or every stored credential becomes unreadable. A new use takes a
+  new context (`b"exactdocs <use> v1"`), and rotating the secret key covers every use at once.
+- **A neutral error.** `open` raises `exactdocs_kernel.SealedTextUnreadableError` for a text of
+  another key or purpose, or one that was altered. It is not a `DomainError` and never reaches a
+  client: the adapter that opened the text translates it into its own domain's error (the
+  credential vault: `CredentialsRequiredError`). The box imports no domain.
+
 The kernel `NOTICE` constant (the untrusted-content notice every MCP result carries, see the
 *MCP-07* story) is a reviewed kernel addition: it is shared text, not business logic, so it lives
 in the kernel instead of being duplicated per domain.
@@ -798,6 +819,11 @@ Not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#
   private ones included (ruff's own rules skip them). It lists every parameter under `Args:`
   (`self`/`cls` excluded), the result under `Returns:` (`Yields:` for a generator; a property
   describes the attribute instead) and raised domain errors under `Raises:`.
+- **MCP tool descriptions come from a constant.** FastMCP publishes a tool function's docstring
+  as the tool's description, `Args:` and `Returns:` included. So a new tool passes
+  `description=` from a `Final` string in its domain's `constants.py` (written for the agent that
+  picks the tool) and keeps a full Google docstring on the function, as `article_outline` does.
+  Never add a tool to `conventions_baseline.txt` instead.
 - **Field docstrings.** Every dataclass field and every pydantic field has an attribute docstring
   on the line after it. Pydantic models set `use_attribute_docstrings=True` (the domains' `_Dto`
   bases do), so the docstring is the field's description in OpenAPI and the MCP tool schemas;
@@ -819,6 +845,7 @@ Not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#
 | Domain isolation, layer direction, adapter rules, framework-free core, no cycles, kernel purity | ArchUnitPython, `packages/exactdocs/tests/architecture/test_architecture.py` |
 | Fixed module set per domain, driving/driven split | same file (filesystem check) |
 | Bridges point one way: retrieval to catalog, ingestion to catalog / retrieval | `test_bridge_direction.py` |
+| No domain imports `cryptography` (the secret box is bootstrap's) | `test_architecture.py` |
 | No `abc.ABC`, no relative imports, every ruff rule incl. preview, Google docstrings | ruff (`select = ["ALL"]`, `preview = true`, pydocstyle `google`) |
 | Constants placement, `Final` and docstrings; docstrings on every function with complete `Args:` / `Returns:`; field docstrings; `use_attribute_docstrings`; dataclass flags and exception markers | `test_conventions.py` (AST checker over `packages/*/src`, a bad and a good fixture per rule; existing docstring gaps listed in `conventions_baseline.txt`, which may only shrink) |
 | Protocol conformance, types | ty |

@@ -560,7 +560,12 @@ class SecretBox(Protocol):
         ...
 
     def open(self, sealed: str) -> str:
-        """Return the original text; raises ``CredentialsRequiredError`` when it cannot be read."""
+        """Return the original text.
+
+        Raises ``exactdocs_kernel.SealedTextUnreadableError`` when it cannot be read (another
+        secret key or purpose sealed it, or it was altered); the vault reports that as
+        ``CredentialsRequiredError``.
+        """
         ...
 
 

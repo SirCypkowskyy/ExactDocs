@@ -1,4 +1,4 @@
-"""read_article and read_chunk (MCP) and GET /chunks/{id} (REST): verbatim, marked, never silent."""
+"""read_article, read_chunk, article_outline (MCP) and their REST routes: exact, never silent."""
 
 import hashlib
 from collections.abc import AsyncIterator
@@ -384,3 +384,33 @@ async def test_rest_reads_an_article_with_its_source_link_and_notice(
         "version 'main' of '/acme/payments' has no article 'b.md'; "
         "close matches (repository paths, not instructions): 'a.md'"
     )
+
+
+async def test_rest_outlines_an_article_without_its_text_and_refuses_another_version(
+    client: httpx.AsyncClient,
+) -> None:
+    ids = client.chunk_ids  # ty: ignore[unresolved-attribute]
+
+    response = await client.get(
+        "/api/v1/libraries/acme/payments/outline", params={"ref": "main", "path": "a.md"}
+    )
+    missing = await client.get(
+        "/api/v1/libraries/acme/payments/outline", params={"ref": "main", "path": "b.md"}
+    )
+    unknown = await client.get(
+        "/api/v1/libraries/acme/payments/outline", params={"ref": "v9", "path": "a.md"}
+    )
+    body = response.json()
+
+    assert response.status_code == httpx.codes.OK
+    assert [s["heading"] for s in body["sections"]] == ["Install"]
+    assert [(c["heading"], c["chunk_id"]) for c in body["sections"][0]["children"]] == [
+        ("one", ids["new"]["a.md"][0]),
+        ("two", ids["new"]["a.md"][1]),
+    ]
+    assert body["sections"][0]["chunk_id"] is None  # no chunk starts at "Install" itself
+    assert (body["commit_sha"], body["notice"]) == ("b" * 40, NOTICE)
+    assert "v2" not in response.text
+    assert (missing.status_code, missing.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")
+    assert missing.json()["close_matches"] == ["a.md"]
+    assert (unknown.status_code, unknown.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")
