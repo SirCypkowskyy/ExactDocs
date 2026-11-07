@@ -189,7 +189,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   not found is 422 `unknown_ref`, a short SHA that starts two commits 422 `ambiguous_ref`, a bad
   pattern 422 `invalid_path_pattern`, a taken ID 409 `library_id_taken`. Patterns are repo-relative,
   case-sensitive, never absolute or with `..`: `docs/` (a folder), `docs/**`, `*.md`,
-  `{a,b}`; no `include_paths` means every `.md`/`.mdx` file, only those are ever articles, and an
+  `?`, `{a,b}`. A pattern without `*`, `?` or `{` is a path: it names a file, or a folder and
+  everything below it, with or without a trailing `/`. `[` is a plain character (no character
+  classes), so `app/[locale]` is a folder; no `include_paths` means every `.md`/`.mdx` file, only those are ever articles, and an
   exclusion always wins. The library has no versions until its import has run; the job records the
   pinned ref and commit. `GET /repositories/refs?url=` lists `default_branch`, `branches` and `tags`
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.

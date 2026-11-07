@@ -488,12 +488,13 @@ TREE = [
     "docs/guide/install.md", "docs/guide/deep/x.md", "docs/archive/old.md", "docs/API.MD",
     "guide/g.md", "a/x.md", "b/x.md", "ab/x.md", "src/lib/readme.md", "src/lib/code.py",
     "!bang/b.md", "#hash.md", "br[ack]et.md", "bracket.md", "sp ace/s.md", "notes.txt",
+    "app/[locale]/x.md", "app/l/x.md",
 ]  # fmt: skip
 PIECES = [
     "docs", "docs/", "docs/**", "docs/*.md", "docs/**/*.md", "**/x.md", "*/x.md", "{a,b}/x.md",
     "{docs,guide}/", "docs/archive/", "**/readme.md", "*.md", "README.md", "src/", "!bang/",
     "#hash.md", "br[ack]et.md", "sp ace/", "{}", "docs/{guide,archive}/**", "docs/guide/**/x.md",
-    "?/x.md", "a?/x.md", "docs/*.mdx",
+    "?/x.md", "a?/x.md", "docs/*.mdx", "app/[locale]", "app/[locale]/",
 ]  # fmt: skip
 
 
