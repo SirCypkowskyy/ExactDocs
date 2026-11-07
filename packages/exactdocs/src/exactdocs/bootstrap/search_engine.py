@@ -54,10 +54,12 @@ class PostgresSearchChoice:
             logger.info("Search uses pg_search's BM25.")
             return
         self.chosen = self.full_text
-        logger.info(
+        # A server that could run pg_search but doesn't is probably a mistake: ranking is worse.
+        logger.log(
+            logging.WARNING if missing.misconfigured else logging.INFO,
             "Search uses PostgreSQL full-text search, not pg_search's BM25: %s. Rankings may "
             "differ slightly from SQLite's.",
-            missing,
+            missing.reason,
         )
 
     async def index(self, chunk_set: ChunkSet) -> None:

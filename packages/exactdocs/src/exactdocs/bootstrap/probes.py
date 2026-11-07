@@ -31,6 +31,7 @@ from exactdocs.bootstrap.constants import (
 )
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import current_revision, database_file_missing, schema_head
+from exactdocs.retrieval.models import SearchEngine
 
 
 class Alive(BaseModel):
@@ -60,7 +61,7 @@ class Health(BaseModel):
     reindex_required: bool | None
     """The index is in an older or unrecorded format: run `exactdocs reindex` (it keeps serving).
     Null when the database could not tell."""
-    search_engine: str | None
+    search_engine: SearchEngine | None
     """The search engine that answers: `fts5` (SQLite), `pg_search` (ParadeDB's BM25 on
     PostgreSQL) or `postgres_fts` (PostgreSQL full-text search, without `pg_search`). Null when the
     database could not tell."""

@@ -368,16 +368,6 @@ POSTGRES_TAG_CONDITIONS: Final[dict[str | None, str]] = {
 }
 """`TAG_CONDITIONS` for PostgreSQL's JSON functions."""
 
-# ---------------------------------------------------------------- search engines (health)
-MEMORY_ENGINE: Final[str] = "memory"
-"""The search engine of the in-memory reference index (tests)."""
-SQLITE_ENGINE: Final[str] = "fts5"
-"""The search engine on SQLite: FTS5's BM25."""
-POSTGRES_FTS_ENGINE: Final[str] = "postgres_fts"
-"""The search engine on PostgreSQL without `pg_search`: its full-text search, `ts_rank_cd`."""
-PG_SEARCH_ENGINE: Final[str] = "pg_search"
-"""The search engine on PostgreSQL with ParadeDB's `pg_search` extension: BM25."""
-
 # ---------------------------------------------------------------- adapters.driven.pg_search
 PG_SEARCH_EXTENSION: Final[str] = "pg_search"
 """The PostgreSQL extension (ParadeDB) whose BM25 index the `pg_search` adapter needs."""
@@ -396,11 +386,14 @@ _PG_BM25_COLUMNS: Final[str] = (
 """The BM25 index's fields: the key first, then FTS5's four columns. `identifiers` holds the words
 `identifier_tokens` already cut and case-folded: whitespace separates them."""
 _PG_BM25_INDEX: Final[str] = (
-    f"CREATE INDEX retrieval_search_bm25 ON retrieval_search USING bm25 ({_PG_BM25_COLUMNS})"
+    "CREATE INDEX CONCURRENTLY retrieval_search_bm25 ON retrieval_search"
+    f" USING bm25 ({_PG_BM25_COLUMNS})"
 )
 """The BM25 index over `retrieval_search` (revision 0c4e8a2f6b19's table), made at start when the
-database has `pg_search` and the table has no BM25 index yet. The table and its `document` column
-stay, so PostgreSQL's full-text search still answers if the extension is removed."""
+database has `pg_search` and the table has no valid BM25 index yet. ``CONCURRENTLY``: imports and
+other writers carry on while it is built (outside a transaction, so on an autocommit connection);
+a build that died leaves an invalid index, dropped and built again by the next start. The table
+and its `document` column stay, so PostgreSQL's full-text search still answers without it."""
 _PG_BM25_INDEX_NEXT: Final[str] = (
     "CREATE INDEX retrieval_search_next_bm25 ON retrieval_search_next"
     f" USING bm25 ({_PG_BM25_COLUMNS})"
@@ -411,29 +404,45 @@ _PG_BM25_RENAME: Final[str] = (
 )
 """After the swap the new table's index keeps its name; this gives it the usual one back."""
 _PG_BM25_LOCK: Final[int] = 0x45584453_424D3235
-"""Advisory lock key ("EXDSBM25"): processes that start together make the BM25 index once."""
+"""Session advisory lock key ("EXDSBM25"): processes that start together make the BM25 index once.
+The others poll it (``pg_try_advisory_lock``) rather than wait in one statement: a statement that
+waits holds a snapshot, which ``CREATE INDEX CONCURRENTLY`` would wait for in turn."""
+PG_BM25_POLL_SECONDS: Final[float] = 0.5
+"""How often a process waiting for another one's BM25 build looks again."""
+_PG_JOIN_SCANS_OFF: Final[tuple[str, ...]] = (
+    "SET LOCAL paradedb.enable_join_custom_scan = off",
+    "SET LOCAL paradedb.enable_aggregate_custom_scan = off",
+)
+"""Run before each search and count: they join tables that have no BM25 index, so pg_search's
+join and aggregate scans never apply, and asking for them writes a WARNING per query (`JoinScan
+not used`, `Aggregate Scan (DataFusion) not used`) to the server log and the client."""
 _PG_EXTENSION: Final[str] = """
     SELECT
         EXISTS (SELECT 1 FROM pg_extension WHERE extname = :extension) AS installed,
         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = :extension) AS available
 """
 """Whether the database has the extension, and whether its server could install it."""
-_PG_BM25_EXISTS: Final[str] = """
-    SELECT EXISTS (
-        SELECT 1 FROM pg_index i
-        JOIN pg_class ix ON ix.oid = i.indexrelid
-        JOIN pg_am am ON am.oid = ix.relam
-        WHERE i.indrelid = to_regclass('retrieval_search') AND am.amname = 'bm25'
-    )
+_PG_BM25_INDEXES: Final[str] = """
+    SELECT ix.relname AS name, i.indisvalid AS valid FROM pg_index i
+    JOIN pg_class ix ON ix.oid = i.indexrelid
+    JOIN pg_am am ON am.oid = ix.relam
+    WHERE i.indrelid = to_regclass('retrieval_search') AND am.amname = 'bm25'
 """
-"""Whether `retrieval_search` has a BM25 index, whatever its name (a table has at most one)."""
-PG_SEARCH_BOOSTS: Final[tuple[float, float, float, float]] = (2.0, 1.5, 1.0, 0.1)
-"""Boosts of the heading, path, text and identifiers fields. Not FTS5's weights (20, 4, 1, 0.1):
-FTS5 multiplies a column's term count by its weight before BM25 saturates it, so a heading hit
-counts at most about twice a text hit; here the boost multiplies the field's whole BM25 score,
-whose IDF and length are the field's own (short headings make every word in them rare). These
-values keep the ranking suite whole and the retrieval eval's BM25 recall at SQLite's
-(docs/evals.md); change them only with both run on `pg_search`."""
+"""The BM25 indexes of `retrieval_search`, whatever their names, and whether each is valid (one
+that a ``CONCURRENTLY`` build left half made is not)."""
+FTS5_K1: Final[float] = 1.2
+"""FTS5's BM25 term-frequency saturation (``k1``), fixed in SQLite's `bm25()`."""
+PG_SEARCH_BOOSTS: Final[tuple[float, ...]] = tuple(
+    round(weight * (FTS5_K1 + 1) / (weight + FTS5_K1), 3)
+    for weight in (HEADING_WEIGHT, PATH_WEIGHT, TEXT_WEIGHT, IDENTIFIERS_WEIGHT)
+)
+"""Boosts of the heading, path, text and identifiers fields, derived from FTS5's column weights:
+``w * (k1 + 1) / (w + k1)``, about 2.08, 1.69, 1 and 0.17. FTS5 multiplies a column's term count
+by its weight *before* BM25 saturates it, so one occurrence in a column of weight ``w`` scores
+``w * (k1 + 1) / (w + k1)`` times one in the text. Tantivy multiplies each field's whole BM25 score
+by its boost instead, so FTS5's raw weights (20 for a heading) would let any word of a short
+heading win. With the derived boosts the ranking suite passes and the retrieval eval's BM25
+recall matches SQLite's (docs/evals.md); they follow any change to the FTS5 weights."""
 _PG_SEARCH_FIELDS: Final[str] = (
     "s.heading ||| CAST(:{{words}} AS text)::pdb.boost({})"
     " OR s.path ||| CAST(:{{words}} AS text)::pdb.boost({})"
@@ -443,14 +452,16 @@ _PG_SEARCH_FIELDS: Final[str] = (
 """Any of the words (``{words}``: a parameter's name) in any field; each field's BM25 score is
 boosted by its weight and the fields' scores add up, as in FTS5's weighted `bm25()`. Each field's
 own tokenizer cuts the words. ``|||`` matches tokens: it parses no query syntax."""
-_PG_SEARCH_MATCH: Final[str] = (
+_PG_SEARCH_MATCH: Final[str] = f"({_PG_SEARCH_FIELDS.format(words='wanted')})"
+"""``:wanted`` holds every search term, joined by spaces."""
+_PG_SEARCH_MATCH_WHOLE: Final[str] = (
     f"({_PG_SEARCH_FIELDS.format(words='wanted')} OR {_PG_SEARCH_FIELDS.format(words='whole')})"
 )
-"""``:wanted`` holds every search term, joined by spaces. ``:whole`` holds those that are whole
-identifiers (`retry_policy`, `v1.4.0`; empty when none is): they count twice. FTS5 scores each
-term over the whole row, so the one rare token `retry_policy` beats `retry` and `policy`; BM25
-here scores each field on its own, where a heading "Retry policy" gets two rare words. Counting
-the whole identifier again puts the section named `retry_policy` back first."""
+"""`_PG_SEARCH_MATCH` for a query with whole identifiers (`retry_policy`, `v1.4.0`): ``:whole``
+holds them, and they count twice. FTS5 scores each term over the whole row, so the one rare token
+`retry_policy` beats `retry` and `policy`; BM25 here scores each field on its own, where a heading
+"Retry policy" gets two rare words. Counting the whole identifier again puts the section named
+`retry_policy` back first. A query without one uses `_PG_SEARCH_MATCH` (four clauses fewer)."""
 _PG_WHOLE_IDENTIFIER: Final[re.Pattern[str]] = re.compile(
     r"[A-Za-z0-9\u0080-\U0010FFFF][-_.][A-Za-z0-9\u0080-\U0010FFFF]"
 )

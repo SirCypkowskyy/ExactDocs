@@ -186,20 +186,29 @@ only holds each process's git work folders and `known_hosts`. What changes:
   columns answers instead. Its tokenizer cuts words as FTS5 does (a regular expression for ASCII
   letters and digits, every non-ASCII character and `-_.`, lower-cased and ASCII-folded; the
   identifiers column by whitespace). Every term is an alternative; each field's BM25 score is
-  boosted (heading 2, path 1.5, text 1, identifiers 0.1) and the fields' scores add up, and the
-  query's whole identifiers count twice. The boosts are not FTS5's weights: FTS5 weights term
-  counts before saturating them, Tantivy multiplies each field's whole score (with the field's own
-  IDF and length), so FTS5's 20 for a heading would let any word of a short heading win. These
-  keep the ranking suite whole and the retrieval eval's BM25 recall at SQLite's; both run on it in
-  CI. The adapter writes and rebuilds the rows through `postgres_fts` (structurally, as its
+  boosted and the fields' scores add up, and the query's whole identifiers count twice (only
+  queries that have one run that second group of clauses). The boosts are derived from FTS5's
+  column weights `w`, as `w * (k1 + 1) / (w + k1)` with FTS5's `k1 = 1.2` (heading 2.08, path
+  1.69, text 1, identifiers 0.17): FTS5 multiplies a column's term count by `w` before BM25
+  saturates it, so that is what one occurrence there scores against one in the text, while
+  Tantivy multiplies each field's whole score (with the field's own IDF and length) by its boost.
+  FTS5's raw 20 for a heading would let any word of a short heading win. The ranking suite and the
+  retrieval eval's BM25 gates run on it in CI (the eval with `--expect-engine pg_search`). Each
+  search turns pg_search's join and aggregate scans off (`SET LOCAL`): they never apply to these
+  joins and would log a warning per query. The adapter writes and rebuilds the rows through `postgres_fts` (structurally, as its
   `table`), and `exactdocs reindex` indexes `retrieval_search_next` with BM25 before the swap.
   Snippets are `ts_headline`'s, as without `pg_search`.
 - **The engine is chosen at start** (`bootstrap/search_engine.py`): once the schema is migrated,
-  `Container.running()` asks whether the extension is installed and makes the BM25 index if it is
-  missing (under an advisory lock, so processes starting together make it once; a read-only
-  `serve --stdio` never makes it and falls back). Without the extension, or without the index in a
-  read-only process, full-text search answers and the log says why. The table and its `tsvector`
-  stay in both cases, so the extension can come and go with a restart. `SearchIndexState.engine`
+  `Container.running()` asks whether the extension is installed and builds the BM25 index if no
+  valid one exists: `CREATE INDEX CONCURRENTLY` on an autocommit connection, so writers carry on,
+  under a session advisory lock that the other starting processes poll (`pg_try_advisory_lock`; a
+  statement waiting for the lock would hold a snapshot the concurrent build waits for). An invalid
+  index a dead build left is dropped and built again. A read-only `serve --stdio` never builds it
+  and falls back. Without the extension, or without the index in a read-only process, full-text
+  search answers and the log says why (a WARNING when the server could do better: the extension is
+  available, or the index is only missing). The table and its `tsvector` stay in both cases, so
+  the extension can come and go with a restart. `exactdocs reindex` first renames an index left
+  under `retrieval_search_next_bm25` by a rebuild that died between its swap and its rename. `SearchIndexState.engine`
   names the engine in use; `/healthz` reports it as `search_engine`.
 - **Jobs and locks across processes:** see *Several processes on PostgreSQL* under
   [Background jobs](#background-jobs).

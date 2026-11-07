@@ -610,13 +610,15 @@ crashed one left (it logs why).
 - Search is chosen when a process starts, from what the database offers. With ParadeDB's
   `pg_search` extension installed in the database (the ParadeDB image below installs it), search
   is BM25, as on SQLite: the first start builds its index (`retrieval_search_bm25`, a while on a
-  large instance), later ones find it. Without it (managed PostgreSQL such as Supabase, or
-  `pg_search` available but not installed: `CREATE EXTENSION pg_search CASCADE` adds it), search
-  uses PostgreSQL's full-text search (`tsvector`, the `simple` configuration, ranked with
-  `ts_rank_cd`, words cut as SQLite's index cuts them), and the log says why. Both pass the shared
-  ranking suite as SQLite does, and both read the same rows: adding or removing the extension
-  needs only a restart, no `exactdocs reindex`. `/healthz` names the engine in use
-  (`search_engine`: `fts5`, `pg_search` or `postgres_fts`).
+  large instance; `CONCURRENTLY`, so the instance keeps serving and importing meanwhile), later
+  ones find it. Without it, search uses PostgreSQL's full-text search (`tsvector`, the `simple`
+  configuration, ranked with `ts_rank_cd`, words cut as SQLite's index cuts them), and the log
+  says why: at INFO on a server without `pg_search` (managed PostgreSQL such as Supabase), as a
+  WARNING when the server has it but the database does not (`CREATE EXTENSION pg_search CASCADE`
+  adds it). Both pass the shared ranking suite as SQLite does, and both read the same rows: adding
+  the extension needs only a restart, no `exactdocs reindex`; removing it needs
+  `DROP EXTENSION pg_search CASCADE` (the BM25 index depends on it), then a restart. `/healthz`
+  names the engine in use (`search_engine`: `fts5`, `pg_search` or `postgres_fts`).
 - Writes that must not interleave (storing and activating a version, indexing it) take turns
   across all processes, as on SQLite, so several processes serve more readers but do not import
   faster. A writer that waits more than 30 s for its turn gives up with an error, as SQLite does

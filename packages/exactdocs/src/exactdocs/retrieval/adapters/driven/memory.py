@@ -6,7 +6,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from exactdocs.retrieval.constants import MEMORY_ENGINE, MEMORY_FORMAT
+from exactdocs.retrieval.constants import MEMORY_FORMAT
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     RetiredEmbeddingSpaceError,
@@ -32,6 +32,7 @@ from exactdocs.retrieval.models import (
     Removed,
     RetrievalMode,
     SearchableVersion,
+    SearchEngine,
     SearchHit,
     SearchIndexState,
     SectionRef,
@@ -225,7 +226,9 @@ class InMemorySearchIndex:
     async def state(self) -> SearchIndexState:
         """Return the format the index was "built" in and the current one."""
         return SearchIndexState(
-            stored_format=self.stored_format, current_format=MEMORY_FORMAT, engine=MEMORY_ENGINE
+            stored_format=self.stored_format,
+            current_format=MEMORY_FORMAT,
+            engine=SearchEngine.MEMORY,
         )
 
     async def rebuild(self) -> RebuiltIndex:

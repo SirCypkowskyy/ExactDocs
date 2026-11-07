@@ -99,7 +99,8 @@ jobs:
           uv run python packages/exactdocs/evals/run_retrieval_eval.py "${flags[@]}"
       # The same BM25 gates with pg_search answering (#104), against this branch's baseline (the
       # step above checked it against develop's): a database of its own with the extension, so
-      # the app chooses pg_search at start as a ParadeDB deployment does.
+      # the app chooses pg_search at start as a ParadeDB deployment does; --expect-engine fails
+      # the step if it fell back to PostgreSQL full-text search instead.
       - name: Retrieval eval on pg_search (BM25, gating)
         env:
           ADMIN_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}
@@ -116,7 +117,7 @@ jobs:
           PY
           EXACTDOCS_DATABASE_URL="${ADMIN_URL/postgresql:/postgresql+psycopg:}/exactdocs_eval" \
             uv run python packages/exactdocs/evals/run_retrieval_eval.py \
-            --report reports/evals/retrieval-pg-search.json
+            --expect-engine pg_search --report reports/evals/retrieval-pg-search.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

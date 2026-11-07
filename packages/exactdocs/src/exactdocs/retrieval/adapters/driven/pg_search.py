@@ -8,27 +8,30 @@ share them, so a database can move from one to the other without a rebuild. Word
 cuts them (`_PG_SEARCH_PATTERN`); each field's BM25 score is boosted by FTS5's column weight.
 """
 
+import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.constants import (
-    _PG_BM25_EXISTS,
     _PG_BM25_INDEX,
     _PG_BM25_INDEX_NEXT,
+    _PG_BM25_INDEXES,
     _PG_BM25_LOCK,
     _PG_BM25_RENAME,
     _PG_COUNT_BM25,
     _PG_EXTENSION,
+    _PG_JOIN_SCANS_OFF,
     _PG_QUERY,
     _PG_SEARCH_BM25,
     _PG_SEARCH_MATCH,
+    _PG_SEARCH_MATCH_WHOLE,
     _PG_WHOLE_IDENTIFIER,
-    PG_SEARCH_ENGINE,
+    PG_BM25_POLL_SECONDS,
     PG_SEARCH_EXTENSION,
     POSTGRES_HEADLINE,
     POSTGRES_SNIPPET_WORDS,
@@ -39,12 +42,24 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ManifestHit,
     RebuiltIndex,
+    SearchEngine,
     SearchHit,
     SearchIndexState,
     TagFilter,
     highlights,
     search_terms,
 )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Bm25Missing:
+    """Why `pg_search` cannot answer in this database."""
+
+    reason: str
+    """A sentence for the operator's log."""
+    misconfigured: bool
+    """The server could do it (the extension is available, or a writing process could build the
+    index): probably a mistake, worth a warning. ``False``: the server has no `pg_search`."""
 
 
 class SearchTable(Protocol):
@@ -82,20 +97,26 @@ class SearchTable(Protocol):
         ...
 
 
-def _statements(template: str) -> dict[object, Any]:
-    """Return the statement of each tag condition, with the manifests bound as a list.
+def _statements(template: str) -> dict[tuple[object, bool], Any]:
+    """Return the statement of each tag condition, with and without whole identifiers.
 
     Args:
         template: The SQL, with ``{match}``, ``{query}`` and ``{tags}`` slots.
 
     Returns:
-        One statement per ``POSTGRES_TAG_CONDITIONS`` key.
+        One statement per ``POSTGRES_TAG_CONDITIONS`` key and whether the query has a whole
+        identifier, with the manifests bound as a list.
     """
     return {
-        match: text(template.format(match=_PG_SEARCH_MATCH, query=_PG_QUERY, tags=sql)).bindparams(
-            bindparam("manifests", expanding=True)
-        )
+        (match, whole): text(
+            template.format(
+                match=_PG_SEARCH_MATCH_WHOLE if whole else _PG_SEARCH_MATCH,
+                query=_PG_QUERY,
+                tags=sql,
+            )
+        ).bindparams(bindparam("manifests", expanding=True))
         for match, sql in POSTGRES_TAG_CONDITIONS.items()
+        for whole in (False, True)
     }
 
 
@@ -115,39 +136,84 @@ class PgSearchIndex:
     table: SearchTable
     """Writes, rebuilds and versions the rows the BM25 index is built on."""
 
-    async def prepare(self, *, create: bool) -> str | None:
-        """Make sure the BM25 index exists, or say why `pg_search` cannot answer here.
+    async def prepare(self, *, create: bool) -> Bm25Missing | None:
+        """Make sure a valid BM25 index exists, or say why `pg_search` cannot answer here.
 
-        Processes that start together take turns (an advisory lock), so the index is made once.
-        Making it reads every row: a first start on a large index takes a while.
+        The index is built ``CONCURRENTLY``, so imports and other writers go on meanwhile (a first
+        start on a large index takes a while). Processes that start together take turns through
+        a session advisory lock, so it is built once; a build a crash left invalid is dropped and
+        built again.
 
         Args:
-            create: Make the index when it is missing (``False``: a read-only process).
+            create: Build the index when it is missing (``False``: a read-only process).
 
         Returns:
-            ``None`` when the index answers, else why not (a sentence for the operator).
+            ``None`` when the index answers, else why not.
         """
-        async with self.engine.begin() as connection:
+        async with self.engine.connect() as connection:
             found = (
                 await connection.execute(text(_PG_EXTENSION), {"extension": PG_SEARCH_EXTENSION})
             ).one()
             if not found.installed:
                 return (
-                    f"the {PG_SEARCH_EXTENSION} extension is available but not installed in this "
-                    f"database (CREATE EXTENSION {PG_SEARCH_EXTENSION} CASCADE adds it)"
+                    Bm25Missing(
+                        reason=f"the {PG_SEARCH_EXTENSION} extension is available but not "
+                        f"installed in this database (CREATE EXTENSION {PG_SEARCH_EXTENSION} "
+                        "CASCADE adds it)",
+                        misconfigured=True,
+                    )
                     if found.available
-                    else f"this PostgreSQL server has no {PG_SEARCH_EXTENSION} extension"
+                    else Bm25Missing(
+                        reason=f"this PostgreSQL server has no {PG_SEARCH_EXTENSION} extension",
+                        misconfigured=False,
+                    )
                 )
-            if await connection.scalar(text(_PG_BM25_EXISTS)):
+            if await self._valid_index(connection):
                 return None
             if not create:
-                return "the BM25 index is missing and this process may not create it"
-            await connection.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"), {"key": _PG_BM25_LOCK}
-            )
-            if not await connection.scalar(text(_PG_BM25_EXISTS)):
-                await connection.exec_driver_sql(_PG_BM25_INDEX)
+                return Bm25Missing(
+                    reason="the BM25 index is missing and this read-only process may not build it",
+                    misconfigured=True,
+                )
+            await self._build_once(connection)
         return None
+
+    async def _build_once(self, connection: AsyncConnection) -> None:
+        """Build the BM25 index unless another process does, or did meanwhile.
+
+        Args:
+            connection: A connection of its own; its open transaction is ended first.
+        """
+        await connection.commit()  # the checks above opened a transaction
+        autocommit = await connection.execution_options(isolation_level="AUTOCOMMIT")
+        lock = {"key": _PG_BM25_LOCK}
+        while not await autocommit.scalar(text("SELECT pg_try_advisory_lock(:key)"), lock):
+            if await self._valid_index(autocommit):
+                return  # another process built it
+            await asyncio.sleep(PG_BM25_POLL_SECONDS)
+        try:
+            indexes = (await autocommit.execute(text(_PG_BM25_INDEXES))).all()
+            if any(index.valid for index in indexes):
+                return
+            for index in indexes:  # left invalid by a build that died
+                await autocommit.exec_driver_sql(
+                    f'DROP INDEX CONCURRENTLY IF EXISTS "{index.name}"'
+                )
+            await autocommit.exec_driver_sql(_PG_BM25_INDEX)
+        finally:
+            await autocommit.execute(text("SELECT pg_advisory_unlock(:key)"), lock)
+
+    @staticmethod
+    async def _valid_index(connection: AsyncConnection) -> bool:
+        """Tell whether `retrieval_search` has a valid BM25 index.
+
+        Args:
+            connection: Any connection to the database.
+
+        Returns:
+            Whether one of its BM25 indexes is valid.
+        """
+        return any(index.valid for index in await connection.execute(text(_PG_BM25_INDEXES)))
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Index the chunks of this set that have no row yet (the BM25 index follows its table).
@@ -196,9 +262,11 @@ class PgSearchIndex:
             "words": POSTGRES_SNIPPET_WORDS,
             "limit": limit,
         }
-        statement = _searches[tag_filter.match if tag_filter.tags else None]
-        async with self.engine.connect() as connection:
-            found = (await connection.execute(statement, params)).all()
+        search = _searches[tag_filter.match if tag_filter.tags else None, bool(params["whole"])]
+        async with self.engine.begin() as connection:
+            for statement in _PG_JOIN_SCANS_OFF:
+                await connection.exec_driver_sql(statement)
+            found = (await connection.execute(search, params)).all()
         return [
             ManifestHit(
                 manifest_id=row.manifest_id,
@@ -228,11 +296,12 @@ class PgSearchIndex:
         terms = search_terms(query)
         if not terms or not manifest_ids:
             return {}
-        statement = _counts[tag_filter.match if tag_filter.tags else None]
-        async with self.engine.connect() as connection:
-            found = await connection.execute(
-                statement, self._params(terms, manifest_ids, tag_filter)
-            )
+        params = self._params(terms, manifest_ids, tag_filter)
+        count = _counts[tag_filter.match if tag_filter.tags else None, bool(params["whole"])]
+        async with self.engine.begin() as connection:
+            for statement in _PG_JOIN_SCANS_OFF:
+                await connection.exec_driver_sql(statement)
+            found = await connection.execute(count, params)
             return {row.manifest_id: row.matches for row in found}
 
     async def state(self) -> SearchIndexState:
@@ -241,7 +310,7 @@ class PgSearchIndex:
         Returns:
             Both formats and this engine.
         """
-        return replace(await self.table.state(), engine=PG_SEARCH_ENGINE)
+        return replace(await self.table.state(), engine=SearchEngine.PG_SEARCH)
 
     async def rebuild(self) -> RebuiltIndex:
         """Rebuild the table beside the one that answers, index it with BM25, then swap it in.
@@ -251,6 +320,10 @@ class PgSearchIndex:
         """
         await self.table.build_next()
         async with self.engine.begin() as connection:
+            # `retrieval_search_next` was just made anew, so an index of that name belongs to the
+            # live table: a rebuild that died between its swap and its rename left it. Rename it
+            # first, or its name would be taken.
+            await connection.exec_driver_sql(_PG_BM25_RENAME)
             await connection.exec_driver_sql(_PG_BM25_INDEX_NEXT)
         rebuilt = await self.table.swap()
         async with self.engine.begin() as connection:

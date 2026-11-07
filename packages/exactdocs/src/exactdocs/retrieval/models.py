@@ -450,8 +450,8 @@ class SearchIndexState:
 
     stored_format: int | None
     current_format: int
-    engine: str
-    """The search engine that answers: ``fts5``, ``postgres_fts``, ``pg_search`` or ``memory``."""
+    engine: SearchEngine
+    """The search engine that answers."""
 
     @property
     def needs_rebuild(self) -> bool:
@@ -465,6 +465,19 @@ class RebuiltIndex:
 
     format: int
     entries: int
+
+
+class SearchEngine(StrEnum):
+    """The engine that answers full-text searches (``/healthz`` reports it)."""
+
+    FTS5 = "fts5"
+    """SQLite: FTS5's BM25."""
+    PG_SEARCH = "pg_search"
+    """PostgreSQL with ParadeDB's `pg_search` extension: BM25."""
+    POSTGRES_FTS = "postgres_fts"
+    """PostgreSQL without `pg_search`: its full-text search, ranked with `ts_rank_cd`."""
+    MEMORY = "memory"
+    """The in-memory reference index (tests only)."""
 
 
 class ManifestStatus(StrEnum):

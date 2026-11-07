@@ -87,6 +87,7 @@ async def run_on_fixture(
     local_roles: frozenset[ModelRole] = frozenset(),
     comparison: Comparison | None = None,
     dataset_file: Path = DATASET_FILE,
+    expect_engine: str | None = None,
 ) -> SuiteReport:
     """Import every fixture version, run the dataset through each mode and apply the gates.
 
@@ -101,6 +102,8 @@ async def run_on_fixture(
         comparison: What to compare with (``compare``); none: no comparison.
         dataset_file: The dataset to run: the repository's by default; CI also runs
             ``develop``'s when the dataset changed.
+        expect_engine: The full-text search engine that must answer (CI: ``pg_search`` on
+            ParadeDB); another one fails the suite, so a silent fallback cannot pass.
 
     Returns:
         The judged report.
@@ -112,6 +115,10 @@ async def run_on_fixture(
     container = build(data_dir)
     async with container.running(jobs=False):
         await import_fixture(container, docs_repo)
+        engine = (await container.retrieval.get_search_index_state()).engine
+        if expect_engine is not None and engine != expect_engine:
+            problem = f"the search engine was {engine}, not the expected {expect_engine}"
+            comparison = dataclasses.replace(comparison, problems=(*comparison.problems, problem))
         outcomes = await run_modes(
             dataset,
             retrieval=container.retrieval,
@@ -127,4 +134,5 @@ async def run_on_fixture(
         outcomes,
         comparison,
         fingerprint=fingerprint(dataset),
+        search_engine=engine,
     )

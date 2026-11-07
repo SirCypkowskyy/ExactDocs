@@ -164,6 +164,8 @@ class SuiteReport(_Model):
     warnings: list[str]
     """What a report-only mode got worse at, without failing the suite."""
     modes: list[ModeOutcome]
+    search_engine: str | None = None
+    """The full-text search engine that answered (`fts5`, `pg_search`, `postgres_fts`)."""
 
 
 def _percentile(values: Sequence[float], share: float) -> float:
@@ -559,6 +561,7 @@ def judge(
     comparison: Comparison,
     *,
     fingerprint: str | None = None,
+    search_engine: str | None = None,
 ) -> SuiteReport:
     """Apply the gates.
 
@@ -570,6 +573,7 @@ def judge(
             branch's stored baseline, which may not be below it (the bar only moves up) nor
             above what a gating mode measures.
         fingerprint: The dataset's fingerprint, kept in the report.
+        search_engine: The full-text search engine that answered, kept in the report.
 
     Returns:
         The report: passed only with no wrong version and no error in any mode, no recall@5
@@ -633,6 +637,7 @@ def judge(
         problems=problems,
         warnings=warnings,
         modes=judged,
+        search_engine=search_engine,
     )
 
 
@@ -700,11 +705,13 @@ def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
     verdict = "passed" if report.passed else "failed"
     against = f"in `{report.baseline}`" if report.baseline else "given (none)"
     dataset_id = f" (`{report.fingerprint}`)" if report.fingerprint else ""
+    engine = f" on the `{report.search_engine}` search engine" if report.search_engine else ""
     lines = [
         f"## {title}: {verdict}",
         "",
         (
-            f"{report.cases} questions of the `{report.dataset}` dataset{dataset_id}, per mode. "
+            f"{report.cases} questions of the `{report.dataset}` dataset{dataset_id}{engine}, per "
+            "mode. "
             "Recall and MRR are over the questions whose version has an answer; recall@5 delta "
             f"is against the baseline {against}."
         ),

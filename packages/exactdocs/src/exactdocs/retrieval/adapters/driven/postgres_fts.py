@@ -26,7 +26,6 @@ from exactdocs.retrieval.constants import (
     _PG_SEARCH,
     _PG_SWAP,
     POSTGRES_FORMAT,
-    POSTGRES_FTS_ENGINE,
     POSTGRES_HEADLINE,
     POSTGRES_SNIPPET_WORDS,
     POSTGRES_TAG_CONDITIONS,
@@ -38,6 +37,7 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ManifestHit,
     RebuiltIndex,
+    SearchEngine,
     SearchHit,
     SearchIndexState,
     TagFilter,
@@ -248,7 +248,7 @@ class PostgresSearchIndex:
         async with self.engine.connect() as connection:
             stored = await connection.scalar(text("SELECT format FROM retrieval_search_format"))
         return SearchIndexState(
-            stored_format=stored, current_format=POSTGRES_FORMAT, engine=POSTGRES_FTS_ENGINE
+            stored_format=stored, current_format=POSTGRES_FORMAT, engine=SearchEngine.POSTGRES_FTS
         )
 
     async def rebuild(self) -> RebuiltIndex:
