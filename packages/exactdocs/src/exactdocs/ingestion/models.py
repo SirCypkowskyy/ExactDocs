@@ -1104,7 +1104,7 @@ def _segment(text: str) -> _Segment:
     i = 0
     while i < len(text):
         char = text[i]
-        if char in "*?{":
+        if char in GLOB_CHARS:
             if literal:
                 tokens.append(literal)
                 literal = ""

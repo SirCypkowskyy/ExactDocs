@@ -94,6 +94,33 @@ def test_folders_and_exclusions_translate_to_a_path_selection(path: str, selecte
     assert selection.selects(path) is selected
 
 
+@pytest.mark.parametrize(
+    ("folders", "exclude_folders", "exclude_files", "path", "selected"),
+    [
+        (["app/[locale]"], [], [], "app/[locale]/a.md", True),  # a folder, not a glob (#234)
+        (["./app/[locale]/"], [], [], "app/[locale]/a.md", True),
+        (["app/[locale]"], [], [], "app/other.md", False),
+        (["docs"], ["[draft]"], [], "docs/x/[draft]/a.md", False),  # a bare name, anywhere
+        (["docs"], ["./docs/[draft]"], [], "docs/[draft]/a.md", False),
+        (["docs"], ["./docs/[draft]"], [], "docs/x/[draft]/a.md", True),
+        (["docs"], [], ["[id].md"], "docs/x/[id].md", False),
+        (["docs"], [], ["[id].md"], "docs/x/id.md", True),
+    ],
+)
+def test_names_with_brackets_are_folders_and_files_not_globs(
+    folders: list[str],
+    exclude_folders: list[str],
+    exclude_files: list[str],
+    path: str,
+    *,
+    selected: bool,
+) -> None:
+    selection = context7_selection(folders, exclude_folders, exclude_files)
+
+    assert selection is not None
+    assert selection.selects(path) is selected
+
+
 def test_a_root_folder_or_only_exclusions_mean_every_article_but_those() -> None:
     assert context7_selection([".", "docs"], [], []) == PathSelection.of()
     assert context7_selection([], ["**/tmp/**"], []) == PathSelection.of([], ["**/tmp/**"])
