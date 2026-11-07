@@ -80,6 +80,11 @@ class SlotState(StrEnum):
 class ExecutorSlots(Protocol):
     """Gives each process sharing DBOS's database an executor ID no live process has."""
 
+    @property
+    def claim_grace(self) -> float:
+        """How long ``claim`` waits before it returns a slot whose executor left pending work."""
+        ...
+
     def claim(self) -> AbstractAsyncContextManager[str]:
         """Return this process's executor ID, held until the context ends.
 
@@ -152,15 +157,21 @@ class DbosJobWorker:
     """The DBOS schedule; the one ``adapters.driven.dbos.DbosScheduleSwitch`` pauses."""
     schedule: str = EVERY_MINUTE
     """When it ticks: a DBOS cron expression with seconds. Libraries are due by their interval."""
-    slot_check_interval: float = 5.0
+    slot_check_interval: float = 2.0
     """With ``executors``: how often the worker checks that it still holds its slot, and looks
     for the jobs of stopped executors."""
-    adopt_grace: float = 15.0
-    """With ``executors``: how long a slot must stay free before its jobs are adopted, so that a
-    process whose slot connection merely dropped can take it again first."""
-    slot_check_timeout: float = 4.0
-    """Bound on one slot check (``keep`` and the job check after a retake), well under
-    ``adopt_grace - slot_check_interval``: a check that hangs counts as ``unknown``."""
+    slot_check_timeout: float = 1.5
+    """Bound on one slot check (``keep``, and the job check after a retake): a check that hangs
+    counts as ``unknown``."""
+    slot_give_up: float = 15.0
+    """How long after its last confirmed hold the slot counts as lost while the database cannot
+    be reached: a shorter outage is waited out, a longer one stops the process."""
+    halt_timeout: float = 5.0
+    """Bound on stopping the jobs and DBOS once the slot is lost (``_halt``)."""
+    adopt_grace: float = 30.0
+    """With ``executors``: how long a slot must stay free before its jobs are adopted. More than
+    ``slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout``: a process that
+    lost its connection has stopped its jobs before anyone adopts them (checked at build)."""
     on_slot_lost: Callable[[], None] | None = None
     """Called when another process took this one's slot: the composition root stops the
     process (its jobs are then another executor's, and must not run here as well)."""
@@ -171,8 +182,8 @@ class DbosJobWorker:
     """The clock ``adopt_grace`` is measured with (tests pass their own)."""
     _suspects: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     """Executors whose slots were seen free, and since when (``monotonic``)."""
-    _unconfirmed: dict[str, float] = field(default_factory=dict, init=False, repr=False)
-    """Since when (``monotonic``) the slot could not be confirmed, while it cannot."""
+    _confirmed: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    """When (``monotonic``) the slot was last confirmed held (key ``"at"``)."""
     _lost: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     """Set once the slot is lost: no job starts here any more."""
     _refused: set[str] = field(default_factory=set, init=False, repr=False)
@@ -180,6 +191,31 @@ class DbosJobWorker:
     _destroyed: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     """Set once DBOS was stopped in this run: teardown does not stop it twice."""
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Refuse slot timings that would let two processes run one job.
+
+        Raises:
+            ValueError: A process could still be running its jobs when another one adopts them,
+                or a starting process could resume a slot's jobs before the slot's last holder
+                has stopped them.
+        """
+        stop_by = self.slot_give_up + self.slot_check_interval + self.slot_check_timeout
+        stop_by += self.halt_timeout
+        if stop_by >= self.adopt_grace:
+            message = (
+                f"adopt_grace ({self.adopt_grace} s) must exceed slot_give_up + "
+                f"slot_check_interval + slot_check_timeout + halt_timeout ({stop_by} s)"
+            )
+            raise ValueError(message)
+        if self.executors is not None:
+            needed = self.slot_check_interval + self.slot_check_timeout + self.halt_timeout
+            if self.executors.claim_grace <= needed:
+                message = (
+                    f"the executors' claim_grace ({self.executors.claim_grace} s) must exceed "
+                    f"slot_check_interval + slot_check_timeout + halt_timeout ({needed} s)"
+                )
+                raise ValueError(message)
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
@@ -217,6 +253,7 @@ class DbosJobWorker:
             Nothing, while jobs run.
         """
         self._destroyed.clear()
+        self._confirmed.clear()
         self._lost.clear()
         self._refused.clear()
         DBOS(config=self._config(executor_id))
@@ -308,6 +345,7 @@ class DbosJobWorker:
             executor_id: This process's executor ID.
             executors: The slots.
         """
+        self._confirmed["at"] = self.monotonic()  # claimed just now
         while True:
             await asyncio.sleep(self.slot_check_interval)
             try:
@@ -323,9 +361,9 @@ class DbosJobWorker:
         """Keep the slot; when it is lost, stop taking and running jobs and report it.
 
         A database that cannot be reached is not a lost slot: the worker waits, adopting
-        nothing, and gives up once the slot went unconfirmed for ``adopt_grace`` less two check
-        intervals, so it has stopped before another process can adopt its jobs. A slot another
-        process holds is lost at once.
+        nothing, and gives up ``slot_give_up`` after the slot was last confirmed, so it has
+        stopped (``halt_timeout`` at most) before another process can adopt its jobs
+        (``adopt_grace``). A slot another process holds is lost at once.
 
         Args:
             executor_id: This process's executor ID.
@@ -347,15 +385,20 @@ class DbosJobWorker:
                 ours = False
             state = SlotState.HELD if ours else SlotState.LOST
         if state is SlotState.UNKNOWN:
-            since = self._unconfirmed.setdefault("since", self.monotonic())
-            if self.monotonic() - since < self.adopt_grace - 2 * self.slot_check_interval:
+            last = self._confirmed.setdefault("at", self.monotonic())
+            if self.monotonic() - last < self.slot_give_up:
                 return SlotState.UNKNOWN
             state = SlotState.LOST
-        self._unconfirmed.clear()
         if state is SlotState.HELD:
+            self._confirmed["at"] = self.monotonic()
             return SlotState.HELD
         log.error("executor slot %s is lost: no more jobs run in this process", executor_id)
-        await self._halt()
+        try:
+            await asyncio.wait_for(self._halt(), self.halt_timeout)
+        except TimeoutError:
+            log.exception(
+                "stopping the jobs took over %.0f s; stopping the process", self.halt_timeout
+            )
         if self.on_slot_lost is not None:
             self.on_slot_lost()
         return SlotState.LOST

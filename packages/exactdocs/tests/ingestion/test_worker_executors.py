@@ -35,6 +35,7 @@ def workflow(workflow_id: str, executor: str, status: str, version: str = "v2") 
 class FakeSlots:
     states: list[SlotState] = field(default_factory=list)
     dead: set[str] = field(default_factory=set)
+    claim_grace: float = 15.0
 
     def claim(self) -> Any:
         raise NotImplementedError
@@ -64,7 +65,10 @@ def worker(
         workflow="w",
         version="v2",
         adopt_grace=10,
+        slot_give_up=5,
         slot_check_interval=1,
+        slot_check_timeout=0.5,
+        halt_timeout=1,
         on_slot_lost=None if lost is None else lambda: lost.append("stop"),
         monotonic=(lambda: now[0]) if now is not None else lambda: 0.0,
     )
@@ -218,14 +222,14 @@ async def test_an_unreachable_database_is_waited_out_before_the_slot_counts_as_l
     subject = worker(slots, lost, now=now)
 
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
-    now[0] += 7  # under the grace less two check intervals (10 - 2 x 1 s here)
+    now[0] += 4  # under the give-up time (5 s here) since the slot was last confirmed
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.HELD  # back in time
     assert (lost, no_dbos) == ([], [])
 
     slots.states += [SlotState.UNKNOWN, SlotState.UNKNOWN]
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
-    now[0] += 8  # it must stop before another process could adopt its jobs
+    now[0] += 5  # unconfirmed for the give-up time: it stops before anyone can adopt its jobs
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
     assert lost == ["stop"]
 
@@ -309,3 +313,63 @@ async def test_old_ended_ticks_are_pruned_and_recent_ones_kept(
     assert asked["name"] == dbos_worker.SCHEDULE_WORKFLOW
     assert "end_time" in asked  # only those created before the retention
     assert deleted == [["sched-x-1"]]
+
+
+async def test_the_give_up_clock_runs_from_the_last_confirmed_hold(no_dbos: list[str]) -> None:
+    now = [0.0]
+    lost: list[str] = []
+    slots = FakeSlots(states=[SlotState.HELD, SlotState.UNKNOWN, SlotState.UNKNOWN])
+    subject = worker(slots, lost, now=now)
+
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.HELD
+    now[0] += 4  # the first failed check comes late (a check that hung, then the interval)
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.UNKNOWN
+    now[0] += 1  # 5 s since the last hold, though only 1 s since the first failure
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
+    assert lost == ["stop"]
+    assert no_dbos == ["destroy"]
+
+
+@pytest.mark.parametrize(
+    ("adopt_grace", "give_up", "halt", "complaint"),
+    [
+        # 15 + 2 + 1.5 + 5 = 23.5 s: a process may still run its jobs when they are adopted
+        (23.0, 15.0, 5.0, "adopt_grace"),
+        (30.0, 22.0, 5.0, "adopt_grace"),
+        # 2 + 1.5 + 12 = 15.5 s: a starting process could resume jobs their holder still runs
+        (60.0, 15.0, 12.0, "claim_grace"),
+    ],
+)
+def test_slot_timings_that_could_run_a_job_twice_are_refused(
+    adopt_grace: float, give_up: float, halt: float, complaint: str
+) -> None:
+    with pytest.raises(ValueError, match=complaint):
+        DbosJobWorker(
+            run_job=_nothing,
+            recover_jobs=_nothing,
+            submit_queued_jobs=_nothing,
+            system_database_url="postgresql+psycopg://x/y",
+            executors=FakeSlots(claim_grace=15),
+            queue="q",
+            workflow="w",
+            version="v2",
+            adopt_grace=adopt_grace,
+            slot_give_up=give_up,
+            halt_timeout=halt,
+        )
+
+
+def test_the_default_slot_timings_hold_together() -> None:
+    worker_ = DbosJobWorker(
+        run_job=_nothing,
+        recover_jobs=_nothing,
+        submit_queued_jobs=_nothing,
+        system_database_url="postgresql+psycopg://x/y",
+        executors=FakeSlots(claim_grace=15),
+        queue="q",
+        workflow="w",
+        version="v2",
+    )
+
+    assert (worker_.slot_check_interval, worker_.slot_check_timeout) == (2.0, 1.5)
+    assert (worker_.slot_give_up, worker_.halt_timeout, worker_.adopt_grace) == (15.0, 5.0, 30.0)

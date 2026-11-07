@@ -81,8 +81,8 @@ class PostgresExecutorSlots:
     """The database the processes share."""
     schema: str = "dbos"
     """DBOS's schema: ``claim`` looks there for the pending workflows of the slot it takes."""
-    check_timeout: float = 4.0
-    """Bound on each database round trip of ``keep`` (below the worker's check interval)."""
+    check_timeout: float = 1.5
+    """Bound on one whole ``keep`` (both its round trips): the worker's ``slot_check_timeout``."""
     claim_grace: float = 15.0
     """How long ``claim`` waits before it returns a slot whose executor left pending workflows:
     a process that lost the slot but still runs them notices within this time and stops."""
@@ -136,8 +136,8 @@ class PostgresExecutorSlots:
     async def keep(self) -> SlotState:
         """Check that this process still holds its slot; take it again if it was freed.
 
-        Each database round trip is bounded by ``check_timeout``: a connection to a host that
-        no longer answers (a failover) must not hold the worker past the adoption grace.
+        The whole check is bounded by ``check_timeout``: a connection to a host that no longer
+        answers (a failover) must not hold the worker past its give-up time.
 
         Returns:
             ``held``; ``retaken`` when the slot was lost and taken again (the worker then checks
@@ -151,9 +151,10 @@ class PostgresExecutorSlots:
         )
         if not isinstance(slot, int) or not isinstance(engine, AsyncEngine):
             return SlotState.LOST
+        deadline = asyncio.get_running_loop().time() + self.check_timeout
         if isinstance(connection, AsyncConnection):
             try:
-                async with asyncio.timeout(self.check_timeout):
+                async with asyncio.timeout_at(deadline):
                     held = await connection.scalar(_holds, {"space": EXECUTOR_LOCKS, "slot": slot})
                     await connection.commit()
             except DBAPIError, OSError, TimeoutError:
@@ -167,7 +168,7 @@ class PostgresExecutorSlots:
         # workflows; a retake that meets it reports `lost` and this process stops, though
         # nobody adopted anything. That errs on the safe side and is left as it is.
         try:
-            async with asyncio.timeout(self.check_timeout):
+            async with asyncio.timeout_at(deadline):
                 fresh = await engine.connect()
                 taken = await self._try(fresh, slot)
         except DBAPIError, OSError, TimeoutError:
@@ -219,12 +220,11 @@ class PostgresExecutorSlots:
             .where(statuses.c.executor_id == executor_id, statuses.c.status == "PENDING")
             .limit(1)
         )
-        try:
-            async with self.engine.connect() as connection:
-                found = await connection.scalar(query)
-        except DBAPIError:
-            return False
-        return found is not None
+        name = f'"{self.schema}".workflow_status'
+        async with self.engine.connect() as connection:
+            if await connection.scalar(text("SELECT to_regclass(:name)"), {"name": name}) is None:
+                return False  # the first start: DBOS has not created its tables yet
+            return await connection.scalar(query) is not None
 
     @staticmethod
     async def _try(connection: AsyncConnection, slot: int) -> bool:

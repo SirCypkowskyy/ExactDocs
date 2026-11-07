@@ -7,6 +7,7 @@ module is skipped as a whole; CI sets ``EXACTDOCS_REQUIRE_POSTGRES=1``, so there
 import asyncio
 import json
 import signal
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
-from exactdocs.ingestion.adapters.driving.dbos_worker import SlotState
+from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker, SlotState
 from import_child import big_repository, page, run
 
 if ADMIN_URL is None:
@@ -326,28 +327,81 @@ async def test_a_process_whose_slot_connection_died_takes_it_back_or_stops(
             assert await first.keep() is SlotState.LOST  # so this one must stop
 
 
-async def test_a_database_that_cannot_be_reached_leaves_the_slot_unknown_not_lost(
+def _allow_connections(database: str, *, allowed: bool) -> None:
+    """Let connections into the database, or keep every new one out (an outage, seen from it)."""
+    admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
+    with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
+        a.execute(
+            sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS {}").format(
+                sql.Identifier(database), sql.Literal(allowed)
+            )
+        )
+
+
+def _slot_worker(stopped: list[str], slots: PostgresExecutorSlots) -> DbosJobWorker:
+    """A worker that only checks its slot here (no DBOS runs), with the production timings."""
+
+    async def nothing(*_: object, **__: object) -> None:
+        return None
+
+    return DbosJobWorker(
+        run_job=nothing,
+        recover_jobs=nothing,
+        submit_queued_jobs=nothing,
+        system_database_url="postgresql+psycopg://unused/unused",
+        executors=slots,
+        queue="q",
+        workflow="w",
+        version="v",
+        on_slot_lost=lambda: stopped.append("stop"),
+    )
+
+
+async def test_a_12_second_outage_is_waited_out(
     engines: tuple[AsyncEngine, AsyncEngine], on_postgres: PostgresDatabase
 ) -> None:
-    slots = PostgresExecutorSlots(engine=engines[0], check_timeout=2)
-    admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
+    stopped: list[str] = []
+    slots = PostgresExecutorSlots(engine=engines[0])
+    worker = _slot_worker(stopped, slots)
 
-    def allow(*, connections: bool) -> None:
-        with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
-            a.execute(
-                sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS {}").format(
-                    sql.Identifier(on_postgres.name), sql.Literal(connections)
-                )
-            )
-
-    async with slots.claim():
-        allow(connections=False)  # an outage: nobody can connect, and the slot's connection dies
+    async with slots.claim() as mine:
+        assert await worker.check_slot(mine, slots) is SlotState.HELD
+        _allow_connections(on_postgres.name, allowed=False)
         try:
-            await _drop_slot_connection_as_admin(on_postgres.name)
-            assert await slots.keep() is SlotState.UNKNOWN
+            await _drop_slot_connection_as_admin(on_postgres.name)  # the slot's connection dies
+            outage_ends = time.monotonic() + 12
+            seen = set()
+            while time.monotonic() < outage_ends:  # checks every slot_check_interval, as _watch
+                seen.add(await worker.check_slot(mine, slots))
+                await asyncio.sleep(worker.slot_check_interval)
         finally:
-            allow(connections=True)
-        assert await slots.keep() is SlotState.RETAKEN  # nobody else took it meanwhile
+            _allow_connections(on_postgres.name, allowed=True)
+        assert seen == {SlotState.UNKNOWN}
+        assert await worker.check_slot(mine, slots) is SlotState.HELD  # taken back
+
+    assert stopped == []
+
+
+async def test_a_slot_another_process_took_stops_this_one_before_any_adoption(
+    engines: tuple[AsyncEngine, AsyncEngine],
+) -> None:
+    stopped: list[str] = []
+    slots, other = (
+        PostgresExecutorSlots(engine=engines[0]),
+        PostgresExecutorSlots(engine=engines[1]),
+    )
+    worker = _slot_worker(stopped, slots)
+
+    async with slots.claim() as mine:
+        await _drop_slot_connection(engines[0], 0)  # its connection dies, the slot is free...
+        async with other.claim() as theirs:  # ...and a process starting now takes it
+            assert theirs == mine
+            started = time.monotonic()
+            assert await worker.check_slot(mine, slots) is SlotState.LOST
+            assert stopped == ["stop"]
+            # Stopped within one check and the halt, long before anyone adopts its jobs.
+            assert time.monotonic() - started < worker.slot_check_timeout + worker.halt_timeout
+            assert worker.slot_check_interval + worker.slot_check_timeout < worker.adopt_grace
 
 
 async def _drop_slot_connection_as_admin(database: str) -> None:

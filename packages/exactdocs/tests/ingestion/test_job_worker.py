@@ -393,6 +393,8 @@ async def test_after_a_lost_slot_threads_still_run_and_the_worker_stops_cleanly(
     tmp_path: Path,
 ) -> None:
     class Taken:
+        claim_grace = 15.0
+
         def claim(self) -> AbstractAsyncContextManager[str]:
             raise NotImplementedError
 
