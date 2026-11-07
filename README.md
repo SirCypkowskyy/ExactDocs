@@ -584,6 +584,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   models' vectors are never mixed). The old space is dropped once the new one covers every
   version. The tokens each call used (from the provider's answer) are recorded per UTC day and
   month in the `retrieval_ai_spend` table, which budgets will read (#95).
+  On PostgreSQL there is no vector store yet (pgvector, #243): nothing is embedded or queued, and
+  the estimate answers `vector_store_unavailable`.
 - **Estimate first:** `exactdocs ai estimate` (where the server runs) prints the chunks still to
   embed, an estimate of their tokens (4 characters per token, never a tokenizer) and of the US
   dollars from the bundled price list, without calling any model;

@@ -362,7 +362,8 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   active versions of libraries with AI on count, and each stored chunk once (a blob held by many
   versions is embedded once). Tokens are 4 characters each and the price is the bundled price
   list's (`null` for a model it does not know): an estimate, as `note` says. No model or
-  tokenizer is called. `model` is `null` and the counts 0 when no embedding model is configured.
+  tokenizer is called. `model` is `null` and the counts 0 when no embedding model is configured;
+  400 `vector_store_unavailable` on a database without a vector store (PostgreSQL until #243).
 
 ## Jobs, access and health
 
