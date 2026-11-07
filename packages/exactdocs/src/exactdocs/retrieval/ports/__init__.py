@@ -7,6 +7,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
+    SearchTracer,
 )
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
@@ -43,5 +44,6 @@ __all__ = [
     "SearchDocs",
     "SearchIndex",
     "SearchIndexMaintenance",
+    "SearchTracer",
     "SearchableVersions",
 ]

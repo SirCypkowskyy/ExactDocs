@@ -52,6 +52,7 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.mcp_config import Client, render
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.telemetry import start_telemetry
 from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from exactdocs.identity.dtos import CreateFirstAdminCommand, ResetPasswordCommand
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
@@ -987,6 +988,7 @@ async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltInde
 
 
 async def _serve_stdio(settings: Settings) -> None:
+    start_telemetry(settings)  # nothing unless EXACTDOCS_TELEMETRY=otlp; never on stdout
     try:
         container = ReadOnlyContainer.build(settings)
         async with container.running():  # no worker, no migration: the HTTP server owns both

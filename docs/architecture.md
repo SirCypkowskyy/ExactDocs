@@ -632,6 +632,34 @@ that last step, which is one transaction in the catalog.
   (`CopyManifest`) and `RetrievalChunkIndex` (`IndexManifest`, `GetChunkSets`,
   `DiscardPendingChunks`).
 
+## Telemetry
+
+Off by default, and then nothing is set up: only the OpenTelemetry *API* is imported (FastAPI,
+FastMCP and DBOS use it too), which records nothing without an SDK. With `EXACTDOCS_TELEMETRY=otlp`,
+`bootstrap/telemetry.py:start_telemetry` (called by `create_app` and `serve --stdio`) loads
+`bootstrap/otlp.py`, which sets up the plain OpenTelemetry SDK: a tracer and a meter provider,
+exporting over OTLP/HTTP to the collector the `OTEL_EXPORTER_OTLP_*` variables name, never to the
+console. A process's providers are set once and cannot be replaced, so each test that turns
+telemetry on runs in a process of its own. (The Telemetry decision named Logfire as the SDK; it
+was dropped in #87: its pydantic plugin loaded into every process, crashed on a malformed
+`pyproject.toml` in the working directory and could export validated input, and the image had no
+room for its 9 MB.)
+
+- **Requests:** FastAPI's built-in OpenTelemetry (`FastAPI(telemetry=...)`, not
+  `instrument_fastapi`, which records request arguments), with the health checks excluded and
+  `auto_configure` off.
+- **Scrubbing:** unless the operator opted in to query text, spans pass `ScrubbingExporter` on
+  their way out: the query-text values in `url.query` become `REDACTED`, and exception events and
+  error statuses lose their message and stack trace (a pydantic `ValidationError` quotes its
+  `input_value`), keeping the exception type; FastMCP's `enduser.id` and `enduser.scope` (who
+  called) are dropped. Health and readiness probes (`PROBE_PATHS`) get no request span.
+- **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
+  for the search and one per stage (`version`, `rank`, `chunks`), in its mode. The query text is a
+  separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without
+  a tracer the use cases get `UntracedSearches`, which records nothing.
+- **Jobs:** bootstrap wraps every job handler in `TracedJobHandler` (`ingestion.<kind>` spans);
+  ingestion's code is unchanged. MCP tool calls get FastMCP's own spans.
+
 ## Python conventions
 
 - **`Protocol`, not ABC.** Ports are structural. Adapters and use cases never inherit from them;
