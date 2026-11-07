@@ -862,6 +862,10 @@ class DeployKey:
         if len(key) > _MAX_KEY:
             raise InvalidCredentialError(CredentialProblem.TOO_LONG)
         lines = key.split("\n")
+        if len(lines) == 1 and key.startswith("-----BEGIN ") and "-----END " in key:
+            # A password box or a JSON client flattened it. Re-wrapping a secret here would
+            # guess at its layout; saying why is safer, and the web form re-wraps it itself.
+            raise InvalidCredentialError(CredentialProblem.ONE_LINE_KEY)
         if (
             not (lines[0].startswith("-----BEGIN ") and lines[0].endswith("PRIVATE KEY-----"))
             or not lines[-1].startswith("-----END ")

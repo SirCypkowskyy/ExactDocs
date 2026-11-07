@@ -107,6 +107,17 @@ async def test_a_deploy_key_with_a_passphrase_is_refused_with_words_that_say_so(
     assert body not in str(raised.value)
 
 
+def test_a_deploy_key_sent_on_one_line_is_refused_naming_the_lost_line_breaks() -> None:
+    flat = KEY.replace("\n", "")
+
+    with pytest.raises(InvalidCredentialError, match="lost its line breaks") as raised:
+        DeployKey(private_key=flat)
+
+    assert "AAAA" not in str(raised.value)
+    with pytest.raises(InvalidCredentialError, match="OpenSSH or PEM"):
+        DeployKey(private_key="-----BEGIN OPENSSH PRIVATE KEY-----AAAA")  # no END: not a key
+
+
 @pytest.mark.parametrize(
     ("url", "credential", "fits"),
     [

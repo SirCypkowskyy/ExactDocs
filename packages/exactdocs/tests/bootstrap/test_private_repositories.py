@@ -217,6 +217,22 @@ async def test_an_api_token_cannot_send_a_credential_but_may_add_public_docs(
     assert (await client.get("/api/v1/libraries/fixture/docs-repo")).status_code == 404
 
 
+async def test_a_key_sent_on_one_line_through_the_api_is_refused_saying_why(
+    client: httpx.AsyncClient,
+) -> None:
+    flat = await client.post(
+        "/api/v1/repositories/check",
+        json={
+            "url": "git@git.example.com:acme/x.git",
+            "credential": {"kind": "ssh_key", "private_key": KEY.replace("\n", "")},
+        },
+    )
+
+    assert (flat.status_code, flat.json()["error"]) == (422, "invalid_credential")
+    assert "lost its line breaks" in flat.json()["detail"]
+    assert KEY_BODY not in flat.text
+
+
 async def test_a_session_may_send_a_credential(
     client: httpx.AsyncClient, docs_repo: DocsRepo
 ) -> None:

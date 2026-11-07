@@ -92,11 +92,11 @@ export function hasPassphrase(raw: string): boolean {
     return true;
   }
   const match = KEY.exec(raw.replace(/\r\n?/g, "\n").trim());
-  if (!match || match[1] !== "OPENSSH PRIVATE KEY") return false;
+  if (match?.[1] !== "OPENSSH PRIVATE KEY") return false;
   let blob: string;
   try {
     // Enough of the key for the magic and the cipher name; the rest is never decoded.
-    blob = atob((match[2] ?? "").replace(/\s+/g, "").slice(0, 64));
+    blob = atob((match?.[2] ?? "").replace(/\s+/g, "").slice(0, 64));
   } catch {
     return false;
   }

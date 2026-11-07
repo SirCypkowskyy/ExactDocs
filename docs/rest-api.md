@@ -303,7 +303,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Private repositories**: a `credential` (`{"kind": "token", ...}` or `{"kind": "ssh_key", ...}`)
   is accepted by `POST /repositories/check`, `POST /repositories/refs`, `POST /repositories/preview`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
-  and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
+  and its host, and never returned. A deploy key keeps its line breaks (`\n` in JSON); one sent
+  on a single line, or with a passphrase, is 422 `invalid_credential` with a sentence saying so. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.
 - **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version`, the database's
   `schema_revision`, the `search_index_format` the search index was built in (`null` if none is

@@ -80,6 +80,10 @@ class CredentialProblem(StrEnum):
     USERNAME = "a token's user name is letters, digits, '.', '_' and '-' (at most 100)"
     KEY = "a deploy key is an unencrypted private key in OpenSSH or PEM format"
     TOO_LONG = "the deploy key is too long"
+    ONE_LINE_KEY = (
+        "the deploy key has lost its line breaks: send it as its file holds it, the BEGIN and "
+        "END lines and each line of the body on its own line"
+    )
     ENCRYPTED_KEY = "the deploy key has a passphrase: use a key without one"
     HTTPS_ONLY = "an access token goes with an https:// URL (http:// only for localhost)"
     SSH_ONLY = "a deploy key goes with an ssh:// or user@host:path URL"
