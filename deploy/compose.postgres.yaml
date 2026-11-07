@@ -4,7 +4,7 @@
 services:
   db:
     # PostgreSQL 17 with pg_search and pgvector; any PostgreSQL 14 or newer works as well.
-    image: paradedb/paradedb:0.26.5-pg17
+    image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
     environment:
       POSTGRES_USER: exactdocs
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}

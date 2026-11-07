@@ -27,7 +27,7 @@ jobs:
     # a role without CREATEDB for the scenario that needs one.
     services:
       postgres:
-        image: paradedb/paradedb:0.26.5-pg17@sha256:af82b608d85fccc315dcaa65fdeef63c94837906bb7984f378ab645c8d4e81b8
+        image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
         env:
           POSTGRES_USER: exactdocs
           POSTGRES_PASSWORD: exactdocs-ci
