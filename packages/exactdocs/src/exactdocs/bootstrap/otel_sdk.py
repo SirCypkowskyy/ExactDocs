@@ -79,8 +79,10 @@ def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> b
 def exposition() -> tuple[bytes, str]:
     """Render the metrics for a Prometheus scrape: what the Prometheus reader collects now.
 
-    The registry is ``prometheus_client``'s default one, where the reader registered itself; it
-    also holds the process and Python runtime collectors (memory, CPU, garbage collection).
+    The registry is ``prometheus_client``'s default one, where the reader registered itself. Chosen
+    over a dedicated ``CollectorRegistry`` because it also holds the process and Python runtime
+    collectors (memory, CPU, open files, garbage collection); the price is that a dependency
+    registering its own collectors there would show up too (none does today).
 
     Returns:
         The text exposition and its content type.

@@ -639,10 +639,10 @@ that last step, which is one transaction in the catalog.
 Off by default, and then nothing is set up: only the OpenTelemetry *API* is imported (FastAPI,
 FastMCP and DBOS use it too), which records nothing without an SDK. With `EXACTDOCS_TELEMETRY=otlp`
 or `EXACTDOCS_METRICS`, `bootstrap/telemetry.py:start_telemetry` (called by `create_app` and
-`serve --stdio`) loads `bootstrap/otlp.py`, which sets up the plain OpenTelemetry SDK: for OTLP, a
+`serve --stdio`) loads `bootstrap/otel_sdk.py`, which sets up the plain OpenTelemetry SDK: for OTLP, a
 tracer and a meter provider exporting over OTLP/HTTP to the collector the `OTEL_EXPORTER_OTLP_*`
-variables name, never to the console; for metrics, a Prometheus reader on the meter provider. A process's providers are set once and cannot be replaced, so each test that turns
-telemetry on runs in a process of its own. (The Telemetry decision named Logfire as the SDK; it
+variables name, never to the console; for metrics, a Prometheus reader on the meter provider.
+A process's providers are set once and cannot be replaced, so each test that turns telemetry on runs in a process of its own. (The Telemetry decision named Logfire as the SDK; it
 was dropped in #87: its pydantic plugin loaded into every process, crashed on a malformed
 `pyproject.toml` in the working directory and could export validated input, and the image had no
 room for its 9 MB.)
@@ -669,9 +669,11 @@ room for its 9 MB.)
 - **Prometheus:** with `EXACTDOCS_METRICS`, `start_telemetry(..., scraped=True)` (from
   `create_app`; stdio MCP has no HTTP to serve it) adds a `PrometheusMetricReader` to the meter
   provider, beside the OTLP reader when that is on too, and `create_app` mounts `GET /metrics`
-  (`build_metrics_router`), which renders `prometheus_client`'s registry. It sits behind the Host
-  check and needs no sign-in (Prometheus has none; the metrics hold nothing user-specific); the
-  reader sends nothing. Scrapes, like the probes, get no request span or metric
+  (`build_metrics_router`), which renders `prometheus_client`'s default registry (chosen for its
+  process and runtime collectors). It sits behind the Host check and takes no account sign-in
+  (Prometheus has none; the metrics hold nothing user-specific); `EXACTDOCS_METRICS_TOKEN`, when
+  set, makes it require that bearer token (`hmac.compare_digest`, 401 otherwise). The reader
+  sends nothing. Scrapes, like the probes, get no request span or metric
   (`UNTRACED_PATHS`). Off, the route does not exist and `prometheus_client` is not imported. Any
   library that records through OpenTelemetry's global meter (pydantic-ai's
   `gen_ai.client.token.usage`, once the AI modes exist) shows up without more wiring.

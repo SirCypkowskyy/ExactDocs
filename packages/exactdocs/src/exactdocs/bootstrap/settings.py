@@ -70,9 +70,13 @@ class Settings(BaseSettings):
     default: queries can hold code, names or secrets, and traces are read by more people.
     """
     metrics: bool = False
-    """Serve Prometheus metrics at `/metrics` (request, search, job and LLM-usage metrics, no
-    query text, library or caller), behind the Host allowlist and without sign-in. `serve` only;
+    """Serve Prometheus metrics at `/metrics` (request, search and job metrics, LLM usage once the
+    AI modes exist; no query text, library or caller), behind the Host allowlist. `serve` only;
     with `EXACTDOCS_TELEMETRY=otlp` too, the same metrics also go to the collector.
+    """
+    metrics_token: SecretStr | None = None
+    """When set, `/metrics` answers only `Authorization: Bearer <this token>` (401 otherwise).
+    Unset, it needs no credentials. Blank counts as unset.
     """
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,
     # `*.example.com`) and browser origins (e.g. `https://docs.example.com`), comma-separated.
@@ -96,7 +100,7 @@ class Settings(BaseSettings):
             raise ValueError(message)
         return value
 
-    @field_validator("secret_key", "secret_key_previous", mode="before")
+    @field_validator("secret_key", "secret_key_previous", "metrics_token", mode="before")
     @classmethod
     def _blank_secret_key_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value

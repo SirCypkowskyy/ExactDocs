@@ -2,20 +2,24 @@
 
 ``EXACTDOCS_TELEMETRY=otlp`` exports to the operator's collector; ``EXACTDOCS_METRICS`` serves
 ``/metrics`` for Prometheus. Only the OpenTelemetry *API* is imported here, which records nothing
-until an SDK is set up. The SDK (``bootstrap/otlp.py``) is loaded by ``start_telemetry`` when the
-operator turned either on, never otherwise: a default process has no SDK, no provider, no exporter
-and no ``/metrics``.
+until an SDK is set up. The SDK (``bootstrap/otel_sdk.py``) is loaded by ``start_telemetry`` when
+the operator turned either on, never otherwise: a default process has no SDK, no provider, no
+exporter and no ``/metrics``.
 """
 
+import hmac
 import importlib
 import logging
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from time import perf_counter
 from typing import Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
+from fastapi.responses import JSONResponse
 from opentelemetry import metrics, trace
+from pydantic import SecretStr
 
 from exactdocs.bootstrap.constants import (
     ERROR_TYPE_ATTRIBUTE,
@@ -25,9 +29,10 @@ from exactdocs.bootstrap.constants import (
     JOB_TRACER_NAME,
     METRICS_PATH,
     OTLP_ENDPOINT_VARIABLE,
-    OTLP_MODULE,
+    SDK_MODULE,
     UNTRACED_PATHS,
 )
+from exactdocs.bootstrap.rest import ErrorResponse
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.models import Job, JobKind
 from exactdocs.ingestion.ports.driven import JobHandler, JobProgress
@@ -54,7 +59,7 @@ def start_telemetry(settings: Settings, *, scraped: bool = False) -> None:
     if not (otlp_on or prometheus_on):
         return
     # Loaded here, not imported at the top: with both off the SDK is never loaded.
-    sdk = importlib.import_module(OTLP_MODULE)
+    sdk = importlib.import_module(SDK_MODULE)
     if otlp_on and not sdk.exports("TRACES"):
         logger.warning(
             "EXACTDOCS_TELEMETRY=otlp, but no OTLP endpoint is set (%s): no traces are exported",
@@ -67,26 +72,47 @@ def start_telemetry(settings: Settings, *, scraped: bool = False) -> None:
         logger.warning("telemetry was already set up in this process; it is left as it is")
 
 
-def build_metrics_router() -> APIRouter:
+def build_metrics_router(*, token: SecretStr | None = None) -> APIRouter:
     """``GET /metrics``: the Prometheus text exposition, for an app with ``EXACTDOCS_METRICS`` on.
 
-    No sign-in (Prometheus scrapes with none); the Host allowlist applies, as everywhere but the
-    probes. It holds no query text, library, user or caller: request metrics are by route
-    template, search metrics by search, stage and mode, job metrics by kind.
+    No account sign-in (Prometheus has none): with ``token`` (``EXACTDOCS_METRICS_TOKEN``) a
+    scrape must send it as a bearer token, else it gets 401; without, anyone who reaches the port
+    may scrape. The Host allowlist applies either way, as everywhere but the probes. The metrics
+    hold no query text, library, user or caller: request metrics are by route template, search
+    metrics by search, stage and mode, job metrics by kind.
+
+    Args:
+        token: The bearer token a scrape must send; ``None``: none is needed.
 
     Returns:
         The router.
     """
     router = APIRouter()
+    expected = token.get_secret_value().encode() if token else None
 
     @router.get(METRICS_PATH, include_in_schema=False)
-    def scrape() -> Response:  # sync: collecting is CPU work, it runs in the thread pool
-        """Collect the metrics and render them for Prometheus.
+    def scrape(request: Request) -> Response:  # sync: collecting is CPU work, in the thread pool
+        """Collect the metrics and render them for Prometheus, if the scrape may have them.
+
+        Args:
+            request: The scrape.
 
         Returns:
-            The text exposition.
+            The text exposition, or 401 when a token is configured and was not sent.
         """
-        body, content_type = importlib.import_module(OTLP_MODULE).exposition()
+        if expected is not None:
+            scheme, _, sent = request.headers.get("authorization", "").partition(" ")
+            if scheme.lower() != "bearer" or not hmac.compare_digest(sent.encode(), expected):
+                body = ErrorResponse(
+                    error="unauthenticated",
+                    detail="send EXACTDOCS_METRICS_TOKEN as a bearer token to scrape /metrics",
+                )
+                return JSONResponse(
+                    body.model_dump(),
+                    status_code=HTTPStatus.UNAUTHORIZED,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        body, content_type = importlib.import_module(SDK_MODULE).exposition()
         return Response(content=body, media_type=content_type)
 
     return router

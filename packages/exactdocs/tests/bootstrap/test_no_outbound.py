@@ -381,7 +381,7 @@ def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str
         "with TestClient(app, base_url='http://localhost') as client:\n"
         "    assert client.get('/api/health').status_code == 200\n"
         "assert settings.check_for_updates == 'off', settings.check_for_updates\n"
-        "assert 'exactdocs.bootstrap.otlp' not in sys.modules\n"
+        "assert 'exactdocs.bootstrap.otel_sdk' not in sys.modules\n"
         "loaded = [m for m in sys.modules\n"
         "          if m.startswith(('logfire', 'opentelemetry.sdk', 'prometheus_client'))]\n"
         "assert not loaded, loaded\n"

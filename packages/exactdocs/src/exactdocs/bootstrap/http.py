@@ -80,7 +80,7 @@ def create_app(container: Container) -> FastAPI:
 
     app.include_router(build_probe_router(container))
     if settings.metrics:
-        app.include_router(build_metrics_router())
+        app.include_router(build_metrics_router(token=settings.metrics_token))
 
     v1 = APIRouter(prefix="/v1", responses=error_responses())
     # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.

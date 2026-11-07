@@ -410,7 +410,8 @@ chunks until the new ones are in place.
 | `EXACTDOCS_JOB_POLL_SECONDS` | `1` | How often the job worker looks for a queued job to start (at most 60). An idle server polls no more often than this; lower it only if a second of delay before an import starts matters |
 | `EXACTDOCS_TELEMETRY` | `off` | `otlp`: traces and metrics over OTLP/HTTP to your OpenTelemetry collector, named by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `..._METRICS_ENDPOINT`); a signal with no endpoint, or with `OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` set to `none`, is not exported. See [Privacy and observability](#privacy-and-observability) |
 | `EXACTDOCS_TELEMETRY_QUERY_TEXT` | `false` | Keep the text of search queries in the traces. Off, it is left out of every span and redacted from request URLs |
-| `EXACTDOCS_METRICS` | `false` | `true`: Prometheus metrics at `/metrics` (requests, searches, imports, syncs, LLM usage), without sign-in but behind the Host allowlist; `serve` only, not `--stdio`. See [Privacy and observability](#privacy-and-observability) |
+| `EXACTDOCS_METRICS` | `false` | `true`: Prometheus metrics at `/metrics` (requests, searches, imports, syncs; LLM usage once the AI retrieval modes exist), behind the Host allowlist; `serve` only, not `--stdio`. See [Privacy and observability](#privacy-and-observability) |
+| `EXACTDOCS_METRICS_TOKEN` | – | A bearer token `/metrics` requires (`Authorization: Bearer <token>`, else 401). Unset, a scrape needs no credentials. Set it whenever the port is reachable beyond a network you trust |
 | `EXACTDOCS_AUTO_SYNC_SCHEDULE` | `0 * * * * *` | When the scheduled check ticks (a DBOS cron expression, seconds first). Each tick checks the libraries whose own interval is up (`PUT /api/v1/libraries/{owner}/{repo}/auto-sync`): new matching tags imported, old automatic versions pruned, branches re-synced. Paused while no library has a schedule. An invalid expression stops startup |
 
 ### Upgrading
@@ -681,12 +682,15 @@ pipeline.
 Prometheus text format, from an OpenTelemetry metric reader that only answers scrapes. Off (the
 default), there is no `/metrics` (404) and `prometheus_client` is not imported. With
 `EXACTDOCS_TELEMETRY=otlp` as well, it is a second reader on the same meter provider: the
-collector gets the same metrics. Point Prometheus at the address and Host name you serve:
+collector gets the same metrics. Point Prometheus at the address and Host name you serve, with
+the token in a file if you set `EXACTDOCS_METRICS_TOKEN`:
 
 ```yaml
 scrape_configs:
   - job_name: exactdocs
     static_configs: [{targets: ["exactdocs:3000"]}]   # the Host must be allowed (EXACTDOCS_ALLOWED_HOSTS)
+    authorization:                                    # only with EXACTDOCS_METRICS_TOKEN
+      credentials_file: /etc/prometheus/exactdocs-metrics-token
 ```
 
 | Metric (Prometheus name) | Labels |
@@ -697,14 +701,20 @@ scrape_configs:
 | `gen_ai_client_token_usage` and pydantic-ai's cost metrics | LLM usage, once the AI retrieval modes exist: anything recorded through OpenTelemetry's global meter appears here |
 | `process_*`, `python_*`, `target_info` | the process (memory, CPU, open files), the Python runtime, and the service name and version |
 
-**No sign-in on `/metrics`, by design.** Prometheus scrapes without a session, and the metrics
-carry nothing a user typed or owns: no query text, library, version, user name or token client
-ID, whatever `EXACTDOCS_TELEMETRY_QUERY_TEXT` says (requests are labelled with the route template,
-never the path). They do tell how busy the instance is and which version it runs. The Host
-allowlist applies as on every other path (an unknown `Host` gets 400), but it is a DNS-rebinding
-guard, not access control: on an instance reachable from the internet, block `/metrics` at your
-reverse proxy and let Prometheus scrape the container's port on the internal network. Scrapes and
-the health probes are not counted as requests.
+**Who may scrape.** `/metrics` takes no account sign-in (Prometheus has none). The metrics carry
+nothing a user typed or owns: no query text, library, version, user name or token client ID,
+whatever `EXACTDOCS_TELEMETRY_QUERY_TEXT` says (requests are labelled with the route template,
+never the path). They do tell how busy the instance is, its error types, the process's memory and
+open files, and which Python and ExactDocs versions it runs. So set `EXACTDOCS_METRICS_TOKEN`
+whenever the port is reachable beyond a network you trust: a scrape without
+`Authorization: Bearer <token>` then gets 401 (compared in constant time). Without it, anyone who
+reaches the port can scrape. The Host allowlist applies either way (an unknown `Host` gets 400),
+but it is a DNS-rebinding guard, not access control; blocking `/metrics` at your reverse proxy also
+works. Scrapes and the health probes are not counted as requests.
+
+`/metrics` renders `prometheus_client`'s default registry, on purpose: besides ExactDocs' own
+metrics it holds the process and Python runtime collectors. A dependency that registers its own
+Prometheus collectors there would show up too; none does today.
 
 This is tested, not just promised, in
 [`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py): an import over

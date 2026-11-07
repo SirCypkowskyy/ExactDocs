@@ -7,6 +7,7 @@ their own (``test_telemetry_end_to_end_in_its_own_process``).
 """
 
 import asyncio
+import importlib
 import os
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import httpx
 import httpx2
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from opentelemetry import metrics
@@ -29,12 +31,14 @@ from opentelemetry.trace import StatusCode
 from pydantic import SecretStr
 
 from app_lifespan import serving
+from exactdocs.bootstrap.constants import SDK_MODULE
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.otlp import redact_query, scrub
+from exactdocs.bootstrap.otel_sdk import redact_query, scrub
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import (
     TracedJobHandler,
+    build_metrics_router,
     is_untraced,
     search_tracer,
     traced_jobs,
@@ -146,6 +150,72 @@ def test_health_checks_get_no_request_span() -> None:
 
 def test_the_metrics_scrape_gets_no_request_span_or_metric() -> None:
     assert is_untraced({"type": "http", "path": "/metrics"})
+
+
+class FakeExposition:
+    """Stands in for the SDK module: renders a fixed scrape, so no provider is set up here."""
+
+    @staticmethod
+    def exposition() -> tuple[bytes, str]:
+        return b"exactdocs_up 1\n", "text/plain; version=0.0.4; charset=utf-8"
+
+
+@pytest.fixture
+def metrics_client(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Build a client of ``/metrics`` alone, guarded by the token given (or none).
+
+    Returns:
+        A function from the token to the client.
+    """
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name, *a: FakeExposition if name == SDK_MODULE else real_import(name, *a),
+    )
+
+    def build(token: str | None) -> TestClient:
+        app = FastAPI()
+        app.include_router(build_metrics_router(token=SecretStr(token) if token else None))
+        return TestClient(app)
+
+    return build
+
+
+def test_without_a_metrics_token_prometheus_scrapes_without_credentials(
+    metrics_client: Any,
+) -> None:
+    assert metrics_client(None).get("/metrics").text == "exactdocs_up 1\n"
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [None, "Bearer wrong-token", "bearer", "Basic c2NyYXBlOnM=", "Bearer s3cret-scrape-tokenX"],
+)
+def test_with_a_metrics_token_a_scrape_without_it_is_refused(
+    metrics_client: Any, authorization: str | None
+) -> None:
+    headers = {"authorization": authorization} if authorization else {}
+
+    refused = metrics_client("s3cret-scrape-token").get("/metrics", headers=headers)
+
+    assert refused.status_code == 401
+    assert refused.headers["www-authenticate"] == "Bearer"
+    assert refused.json()["error"] == "unauthenticated"
+    assert "exactdocs_up" not in refused.text
+
+
+def test_with_a_metrics_token_prometheus_scrapes_with_it(metrics_client: Any) -> None:
+    scraped = metrics_client("s3cret-scrape-token").get(
+        "/metrics", headers={"authorization": "Bearer s3cret-scrape-token"}
+    )
+
+    assert scraped.status_code == 200
+    assert scraped.text == "exactdocs_up 1\n"
+
+
+def test_a_blank_metrics_token_is_unset() -> None:
+    assert Settings(metrics_token=" ").metrics_token is None
 
 
 def test_off_nothing_is_traced() -> None:
@@ -506,6 +576,18 @@ def with_otlp() -> bool:
 
 
 @pytest.fixture
+def metrics_token(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Require a bearer token on ``/metrics``; set before the app reads the settings.
+
+    Returns:
+        The token.
+    """
+    token = "s3cret-scrape-token"
+    monkeypatch.setenv("EXACTDOCS_METRICS_TOKEN", token)
+    return token
+
+
+@pytest.fixture
 async def metered_app(monkeypatch: pytest.MonkeyPatch, with_otlp: bool) -> AsyncIterator[FastAPI]:
     """The app with ``EXACTDOCS_METRICS`` on (and OTLP too, if asked), an admin and one version.
 
@@ -543,9 +625,10 @@ def use_an_llm() -> None:
         )
 
 
-async def scrape(app: FastAPI, host: str = "localhost") -> httpx.Response:
+async def scrape(app: FastAPI, host: str = "localhost", token: str | None = None) -> httpx.Response:
+    headers = {"authorization": f"Bearer {token}"} if token else {}
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url=f"http://{host}"
+        transport=httpx.ASGITransport(app=app), base_url=f"http://{host}", headers=headers
     ) as prometheus:
         return await prometheus.get("/metrics")
 
@@ -599,13 +682,15 @@ async def test_prometheus_scrapes_request_search_and_llm_metrics_without_query_t
 @pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
 @pytest.mark.parametrize("with_otlp", [True])
 async def test_prometheus_is_a_reader_beside_the_otlp_export(
-    with_otlp: bool, collector: Collector, metered_app: FastAPI
+    with_otlp: bool, metrics_token: str, collector: Collector, metered_app: FastAPI
 ) -> None:
     assert with_otlp
     await search_everywhere(metered_app)
 
     collector.wait_for(lambda found: names(found) >= EXPECTED)
-    text = (await scrape(metered_app)).text
+    # EXACTDOCS_METRICS_TOKEN is set for this app: a scrape without it gets nothing.
+    assert (await scrape(metered_app)).status_code == 401
+    text = (await scrape(metered_app, token=metrics_token)).text
 
     # One meter provider, two readers: Prometheus pulls, the OTLP exporter pushes the same.
     assert sampled(text, "exactdocs_search_duration_seconds_count", exactdocs_search="search_docs")
