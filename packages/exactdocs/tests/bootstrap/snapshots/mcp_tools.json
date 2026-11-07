@@ -82,8 +82,15 @@
               "type": "string"
             },
             "starts_chunk": {
-              "description": "True when the chunk starts with this heading; false when the library's chunking merged it\ninto a chunk that starts earlier (`read_chunk` then returns that whole chunk).",
-              "type": "boolean"
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "True when the chunk starts with this heading; false when the library's chunking merged it\ninto a chunk that starts earlier (`read_chunk` then returns that whole chunk); null when\n`chunk_id` is."
             }
           },
           "required": [

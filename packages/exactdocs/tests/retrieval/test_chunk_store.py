@@ -1007,6 +1007,44 @@ async def test_heading_records_are_stored_with_the_chunk_set_and_come_back_with_
     sets = await world.retrieval.get_chunk_sets(
         GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["merged", "old"])
     )
-    assert sets.chunks["merged"][0].headings == merged.headings
+    stored = sets.chunks["merged"][0].headings or []
+    assert [h.model_dump() for h in stored] == [h.model_dump() for h in merged.headings or []]
     assert sets.chunks["old"][0].headings is None
     assert await world.count_chunk_sets() == 2
+
+
+async def test_a_set_stored_without_heading_records_is_reused_as_it_is_by_one_with_them(
+    world: World,
+) -> None:
+    # A default-config set stored before #251 (no records) and the same blob cut again now (with
+    # records) share a key: the records are not in the digest, and the first write wins.
+    def chunk(headings: list[ChunkHeadingIn] | None) -> ChunkIn:
+        return ChunkIn(
+            heading_path=["Guide"],
+            occurrence_index=0,
+            content="# Guide\n",
+            content_hash="h-guide",
+            anchor="guide",
+            headings=headings,
+        )
+
+    recorded = [ChunkHeadingIn(heading_path=["Guide"], anchor="guide", starts_chunk=True)]
+    for manifest_id, ref, headings in (("m1", "v1", None), ("m2", "v2", recorded)):
+        await world.retrieval.index_manifest(
+            IndexManifestCommand(
+                manifest_id=manifest_id,
+                library=PAYMENTS,
+                ref=ref,
+                config_hash=CONFIG,
+                articles=[ArticleChunksIn(path="a.md", blob_sha="blob", chunks=[chunk(headings)])],
+            )
+        )
+
+    assert await world.count_chunk_sets() == 1
+    for manifest_id in ("m1", "m2"):
+        (section,) = await world.chunks.article(manifest_id, "a.md")
+        assert section.headings is None
+    sets = await world.retrieval.get_chunk_sets(
+        GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["blob"])
+    )
+    assert sets.chunks["blob"][0].headings is None

@@ -125,13 +125,15 @@ async def import_versions(
                                     content_hash=c.content_hash,
                                     anchor=c.anchor,
                                     code_languages=list(c.code_languages),
-                                    headings=[
+                                    headings=None
+                                    if c.headings is None
+                                    else [
                                         ChunkHeadingIn(
                                             heading_path=list(h.heading_path),
                                             anchor=h.anchor,
                                             starts_chunk=h.starts_chunk,
                                         )
-                                        for h in c.headings or ()
+                                        for h in c.headings
                                     ],
                                 )
                                 for c in chunker.chunk(a)

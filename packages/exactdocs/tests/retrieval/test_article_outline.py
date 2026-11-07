@@ -457,3 +457,11 @@ def test_heading_records_that_do_not_match_their_chunk_are_refused(headings: lis
                 "headings": headings,
             }
         )
+
+
+def test_a_heading_no_chunk_records_has_no_chunk_anchor_or_starts_chunk() -> None:
+    tree = outline([section(0, "A", "B")])
+
+    (a,) = [OutlineSectionOut.from_model(node) for node in tree.sections]
+    assert (a.chunk_id, a.anchor, a.starts_chunk) == (None, None, None)
+    assert (a.children[0].chunk_id, a.children[0].starts_chunk) == ("c0", True)

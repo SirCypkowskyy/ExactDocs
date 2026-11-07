@@ -1979,9 +1979,10 @@ export interface components {
             /**
              * Starts Chunk
              * @description True when the chunk starts with this heading; false when the library's chunking merged it
-             *     into a chunk that starts earlier (`read_chunk` then returns that whole chunk).
+             *     into a chunk that starts earlier (`read_chunk` then returns that whole chunk); null when
+             *     `chunk_id` is.
              */
-            readonly starts_chunk: boolean;
+            readonly starts_chunk: boolean | null;
             /**
              * Children
              * @description The headings directly under it, in document order.

@@ -7902,9 +7902,16 @@
             "description": "The heading's own anchor in the article; null when `chunk_id` is."
           },
           "starts_chunk": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Starts Chunk",
-            "description": "True when the chunk starts with this heading; false when the library's chunking merged it\ninto a chunk that starts earlier (`read_chunk` then returns that whole chunk)."
+            "description": "True when the chunk starts with this heading; false when the library's chunking merged it\ninto a chunk that starts earlier (`read_chunk` then returns that whole chunk); null when\n`chunk_id` is."
           },
           "children": {
             "items": {

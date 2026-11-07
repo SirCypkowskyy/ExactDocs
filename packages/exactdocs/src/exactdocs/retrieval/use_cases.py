@@ -22,7 +22,7 @@ from exactdocs.retrieval.constants import (
 from exactdocs.retrieval.dtos import (
     ArticleOutlineOut,
     ArticleOutlineQuery,
-    ChunkHeadingIn,
+    ChunkHeadingOut,
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
@@ -567,7 +567,7 @@ class GetChunkSetsUseCase:
                         headings=None
                         if c.headings is None
                         else [
-                            ChunkHeadingIn(
+                            ChunkHeadingOut(
                                 heading_path=list(h.heading_path),
                                 anchor=h.anchor,
                                 starts_chunk=h.starts_chunk,

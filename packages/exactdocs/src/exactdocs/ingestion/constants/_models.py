@@ -15,8 +15,8 @@ CHUNKER_VERSION: Final[int] = 1
 """
 MERGED_HEADINGS_VERSION: Final[int] = 1
 """Bump on any change to the heading records of chunks that hold more than one heading (#251). It
-feeds the hash of every config but the default one (which never merges headings), so those
-libraries' chunk sets are cut again when they are next imported or re-chunked.
+feeds the hash of the configs that can merge headings (a split level above h6, or ``min_chars``),
+so those libraries' chunk sets are cut again when they are next imported or re-chunked.
 """
 MAX_HEADING_LEVEL: Final[int] = 6
 """Deepest Markdown heading level a chunking config may split at."""

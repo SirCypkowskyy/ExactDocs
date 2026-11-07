@@ -244,6 +244,17 @@ class ChunkHeadingIn(_Dto):
     """True for the heading the chunk is named after; false for one merged into it."""
 
 
+class ChunkHeadingOut(_Dto):
+    """One heading a stored chunk holds."""
+
+    heading_path: list[str]
+    """The heading and every heading above it."""
+    anchor: str
+    """The heading's own anchor in the article."""
+    starts_chunk: bool
+    """True for the heading the chunk is named after; false for one merged into it."""
+
+
 class ChunkIn(_Dto):
     """One chunk as the chunker produced it."""
 
@@ -332,7 +343,7 @@ class SetChunkOut(_Dto):
     content_hash: str
     anchor: str
     code_languages: list[str]
-    headings: list[ChunkHeadingIn] | None = None
+    headings: list[ChunkHeadingOut] | None = None
     """Every heading the chunk holds, in order; null when they were not recorded."""
 
 
@@ -525,9 +536,10 @@ class OutlineSectionOut(_Dto):
     """The chunk that holds this heading, for `read_chunk`; null when no chunk records it."""
     anchor: str | None
     """The heading's own anchor in the article; null when `chunk_id` is."""
-    starts_chunk: bool
+    starts_chunk: bool | None
     """True when the chunk starts with this heading; false when the library's chunking merged it
-    into a chunk that starts earlier (`read_chunk` then returns that whole chunk)."""
+    into a chunk that starts earlier (`read_chunk` then returns that whole chunk); null when
+    `chunk_id` is."""
     children: list[OutlineSectionOut]
     """The headings directly under it, in document order."""
 
@@ -546,7 +558,7 @@ class OutlineSectionOut(_Dto):
             heading=node.heading,
             chunk_id=entry.chunk_id if entry else None,
             anchor=entry.anchor if entry else None,
-            starts_chunk=entry.starts_chunk if entry else False,
+            starts_chunk=entry.starts_chunk if entry else None,
             children=[cls.from_model(child) for child in node.children],
         )
 

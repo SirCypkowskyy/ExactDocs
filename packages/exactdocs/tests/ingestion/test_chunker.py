@@ -532,3 +532,25 @@ def test_a_setting_that_can_merge_headings_changes_the_hash_it_had_before_headin
 
     hashed = MarkdownChunker().configured(config).config_hash
     assert hashed != hashlib.sha256(before.encode()).hexdigest()[:32]
+
+
+@pytest.mark.parametrize("max_chars", [1, 50, 500])
+def test_a_setting_that_cannot_merge_headings_keeps_the_hash_it_had_before_heading_records(
+    max_chars: int,
+) -> None:
+    engine = f"markdown-it-py {markdown_it.__version__}"
+    before = json.dumps(
+        [models.PARSER_VERSION, models.CHUNKER_VERSION, 6, engine, 0, max_chars, "markdown"],
+        separators=(",", ":"),
+    )
+
+    hashed = MarkdownChunker().configured(ChunkingConfig(max_chars=max_chars)).config_hash
+    assert hashed == hashlib.sha256(before.encode()).hexdigest()[:32]
+
+
+@pytest.mark.parametrize("max_chars", [1, 50, 500])
+@pytest.mark.parametrize("path", ARTICLES, ids=lambda p: str(p.relative_to(TESTS)))
+def test_max_chars_alone_never_merges_headings(path: Path, max_chars: int) -> None:
+    chunks = MarkdownChunker(ChunkingConfig(max_chars=max_chars)).chunk(_parse(path))
+
+    assert all(h.starts_chunk for c in chunks for h in c.headings or ())

@@ -979,16 +979,16 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     A fix to the parser or the chunker changes it, so stored articles are re-chunked instead of
     reusing a chunk set made by older code. The size bounds and the chunker are added only when
     they differ from the defaults, so the chunk sets stored before they existed stay valid.
-    Every other config can merge headings into a chunk, so its hash also names
-    ``MERGED_HEADINGS_VERSION``: the chunks record those headings, and a set cut before they did
-    is cut again instead of reused. The default config cuts at every heading, so its chunk sets
-    already tell every heading and keep their hash.
+    A config that can merge headings into a chunk (a split level above h6, or ``min_chars``) also
+    names ``MERGED_HEADINGS_VERSION``: its chunks record those headings, and a set cut before
+    they did is cut again instead of reused. The others cut at every heading (``max_chars`` only
+    cuts whole sections), so their chunk sets already tell every heading and keep their hash.
     """
     fields: list[object] = [PARSER_VERSION, CHUNKER_VERSION, config.split_depth, engine]
     extra = (config.min_chars, config.max_chars, config.chunker)
     if extra != (0, None, DEFAULT_CHUNKER):
         fields.extend(extra)
-    if config != ChunkingConfig():  # it can merge headings, which its chunks now record
+    if config.split_depth < MAX_HEADING_LEVEL or config.min_chars:  # it can merge headings
         fields.append(f"headings-{MERGED_HEADINGS_VERSION}")
     payload = json.dumps(fields, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
