@@ -41,11 +41,14 @@ from exactdocs.retrieval.constants import (
     _PG_VECTOR_CREATE,
     _PG_VECTOR_INLINE,
     _PG_VECTOR_NEAREST,
+    _PG_VECTOR_PENDING,
     _PG_VECTOR_UPSERT,
+    _VECTOR_ABSENT,
     _VECTOR_COVERAGE,
     _VECTOR_DELETE,
     _VECTOR_DROP,
     _VECTOR_MISSING,
+    _VECTOR_PENDING_ARTICLES,
     PGVECTOR_EXTENSION,
     PGVECTOR_MODULE,
     POSTGRES_TAG_CONDITIONS,
@@ -63,6 +66,8 @@ from exactdocs.retrieval.models import (
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
+    PendingArticle,
+    PendingChunks,
     SpaceState,
     TagFilter,
     VectorCoverage,
@@ -367,6 +372,47 @@ class PostgresVectorIndex:
             await self._live(connection, space_id)
             rows = await connection.execute(statement, {"manifest": manifest_id, "limit": limit})
             return [(r.blob_sha, r.config_hash, r.position) for r in rows]
+
+    async def pending(
+        self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
+    ) -> PendingChunks:
+        """Count the distinct chunks of these manifests without a vector in the space, in SQL.
+
+        Plain SQL over the chunk tables: it needs no extension, so an estimate works before
+        pgvector is installed.
+
+        Args:
+            space_id: The space; ``None`` counts every chunk.
+            manifest_ids: The manifests.
+
+        Returns:
+            The chunks and the characters of their text and heading paths.
+        """
+        if not manifest_ids:
+            return PendingChunks(chunks=0, characters=0)
+        missing = "" if space_id is None else _VECTOR_ABSENT.format(table=vector_table(space_id))
+        statement = text(_PG_VECTOR_PENDING.format(missing=missing)).bindparams(
+            bindparam("manifests", expanding=True)
+        )
+        by_article = text(_VECTOR_PENDING_ARTICLES.format(missing=missing)).bindparams(
+            bindparam("manifests", expanding=True)
+        )
+        params = {"manifests": sorted(set(manifest_ids))}
+        async with self.engine.connect() as connection:
+            if space_id is not None:
+                await self._live(connection, space_id)
+            row = (await connection.execute(statement, params)).one()
+            articles = (await connection.execute(by_article, params)).all()
+        return PendingChunks(
+            chunks=int(row.chunks),
+            characters=int(row.characters),
+            articles=tuple(
+                PendingArticle(
+                    manifest_id=a.manifest_id, article_path=a.article_path, chunks=int(a.chunks)
+                )
+                for a in articles
+            ),
+        )
 
     def _write(self) -> AbstractAsyncContextManager[AsyncConnection]:
         """Open a write transaction that takes its turn with the others (``begin_immediate``).

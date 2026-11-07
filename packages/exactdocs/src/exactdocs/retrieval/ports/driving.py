@@ -10,7 +10,14 @@ from exactdocs.retrieval.dtos import (
     ChunkSetsOut,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
+    EmbedBatchCommand,
+    EmbeddedBatchOut,
+    EmbeddingEstimateOut,
+    EmbeddingPlanOut,
     EmbeddingSpaceOut,
+    EmbedVersionCommand,
+    FinishedEmbeddingOut,
+    FinishEmbeddingCommand,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
@@ -40,6 +47,8 @@ from exactdocs.retrieval.dtos import (
     SearchDocsResult,
     SearchIndexStateOut,
     SetLibraryRetrievalCommand,
+    UnembeddedVersionsOut,
+    UnembeddedVersionsQuery,
     VectorStoreStateOut,
 )
 
@@ -395,5 +404,90 @@ class OpenEmbeddingSpace(Protocol):
 
         Returns:
             The space that is not retired for it, created if there was none.
+        """
+        ...
+
+
+class PlanEmbedding(Protocol):
+    """Start an ``embed`` job of one version: pick its space and say how much is missing.
+
+    Sends nothing of the library when it has AI off. Creates the space of the configured model
+    when it has none (asking the model its dimensions once, with a fixed text, unless they are
+    configured), and says so: every other version then needs embedding too.
+    """
+
+    async def __call__(self, command: EmbedVersionCommand) -> EmbeddingPlanOut:
+        """Run the use case.
+
+        Args:
+            command: The version.
+
+        Returns:
+            The plan; ``skipped`` says why nothing is to be sent.
+        """
+        ...
+
+
+class EmbedBatch(Protocol):
+    """Embed the next chunks of a manifest that have no vector in the space (one durable step).
+
+    Reads the library's AI setting and the configured model again first: a library switched off,
+    or a model changed, meanwhile stops the job with nothing sent. Records the usage the provider
+    returned in the spend ledger.
+    """
+
+    async def __call__(self, command: EmbedBatchCommand) -> EmbeddedBatchOut:
+        """Run the use case.
+
+        Args:
+            command: The plan's version, manifest and space.
+
+        Returns:
+            What was embedded, and whether the manifest is done.
+        """
+        ...
+
+
+class FinishEmbedding(Protocol):
+    """Make a space active once it covers every version, and retire the spaces it replaces."""
+
+    async def __call__(self, command: FinishEmbeddingCommand) -> FinishedEmbeddingOut:
+        """Run the use case.
+
+        Args:
+            command: The space a job embedded into.
+
+        Returns:
+            Its state, and the spaces retired.
+        """
+        ...
+
+
+class ListUnembeddedVersions(Protocol):
+    """Name the versions the configured embedding model has not fully embedded (no call made)."""
+
+    async def __call__(self, query: UnembeddedVersionsQuery) -> UnembeddedVersionsOut:
+        """Run the use case.
+
+        Args:
+            query: Every library, or one.
+
+        Returns:
+            The versions to queue ``embed`` jobs for.
+        """
+        ...
+
+
+class EstimateEmbedding(Protocol):
+    """Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.
+
+    Never calls the model or a tokenizer: 4 characters per token, and the bundled price list.
+    """
+
+    async def __call__(self) -> EmbeddingEstimateOut:
+        """Run the use case.
+
+        Returns:
+            The estimate.
         """
         ...

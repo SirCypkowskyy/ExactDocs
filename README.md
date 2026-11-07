@@ -523,6 +523,8 @@ model = "corp:gpt-4.1-mini"
 
 [ai.embedding]
 model = "corp:text-embedding-3-small"   # instance-wide only
+dimensions = 1024                       # optional: ask the model for shorter vectors
+batch_size = 64                         # chunks per call and per durable step
 ```
 
 The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compatible`,
@@ -573,8 +575,26 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 - **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
   prints the latency, the model that answered and an embedding's dimensions, never a key;
   `POST /api/v1/ai/providers/{name}/check` does the same for one profile.
+- **Background embedding:** with an embedding model set, every version is embedded in the
+  background, one `embed` job per version (a durable step per `batch_size` chunks, resumed after
+  a restart), queued on start, after each import and whenever the model changes. Each chunk is
+  sent once, as its article title, heading path and text, even when many versions hold it; a
+  library with AI off is never sent. Changing the model, its `dimensions` or the input format
+  starts a new embedding space: every version is embedded again, and until a version is covered
+  by the new model its searches answer BM25 with `fallback_reason: embedding_in_progress` (two
+  models' vectors are never mixed). The old space is dropped once the new one covers every
+  version. The tokens each call used (from the provider's answer) are recorded per UTC day and
+  month, for the instance and for the library, in the `retrieval_ai_spend` table, which budgets
+  will read (#95). Saving the embedding role's profile over REST re-queues what it changes; a
+  batch the provider does not answer for now (a timeout, a 429) is tried again a few times.
+  On PostgreSQL the vectors go to pgvector (see *PostgreSQL*); without its `vector` extension
+  each embed job is skipped with `vector_store_unavailable`.
+- **Estimate first:** `exactdocs ai estimate` (where the server runs) prints the chunks still to
+  embed, an estimate of their tokens (4 characters per token, never a tokenizer) and of the US
+  dollars from the bundled price list, without calling any model;
+  `GET /api/v1/ai/embedding/estimate` is the same over REST.
 
-No mode uses the roles yet: the hybrid, HyDE and agentic pipelines arrive with #91 onwards.
+The hybrid, HyDE and agentic pipelines arrive with #92 onwards.
 
 ### PostgreSQL
 

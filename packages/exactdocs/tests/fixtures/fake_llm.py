@@ -6,6 +6,8 @@ and the Cohere-compatible rerank (``/v1/rerank``); a path with ``/broken/`` answ
 404. It records every request (method, path,
 headers, body), so a test can see what was sent and with which credentials. A second instance
 serves as a trap: pointed to by ``OPENAI_BASE_URL`` and the like, it must receive nothing.
+Given a ``hold`` event, it answers embedding requests only once the event is set, so a test can
+look at an instance while an embedding run is in progress.
 """
 
 import json
@@ -100,9 +102,16 @@ def _answer(path: str, body: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+HOLD_SECONDS = 60.0
+"""The longest an embedding request waits for its ``hold`` event."""
+
+
 @contextmanager
-def gateway() -> Generator[FakeGateway]:
+def gateway(hold: threading.Event | None = None) -> Generator[FakeGateway]:
     """Serve a fake gateway on a free loopback port until the block ends.
+
+    Args:
+        hold: When given, embedding requests wait until it is set (at most ``HOLD_SECONDS``).
 
     Yields:
         The gateway.
@@ -122,6 +131,8 @@ def gateway() -> Generator[FakeGateway]:
                     body=body,
                 )
             )
+            if hold is not None and self.path.split("?")[0].endswith("/embeddings"):
+                hold.wait(HOLD_SECONDS)
             answer = _answer(self.path.split("?")[0], body)
             payload = json.dumps(answer or {"error": "not found"}).encode()
             self.send_response(200 if answer is not None else 404)

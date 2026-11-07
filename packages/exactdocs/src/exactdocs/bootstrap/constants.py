@@ -23,7 +23,16 @@ from exactdocs_kernel import (
 DEFAULT_TOKEN_DAYS: Final[int] = 90
 """Lifetime of an API token created on the command line when ``--days`` is not given."""
 LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"serve", "reindex", "backup", "restore", "admin create", "admin reset-password", "ai check"}
+    {
+        "serve",
+        "reindex",
+        "backup",
+        "restore",
+        "admin create",
+        "admin reset-password",
+        "ai check",
+        "ai estimate",
+    }
 )
 """CLI commands that work on the local data directory instead of calling a server."""
 
