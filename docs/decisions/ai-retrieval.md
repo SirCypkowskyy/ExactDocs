@@ -382,6 +382,7 @@ identities and tokens are never sent.
 - **Gates.** Wrong-version rate must be 0 for every mode; recall@5 may not drop more than 2 points
   below the baseline. A mode becomes a default only when it beats BM25 recall@5 by at least
   5 points with wrong-version rate 0. Agentic runs are also checked from their traces (#99).
+- How to run it, the dataset and the tiers as built: [Retrieval evals](../evals.md).
 
 ## Where the code lives
 

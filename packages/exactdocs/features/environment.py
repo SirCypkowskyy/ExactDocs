@@ -12,6 +12,8 @@ from behave.runner import Context
 # The fixture builder is test support shared with pytest, not part of the package. behave has no
 # pythonpath option; import_module keeps ruff (E402) and ty from needing the path at lint time.
 sys.path.insert(0, str(Path(__file__).parents[1] / "tests" / "fixtures"))
+# The retrieval eval suite (retrieval_eval.feature) is development tooling beside the package.
+sys.path.insert(0, str(Path(__file__).parents[1] / "evals"))
 fixture_repo = import_module("fixture_repo")
 
 

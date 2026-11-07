@@ -20,4 +20,5 @@ reports
 # the wheels contain only src/ (see deploy/Dockerfile): tests and acceptance features stay out
 packages/*/tests
 packages/*/features
+packages/*/evals
 packages/*/alembic.ini

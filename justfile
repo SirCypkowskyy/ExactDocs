@@ -69,6 +69,10 @@ arch:
 bdd *args:
     uv run behave {{ args }}
 
+# Retrieval eval suite: modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
+eval *args:
+    uv run python packages/exactdocs/evals/run_retrieval_eval.py {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test

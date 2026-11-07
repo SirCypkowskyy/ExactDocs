@@ -108,6 +108,9 @@ Rules for content:
   - `top_n: 3` accepts the section anywhere in the first three hits (default: first);
   - `xfail: "<reason and #issue>"` marks a known gap; the suite expects it to fail (strict), so
     delete the key when the issue is fixed.
+- Add the same case to the retrieval eval dataset
+  (`packages/exactdocs/evals/retrieval_eval/dataset.yaml`, `kind: identifier`); a test fails until
+  the two agree. See [docs/evals.md](../../../../../docs/evals.md).
 - Versions are `v1.3.0`, `v1.4.0` and `next`. `test_fixture_repo.py` checks that every entry
   points at a heading that exists and contains the query, so a typo fails fast. Whether the
   section really ranks first is asserted by the ranking suite, not here.

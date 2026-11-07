@@ -1,0 +1,12 @@
+{
+  "note": "Written by `just eval --write-baseline`; CI compares with the copy on develop.",
+  "modes": {
+    "bm25": {
+      "recall_at_1": 0.8,
+      "recall_at_5": 0.92,
+      "recall_at_10": 0.94,
+      "mrr": 0.854,
+      "wrong_version_rate": 0.0
+    }
+  }
+}

@@ -13,6 +13,9 @@ dev = [
     # while no model is configured (RUN-02), and later AI tests can use pydantic-ai's test models.
     "exactdocs[ai]",
     "httpx>=0.28",
+    # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):
+    # exact pin, it moves with pydantic-ai-slim in the `ai` extra.
+    "pydantic-evals==2.60.0",
     "pytest>=9",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7",
@@ -36,7 +39,13 @@ exactdocs-kernel = { workspace = true }
 [tool.ruff]
 target-version = "py314"
 line-length = 100
-src = ["packages/*/src", "packages/*/tests", "packages/*/tests/fixtures", "packages/*/features"]
+src = [
+    "packages/*/src",
+    "packages/*/tests",
+    "packages/*/tests/fixtures",
+    "packages/*/features",
+    "packages/*/evals",
+]
 # The fixture docs repository is content under test (byte-exact, incl. invalid UTF-8), not code.
 extend-exclude = [
     "web",
@@ -98,6 +107,8 @@ ignore = [
     "implicit-namespace-package",
 ]
 "e2e/**" = ["D", "implicit-namespace-package", "suspicious-subprocess-import"]
+# The eval runner script sits beside its package, outside any package, like e2e/run.py.
+"packages/exactdocs/evals/run_retrieval_eval.py" = ["implicit-namespace-package"]
 "**/features/**" = ["assert", "D", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]
@@ -135,7 +146,7 @@ docstring-code-format = true
 # ---------------------------------------------------------------- ty
 [tool.ty.environment]
 python-version = "3.14"
-extra-paths = ["packages/exactdocs/tests/fixtures"]
+extra-paths = ["packages/exactdocs/tests/fixtures", "packages/exactdocs/evals"]
 
 [tool.ty.src]
 include = ["packages"]
@@ -153,7 +164,10 @@ rules = { call-non-callable = "ignore" }
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["packages/exactdocs-kernel/tests", "packages/exactdocs/tests"]
-pythonpath = ["packages/exactdocs/tests/fixtures"]  # fixture_repo.py
+pythonpath = [
+    "packages/exactdocs/tests/fixtures",  # fixture_repo.py
+    "packages/exactdocs/evals",  # retrieval_eval, the retrieval eval suite
+]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
