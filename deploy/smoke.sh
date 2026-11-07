@@ -19,6 +19,10 @@ for _ in $(seq 1 60); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; 
 curl -fsS "$base/api/health" || { echo "server did not start"; exit 1; }
 echo
 
+step "liveness and readiness probes, without sign-in"
+curl -fsS "$base/healthz" | grep -q '"database_reachable":true'
+curl -fsS "$base/readyz" | grep -q '"status":"ready"'
+
 step "setup, sign in"
 # a fresh instance offers only the setup; setup does not sign in
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/libraries")" = 403

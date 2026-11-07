@@ -110,6 +110,16 @@ WEB_DIST: Final[Path] = Path(__file__).parent.parent / "_web"
 """Built web UI, copied into the package by CI / the Docker build (see web/README.md)."""
 MCP_PATH: Final[str] = "/mcp"
 """Where the HTTP app serves MCP."""
+LIVENESS_PATH: Final[str] = "/healthz"
+"""Liveness probe: 200 while the process answers, whatever the database does."""
+HEALTH_ALIAS_PATH: Final[str] = "/api/health"
+"""The liveness probe's older path, kept for existing clients."""
+READINESS_PATH: Final[str] = "/readyz"
+"""Readiness probe: 200 when the database answers, 503 otherwise."""
+PROBE_PATHS: Final[frozenset[str]] = frozenset({LIVENESS_PATH, HEALTH_ALIAS_PATH, READINESS_PATH})
+"""Paths orchestrators poll: never traced or metered (telemetry, when added, must skip them)."""
+PROBE_TIMEOUT_SECONDS: Final[float] = 2.0
+"""How long a probe waits for the database before it reports it unreachable."""
 _UNSAFE_METHODS: Final[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 """Methods that change state, so a browser request with them must come from a trusted origin."""
 

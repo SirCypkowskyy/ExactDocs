@@ -15,7 +15,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, event
+from sqlalchemy import Connection, event, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
@@ -209,6 +209,16 @@ async def current_revision(engine: AsyncEngine) -> str | None:
         return await connection.run_sync(
             lambda sync: MigrationContext.configure(sync).get_current_revision()
         )
+
+
+async def ping(engine: AsyncEngine) -> None:
+    """Run the cheapest query there is, proving a connection can be made and used.
+
+    Args:
+        engine: The database to ask; a ``SQLAlchemyError`` means it cannot be reached.
+    """
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
 
 
 async def check_schema_is_current(engine: AsyncEngine) -> None:

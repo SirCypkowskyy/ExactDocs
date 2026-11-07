@@ -140,8 +140,9 @@ USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 3000
+# Readiness: unhealthy while the database does not answer (README *Health checks*).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/health', timeout=2)"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/readyz', timeout=2)"]
 ENTRYPOINT ["tini", "--", "exactdocs"]
 CMD ["serve"]
 # Metadata last: it changes on every build and must not invalidate the layers above.
