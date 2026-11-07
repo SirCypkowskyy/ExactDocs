@@ -15,6 +15,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.opentelemetry import OpenTelemetrySearchTracer
@@ -112,6 +113,7 @@ async def build(tracer: RecordingTracer | None) -> RetrievalModule:
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
         tracer=tracer,
     )
     await module.index_manifest(

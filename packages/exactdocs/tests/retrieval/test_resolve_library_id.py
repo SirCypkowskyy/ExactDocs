@@ -6,6 +6,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driving.mcp import format_library
@@ -170,6 +171,7 @@ async def world(
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
     for library, articles in docs.items():
         await module.index_manifest(

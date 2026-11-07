@@ -258,3 +258,9 @@ SEARCH_DURATION_BUCKETS: Final[tuple[float, ...]] = (
     0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 10,
 )  # fmt: skip
 """Bucket bounds of the search duration histogram, in seconds (a stage can take a millisecond)."""
+
+# ---------------------------------------------------------------- models (retrieval modes)
+DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "hybrid", "bm25")
+"""The default mode when neither the call, the library nor the instance names one: the first that
+can run. Agentic is never a default; a call, a library or the instance must choose it.
+"""

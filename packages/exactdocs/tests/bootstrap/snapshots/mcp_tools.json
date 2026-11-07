@@ -992,7 +992,10 @@
         "retrieval_mode": {
           "description": "How a search found its results. One result shape serves every mode.",
           "enum": [
-            "bm25"
+            "bm25",
+            "hybrid",
+            "hybrid_hyde",
+            "agentic"
           ],
           "type": "string"
         }
@@ -1044,7 +1047,7 @@
             }
           ],
           "default": null,
-          "description": "Retrieval mode. Only 'bm25' today; any other value is an error. Omit for the default."
+          "description": "Retrieval mode: 'bm25', 'hybrid', 'hybrid_hyde' or 'agentic', if this instance has it; any other is an error listing the available ones. Omit for the default (the library's, else the instance's, else the best)."
         },
         "query": {
           "description": "Identifier, error message or question",
@@ -1132,6 +1135,13 @@
         "fallback_reason": {
           "anyOf": [
             {
+              "description": "Why a search was answered by a cheaper mode than the one it would have used.",
+              "enum": [
+                "mode_unavailable",
+                "embedding_in_progress",
+                "llm_budget_reached",
+                "llm_rate_limited"
+              ],
               "type": "string"
             },
             {
@@ -1139,7 +1149,7 @@
             }
           ],
           "default": null,
-          "description": "Why a better mode was not used, when one was asked for."
+          "description": "Set when a cheaper mode answered than the one that would have: says why."
         },
         "library": {
           "type": "string"
@@ -1271,9 +1281,12 @@
           "type": "array"
         },
         "retrieval_mode": {
-          "description": "How a search found its results. One result shape serves every mode.",
+          "description": "The mode that answered (the call's, the library's, the instance's, or the best one).",
           "enum": [
-            "bm25"
+            "bm25",
+            "hybrid",
+            "hybrid_hyde",
+            "agentic"
           ],
           "type": "string"
         },

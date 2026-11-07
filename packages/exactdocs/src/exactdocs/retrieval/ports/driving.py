@@ -8,8 +8,10 @@ from exactdocs.retrieval.dtos import (
     CollectChunksCommand,
     DiscardPendingChunksCommand,
     GetChunkSetsQuery,
+    GetLibraryRetrievalQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    LibraryRetrievalOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -25,6 +27,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     SearchDocsResult,
     SearchIndexStateOut,
+    SetLibraryRetrievalCommand,
 )
 
 
@@ -175,4 +178,41 @@ class RebuildSearchIndex(Protocol):
 
     async def __call__(self) -> RebuiltIndexOut:
         """Run the use case."""
+        ...
+
+
+class GetLibraryRetrieval(Protocol):
+    """Read a library's retrieval mode and the mode its searches use now.
+
+    Raises ``UnknownLibraryError`` when there is no such library.
+    """
+
+    async def __call__(self, query: GetLibraryRetrievalQuery) -> LibraryRetrievalOut:
+        """Run the use case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            Its setting, the mode its searches use now, and the modes available.
+        """
+        ...
+
+
+class SetLibraryRetrieval(Protocol):
+    """Set or clear a library's retrieval mode; it must be a mode that can run now.
+
+    Raises ``UnknownLibraryError`` when there is no such library, ``UnavailableModeError`` when
+    the mode is unknown or a model role it needs is not configured.
+    """
+
+    async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
+        """Run the use case.
+
+        Args:
+            command: The library and its mode (none: clear it).
+
+        Returns:
+            The stored setting, the mode its searches use now, and the modes available.
+        """
         ...

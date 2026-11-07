@@ -15,8 +15,12 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     ManifestStatus,
+    ModelRole,
+    PipelineAnswer,
+    PipelineRequest,
     RebuiltIndex,
     Removed,
+    RetrievalMode,
     SearchableVersion,
     SearchHit,
     SearchIndexState,
@@ -54,6 +58,18 @@ class Libraries(Protocol):
 
     async def all(self) -> Sequence[CatalogLibrary]:
         """Return every library that has a default version; the rest cannot be queried."""
+        ...
+
+    async def canonical_id(self, library: str) -> str | None:
+        """Spell the library's ID as the catalog does (IDs match in any letter case).
+
+        Args:
+            library: The ID as asked.
+
+        Returns:
+            The catalog's spelling; ``None`` when there is no such library, whether or not it
+            has a version yet.
+        """
         ...
 
 
@@ -247,5 +263,69 @@ class SearchTracer(Protocol):
 
         Returns:
             A context manager: the span lasts as long as its block.
+        """
+        ...
+
+
+class ModelRoles(Protocol):
+    """Which model roles the operator configured (#241 reads them from the configuration).
+
+    Asked at every search, so a role set or removed while the server runs counts at the next one.
+    """
+
+    async def configured(self) -> frozenset[ModelRole]:
+        """Say which roles are set.
+
+        Returns:
+            The roles; empty when nothing is configured (BM25 only).
+        """
+        ...
+
+
+class LibraryModes(Protocol):
+    """Each library's own retrieval mode, which a search uses when the call names none.
+
+    Library IDs match in any letter case.
+    """
+
+    async def mode_of(self, library: str) -> RetrievalMode | None:
+        """Read the library's mode.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            The mode, or ``None`` when it has none (the instance's applies).
+        """
+        ...
+
+    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
+        """Store the library's mode.
+
+        Args:
+            library: The library ID as the catalog spells it.
+            mode: The mode; ``None`` removes it.
+        """
+        ...
+
+
+class RetrievalPipeline(Protocol):
+    """One way of finding the chunks of one version that answer a query (a retrieval mode).
+
+    The use cases pick the mode (call, then library, then instance, then the best available, see
+    ``ModeRegistry``) and run the pipeline registered for it. Version is a hard filter: every
+    hit must come from ``request.version``. A pipeline that cannot do its part (a version not
+    embedded yet, a budget reached) answers with a cheaper mode and says why in the answer; it
+    raises only for what would fail any mode.
+    """
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Search the version.
+
+        Args:
+            request: The version, the query, the tag filter, the limit and the rerank flag.
+
+        Returns:
+            At most ``request.limit`` hits, best first, with the mode that really answered.
         """
         ...

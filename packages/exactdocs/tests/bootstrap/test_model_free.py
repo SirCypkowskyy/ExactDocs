@@ -1,5 +1,6 @@
 """RUN-02: the default install is small and model-free (no ML libraries, no model weights)."""
 
+import importlib.util
 import json
 import os
 import runpy
@@ -40,6 +41,71 @@ def test_starting_the_app_imports_no_ml_library(tmp_path: Path) -> None:
     loaded = set(json.loads(result.stdout.splitlines()[-1]))
 
     assert not loaded & check_artifacts.ML_MODULES
+
+
+# What the `[ai]` extra brings (and what it pulls in that ExactDocs must never load on its own).
+AI_MODULES = {
+    "pydantic_ai",
+    "pydantic_ai_harness",
+    "pydantic_graph",
+    "pydantic_monty",
+    "sqlite_vec",
+    "pgvector",
+    "openai",
+    "anthropic",
+    "google.genai",
+    "tiktoken",
+    "logfire",
+}
+
+SEARCH_WITHOUT_MODELS = """
+import asyncio, json, sys
+from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.settings import Settings
+from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery, QueryDocsQuery, SearchDocsQuery
+from exactdocs.retrieval.errors import UnknownLibraryError, VersionNotIndexedError
+
+async def main():
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        retrieval = container.retrieval
+        for ask in (
+            lambda: retrieval.search_docs(SearchDocsQuery(library="/acme/x", query="retry")),
+            lambda: retrieval.query_docs(QueryDocsQuery(library_id="/acme/x", query="retry")),
+            lambda: retrieval.get_library_retrieval(GetLibraryRetrievalQuery(library="/acme/x")),
+        ):
+            try:
+                await ask()
+            except (UnknownLibraryError, VersionNotIndexedError):
+                pass
+
+asyncio.run(main())
+print(json.dumps(sorted(sys.modules)))
+"""
+
+
+def test_the_ai_extra_is_installed_for_the_tests() -> None:
+    """Otherwise the next test would pass for the wrong reason."""
+    assert importlib.util.find_spec("pydantic_ai") is not None
+    assert importlib.util.find_spec("sqlite_vec") is not None
+
+
+@pytest.mark.parametrize("script", [START_APP, SEARCH_WITHOUT_MODELS], ids=["start", "search"])
+def test_with_no_model_configured_nothing_of_the_ai_extra_is_imported(
+    tmp_path: Path, script: str
+) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "EXACTDOCS_DATA_DIR": str(tmp_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    loaded = set(json.loads(result.stdout.splitlines()[-1]))
+    top_level = {m.split(".")[0] for m in loaded}
+
+    assert not (loaded | top_level) & AI_MODULES
 
 
 def _lock(default: list[str], extra: list[str]) -> dict:

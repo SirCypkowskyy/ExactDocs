@@ -198,6 +198,22 @@ class CatalogLibraries:
     """Implements ``retrieval.ports.driven.Libraries`` using the catalog."""
 
     list_libraries: ListLibraries
+    get_library: GetLibrary
+    """Spells a library ID as the catalog stores it."""
+
+    async def canonical_id(self, library: str) -> str | None:
+        """Ask the catalog for the library.
+
+        Args:
+            library: The ID in any letter case.
+
+        Returns:
+            The ID as the catalog spells it, or ``None`` when it has no such library.
+        """
+        try:
+            return (await self.get_library(GetLibraryQuery(id=library))).id
+        except NotFoundError, ValidationError:
+            return None
 
     async def all(self) -> Sequence[CatalogLibrary]:
         """Read every page of the catalog's list, skipping libraries with no default version."""

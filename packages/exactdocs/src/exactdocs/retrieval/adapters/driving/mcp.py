@@ -162,8 +162,9 @@ def register_tools(
             Field(
                 max_length=MAX_NAME,
                 description=(
-                    "Retrieval mode. Only 'bm25' today; any other value is an error. "
-                    "Omit for the default."
+                    "Retrieval mode: 'bm25', 'hybrid', 'hybrid_hyde' or 'agentic', if this "
+                    "instance has it; any other is an error listing the available ones. Omit "
+                    "for the default (the library's, else the instance's, else the best)."
                 ),
             ),
         ] = None,

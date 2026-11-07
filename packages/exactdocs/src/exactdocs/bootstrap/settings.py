@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
 from exactdocs.bootstrap.constants import LOCAL_HOSTS
+from exactdocs.retrieval.models import RetrievalMode
 
 
 def _default_data_dir() -> Path:
@@ -62,6 +63,12 @@ class Settings(BaseSettings):
     # One whole `query-docs` payload, notice included, in tokens counted as characters / 4. That
     # undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
     query_docs_token_budget: int = Field(default=10_000, ge=500)
+    retrieval_mode: RetrievalMode | None = None
+    """The retrieval mode of every search that names none, for libraries without their own:
+    `bm25`, `hybrid`, `hybrid_hyde` or `agentic`. Unset (or `auto`): the best mode the configured
+    models allow (BM25 with none). A mode whose model is not configured falls back to the best
+    one, and the results say so (`fallback_reason` `mode_unavailable`).
+    """
     # `otlp`: traces and metrics over OTLP/HTTP to the collector the standard
     # `OTEL_EXPORTER_OTLP_ENDPOINT` names. Off: no telemetry SDK is set up, nothing is exported.
     telemetry: Literal["off", "otlp"] = "off"
@@ -99,6 +106,22 @@ class Settings(BaseSettings):
                 "the seconds first (e.g. '0 * * * * *', every minute)"
             )
             raise ValueError(message)
+        return value
+
+    @field_validator("retrieval_mode", mode="before")
+    @classmethod
+    def _retrieval_mode_any_case(cls, value: object) -> object:
+        """Read the mode in any letter case; blank and ``auto`` count as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The mode name in lower case, or ``None``.
+        """
+        if isinstance(value, str):
+            name = value.strip().lower()
+            return None if name in {"", "auto"} else name
         return value
 
     @field_validator("secret_key", "secret_key_previous", mode="before")

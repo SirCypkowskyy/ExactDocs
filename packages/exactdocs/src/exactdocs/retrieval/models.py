@@ -14,9 +14,14 @@ from typing import NewType
 from exactdocs.retrieval.constants import (
     _LANGUAGE_ALIASES,
     _WORD,
+    DEFAULT_MODE_ORDER,
     STOP_WORDS,
 )
-from exactdocs.retrieval.errors import DuplicateChunkError, EmptySearchTextError
+from exactdocs.retrieval.errors import (
+    DuplicateChunkError,
+    EmptySearchTextError,
+    UnavailableModeError,
+)
 from exactdocs_kernel import section_link
 
 
@@ -358,10 +363,180 @@ class TagFilter:
         return not wanted or bool(wanted & set(chunk_tags))
 
 
+class ModelRole(StrEnum):
+    """A model an operator can configure; which ones are set decides the modes on offer."""
+
+    EMBEDDING = "embedding"
+    """Turns chunks and queries into vectors (hybrid search)."""
+    RERANKER = "reranker"
+    """Reorders the best candidates of any mode (reranking is a flag on top of a mode)."""
+    LLM = "llm"
+    """Writes hypothetical answers (HyDE) and drives the agentic explorer."""
+
+
 class RetrievalMode(StrEnum):
     """How a search found its results. One result shape serves every mode."""
 
     BM25 = "bm25"
+    HYBRID = "hybrid"
+    HYBRID_HYDE = "hybrid_hyde"
+    AGENTIC = "agentic"
+
+    @property
+    def roles(self) -> frozenset[ModelRole]:
+        """The model roles this mode cannot run without (BM25 needs none).
+
+        Returns:
+            The roles that must all be configured.
+        """
+        match self:
+            case RetrievalMode.BM25:
+                return frozenset()
+            case RetrievalMode.HYBRID:
+                return frozenset({ModelRole.EMBEDDING})
+            case RetrievalMode.HYBRID_HYDE:
+                return frozenset({ModelRole.EMBEDDING, ModelRole.LLM})
+            case RetrievalMode.AGENTIC:
+                return frozenset({ModelRole.LLM})
+
+
+class FallbackReason(StrEnum):
+    """Why a search was answered by a cheaper mode than the one it would have used."""
+
+    MODE_UNAVAILABLE = "mode_unavailable"
+    """The library's or the instance's mode needs a model role that is not configured now."""
+    EMBEDDING_IN_PROGRESS = "embedding_in_progress"
+    """The version is not embedded with the current model yet."""
+    LLM_BUDGET_REACHED = "llm_budget_reached"
+    """A spend limit stopped the LLM step."""
+    LLM_RATE_LIMITED = "llm_rate_limited"
+    """Too many LLM searches in the last minute."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModeChoice:
+    """The mode a search runs in, whether it reranks, and why a better mode was skipped."""
+
+    mode: RetrievalMode
+    """The mode whose pipeline runs."""
+    rerank: bool
+    """A reranker is configured: the pipeline reorders its best candidates."""
+    fallback_reason: FallbackReason | None = None
+    """Why the library's or the instance's mode was skipped, if it was."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModeRegistry:
+    """The modes this instance can run now: a pipeline is built for it and its roles are set.
+
+    A configured mode that is no longer available (its role was removed) never fails a search:
+    it falls back with ``mode_unavailable``. Only a mode the caller asks for fails.
+    """
+
+    roles: frozenset[ModelRole]
+    """The model roles configured now."""
+    pipelines: frozenset[RetrievalMode]
+    """The modes this build has a pipeline for; BM25 always."""
+
+    def missing_roles(self, mode: RetrievalMode) -> tuple[ModelRole, ...]:
+        """Name the roles ``mode`` needs that are not configured.
+
+        Args:
+            mode: The mode to check.
+
+        Returns:
+            The missing roles, in ``ModelRole`` order; empty when none is missing.
+        """
+        return tuple(r for r in ModelRole if r in mode.roles - self.roles)
+
+    def is_available(self, mode: RetrievalMode) -> bool:
+        """Say whether ``mode`` can run now.
+
+        Args:
+            mode: The mode to check.
+
+        Returns:
+            True when it has a pipeline and every role it needs.
+        """
+        return mode in self.pipelines and not self.missing_roles(mode)
+
+    def available(self) -> tuple[RetrievalMode, ...]:
+        """List the modes that can run now.
+
+        Returns:
+            The available modes, in ``RetrievalMode`` order (BM25 first).
+        """
+        return tuple(m for m in RetrievalMode if self.is_available(m))
+
+    def best(self) -> RetrievalMode:
+        """Pick the default when nothing is set: HyDE, then hybrid, then BM25.
+
+        Returns:
+            The best available mode.
+        """
+        return next(
+            RetrievalMode(m) for m in DEFAULT_MODE_ORDER if self.is_available(RetrievalMode(m))
+        )
+
+    def check(self, name: str) -> RetrievalMode:
+        """Turn a mode name (any letter case) into a mode that can run now.
+
+        Args:
+            name: The mode as a caller or an admin wrote it.
+
+        Returns:
+            The mode.
+
+        Raises:
+            UnavailableModeError: The name is unknown, or the mode cannot run now.
+        """
+        available = [m.value for m in self.available()]
+        try:
+            mode = RetrievalMode(name.strip().lower())
+        except ValueError:
+            raise UnavailableModeError(name, available, []) from None
+        if not self.is_available(mode):
+            missing = [r.value for r in self.missing_roles(mode)]
+            raise UnavailableModeError(name, available, missing)
+        return mode
+
+    def choose(
+        self,
+        *,
+        asked: str | None,
+        library: RetrievalMode | None,
+        instance: RetrievalMode | None,
+    ) -> ModeChoice:
+        """Pick the mode: the call's, else the library's, else the instance's, else the best.
+
+        Args:
+            asked: The mode the call asked for, if any.
+            library: The library's setting, if any.
+            instance: The instance's setting, if any.
+
+        Returns:
+            The choice; ``fallback_reason`` is ``mode_unavailable`` when a setting was skipped.
+            A call that asks for a mode that cannot run fails (``check``).
+        """
+        rerank = ModelRole.RERANKER in self.roles
+        if asked is not None:
+            return ModeChoice(mode=self.check(asked), rerank=rerank)
+        skipped = False
+        for setting in (library, instance):
+            if setting is None:
+                continue
+            if self.is_available(setting):
+                return ModeChoice(
+                    mode=setting,
+                    rerank=rerank,
+                    fallback_reason=FallbackReason.MODE_UNAVAILABLE if skipped else None,
+                )
+            skipped = True
+        return ModeChoice(
+            mode=self.best(),
+            rerank=rerank,
+            fallback_reason=FallbackReason.MODE_UNAVAILABLE if skipped else None,
+        )
 
 
 class SourceHost(StrEnum):
@@ -396,6 +571,40 @@ def source_link(version: SearchableVersion, article_path: str, anchor: str) -> s
     return section_link(
         version.host.value, version.repository_url, version.commit_sha, article_path, anchor
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PipelineRequest:
+    """What a retrieval pipeline searches: one exact version, never another."""
+
+    version: SearchableVersion
+    """The exact version; every hit must come from its manifest."""
+    query: str
+    """The query text."""
+    tag_filter: TagFilter
+    """Which chunks may be returned, applied before ranking."""
+    limit: int
+    """How many hits to return at most."""
+    rerank: bool
+    """Reorder the best candidates with the configured reranker."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PipelineAnswer:
+    """What a pipeline found, and how: the mode that really answered may be a cheaper one."""
+
+    mode: RetrievalMode
+    """The mode that answered: the one asked for, or a cheaper one."""
+    hits: tuple[SearchHit, ...]
+    """At most the asked limit, best first, all from the requested version."""
+    candidates: int
+    """Matching chunks looked at (a lower bound)."""
+    reranked: int
+    """Of those, how many a reranker reordered."""
+    complete: bool
+    """False when more matches exist than the limit allowed."""
+    fallback_reason: FallbackReason | None = None
+    """Why a cheaper mode answered, if one did."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
