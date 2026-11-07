@@ -227,6 +227,19 @@ durable state of running jobs in `jobs.sqlite` (its own schema and migrations; s
   old table and renames the new one over it. A rebuild that died leaves its table behind; the next
   one starts over. A change of the table's columns stays an Alembic revision that rebuilds it on
   start (as `a91c4e7b3d02` did). See *Upgrades* in [Releasing](releasing.md).
+- **Vector store (RET-01, #242):** `retrieval_embedding_spaces` records each embedding space
+  (profile kind, model, dimensions, metric, input format, state `building`/`active`/`retired`,
+  created and activated times; IDs are never reused). Its vectors live in a table the
+  `SqliteVectorIndex` adapter creates with the space and drops when it is retired,
+  `retrieval_vec_<id>`: one little-endian float32 BLOB of fixed size per `retrieval_chunks` row,
+  referenced with `ON DELETE CASCADE`, so a blob shared by many versions is embedded once and
+  garbage collection removes vectors with their chunk sets. They are plain tables, so `exactdocs
+  backup` copies them and `exactdocs reindex` leaves them alone. Search is exact:
+  `vec_distance_cosine` over one manifest's chunks, joined from `retrieval_manifest_chunks`,
+  ordered and limited in SQL. sqlite-vec (`[ai]` extra) is imported and loaded into a pooled
+  connection only when that connection first searches, or when `available()` is asked, which
+  happens only once an embedding role is configured. A revision that rebuilds `retrieval_chunks`
+  must keep its `id`s (or rebuild the vector tables too).
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
@@ -289,6 +302,8 @@ erDiagram
     retrieval_chunk_sets ||--o{ retrieval_chunks : "cut into"
     retrieval_chunk_sets ||--o{ retrieval_manifest_chunks : "reused by"
     retrieval_manifests ||--o{ retrieval_manifest_chunks : "indexes"
+    retrieval_chunks ||--o| retrieval_vec_N : "embedded in each space"
+    retrieval_embedding_spaces ||--|| retrieval_vec_N : "one table per space"
 
     retrieval_chunk_sets {
         text blob_sha PK
@@ -311,6 +326,16 @@ erDiagram
         text article_path
         text prev_chunk_id
         text next_chunk_id
+    }
+    retrieval_embedding_spaces {
+        int id PK "never reused"
+        text model
+        int dimensions
+        text state "building, active, retired"
+    }
+    retrieval_vec_N {
+        int chunk_key PK, FK "retrieval_chunks.id"
+        blob embedding "float32 x dimensions"
     }
 
     catalog_manifests ||..o| retrieval_manifests : "same ID, by value"
@@ -711,7 +736,15 @@ so #102's "AI off" can leave a library with none), builds a `ModeRegistry` (a mo
 has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
 port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best.
 Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
-catalog). Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
+catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (create, activate and
+retire a space, upsert and delete vectors by `ChunkKey`, nearest within one manifest, a manifest's
+coverage and missing chunks) with an in-memory reference and the SQLite adapter (see *Vector
+store* under Persistence), one contract test for both (`tests/retrieval/test_vector_index.py`),
+which the pgvector adapter (#243) joins. `OpenEmbeddingSpace` finds the space of a model or
+creates a new one when the model, its dimensions or the input format changed, so two models never
+share one. `RetrievalModes` asks `VectorIndex.available()` once an embedding role is configured:
+when sqlite-vec cannot load, the hybrid modes are unavailable and a setting that needs them falls
+back to BM25 with `fallback_reason: vector_store_unavailable`. Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 

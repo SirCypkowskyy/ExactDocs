@@ -1309,7 +1309,8 @@
                 "mode_unavailable",
                 "embedding_in_progress",
                 "llm_budget_reached",
-                "llm_rate_limited"
+                "llm_rate_limited",
+                "vector_store_unavailable"
               ],
               "type": "string"
             },

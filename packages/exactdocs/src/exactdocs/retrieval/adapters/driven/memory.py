@@ -1,3 +1,5 @@
+import math
+import struct
 import sys
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
@@ -5,12 +7,21 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from exactdocs.retrieval.constants import MEMORY_FORMAT
-from exactdocs.retrieval.errors import ChunkSetMismatchError
+from exactdocs.retrieval.errors import (
+    ChunkSetMismatchError,
+    RetiredEmbeddingSpaceError,
+    UnknownEmbeddingSpaceError,
+    VectorStoreUnavailableError,
+)
 from exactdocs.retrieval.models import (
     CatalogLibrary,
     ChunkId,
+    ChunkKey,
     ChunkSet,
     ChunkSetKey,
+    EmbeddingSpace,
+    EmbeddingSpaceId,
+    EmbeddingSpec,
     IndexedManifest,
     ManifestChunk,
     ManifestHit,
@@ -22,9 +33,13 @@ from exactdocs.retrieval.models import (
     SearchHit,
     SearchIndexState,
     SectionRef,
+    SpaceState,
     StoredChunk,
     TagFilter,
+    VectorCoverage,
+    VectorHit,
     VersionCounts,
+    checked_vector,
     highlights,
     identifier_tokens,
     search_terms,
@@ -327,3 +342,284 @@ class InMemoryLibraryModes:
             self.modes.pop(library.casefold(), None)
         else:
             self.modes[library.casefold()] = mode
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryVectorIndex:
+    """Reference ``ports.driven.VectorIndex``: exact cosine distance in pure Python.
+
+    It reads the chunk rows of the repository it is built on, and each vector remembers the chunk
+    set it was stored for, so a vector is forgotten when the repository drops that set (even if
+    the same blob is stored again later), as SQLite's foreign key does. Vectors are rounded to
+    32-bit floats, as the stores keep them.
+    """
+
+    chunks: InMemoryChunkRepository
+    """The chunks the vectors belong to."""
+    can_search: bool = True
+    """Set it False to stand for a store that cannot be loaded."""
+    spaces_by_id: dict[EmbeddingSpaceId, EmbeddingSpace] = field(default_factory=dict)
+    """Every space, retired ones too."""
+    vectors: dict[EmbeddingSpaceId, dict[ChunkKey, tuple[ChunkSet, tuple[float, ...]]]] = field(
+        default_factory=dict
+    )
+    """The vectors of each space that is not retired, with the chunk set each was stored for."""
+
+    async def available(self) -> bool:
+        """Say whether searches can run.
+
+        Returns:
+            ``can_search``.
+        """
+        return self.can_search
+
+    async def spaces(self) -> Sequence[EmbeddingSpace]:
+        """List every space, oldest first.
+
+        Returns:
+            The spaces.
+        """
+        return [self.spaces_by_id[i] for i in sorted(self.spaces_by_id)]
+
+    async def create_space(self, spec: EmbeddingSpec, at: datetime) -> EmbeddingSpace:
+        """Create an empty ``building`` space with the next ID.
+
+        Args:
+            spec: The model and format of its vectors.
+            at: When it is created.
+
+        Returns:
+            The new space.
+        """
+        space = EmbeddingSpace(
+            id=EmbeddingSpaceId(max(self.spaces_by_id, default=0) + 1),
+            spec=spec,
+            state=SpaceState.BUILDING,
+            created_at=at,
+        )
+        self.spaces_by_id[space.id] = space
+        self.vectors[space.id] = {}
+        return space
+
+    async def activate_space(self, space_id: EmbeddingSpaceId, at: datetime) -> EmbeddingSpace:
+        """Mark the space active.
+
+        Args:
+            space_id: The space.
+            at: When; the first activation's time is kept.
+
+        Returns:
+            The space now.
+        """
+        space = self._live(space_id)
+        active = replace(space, state=SpaceState.ACTIVE, activated_at=space.activated_at or at)
+        self.spaces_by_id[space_id] = active
+        return active
+
+    async def retire_space(self, space_id: EmbeddingSpaceId) -> None:
+        """Mark the space retired and drop its vectors.
+
+        Args:
+            space_id: The space.
+        """
+        space = self._space(space_id)
+        self.spaces_by_id[space_id] = replace(space, state=SpaceState.RETIRED)
+        self.vectors.pop(space_id, None)
+
+    async def upsert(
+        self, space_id: EmbeddingSpaceId, vectors: Mapping[ChunkKey, Sequence[float]]
+    ) -> int:
+        """Store the vectors of chunks that exist; all or nothing.
+
+        Args:
+            space_id: The space.
+            vectors: The vector of each chunk.
+
+        Returns:
+            How many were stored.
+        """
+        space = self._live(space_id)
+        checked = {
+            k: _float32(checked_vector(v, space.spec.dimensions)) for k, v in vectors.items()
+        }
+        stored = self._stored(space_id)
+        kept = {k: (owner, v) for k, v in checked.items() if (owner := self._owner(k)) is not None}
+        stored.update(kept)
+        return len(kept)
+
+    async def delete(self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]) -> int:
+        """Delete the vectors of these chunks.
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+
+        Returns:
+            How many were deleted.
+        """
+        self._live(space_id)
+        stored = self._stored(space_id)
+        return sum(stored.pop(k, None) is not None for k in set(keys))
+
+    async def nearest(
+        self,
+        space_id: EmbeddingSpaceId,
+        manifest_id: str,
+        query: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> Sequence[VectorHit]:
+        """Compare the query with every vector of the manifest's chunks.
+
+        Args:
+            space_id: The space.
+            manifest_id: The manifest.
+            query: The query's vector.
+            tag_filter: Which chunks may be returned.
+            limit: How many hits at most.
+
+        Returns:
+            The nearest chunks, nearest first, ties by chunk ID.
+
+        Raises:
+            VectorStoreUnavailableError: ``can_search`` is False.
+        """
+        space = self._live(space_id)
+        wanted = _float32(checked_vector(query, space.spec.dimensions))
+        if not self.can_search:
+            raise VectorStoreUnavailableError
+        stored = self._stored(space_id)
+        hits = [
+            VectorHit(chunk_id=row.chunk_id, distance=_cosine_distance(wanted, vector))
+            for row in self.chunks.rows.get(manifest_id, {}).values()
+            if tag_filter.keeps(row.tags)
+            and (entry := stored.get((*row.chunk_set, row.position))) is not None
+            and (vector := entry[1])
+        ]
+        hits.sort(key=lambda h: (h.distance, h.chunk_id))
+        return hits[:limit]
+
+    async def coverage(self, space_id: EmbeddingSpaceId, manifest_id: str) -> VectorCoverage:
+        """Count the manifest's chunks and those with a vector.
+
+        Args:
+            space_id: The space.
+            manifest_id: The manifest.
+
+        Returns:
+            The counts.
+        """
+        self._live(space_id)
+        stored = self._stored(space_id)
+        rows = self.chunks.rows.get(manifest_id, {}).values()
+        embedded = sum((*r.chunk_set, r.position) in stored for r in rows)
+        return VectorCoverage(chunks=len(rows), embedded=embedded)
+
+    async def missing(
+        self, space_id: EmbeddingSpaceId, manifest_id: str, limit: int
+    ) -> Sequence[ChunkKey]:
+        """Return chunk keys of the manifest without a vector, sorted.
+
+        Args:
+            space_id: The space.
+            manifest_id: The manifest.
+            limit: How many at most.
+
+        Returns:
+            The keys.
+        """
+        self._live(space_id)
+        stored = self._stored(space_id)
+        keys = {(*r.chunk_set, r.position) for r in self.chunks.rows.get(manifest_id, {}).values()}
+        return sorted(k for k in keys if k not in stored)[:limit]
+
+    def _space(self, space_id: EmbeddingSpaceId) -> EmbeddingSpace:
+        """Find the space.
+
+        Args:
+            space_id: The space.
+
+        Returns:
+            It, in any state.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+        """
+        space = self.spaces_by_id.get(space_id)
+        if space is None:
+            raise UnknownEmbeddingSpaceError(space_id)
+        return space
+
+    def _live(self, space_id: EmbeddingSpaceId) -> EmbeddingSpace:
+        """Find a space that is not retired.
+
+        Args:
+            space_id: The space.
+
+        Returns:
+            It.
+
+        Raises:
+            RetiredEmbeddingSpaceError: It was retired.
+        """
+        space = self._space(space_id)
+        if space.state is SpaceState.RETIRED:
+            raise RetiredEmbeddingSpaceError(space_id)
+        return space
+
+    def _owner(self, key: ChunkKey) -> ChunkSet | None:
+        """Find the stored chunk set that holds this chunk.
+
+        Args:
+            key: The chunk.
+
+        Returns:
+            The set, or ``None`` when it is not stored or has no such position.
+        """
+        chunk_set = self.chunks.chunk_sets.get((key[0], key[1]))
+        if chunk_set is None or not 0 <= key[2] < len(chunk_set.chunks):
+            return None
+        return chunk_set
+
+    def _stored(
+        self, space_id: EmbeddingSpaceId
+    ) -> dict[ChunkKey, tuple[ChunkSet, tuple[float, ...]]]:
+        """Return the space's vectors, forgetting those whose chunk set was collected.
+
+        Args:
+            space_id: The space.
+
+        Returns:
+            The live vectors (the stored dictionary itself).
+        """
+        stored = self.vectors[space_id]
+        for key in [k for k, (owner, _) in stored.items() if self._owner(k) is not owner]:
+            del stored[key]
+        return stored
+
+
+def _float32(vector: tuple[float, ...]) -> tuple[float, ...]:
+    """Round to 32-bit floats, as the stores keep vectors.
+
+    Args:
+        vector: The values.
+
+    Returns:
+        The values a store would read back.
+    """
+    return struct.unpack(f"<{len(vector)}f", struct.pack(f"<{len(vector)}f", *vector))
+
+
+def _cosine_distance(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    """Return 1 minus the cosine of the angle between two non-zero vectors.
+
+    Args:
+        a: One vector.
+        b: The other, of the same length.
+
+    Returns:
+        The distance, from 0 (same direction) to 2 (opposite).
+    """
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norms = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return max(0.0, 1 - dot / norms)  # rounding can put a vector's own distance below 0

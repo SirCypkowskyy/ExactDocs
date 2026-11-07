@@ -9,12 +9,14 @@ from exactdocs.retrieval.dtos import (
     ChunkSetsOut,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
+    EmbeddingSpaceOut,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     LibraryRetrievalOut,
+    OpenEmbeddingSpaceCommand,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -249,5 +251,25 @@ class ForgetLibrary(Protocol):
 
         Args:
             command: The removed library.
+        """
+        ...
+
+
+class OpenEmbeddingSpace(Protocol):
+    """Find the embedding space of a model, or create one when the model changed (RET-01).
+
+    A space is one (profile kind, model, dimensions, input format): a different model never
+    reuses another's space, so its vectors are never compared with another model's. A new space
+    starts ``building``; switching to it and retiring the old one is the embedding job's.
+    """
+
+    async def __call__(self, command: OpenEmbeddingSpaceCommand) -> EmbeddingSpaceOut:
+        """Run the use case.
+
+        Args:
+            command: The model the instance embeds with now.
+
+        Returns:
+            The space that is not retired for it, created if there was none.
         """
         ...

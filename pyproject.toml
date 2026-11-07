@@ -107,6 +107,8 @@ ignore = [
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
 "deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
+# Runs inside the built image (python - < file) to prove sqlite-vec loads there.
+"deploy/check_sqlite_vec.py" = ["implicit-namespace-package"]
 # The CI upgrade test is a standalone stdlib script that runs two releases and reports on stdout.
 "deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.

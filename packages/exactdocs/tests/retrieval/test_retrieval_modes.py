@@ -15,6 +15,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryLibraries,
     InMemoryLibraryModes,
     InMemorySearchIndex,
+    InMemoryVectorIndex,
     StaticModelRoles,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteLibraryModes
@@ -145,7 +146,9 @@ async def _build(
     *roles: ModelRole,
     instance: RetrievalMode | None = None,
     library_modes: LibraryModes | None = None,
+    vector_store: bool | None = None,
 ) -> World:
+    """Build the module; ``vector_store`` adds a vector index that can (or cannot) search."""
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
     fakes = {
@@ -178,6 +181,9 @@ async def _build(
         roles=MutableRoles(configured, ai_off),
         instance_mode=instance,
         pipelines=fakes,
+        vectors=None
+        if vector_store is None
+        else InMemoryVectorIndex(chunks=chunks, can_search=vector_store),
     )
     for manifest, ref, text in [("m1", "v1", "retry_policy is old"), ("m2", "v2", "Use a token.")]:
         await module.index_manifest(
@@ -515,3 +521,45 @@ async def test_a_library_with_ai_off_cannot_be_given_an_ai_mode_or_ask_for_one()
         await _mode_of(world, "hybrid")
     shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
     assert (shown.available_modes, shown.configured_roles) == ([BM25], [])
+
+
+# ---------------------------------------------------------------- the vector store
+
+
+def test_without_the_vector_store_no_hybrid_mode_is_available() -> None:
+    registry = ModeRegistry(
+        roles=frozenset({EMBEDDING, LLM}), pipelines=EVERY_PIPELINE, vector_store=False
+    )
+
+    with pytest.raises(UnavailableModeError, match="vector store is unavailable") as error:
+        registry.check("hybrid")
+
+    assert registry.available() == (BM25, AGENTIC)
+    assert (error.value.missing_roles, error.value.vector_store) == ([], False)
+
+
+async def test_a_hybrid_setting_falls_back_to_bm25_when_sqlite_vec_cannot_load() -> None:
+    up = await _build(EMBEDDING, instance=HYBRID, vector_store=True)
+    down = await _build(EMBEDDING, instance=HYBRID, vector_store=False)
+
+    assert await _mode_of(up) == (HYBRID, None)
+    assert await _mode_of(down) == (BM25, FallbackReason.VECTOR_STORE_UNAVAILABLE)
+
+
+async def test_the_best_mode_says_when_the_vector_store_kept_hybrid_out() -> None:
+    world = await _build(EMBEDDING, vector_store=False)
+
+    assert await _mode_of(world) == (BM25, FallbackReason.VECTOR_STORE_UNAVAILABLE)
+    shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
+    assert (shown.effective_mode, shown.fallback_reason) == (
+        BM25,
+        FallbackReason.VECTOR_STORE_UNAVAILABLE,
+    )
+    assert shown.available_modes == [BM25]
+
+
+async def test_asking_for_hybrid_without_the_vector_store_fails_clearly() -> None:
+    world = await _build(EMBEDDING, vector_store=False)
+
+    with pytest.raises(UnavailableModeError, match="sqlite-vec cannot be loaded"):
+        await _mode_of(world, "hybrid")

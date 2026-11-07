@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from collections.abc import Callable, Collection, Sequence
@@ -15,12 +16,18 @@ from exactdocs.retrieval.constants import (
     _LANGUAGE_ALIASES,
     _WORD,
     DEFAULT_MODE_ORDER,
+    EMBEDDING_INPUT_FORMAT,
+    MAX_EMBEDDING_DIMENSIONS,
+    MAX_FLOAT32,
     STOP_WORDS,
 )
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
     EmptySearchTextError,
+    InvalidEmbeddingSpaceError,
+    InvalidVectorError,
     UnavailableModeError,
+    VectorDimensionError,
 )
 from exactdocs_kernel import section_link
 
@@ -111,6 +118,12 @@ def _split_case(segment: str) -> list[str]:
 
 ChunkId = NewType("ChunkId", str)
 type ChunkSetKey = tuple[str, str]  # (git blob SHA, chunking-config hash)
+type ChunkKey = tuple[str, str, int]
+"""One stored chunk: (git blob SHA, chunking-config hash, position in its chunk set).
+
+Shared by every manifest that holds the blob with the same chunking, so a vector keyed by it is
+computed once for all of them.
+"""
 
 
 def chunk_id(
@@ -476,6 +489,15 @@ class RetrievalMode(StrEnum):
             case RetrievalMode.AGENTIC:
                 return frozenset({ModelRole.LLM})
 
+    @property
+    def needs_vectors(self) -> bool:
+        """Say whether this mode searches the vector store (the hybrid ones do).
+
+        Returns:
+            True when the mode cannot run without the vector store.
+        """
+        return self in {RetrievalMode.HYBRID, RetrievalMode.HYBRID_HYDE}
+
 
 class FallbackReason(StrEnum):
     """Why a search was answered by a cheaper mode than the one it would have used."""
@@ -488,6 +510,8 @@ class FallbackReason(StrEnum):
     """A spend limit stopped the LLM step."""
     LLM_RATE_LIMITED = "llm_rate_limited"
     """Too many LLM searches in the last minute."""
+    VECTOR_STORE_UNAVAILABLE = "vector_store_unavailable"
+    """The vector store cannot be loaded here (sqlite-vec), so no hybrid mode can run."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -506,14 +530,17 @@ class ModeChoice:
 class ModeRegistry:
     """The modes this instance can run now: a pipeline is built for it and its roles are set.
 
-    A configured mode that is no longer available (its role was removed) never fails a search:
-    it falls back with ``mode_unavailable``. Only a mode the caller asks for fails.
+    A configured mode that is no longer available (its role was removed, or the vector store
+    cannot be loaded) never fails a search: it falls back with ``mode_unavailable`` or
+    ``vector_store_unavailable``. Only a mode the caller asks for fails.
     """
 
     roles: frozenset[ModelRole]
     """The model roles configured now."""
     pipelines: frozenset[RetrievalMode]
     """The modes this build has a pipeline for; BM25 always."""
+    vector_store: bool = True
+    """The vector store can search here; without it no mode that ``needs_vectors`` runs."""
 
     def missing_roles(self, mode: RetrievalMode) -> tuple[ModelRole, ...]:
         """Name the roles ``mode`` needs that are not configured.
@@ -526,6 +553,22 @@ class ModeRegistry:
         """
         return tuple(r for r in ModelRole if r in mode.roles - self.roles)
 
+    def blocked_by_vector_store(self, mode: RetrievalMode) -> bool:
+        """Say whether only the vector store keeps ``mode`` from running.
+
+        Args:
+            mode: The mode to check.
+
+        Returns:
+            True when it has a pipeline and its roles, but needs the vector store, which is down.
+        """
+        return (
+            mode in self.pipelines
+            and not self.missing_roles(mode)
+            and mode.needs_vectors
+            and not self.vector_store
+        )
+
     def is_available(self, mode: RetrievalMode) -> bool:
         """Say whether ``mode`` can run now.
 
@@ -533,9 +576,13 @@ class ModeRegistry:
             mode: The mode to check.
 
         Returns:
-            True when it has a pipeline and every role it needs.
+            True when it has a pipeline, every role it needs and, if it needs one, the vector store.
         """
-        return mode in self.pipelines and not self.missing_roles(mode)
+        return (
+            mode in self.pipelines
+            and not self.missing_roles(mode)
+            and (self.vector_store or not mode.needs_vectors)
+        )
 
     def available(self) -> tuple[RetrievalMode, ...]:
         """List the modes that can run now.
@@ -574,8 +621,24 @@ class ModeRegistry:
             raise UnavailableModeError(name, available, []) from None
         if not self.is_available(mode):
             missing = [r.value for r in self.missing_roles(mode)]
-            raise UnavailableModeError(name, available, missing)
+            raise UnavailableModeError(
+                name, available, missing, vector_store=not self.blocked_by_vector_store(mode)
+            )
         return mode
+
+    def _skipped(self, mode: RetrievalMode) -> FallbackReason:
+        """Say why a configured mode cannot run.
+
+        Args:
+            mode: The library's or the instance's mode, not available now.
+
+        Returns:
+            ``vector_store_unavailable`` when only the vector store is missing, else
+            ``mode_unavailable``.
+        """
+        if self.blocked_by_vector_store(mode):
+            return FallbackReason.VECTOR_STORE_UNAVAILABLE
+        return FallbackReason.MODE_UNAVAILABLE
 
     def choose(
         self,
@@ -592,28 +655,27 @@ class ModeRegistry:
             instance: The instance's setting, if any.
 
         Returns:
-            The choice; ``fallback_reason`` is ``mode_unavailable`` when a setting was skipped.
-            A call that asks for a mode that cannot run fails (``check``).
+            The choice; ``fallback_reason`` says why a setting was skipped (the first one
+            skipped), or ``vector_store_unavailable`` when the best mode would have been a
+            hybrid one but the vector store is down. A call that asks for a mode that cannot
+            run fails (``check``).
         """
         rerank = ModelRole.RERANKER in self.roles
         if asked is not None:
             return ModeChoice(mode=self.check(asked), rerank=rerank)
-        skipped = False
+        reason: FallbackReason | None = None
         for setting in (library, instance):
             if setting is None:
                 continue
             if self.is_available(setting):
-                return ModeChoice(
-                    mode=setting,
-                    rerank=rerank,
-                    fallback_reason=FallbackReason.MODE_UNAVAILABLE if skipped else None,
-                )
-            skipped = True
-        return ModeChoice(
-            mode=self.best(),
-            rerank=rerank,
-            fallback_reason=FallbackReason.MODE_UNAVAILABLE if skipped else None,
-        )
+                return ModeChoice(mode=setting, rerank=rerank, fallback_reason=reason)
+            reason = reason or self._skipped(setting)
+        best = self.best()
+        if reason is None and not self.vector_store:
+            with_store = ModeRegistry(roles=self.roles, pipelines=self.pipelines)
+            if with_store.best() != best:
+                reason = FallbackReason.VECTOR_STORE_UNAVAILABLE
+        return ModeChoice(mode=best, rerank=rerank, fallback_reason=reason)
 
 
 class SourceHost(StrEnum):
@@ -806,3 +868,126 @@ def language_first[T](
     """Put the items with code in ``wanted`` first; each group keeps its order (sort is stable)."""
     want = canonical_language(wanted)
     return sorted(items, key=lambda i: want not in {canonical_language(x) for x in languages(i)})
+
+
+# ---------------------------------------------------------------- vector store
+EmbeddingSpaceId = NewType("EmbeddingSpaceId", int)
+
+
+class VectorMetric(StrEnum):
+    """How two vectors of a space are compared."""
+
+    COSINE = "cosine"
+    """Cosine distance: 1 minus the cosine of their angle (0 is the same direction)."""
+
+
+class SpaceState(StrEnum):
+    """Where an embedding space is in its life."""
+
+    BUILDING = "building"
+    """Created for a new model: versions are being embedded into it."""
+    ACTIVE = "active"
+    """The space hybrid searches use."""
+    RETIRED = "retired"
+    """Replaced by another space; its vectors are dropped and it takes no new ones."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddingSpec:
+    """What makes vectors comparable: one model, its dimensions and what was embedded.
+
+    Two specs that differ in anything need two spaces: their vectors are never compared. The
+    profile's base URL or key is not part of it, so moving a model to another endpoint keeps
+    its space.
+    """
+
+    profile_kind: str
+    """The provider profile's kind (``openai``, ``local``...)."""
+    model: str
+    """The embedding model's name, as the provider spells it."""
+    dimensions: int
+    """How many numbers each vector holds."""
+    input_format: int = EMBEDDING_INPUT_FORMAT
+    """What a chunk's embedding is computed from (``EMBEDDING_INPUT_FORMAT``)."""
+    metric: VectorMetric = VectorMetric.COSINE
+    """How vectors are compared."""
+
+    def __post_init__(self) -> None:
+        """Refuse a spec no store can hold.
+
+        Raises:
+            InvalidEmbeddingSpaceError: No model or kind, or dimensions out of range.
+        """
+        if not self.model.strip() or not self.profile_kind.strip():
+            reason = "the profile kind and the model must not be blank"
+            raise InvalidEmbeddingSpaceError(reason)
+        if not 1 <= self.dimensions <= MAX_EMBEDDING_DIMENSIONS:
+            reason = f"dimensions must be between 1 and {MAX_EMBEDDING_DIMENSIONS}"
+            raise InvalidEmbeddingSpaceError(reason)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddingSpace:
+    """A set of vectors made by one ``EmbeddingSpec``; vectors of two spaces never meet."""
+
+    id: EmbeddingSpaceId
+    """Given by the store when the space is created; never reused."""
+    spec: EmbeddingSpec
+    """The model and format every vector of the space was made with."""
+    state: SpaceState
+    """Building, active or retired."""
+    created_at: datetime
+    """When the space was created."""
+    activated_at: datetime | None = None
+    """When it became the active space, if it did."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VectorHit:
+    """A chunk of the searched manifest and how far its vector is from the query's."""
+
+    chunk_id: ChunkId
+    """The chunk, as the manifest names it."""
+    distance: float
+    """The space's metric (cosine distance, 0 to 2): smaller is nearer, never below 0."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VectorCoverage:
+    """How much of one manifest a space has vectors for."""
+
+    chunks: int
+    """The manifest's chunks."""
+    embedded: int
+    """Of those, how many have a vector in the space."""
+
+    @property
+    def complete(self) -> bool:
+        """Every chunk of the manifest has a vector (a manifest without chunks is complete).
+
+        Returns:
+            True when nothing is left to embed.
+        """
+        return self.embedded >= self.chunks
+
+
+def checked_vector(values: Sequence[float], dimensions: int) -> tuple[float, ...]:
+    """Return a vector that can be stored in, or searched in, a space of ``dimensions``.
+
+    Args:
+        values: The vector as a model returned it.
+        dimensions: The space's dimensions.
+
+    Returns:
+        The values as floats.
+
+    Raises:
+        VectorDimensionError: The length is not the space's.
+        InvalidVectorError: A value is not a finite float32, or every value is zero.
+    """
+    vector = tuple(float(v) for v in values)
+    if len(vector) != dimensions:
+        raise VectorDimensionError(dimensions, len(vector))
+    if not all(math.isfinite(v) and abs(v) <= MAX_FLOAT32 for v in vector) or not any(vector):
+        raise InvalidVectorError
+    return vector

@@ -28,6 +28,7 @@ from exactdocs.retrieval.dtos import (
     CoverageOut,
     DiscardPendingChunksCommand,
     DocSectionOut,
+    EmbeddingSpaceOut,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
@@ -37,6 +38,7 @@ from exactdocs.retrieval.dtos import (
     LibraryMatchOut,
     LibraryRetrievalOut,
     LibrarySearchResultOut,
+    OpenEmbeddingSpaceCommand,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -62,6 +64,7 @@ from exactdocs.retrieval.errors import (
     MovedSection,
     StaleChunkError,
     UnknownLibraryError,
+    VectorStoreUnavailableError,
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
@@ -72,6 +75,7 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    EmbeddingSpec,
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
@@ -85,6 +89,7 @@ from exactdocs.retrieval.models import (
     SearchableVersion,
     SearchText,
     SectionRef,
+    SpaceState,
     TagFilter,
     TagMatch,
     article_chunk_rows,
@@ -108,6 +113,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchIndexMaintenance,
     SearchSpan,
     SearchTracer,
+    VectorIndex,
 )
 from exactdocs_kernel import NOTICE, Clock
 
@@ -239,6 +245,9 @@ class RetrievalModes:
     """Each library's own mode."""
     instance_mode: RetrievalMode | None = None
     """The operator's default for every library (``EXACTDOCS_AI__MODE``)."""
+    vectors: VectorIndex | None = None
+    """The vector store the hybrid modes search; asked whether it can load only once an
+    embedding model is configured. Without one, nothing is checked (pipelines decide)."""
 
     async def registry(self, library: str) -> ModeRegistry:
         """Say which modes can run now for a library's searches.
@@ -247,10 +256,15 @@ class RetrievalModes:
             library: The library, any letter case: roles can differ per library.
 
         Returns:
-            The registry of the library's configured roles and the registered pipelines.
+            The registry of the library's configured roles, the registered pipelines and
+            whether the vector store can search.
         """
+        roles = await self.roles.configured(library)
+        vector_store = True
+        if ModelRole.EMBEDDING in roles and self.vectors is not None:
+            vector_store = await self.vectors.available()
         return ModeRegistry(
-            roles=await self.roles.configured(library), pipelines=frozenset(self.pipelines)
+            roles=roles, pipelines=frozenset(self.pipelines), vector_store=vector_store
         )
 
     async def choose(self, *, asked: str | None, library: str) -> ModeChoice:
@@ -1137,3 +1151,42 @@ class ForgetLibraryUseCase:
             command: The removed library.
         """
         await self.library_modes.forget(command.library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OpenEmbeddingSpaceUseCase:
+    """Implements ``ports.driving.OpenEmbeddingSpace``."""
+
+    vectors: VectorIndex | None
+    """The vector store; ``None`` when this instance has none."""
+    clock: Clock
+    """Stamps a new space."""
+
+    async def __call__(self, command: OpenEmbeddingSpaceCommand) -> EmbeddingSpaceOut:
+        """Return the newest space of exactly this spec that is not retired, or create one.
+
+        Changing only the endpoint of a model keeps its space; changing the model, its
+        dimensions or the input format makes a new one.
+
+        Args:
+            command: The model the instance embeds with now.
+
+        Returns:
+            The space, and whether this call created it.
+
+        Raises:
+            VectorStoreUnavailableError: The instance has no vector store.
+        """
+        if self.vectors is None:
+            raise VectorStoreUnavailableError
+        spec = EmbeddingSpec(
+            profile_kind=command.profile_kind,
+            model=command.model,
+            dimensions=command.dimensions,
+            input_format=command.input_format,
+        )
+        for space in reversed(await self.vectors.spaces()):
+            if space.spec == spec and space.state is not SpaceState.RETIRED:
+                return EmbeddingSpaceOut.from_model(space, created=False)
+        space = await self.vectors.create_space(spec, self.clock.now())
+        return EmbeddingSpaceOut.from_model(space, created=True)

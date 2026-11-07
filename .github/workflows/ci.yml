@@ -176,6 +176,19 @@ jobs:
           docker exec exactdocs-ci ssh -V
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
+      # #242: the vector store needs a Python that loads SQLite extensions. The image's Python
+      # (python:3.14-slim-trixie) is checked natively here (arm64); amd64 cannot run Python under
+      # QEMU, and was checked by hand on an amd64 host (PR of #242). The base image has no `[ai]`
+      # extra, so the locked sqlite-vec wheel for the image's platform goes on PYTHONPATH.
+      - name: sqlite-vec loads and searches in the image's Python
+        run: |
+          pin=$(uv export --frozen --no-hashes --no-header --no-annotate --no-emit-workspace \
+            --no-dev --package exactdocs --extra ai | grep '^sqlite-vec==')
+          uv pip install --target "$RUNNER_TEMP/sqlite-vec" --no-deps --python-version 3.14 \
+            --python-platform aarch64-unknown-linux-gnu "$pin"
+          docker run --rm -i --network none --read-only --tmpfs /tmp --cap-drop ALL \
+            -v "$RUNNER_TEMP/sqlite-vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
+            --entrypoint python exactdocs:ci - < deploy/check_sqlite_vec.py
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
