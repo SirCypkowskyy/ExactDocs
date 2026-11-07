@@ -22,6 +22,7 @@ from exactdocs.catalog.dtos import (
     FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetArticleTitlesQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
@@ -70,6 +71,7 @@ from exactdocs.catalog.ports.driving import (
     FindStoredArticles,
     GetActiveManifest,
     GetArticle,
+    GetArticleTitles,
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
@@ -86,7 +88,7 @@ from exactdocs.catalog.ports.driving import (
     StoreManifest,
 )
 from exactdocs.ingestion.constants import PARSER_VERSION
-from exactdocs.ingestion.errors import StoredTextOutdatedError
+from exactdocs.ingestion.errors import EmbeddingUnavailableError, StoredTextOutdatedError
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ChunkHeading,
@@ -94,6 +96,8 @@ from exactdocs.ingestion.models import (
     Collected,
     CopiedArticle,
     CopiedVersion,
+    EmbeddedBatch,
+    EmbedPlan,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -110,6 +114,7 @@ from exactdocs.ingestion.models import (
     TaggedPath,
     TagRule,
     VersionOrigin,
+    VersionToEmbed,
 )
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
@@ -118,15 +123,21 @@ from exactdocs.retrieval.dtos import (
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
+    EmbedBatchCommand,
+    EmbedVersionCommand,
+    FinishEmbeddingCommand,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     IndexManifestCommand,
     RemoveChunksCommand,
     RetagArticlesCommand,
+    UnembeddedVersionsQuery,
 )
+from exactdocs.retrieval.errors import EmbeddingFailedError
 from exactdocs.retrieval.models import (
     CatalogLibrary,
     DocTarget,
+    ManifestPaths,
     ManifestStatus,
     SearchableVersion,
     SourceHost,
@@ -134,9 +145,13 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
+    EmbedBatch,
+    FinishEmbedding,
     ForgetLibrary,
     GetChunkSets,
     IndexManifest,
+    ListUnembeddedVersions,
+    PlanEmbedding,
     RemoveChunks,
     RetagArticles,
 )
@@ -556,6 +571,84 @@ class RetrievalChunkIndex:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class RetrievalVersionEmbedder:
+    """Implements ``ingestion.ports.driven.VersionEmbedder`` using retrieval."""
+
+    plan_embedding: PlanEmbedding
+    """Retrieval's plan of a version's embedding."""
+    embed_batch_of: EmbedBatch
+    """Retrieval's batch of a version's embedding."""
+    finish_embedding: FinishEmbedding
+    """Retrieval's switch of spaces."""
+    list_unembedded_versions: ListUnembeddedVersions
+    """Retrieval's list of versions not fully embedded."""
+
+    async def plan(self, library: str, ref: str) -> EmbedPlan:
+        """Pick the version's space and count what is missing.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+
+        Returns:
+            The plan.
+        """
+        plan = await self.plan_embedding(EmbedVersionCommand(library=library, ref=ref))
+        return EmbedPlan(
+            space_id=plan.space_id,
+            manifest_id=plan.manifest_id,
+            missing=plan.missing,
+            created=plan.created,
+            skipped=None if plan.skipped is None else plan.skipped.value,
+        )
+
+    async def embed_batch(self, library: str, ref: str, plan: EmbedPlan) -> EmbeddedBatch:
+        """Embed the next batch of the plan's manifest.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            plan: The job's plan.
+
+        Returns:
+            What the batch embedded.
+        """
+        if plan.space_id is None or plan.manifest_id is None:
+            return EmbeddedBatch(embedded=0, finished=True)
+        command = EmbedBatchCommand(
+            library=library, ref=ref, manifest_id=plan.manifest_id, space_id=plan.space_id
+        )
+        try:
+            batch = await self.embed_batch_of(command)
+        except EmbeddingFailedError as error:
+            if error.transient:  # the job tries the batch again, after a wait
+                raise EmbeddingUnavailableError(str(error)) from error
+            raise
+        return EmbeddedBatch(embedded=batch.embedded, finished=batch.finished)
+
+    async def finish(self, plan: EmbedPlan) -> None:
+        """Switch to the plan's space once it covers every version.
+
+        Args:
+            plan: The job's plan.
+        """
+        if plan.space_id is not None:
+            await self.finish_embedding(FinishEmbeddingCommand(space_id=plan.space_id))
+
+    async def unembedded(self, library: str | None) -> Sequence[VersionToEmbed]:
+        """Name the versions not fully embedded.
+
+        Args:
+            library: Only this library's; every library's when ``None``.
+
+        Returns:
+            The versions.
+        """
+        found = await self.list_unembedded_versions(UnembeddedVersionsQuery(library=library))
+        return [VersionToEmbed(library=v.library, ref=v.ref) for v in found.versions]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogManualTags:
     """Implements ``ingestion.ports.driven.ManualTagStore`` using the catalog."""
 
@@ -851,3 +944,25 @@ def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestC
             for a in version.articles
         ],
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogArticleTitles:
+    """Implements ``retrieval.ports.driven.ArticleTitles`` using the catalog (one query)."""
+
+    get_article_titles: GetArticleTitles
+    """The catalog's titles of a manifest's articles, by path."""
+
+    async def titles(self, articles: ManifestPaths) -> Mapping[str, str]:
+        """Look the paths up in the manifest's entries.
+
+        Args:
+            articles: The manifest and the article paths.
+
+        Returns:
+            The titles found (none for a manifest collected meanwhile).
+        """
+        found = await self.get_article_titles(
+            GetArticleTitlesQuery(manifest_id=articles.manifest_id, paths=list(articles.paths))
+        )
+        return found.titles

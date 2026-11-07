@@ -30,11 +30,14 @@ from exactdocs.retrieval.models import (
     ChunkId,
     ChunkKey,
     ChunkSet,
+    EmbeddingSource,
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
     IndexedManifest,
     ManifestChunk,
+    PendingArticle,
+    PendingChunks,
     SpaceState,
     TagFilter,
     TagMatch,
@@ -405,3 +408,62 @@ async def test_a_vector_is_at_distance_zero_from_itself_never_below(world: World
         (hit,) = await world.near(space, "m", vector, limit=1)
         assert hit.chunk_id == f"m:b:{i}"
         assert 0 <= hit.distance < 1e-6
+
+
+# ---------------------------------------------------------------- embedding jobs (#91)
+
+
+def characters(blob: str, position: int) -> int:
+    """The characters ``pending`` counts for a chunk ``World.index`` stores: text and headings."""
+    return len(f"{blob} section {position}") + len(f"{blob} {position}")
+
+
+async def test_pending_counts_each_stored_chunk_once_across_manifests(world: World) -> None:
+    await world.index("m1", {"b1": 2})
+    await world.index("m2", {"b1": 2, "b2": 1})
+
+    pending = await world.vectors.pending(None, ["m1", "m2"])
+
+    expected = characters("b1", 0) + characters("b1", 1) + characters("b2", 0)
+    assert pending == PendingChunks(
+        chunks=3,
+        characters=expected,
+        # Each chunk once, under its first manifest and path: b1's under m1, b2's under m2.
+        articles=(
+            PendingArticle(manifest_id="m1", article_path="docs/b1.md", chunks=2),
+            PendingArticle(manifest_id="m2", article_path="docs/b2.md", chunks=1),
+        ),
+    )
+    assert await world.vectors.pending(None, []) == PendingChunks(chunks=0, characters=0)
+    assert await world.vectors.pending(None, ["unknown"]) == PendingChunks(chunks=0, characters=0)
+
+
+async def test_pending_leaves_out_chunks_with_a_vector_in_the_space(world: World) -> None:
+    await world.index("m1", {"b1": 2, "b2": 1})
+    space = await world.vectors.create_space(SMALL, T0)
+    other = await world.vectors.create_space(LARGE, T0)
+    await world.vectors.upsert(space.id, {key("b1", 0): [1, 0, 0], key("b2"): [0, 1, 0]})
+
+    assert await world.vectors.pending(space.id, ["m1"]) == PendingChunks(
+        chunks=1,
+        characters=characters("b1", 1),
+        articles=(PendingArticle(manifest_id="m1", article_path="docs/b1.md", chunks=1),),
+    )
+    assert (await world.vectors.pending(other.id, ["m1"])).chunks == 3
+    await world.vectors.retire_space(space.id)
+    with pytest.raises(RetiredEmbeddingSpaceError):
+        await world.vectors.pending(space.id, ["m1"])
+
+
+async def test_embedding_sources_read_the_text_heading_path_and_article(world: World) -> None:
+    await world.index("m1", {"b1": 2})
+    await world.index("m2", {"b2": 1})
+
+    found = await world.chunks.embedding_sources("m1", [key("b1", 1), key("b2"), key("zz")])
+
+    assert found == {
+        key("b1", 1): EmbeddingSource(
+            article_path="docs/b1.md", heading_path=("b1 1",), content="b1 section 1"
+        )
+    }
+    assert await world.chunks.embedding_sources("m1", []) == {}

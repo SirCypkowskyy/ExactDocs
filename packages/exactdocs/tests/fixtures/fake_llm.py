@@ -8,7 +8,8 @@ one best), so a test can tell a reranked order from the order it sent. A path wi
 answers 404; one with ``/slow/`` answers after ``SLOW_SECONDS`` (a reranker that times out). It
 records every request (method, path, headers, body), so a test can see what was sent and with
 which credentials. A second instance serves as a trap: pointed to by ``OPENAI_BASE_URL`` and the
-like, it must receive nothing.
+like, it must receive nothing. Given a ``hold`` event, it answers embedding requests only once the
+event is set, so a test can look at an instance while an embedding run is in progress.
 """
 
 import json
@@ -134,9 +135,16 @@ def _answer(path: str, body: dict[str, Any]) -> dict[str, Any] | list[Any] | Non
     return None
 
 
+HOLD_SECONDS = 60.0
+"""The longest an embedding request waits for its ``hold`` event."""
+
+
 @contextmanager
-def gateway() -> Generator[FakeGateway]:
+def gateway(hold: threading.Event | None = None) -> Generator[FakeGateway]:
     """Serve a fake gateway on a free loopback port until the block ends.
+
+    Args:
+        hold: When given, embedding requests wait until it is set (at most ``HOLD_SECONDS``).
 
     Yields:
         The gateway.
@@ -158,6 +166,8 @@ def gateway() -> Generator[FakeGateway]:
             )
             if "/slow/" in self.path:
                 time.sleep(SLOW_SECONDS)
+            if hold is not None and self.path.split("?")[0].endswith("/embeddings"):
+                hold.wait(HOLD_SECONDS)
             answer = _answer(self.path.split("?")[0], body)
             payload = json.dumps({"error": "not found"} if answer is None else answer).encode()
             self.send_response(200 if answer is not None else 404)

@@ -365,12 +365,24 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
 - `GET /ai/roles`: the instance roles (`embedding`, `reranker`, `llm`, `judge`), each with its
   `model` (`<profile>:<model>`), its `source` (`instance`, or `llm` for a judge that defaults to
   the LLM) and whether its profile exists.
+- `GET /ai/embedding/estimate`: what embedding every version not embedded yet would send and cost,
+  before it runs (`exactdocs ai estimate` over REST): `{"model", "space_id", "versions", "chunks",
+  "characters", "estimated_tokens", "usd_per_million_tokens", "estimated_usd", "note"}`;
+  `characters` counts each chunk's text, heading path and article title, as embedded. Only
+  active versions of libraries with AI on count, and each stored chunk once (a blob held by many
+  versions is embedded once). Tokens are 4 characters each and the price is the bundled price
+  list's (`null` for a model it does not know): an estimate, as `note` says. No model or
+  tokenizer is called. `model` is `null` and the counts 0 when no embedding model is configured;
+  400 `vector_store_unavailable` on a database without a vector store (PostgreSQL until #243).
 
 ## Jobs, access and health
 
-- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag` or
-  `collect`; state `queued`,
-  `running`, `succeeded` or `failed`; `done` / `total` files; `chunked` / `reused`; `parsed` / `taken`; problems).
+- **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag`,
+  `collect` or `embed`; state `queued`,
+  `running`, `succeeded` or `failed`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems).
+  An `embed` job embeds one version with the instance's embedding model; a failed one has
+  `error_code` `embedding_failed` (its error names the model and the HTTP status, never a key) and
+  is queued again at the next start.
   A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its
   `finished_at`. The code of an upstream problem is one of `repo_unreachable`, `auth_failed`,
   `ref_deleted` and `tag_moved`, the same for a sync and for an import that meets it; any other

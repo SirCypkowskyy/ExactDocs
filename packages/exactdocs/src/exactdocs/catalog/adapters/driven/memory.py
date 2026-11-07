@@ -441,6 +441,28 @@ class InMemoryImportedTags:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryArticleTitles:
+    """Implements ``ports.driven.ArticleTitleFinder`` on an ``InMemoryManifestRepository``."""
+
+    repository: InMemoryManifestRepository
+    """The manifests."""
+
+    async def titles(self, manifest_id: ManifestId, paths: Collection[str]) -> Mapping[str, str]:
+        """Return the titles of these paths of the manifest.
+
+        Args:
+            manifest_id: The manifest.
+            paths: The article paths.
+
+        Returns:
+            The title of each path found.
+        """
+        found = self.repository.manifests.get(manifest_id)
+        wanted = set(paths)
+        return {e.path: e.title for e in found.entries if e.path in wanted} if found else {}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on an ``InMemoryManifestRepository``."""
 

@@ -414,11 +414,32 @@ class VectorStoreUnavailableError(DomainError):
 
     code = "vector_store_unavailable"
 
-    def __init__(self) -> None:
-        """Say why the store cannot search."""
-        super().__init__(
-            "the vector store is unavailable: sqlite-vec cannot be loaded by this Python"
-        )
+    def __init__(self, reason: str = "sqlite-vec cannot be loaded by this Python") -> None:
+        """Say why the store cannot search.
+
+        Args:
+            reason: A fixed text: why there is no vector store here.
+        """
+        super().__init__(f"the vector store is unavailable: {reason}")
+
+
+class EmbeddingFailedError(DomainError):
+    """The embedding model did not answer as expected; the embedding job stops and can be rerun."""
+
+    code = "embedding_failed"
+
+    def __init__(self, model: str, reason: str, *, transient: bool = False) -> None:
+        """Name the model and what went wrong.
+
+        Args:
+            model: ``<profile>:<model>``.
+            reason: A short reason (an error type and its HTTP status), never a key.
+            transient: The provider may answer if asked again later (a timeout, a 429 or a
+                5xx); the job retries the batch a few times before it fails.
+        """
+        super().__init__(f"embedding with {_data(model)} failed: {_data(reason)}")
+        self.model = model
+        self.transient = transient
 
 
 class RerankerError(DomainError):

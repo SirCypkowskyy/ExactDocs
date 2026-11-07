@@ -12,6 +12,8 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    EmbeddedTexts,
+    EmbeddingSource,
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
@@ -19,9 +21,11 @@ from exactdocs.retrieval.models import (
     LibraryAi,
     ManifestChunk,
     ManifestHit,
+    ManifestPaths,
     ManifestStatus,
     ModelCheck,
     ModelRole,
+    PendingChunks,
     PipelineAnswer,
     PipelineRequest,
     ProviderProfile,
@@ -32,6 +36,7 @@ from exactdocs.retrieval.models import (
     SearchHit,
     SearchIndexState,
     SectionRef,
+    SpendEntry,
     StoredChunk,
     TagFilter,
     VectorCoverage,
@@ -202,6 +207,21 @@ class ChunkRepository(Protocol):
 
         Chunks and the search index stay as they are. Paths without rows are ignored; returns
         how many rows were changed.
+        """
+        ...
+
+    async def embedding_sources(
+        self, manifest_id: str, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, EmbeddingSource]:
+        """Return what each of these stored chunks is embedded from, as the manifest holds it.
+
+        Args:
+            manifest_id: The manifest (it names the article each chunk is in).
+            keys: The stored chunks.
+
+        Returns:
+            The chunks of the manifest among ``keys``; the others are left out. A blob the
+            manifest holds at two paths gives the first path.
         """
         ...
 
@@ -750,5 +770,145 @@ class VectorIndex(Protocol):
         Raises:
             UnknownEmbeddingSpaceError: No space has this ID.
             RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+    async def pending(
+        self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
+    ) -> PendingChunks:
+        """Count the stored chunks of these manifests without a vector in the space, each once.
+
+        A chunk set shared by several manifests counts once, as it is embedded once.
+
+        Args:
+            space_id: The space; ``None`` counts every chunk (no space exists yet).
+            manifest_ids: The manifests.
+
+        Returns:
+            The chunks, the characters of their text and heading paths, and how many of them
+            each article holds (each chunk under its first manifest and path), for its title.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+
+class Embeddings(Protocol):
+    """One embedding model, ready to call: chunks and queries in, vectors out (RET-01).
+
+    ``EmbeddingModels.bind`` makes one from the handle the ``ModelFactory`` built, so a profile
+    edited over the REST API counts at the next batch. The adapter batches the texts itself and
+    asks for the configured dimensions when there are some. Tokens come from the ``usage`` the
+    provider returns, never from a tokenizer.
+    """
+
+    @property
+    def name(self) -> str:
+        """The model as the role names it, ``<profile>:<model>``."""
+        ...
+
+    async def dimensions(self) -> int:
+        """Say how many numbers each vector holds.
+
+        Returns:
+            The configured dimensions, or what the model answers for a fixed text (one call,
+            no library text, made once per bound model).
+
+        Raises:
+            EmbeddingFailedError: The model did not answer.
+        """
+        ...
+
+    async def embed_documents(self, texts: Sequence[str]) -> EmbeddedTexts:
+        """Embed chunks, as documents, in calls of at most ``batch_size`` texts.
+
+        Args:
+            texts: The texts.
+
+        Returns:
+            One vector per text, in order, and the reported usage.
+
+        Raises:
+            EmbeddingFailedError: A call failed or answered with the wrong number of vectors.
+        """
+        ...
+
+    async def embed_query(self, text: str) -> EmbeddedTexts:
+        """Embed a search query, as a query where the model tells the two apart.
+
+        Args:
+            text: The query.
+
+        Returns:
+            Its one vector and the reported usage.
+
+        Raises:
+            EmbeddingFailedError: The call failed.
+        """
+        ...
+
+
+class EmbeddingModels(Protocol):
+    """Turns the embedder handle ``ModelFactory.embedder`` built into ``Embeddings``."""
+
+    def bind(
+        self, handle: object, *, name: str, dimensions: int | None, batch_size: int
+    ) -> Embeddings:
+        """Wrap the handle.
+
+        Args:
+            handle: What ``ModelFactory.embedder`` returned (a pydantic-ai ``Embedder``).
+            name: The role's model, ``<profile>:<model>``, for messages.
+            dimensions: The configured dimensions, sent with every call; ``None``: the model's.
+            batch_size: The most texts per call.
+
+        Returns:
+            The model.
+        """
+        ...
+
+
+class ArticleTitles(Protocol):
+    """The titles of a manifest's articles (the catalog answers, in one query)."""
+
+    async def titles(self, articles: ManifestPaths) -> Mapping[str, str]:
+        """Return the title of each of these articles of the manifest.
+
+        Args:
+            articles: The manifest and the article paths.
+
+        Returns:
+            The titles found; a path the manifest does not have (or a manifest collected
+            meanwhile) is left out.
+        """
+        ...
+
+
+class SpendLedger(Protocol):
+    """What AI calls cost, per scope and UTC window (``retrieval_ai_spend``); budgets read it."""
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        """Add usage to the rows of these entries, atomically, creating rows as needed.
+
+        Args:
+            entries: The usage to add, one entry per row.
+        """
+        ...
+
+
+class Prices(Protocol):
+    """Model prices from the bundled price list; never fetched over the network."""
+
+    def input_usd_per_million(self, profile_kind: str, model: str) -> float | None:
+        """Look up a model's price for input tokens.
+
+        Args:
+            profile_kind: The provider profile's kind (``openai``, ``azure``...).
+            model: The model name.
+
+        Returns:
+            US dollars per million input tokens, or ``None`` when the model is not listed.
         """
         ...

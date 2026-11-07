@@ -18,6 +18,7 @@ from exactdocs.retrieval.constants import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
     EMBEDDING_INPUT_FORMAT,
+    ESTIMATE_NOTE,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_KEY,
     MAX_MODEL_NAME,
@@ -33,6 +34,7 @@ from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
     Candidate,
+    EmbeddingSkip,
     EmbeddingSpace,
     FallbackReason,
     KeySource,
@@ -1200,3 +1202,120 @@ class EmbeddingSpaceOut(_Dto):
             activated_at=space.activated_at,
             created=created,
         )
+
+
+class EmbedVersionCommand(_Dto):
+    """A version to embed with the instance's embedding model (an ``embed`` job)."""
+
+    library: str = Field(min_length=1, max_length=MAX_NAME)
+    """The library ID."""
+    ref: str = Field(min_length=1, max_length=MAX_NAME)
+    """The version."""
+
+
+class EmbeddingPlanOut(_Dto):
+    """What an ``embed`` job of one version is to do: which space, which manifest, how much."""
+
+    space_id: int | None
+    """The space the version is embedded into; null when nothing is to be sent."""
+    manifest_id: str | None
+    """The version's active manifest; null when nothing is to be sent."""
+    missing: int
+    """Chunks of the manifest without a vector in the space when the plan was made."""
+    created: bool
+    """This plan created the space: the model changed, so every version needs embedding."""
+    skipped: EmbeddingSkip | None
+    """Why nothing is to be sent, if nothing is."""
+
+
+class EmbedBatchCommand(_Dto):
+    """One batch of an ``embed`` job: the next chunks of the manifest without a vector."""
+
+    library: str = Field(min_length=1, max_length=MAX_NAME)
+    """The library ID (its AI setting is read again)."""
+    ref: str = Field(min_length=1, max_length=MAX_NAME)
+    """The version (its article titles are part of what is embedded)."""
+    manifest_id: str = Field(min_length=1, max_length=MAX_NAME)
+    """The manifest the plan named."""
+    space_id: int
+    """The space the plan named."""
+
+
+class EmbeddedBatchOut(_Dto):
+    """What one batch embedded."""
+
+    embedded: int
+    """Vectors stored."""
+    input_tokens: int
+    """Tokens the provider reported."""
+    finished: bool
+    """No chunk of the manifest is left to embed (or nothing may be sent any more)."""
+
+
+class FinishEmbeddingCommand(_Dto):
+    """An ``embed`` job finished its version: switch spaces once one covers every version."""
+
+    space_id: int
+    """The space the job embedded into."""
+
+
+class FinishedEmbeddingOut(_Dto):
+    """The space after the check, and the spaces it replaced."""
+
+    space_id: int
+    """The space."""
+    state: SpaceState
+    """`active` once it covers every version of every library with AI on."""
+    retired: list[int]
+    """The spaces retired now that it covers everything (their vectors are dropped)."""
+
+
+class UnembeddedVersionsQuery(_Dto):
+    """Which versions the instance's embedding model has not fully embedded."""
+
+    library: str | None = Field(default=None, max_length=MAX_NAME)
+    """Only this library's; every library's when null."""
+
+
+class VersionRefOut(_Dto):
+    """One version of one library."""
+
+    library: str
+    """The library ID."""
+    ref: str
+    """The version."""
+
+
+class UnembeddedVersionsOut(_Dto):
+    """Versions to queue ``embed`` jobs for."""
+
+    versions: list[VersionRefOut]
+    """Versions with an active manifest, of libraries with AI on, not covered by the space of
+    the configured model; empty when no embedding model is configured."""
+
+
+class EmbeddingEstimateOut(_Dto):
+    """What embedding every version not embedded yet would send and cost, before it runs.
+
+    Counted from characters (4 per token), never with the model's tokenizer, and priced with the
+    bundled price list: an estimate, as `note` says.
+    """
+
+    model: str | None
+    """The embedding role's model, `<profile>:<model>`; null when none is configured."""
+    space_id: int | None
+    """The space of that model, if it has one yet."""
+    versions: int
+    """Versions looked at: active ones of libraries with AI on."""
+    chunks: int
+    """Distinct stored chunks without a vector (a blob shared by versions counts once)."""
+    characters: int
+    """Characters of their text, heading paths and article titles, as they are embedded."""
+    estimated_tokens: int
+    """`characters` / 4, rounded up: an estimate."""
+    usd_per_million_tokens: float | None
+    """The model's input price; null when the price list does not know the model."""
+    estimated_usd: float | None
+    """The estimated tokens at that price; null without a price."""
+    note: str = Field(default=ESTIMATE_NOTE)
+    """How the numbers were made."""

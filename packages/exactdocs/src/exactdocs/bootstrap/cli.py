@@ -60,7 +60,12 @@ from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGT
 from exactdocs.identity.dtos import CreateFirstAdminCommand, ResetPasswordCommand
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
-from exactdocs.retrieval.dtos import ModelChecksOut, RebuiltIndexOut, SearchIndexStateOut
+from exactdocs.retrieval.dtos import (
+    EmbeddingEstimateOut,
+    ModelChecksOut,
+    RebuiltIndexOut,
+    SearchIndexStateOut,
+)
 from exactdocs_kernel import DomainError
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
@@ -919,6 +924,51 @@ async def _ai_check(settings: Settings) -> ModelChecksOut:
     container = _build(settings)
     async with container.running(jobs=False):  # migrates first, as `serve` would
         return await container.retrieval.check_roles()
+
+
+@ai.command(name="estimate")
+def ai_estimate() -> None:
+    """Print what embedding every version not embedded yet would send and cost, before it starts.
+
+    Local: reads this server's settings and database, so run it where the server runs (in
+    Docker: `docker exec <container> exactdocs ai estimate`). Counts the distinct chunks of every
+    active version (libraries with AI on) without a vector from the configured embedding model,
+    at 4 characters per token, priced with the bundled price list: an estimate. It calls no model
+    and no tokenizer. Exits 2 when no embedding model is configured.
+    """
+    estimate = _run(_ai_estimate(Settings()))
+    if estimate.model is None:
+        sys.stdout.write(
+            "No embedding model is configured: nothing would be embedded. Set "
+            "EXACTDOCS_AI__EMBEDDING__MODEL (see docs/decisions/ai-retrieval.md).\n"
+        )
+        raise SystemExit(EXIT_USAGE)
+    if estimate.estimated_usd is None:
+        usd = "unknown USD (the price list does not know this model)"
+    else:
+        usd = (
+            f"{estimate.estimated_usd:.4f} USD estimated "
+            f"(at {estimate.usd_per_million_tokens} USD per million tokens)"
+        )
+    sys.stdout.write(
+        f"Embedding with {estimate.model}: {estimate.chunks} chunks of {estimate.versions} "
+        f"versions to embed, {estimate.characters} characters, about "
+        f"{estimate.estimated_tokens} estimated tokens, {usd}.\n{estimate.note}\n"
+    )
+
+
+async def _ai_estimate(settings: Settings) -> EmbeddingEstimateOut:
+    """Estimate the embedding of what the local database has not embedded.
+
+    Args:
+        settings: The server's settings.
+
+    Returns:
+        The estimate.
+    """
+    container = _build(settings)
+    async with container.running(jobs=False):  # migrates first, as `serve` would
+        return await container.retrieval.estimate_embedding()
 
 
 @app.command

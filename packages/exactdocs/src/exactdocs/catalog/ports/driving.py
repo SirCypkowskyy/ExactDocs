@@ -10,6 +10,7 @@ from exactdocs.catalog.dtos import (
     ApplyReadmeCommand,
     Article,
     ArticleList,
+    ArticleTitles,
     Asset,
     CollectGarbageCommand,
     CollectionResult,
@@ -23,6 +24,7 @@ from exactdocs.catalog.dtos import (
     FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetArticleTitlesQuery,
     GetAssetQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
@@ -208,6 +210,21 @@ class GetManifestStates(Protocol):
 
     async def __call__(self, query: GetManifestStatesQuery) -> ManifestStates:
         """Run the use case."""
+        ...
+
+
+class GetArticleTitles(Protocol):
+    """Name the titles of some articles of a manifest, for domains that hold its ID (one query)."""
+
+    async def __call__(self, query: GetArticleTitlesQuery) -> ArticleTitles:
+        """Run the use case.
+
+        Args:
+            query: The manifest and the paths.
+
+        Returns:
+            The titles found.
+        """
         ...
 
 

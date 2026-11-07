@@ -23,6 +23,8 @@ from exactdocs.ingestion.dtos import (
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PreviewRepositoryCommand,
+    QueuedEmbedding,
+    QueueEmbeddingCommand,
     ReimportedVersion,
     ReimportVersionCommand,
     RemovalResult,
@@ -343,4 +345,24 @@ class UpdateLibrarySettings(Protocol):
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
         """Run the use case."""
+        ...
+
+
+class QueueEmbedding(Protocol):
+    """Queue an ``embed`` job for each version the embedding model has not fully embedded.
+
+    A version that already has a queued ``embed`` job gets no second one. Nothing is queued when
+    no embedding model is configured, nor for a library with AI off. Called on start, after each
+    import and when a job creates the space of a new model.
+    """
+
+    async def __call__(self, command: QueueEmbeddingCommand) -> QueuedEmbedding:
+        """Run the use case.
+
+        Args:
+            command: Every library, or one.
+
+        Returns:
+            How many jobs were queued.
+        """
         ...

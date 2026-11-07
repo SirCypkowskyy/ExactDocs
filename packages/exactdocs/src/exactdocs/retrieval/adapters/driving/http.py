@@ -36,6 +36,7 @@ from exactdocs.retrieval.dtos import (
     ArticleOutlineQuery,
     CheckProviderCommand,
     ChunkOut,
+    EmbeddingEstimateOut,
     GetLibraryRetrievalQuery,
     LibraryMatchOut,
     LibraryRetrievalOut,
@@ -60,6 +61,7 @@ from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
     CheckProvider,
     DeleteProvider,
+    EstimateEmbedding,
     GetLibraryRetrieval,
     GetProvider,
     ListProviders,
@@ -567,6 +569,7 @@ def build_ai_router(
     delete_provider: DeleteProvider,
     check_provider: CheckProvider,
     list_roles: ListRoles,
+    estimate_embedding: EstimateEmbedding,
 ) -> APIRouter:
     """Build the routes of the AI provider profiles and roles (RET-01..03), admins only.
 
@@ -577,6 +580,7 @@ def build_ai_router(
         delete_provider: Deletes one.
         check_provider: Makes one minimal call per role that uses one.
         list_roles: Shows the instance's roles.
+        estimate_embedding: Estimates what embedding the versions not embedded yet costs.
 
     Returns:
         The router.
@@ -683,5 +687,19 @@ def build_ai_router(
             One entry per role.
         """
         return await list_roles()
+
+    @router.get("/embedding/estimate", name="estimate_embedding")
+    async def estimate() -> EmbeddingEstimateOut:
+        """Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.
+
+        Counts the distinct chunks of every active version (of libraries with AI on) that have no
+        vector from the configured embedding model, at 4 characters per token, priced with the
+        bundled price list. Calls no model and no tokenizer: an estimate, as `note` says.
+        The REST form of `exactdocs ai estimate`.
+
+        Returns:
+            The estimate; `model` is null when no embedding model is configured.
+        """
+        return await estimate_embedding()
 
     return router
