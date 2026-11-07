@@ -173,7 +173,10 @@ only holds each process's git work folders and `known_hosts`. What changes:
   whole words, as BM25 weighs a rare whole token high; snippets come from `ts_headline`. Every
   column passes through the SQL function `retrieval_search_words` first, so PostgreSQL's parser
   cuts words as FTS5's `tokenchars '-_.'` does (`/v1/tokens` holds `tokens`, an underscore stays
-  inside a word). It is not BM25, but the shared ranking suite (`tests/retrieval/ranking`) passes
+  inside a word). Its word characters are spelled out (ASCII letters and digits, every non-ASCII
+  character), never `[[:alnum:]]`, which follows `LC_CTYPE` and under `C` knows only ASCII; the
+  suites run on a `C`-locale database too. In such a database `lower()` folds only ASCII, so an
+  upper-case non-ASCII word is matched through the (casefolded) identifiers column. It is not BM25, but the shared ranking suite (`tests/retrieval/ranking`) passes
   on it with no listed difference (ParadeDB's `pg_search`, true BM25, is #104). `exactdocs reindex` rebuilds it
   the same way as FTS5's (`retrieval_search_next`, then a swap in one transaction).
 - **Jobs and locks across processes:** see *Several processes on PostgreSQL* under
@@ -549,14 +552,20 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   `n` whose two-key advisory lock (`EXECUTOR_LOCKS`, `n`) is free gives the executor ID
   `exactdocs-<n>`. The lock is held by a connection of its own (not the pool), with TCP keepalives
   (`SLOT_KEEPALIVES`), for the process's lifetime. A process that dies releases it; the next one
-  to start takes the lowest free slot, often the same, waits `claim_grace` (15 s) if that executor
-  left pending workflows, and DBOS resumes them.
+  to start takes the lowest free slot, often the same, waits `claim_grace` (15 s, logged) if that
+  executor left pending workflows, and DBOS resumes them.
   - **Watchdog.** A connection can die while its process lives (a failover, a NAT timeout,
     `idle_session_timeout`), which frees the slot. Every 5 s (`slot_check_interval`) the worker
-    checks in `pg_locks` that its own backend still holds it. If not, it takes it again when it is
-    free, and goes on only if every job it runs is still its own pending workflow. Otherwise, or
-    when another process holds the slot now, it cancels its jobs and stops the process
-    (`SIGTERM`), so they run elsewhere and not twice.
+    checks in `pg_locks` that its own backend still holds it, each round trip bounded by 4 s
+    (the slot connection also has `tcp_user_timeout`), so a host that stopped answering cannot
+    hold the check past the adoption grace. If the slot is free it takes it again, and goes on
+    only if every job it runs is still its own pending workflow. A database that cannot be
+    reached is `unknown`: the worker adopts nothing and waits, and gives up only once the slot
+    stayed unconfirmed for `adopt_grace`. When another process holds the slot (or after that
+    wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands over is
+    refused and queued again), cancels the running ones, stops DBOS's threads, then stops the
+    process with `SIGTERM`; `serve` bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and
+    a restart policy brings it back.
   - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
     watchdog round the worker lists the pending job workflows of other executors and takes the
     locks of the free slots (so no process holds them, and no other can adopt them meanwhile). A
