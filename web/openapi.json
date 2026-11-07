@@ -5273,7 +5273,7 @@
             "maxLength": 2048,
             "minLength": 1,
             "title": "Url",
-            "description": "Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+            "description": "HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
           },
           "library_id": {
             "anyOf": [
@@ -5705,8 +5705,7 @@
           "username": {
             "type": "string",
             "maxLength": 256,
-            "title": "Username",
-            "description": "Cap the input before normalising."
+            "title": "Username"
           },
           "password": {
             "type": "string",
@@ -6055,7 +6054,7 @@
             "maxLength": 2048,
             "minLength": 1,
             "title": "Url",
-            "description": "Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+            "description": "HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
           },
           "credential": {
             "anyOf": [
@@ -6500,8 +6499,7 @@
           "name": {
             "type": "string",
             "maxLength": 256,
-            "title": "Name",
-            "description": "Cap the input before validating."
+            "title": "Name"
           },
           "expires_at": {
             "anyOf": [
@@ -7524,7 +7522,7 @@
             "maxLength": 2048,
             "minLength": 1,
             "title": "Url",
-            "description": "Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+            "description": "HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
           },
           "credential": {
             "anyOf": [
@@ -7652,7 +7650,7 @@
             "maxLength": 2048,
             "minLength": 1,
             "title": "Url",
-            "description": "Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+            "description": "HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
           },
           "ref": {
             "anyOf": [

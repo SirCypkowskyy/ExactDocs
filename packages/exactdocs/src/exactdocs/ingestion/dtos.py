@@ -259,7 +259,7 @@ class CheckRepositoryCommand(_Dto):
     """Ask whether a git URL works, before anything is saved."""
 
     url: str = Field(min_length=1, max_length=2048)
-    """Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."""
+    """HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
 
 

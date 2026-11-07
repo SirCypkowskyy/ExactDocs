@@ -772,7 +772,7 @@ export interface components {
         readonly AddLibraryCommand: {
             /**
              * Url
-             * @description Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -966,10 +966,7 @@ export interface components {
          * @description A username and password to check.
          */
         readonly AuthenticateQuery: {
-            /**
-             * Username
-             * @description Cap the input before normalising.
-             */
+            /** Username */
             readonly username: string;
             /**
              * Password
@@ -1155,7 +1152,7 @@ export interface components {
         readonly CheckRepositoryCommand: {
             /**
              * Url
-             * @description Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -1358,10 +1355,7 @@ export interface components {
          * @description A new API token for the caller. ``expires_at`` (timezone-aware) is optional.
          */
         readonly CreateTokenCommand: {
-            /**
-             * Name
-             * @description Cap the input before validating.
-             */
+            /** Name */
             readonly name: string;
             /** Expires At */
             readonly expires_at?: string | null;
@@ -1831,7 +1825,7 @@ export interface components {
         readonly ListRepositoryRefsQuery: {
             /**
              * Url
-             * @description Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -1889,7 +1883,7 @@ export interface components {
         readonly PreviewRepositoryCommand: {
             /**
              * Url
-             * @description Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
