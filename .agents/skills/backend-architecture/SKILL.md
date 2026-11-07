@@ -15,18 +15,34 @@ Full reasoning: `docs/architecture.md`. Reference implementation: `packages/exac
   `models`/`errors` don't import Pydantic.
 - Driving adapters depend on driving ports; driven adapters implement driven ports. Adapters
   never import `use_cases` or `module`, nor each other.
-- Only these names at a domain's top level: `__init__`, `errors`, `models`, `dtos`, `ports/`
+- Only these names at a domain's top level: `__init__`, `constants`, `errors`, `models`, `dtos`, `ports/`
   (`driving`, `driven`), `use_cases`, `module`, `adapters/` (`driving/`, `driven/`). Any of the
   modules may become a package of the same name when it grows.
 
+## Conventions the tests check (`tests/architecture/test_conventions.py`)
+
+- Constants only in the package's `constants.py` (or `constants/` topic modules re-exported by
+  its `__init__`), as `NAME: Final[T] = value` followed by a `"""docstring"""`. `constants`
+  imports only the kernel and the standard library.
+- Every `@dataclass(frozen=True, slots=True, kw_only=True)`; otherwise a marker with a reason on
+  the decorator line: `# conventions: allow-mutable-dataclass|allow-positional|allow-dict -- why`.
+- Every function and method, private and nested ones too, has a Google docstring with `Args:`
+  for each parameter and `Returns:`/`Yields:` when it returns something; `Raises:` for domain
+  errors it raises.
+- Every dataclass and pydantic field has an attribute docstring; DTO bases set
+  `use_attribute_docstrings=True`, so it becomes the OpenAPI / MCP description.
+- Private by default (`_name`); public API re-exported from `__init__.py` / `__all__`.
+- `conventions_baseline.txt` lists docstrings existing code still lacks. Never add to it; delete
+  a line when you fix it (the test fails on stale lines).
+
 ## Add a use case to an existing domain
 
-1. `models.py`: new entities/value objects (frozen slotted dataclasses), invariants in `__post_init__`
+1. `models.py`: new entities/value objects (frozen, slotted, keyword-only dataclasses), invariants in `__post_init__`
    raising errors from `errors.py`.
 2. `dtos.py`: query/command + result as frozen Pydantic models; `from_model` classmethods.
 3. `ports/driving.py`: `class DoThing(Protocol): async def __call__(self, query: DoThingQuery) -> DoThingResult: ...`
 4. `ports/driven.py`: any new needs (`async` methods, domain types in and out).
-5. `use_cases.py`: `@dataclass(frozen=True, slots=True) class DoThingUseCase` with driven ports
+5. `use_cases.py`: `@dataclass(frozen=True, slots=True, kw_only=True) class DoThingUseCase` with driven ports
    as fields and `async def __call__`.
 6. `module.py`: add the field `do_thing: DoThing` and build it in `build(...)`.
 7. Adapters: route in `adapters/driving/http.py`, tool in `adapters/driving/mcp.py`
@@ -38,7 +54,7 @@ Full reasoning: `docs/architecture.md`. Reference implementation: `packages/exac
 ```
 src/exactdocs/<domain>/
   __init__.py          from exactdocs.<domain>.module import <Domain>Module; __all__ = [...]
-  errors.py  models.py  dtos.py  use_cases.py  module.py
+  constants.py  errors.py  models.py  dtos.py  use_cases.py  module.py
   ports/__init__.py  ports/driving.py  ports/driven.py
   adapters/__init__.py  adapters/driving/__init__.py  adapters/driven/__init__.py
 ```

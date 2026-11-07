@@ -87,8 +87,9 @@ package (`models/__init__.py` + submodules) with the same name. No other top-lev
 
 | Module | Holds | May import |
 |---|---|---|
+| `constants.py` | every constant of the domain, `Final` and documented (or a `constants/` package) | kernel |
 | `errors.py` | domain exceptions (subclasses of kernel errors) | kernel |
-| `models.py` | entities, value objects: `@dataclass(frozen=True, slots=True)`, `NewType` ids, pure logic | `errors`, kernel |
+| `models.py` | entities, value objects: `@dataclass(frozen=True, slots=True, kw_only=True)`, `NewType` ids, pure logic | `errors`, kernel |
 | `dtos.py` | boundary data: frozen Pydantic models (commands, queries, results) + `from_model` mappers | `models`, `errors` |
 | `ports/driving.py` | **driving (primary) ports**: `Protocol`s for use cases the outside world calls | `dtos`, `models`, `errors` |
 | `ports/driven.py` | **driven (secondary) ports**: `Protocol`s for what the domain needs (repositories, gateways, other domains) | `models`, `errors` |
@@ -628,7 +629,38 @@ that last step, which is one transaction in the catalog.
   `ty` checks conformance where they are wired (`CatalogModule.build(repository=...)`).
   Importing `abc.ABC` is banned by ruff. The only inheritance in the codebase is exceptions.
 - **Immutable by default.** `@dataclass(frozen=True, slots=True, kw_only=True)` for entities,
-  value objects, use cases and modules; `ConfigDict(frozen=True, extra="forbid")` for DTOs.
+  value objects, use cases, modules and adapters; `ConfigDict(frozen=True, extra="forbid")` for
+  DTOs. A dataclass that cannot follow it says why on its decorator line, with a non-empty reason:
+  `# conventions: allow-mutable-dataclass -- <reason>` (no `frozen`), `allow-positional` (no
+  `kw_only`, e.g. a one-field value object built like a conversion, Starlette middleware) or
+  `allow-dict` (no `slots`); several are comma-separated.
+- **Constants in `constants.py`.** A module-level constant (an `UPPER_CASE` name, or anything
+  `Final`) lives only in its package's `constants.py`, or in a `constants/` package whose
+  `__init__.py` re-exports the public ones from private topic modules (`constants/_git.py`, see
+  `ingestion`). Each is typed `Final[<type>]` and followed by an attribute docstring:
+
+  ```python
+  SESSION_IDLE: Final[timedelta] = timedelta(days=7)
+  """Idle time after which a web session expires."""
+  ```
+
+  `constants` is a domain's innermost layer: it imports only the kernel and the standard library,
+  so a value that needs a domain type is keyed by the enum's values (`"queued"`, not
+  `JobState.QUEUED`) or becomes a method. Module-level framework objects (SQLAlchemy tables and
+  clauses, a `TypeAdapter`, a parser, a lock) are not constants: they stay with the adapter that
+  uses them and are named in lower case. Enum members and `__all__` are not constants either.
+- **Private by default.** A module, function, class or constant that is not part of its package's
+  public API is private (`_name`); what other packages use is re-exported by the package's
+  `__init__.py` and listed in `__all__`. Within a domain, a private name may be imported from the
+  module that owns it (a private constant from `constants`).
+- **Docstrings everywhere, Google style.** Every function, method and nested function has one,
+  private ones included (ruff's own rules skip them). It lists every parameter under `Args:`
+  (`self`/`cls` excluded), the result under `Returns:` (`Yields:` for a generator; a property
+  describes the attribute instead) and raised domain errors under `Raises:`.
+- **Field docstrings.** Every dataclass field and every pydantic field has an attribute docstring
+  on the line after it. Pydantic models set `use_attribute_docstrings=True` (the domains' `_Dto`
+  bases do), so the docstring is the field's description in OpenAPI and the MCP tool schemas;
+  `Field(description=...)` is only for descriptions shared through a constant.
 - **Use cases are callables.** `await catalog.list_libraries()` reads like the port name, and any
   `async def` with the same signature is a valid test double.
 - **Explicit composition root, no DI container.** `bootstrap/container.py` builds everything
@@ -646,7 +678,8 @@ that last step, which is one transaction in the catalog.
 | Domain isolation, layer direction, adapter rules, framework-free core, no cycles, kernel purity | ArchUnitPython, `packages/exactdocs/tests/architecture/test_architecture.py` |
 | Fixed module set per domain, driving/driven split | same file (filesystem check) |
 | Bridges point one way: retrieval to catalog, ingestion to catalog / retrieval | `test_bridge_direction.py` |
-| No `abc.ABC`, no relative imports, every ruff rule incl. preview | ruff (`select = ["ALL"]`, `preview = true`) |
+| No `abc.ABC`, no relative imports, every ruff rule incl. preview, Google docstrings | ruff (`select = ["ALL"]`, `preview = true`, pydocstyle `google`) |
+| Constants placement, `Final` and docstrings; docstrings on every function with complete `Args:` / `Returns:`; field docstrings; `use_attribute_docstrings`; dataclass flags and exception markers | `test_conventions.py` (AST checker over `packages/*/src`, a bad and a good fixture per rule; existing docstring gaps listed in `conventions_baseline.txt`, which may only shrink) |
 | Protocol conformance, types | ty |
 | Web: features don't import each other; `shared` imports no feature; routes use feature public APIs | fallow (`web/.fallowrc.json`) + Biome `noRestrictedImports` |
 
