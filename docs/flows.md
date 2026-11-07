@@ -146,9 +146,11 @@ Only BM25 is built; the other modes are the design for the *Next: AI retrieval* 
 mode answers is decided per call (RET-06): the call's `mode`, else the library's mode, else the
 instance's (`EXACTDOCS_AI__MODE`), else the best mode the configured model roles allow. A
 mode is available when it has a pipeline and its roles are configured (`hybrid`: embedding;
-`hybrid_hyde`: embedding and LLM; `agentic`: LLM); reranking is a flag on top. A mode the call asks
-for that is not available is an error naming the missing role; a library or instance mode that is
-not available is skipped, and the result says so (`fallback_reason: mode_unavailable`).
+`hybrid_hyde`: embedding and LLM; `agentic`: LLM) and, for the hybrid modes, the vector store can
+load (sqlite-vec); reranking is a flag on top. A mode the call asks for that is not available is an
+error naming the missing role; a library or instance mode that is not available is skipped, and the
+result says so (`fallback_reason: mode_unavailable`, or `vector_store_unavailable` when only the
+vector store is missing).
 
 ```mermaid
 flowchart TD
