@@ -29,13 +29,20 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
-from exactdocs.bootstrap.constants import JOBS_FILE, KNOWN_HOSTS_FILE, WORK_DIR
+from exactdocs.bootstrap.constants import (
+    CREDENTIALS_KEY_PURPOSE,
+    JOBS_FILE,
+    KEY_FILE,
+    KNOWN_HOSTS_FILE,
+    WORK_DIR,
+)
 from exactdocs.bootstrap.database import (
     StartupError,
     check_schema_is_current,
     migrate,
     open_database,
 )
+from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.catalog import CatalogModule
@@ -63,14 +70,13 @@ from exactdocs.ingestion.adapters.driven.dbos import (
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
     SqliteJobRepository,
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
-from exactdocs.ingestion.constants import KEY_FILE, QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
+from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -217,9 +223,12 @@ class Container:
                         if settings.secret_key_previous
                         else []
                     ),
+                    purpose=CREDENTIALS_KEY_PURPOSE,
                 )
                 if settings.secret_key
-                else FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
+                else FernetSecretBox.from_file(
+                    settings.data_dir / KEY_FILE, purpose=CREDENTIALS_KEY_PURPOSE
+                )
             )
         except ValueError as error:  # fixed texts: they never repeat a key
             raise StartupError(str(error)) from None
