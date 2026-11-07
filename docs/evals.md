@@ -60,7 +60,8 @@ is a question pinned to one version, and the section that answers it:
   the wrong-version rate only: whatever a mode returns for it must still be of that version.
 
 To add a case, add it to the YAML; a test checks that its section exists in that version. If the
-content it needs is missing, extend the fixture as its README says.
+content it needs is missing, extend the fixture as its README says. Then rewrite the baseline
+([Changing the dataset](#changing-the-dataset)).
 
 ## Metrics
 
@@ -92,14 +93,18 @@ cheaper mode answered (`fallbacks`).
   the suite for BM25 and is a warning for the report-only modes. A gating mode with no baseline
   entry is a warning (its recall is then not gated).
 - **The stored baseline only moves up** (`--ratchet`, on in CI): the branch's `baseline.json` may
-  not store a lower BM25 recall@5 than `develop`'s.
+  not store a lower BM25 recall@5 than `develop`'s, and a value it raises must be what the run
+  measures (a stored recall@5 above the measured one fails).
+- Both apply only **on the same dataset**: when the dataset changed since `develop`'s baseline,
+  the branch's own baseline is the bar instead (see [Changing the dataset](#changing-the-dataset)).
 - A question whose search raises fails the suite.
 - **A mode becomes a default only when the suite shows it beats BM25's recall@5 by at least
   5 points with a wrong-version rate of 0.** The report marks such a mode `eligible_as_default`;
   changing the default order (`DEFAULT_MODE_ORDER`) without that is not accepted.
 
 The baseline is `packages/exactdocs/evals/retrieval_eval/baseline.json`: recall@1/5/10, MRR and
-the wrong-version rate of each mode that ran (no latency, which depends on the machine). CI compares
+the wrong-version rate of each mode that ran (no latency, which depends on the machine), and the
+`dataset` fingerprint they were measured on. CI compares
 with the copy on `develop`, checked out on its own (that one file), so a pull request cannot lower
 the bar it is measured against; a failed checkout fails the job. Only when `develop` has no
 `baseline.json` at all does CI compare with the branch's own, with a warning in the summary. A
@@ -109,6 +114,26 @@ numbers:
 ```bash
 just eval --write-baseline
 ```
+
+## Changing the dataset
+
+The fingerprint (`sha256:...` in `baseline.json`) is a hash of every case's question (`inputs`)
+and expected answer (`expected_output`). Renaming, reordering or commenting cases keeps it; adding,
+removing or changing a question or an expected section changes it. Numbers measured on different
+datasets are not comparable (harder questions lower recall without anything getting worse), so:
+
+1. Change `dataset.yaml` (see [The dataset](#the-dataset)).
+2. Run `just eval --write-baseline` and commit the new `baseline.json` in the same pull request.
+   It records the new fingerprint and the recall measured on the new dataset, which may be lower.
+3. In CI, `develop`'s baseline has the old fingerprint, so the drop gate and `--ratchet` compare
+   with the branch's `baseline.json` instead, and the job summary says
+   **Baseline reset: the dataset changed (...)**. The branch's baseline must still be what the run
+   measures, and once the pull request is merged the ratchet starts again from it.
+
+If `baseline.json` was not rewritten, its fingerprint is not the dataset's and CI fails with
+"was recorded for dataset ..., not this one". A pull request that changes ranking and the dataset
+together is measured only against its own new baseline, so keep the two in separate pull requests
+when the ranking change should be gated against `develop`.
 
 ## Tiers
 

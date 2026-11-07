@@ -9,8 +9,9 @@ from pathlib import Path
 
 from exactdocs.retrieval.models import ModelRole
 from fixture_repo import DocsRepo, build
+from retrieval_eval.dataset import fingerprint, load_dataset
 from retrieval_eval.fixture import configured_container, model_free_container, run_on_fixture
-from retrieval_eval.suite import BASELINE_FILE, MODES, baseline_of, markdown, read_baseline
+from retrieval_eval.suite import BASELINE_FILE, MODES, baseline_of, compare, markdown, read_baseline
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -50,7 +51,8 @@ def _parser() -> argparse.ArgumentParser:
         "--ratchet",
         action="store_true",
         help=f"fail when this branch's {BASELINE_FILE.name} stores a lower recall@5 for a gating "
-        "mode than --baseline (CI: the baseline only moves up)",
+        "mode than --baseline (CI: the baseline only moves up), or was recorded for another "
+        "dataset; when --baseline was recorded for another dataset, the branch's is the bar",
     )
     parser.add_argument(
         "--report",
@@ -69,7 +71,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-baseline",
         action="store_true",
-        help=f"store this run's ranking metrics as the baseline ({BASELINE_FILE.name})",
+        help=f"store this run's ranking metrics and the dataset's fingerprint as the baseline "
+        f"({BASELINE_FILE.name})",
     )
     return parser
 
@@ -100,7 +103,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline is not None and not args.baseline.is_file():
         sys.stderr.write(f"baseline not found: {args.baseline}\n")
         return 2
-    baseline_path = args.baseline or BASELINE_FILE
+    comparison = compare(
+        fingerprint(load_dataset()),
+        read_baseline(args.baseline or BASELINE_FILE),
+        read_baseline(BASELINE_FILE),
+        ratchet=args.ratchet,
+    )
     with tempfile.TemporaryDirectory(prefix="exactdocs-eval-") as tmp:
         repo = build(Path(tmp) / "fixture" / "docs-repo")
         report = asyncio.run(
@@ -111,9 +119,7 @@ def main(argv: list[str] | None = None) -> int:
                 modes=[m for m in MODES if m.mode.value in wanted],
                 allow_providers=args.allow_providers,
                 local_roles=frozenset(ModelRole(r) for r in roles),
-                baseline=read_baseline(baseline_path),
-                baseline_source=str(baseline_path) if baseline_path.is_file() else None,
-                stored=read_baseline(BASELINE_FILE) if args.ratchet else None,
+                comparison=comparison,
             )
         )
     args.report.parent.mkdir(parents=True, exist_ok=True)

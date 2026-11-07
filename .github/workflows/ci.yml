@@ -52,7 +52,9 @@ jobs:
           sparse-checkout-cone-mode: false
       # Every mode on the fixture, model-free; BM25 gates: wrong-version rate 0, recall@5 within
       # 2 points of develop's baseline, and the branch's baseline.json not below develop's
-      # (--ratchet). Hosted models are never called here (no secrets).
+      # (--ratchet). When the dataset's fingerprint differs from develop's baseline, the branch's
+      # baseline is the bar and the summary reports the reset (docs/evals.md, Changing the
+      # dataset). Hosted models are never called here (no secrets).
       - name: Retrieval eval (BM25, gating)
         run: |
           baseline=packages/exactdocs/evals/retrieval_eval/baseline.json

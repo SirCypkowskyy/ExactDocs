@@ -9,8 +9,16 @@ from exactdocs.retrieval.models import ModelRole
 from exactdocs.retrieval.use_cases import NoModelRoles
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import DocsRepo
-from retrieval_eval.dataset import load_dataset
-from retrieval_eval.suite import MODES, EvalMode, SuiteReport, judge, run_modes, with_evaluators
+from retrieval_eval.dataset import fingerprint, load_dataset
+from retrieval_eval.suite import (
+    MODES,
+    Comparison,
+    EvalMode,
+    SuiteReport,
+    judge,
+    run_modes,
+    with_evaluators,
+)
 
 
 def configured_container(data_dir: Path) -> Container:
@@ -45,9 +53,7 @@ async def run_on_fixture(
     modes: Sequence[EvalMode] = MODES,
     allow_providers: bool = False,
     local_roles: frozenset[ModelRole] = frozenset(),
-    baseline: dict[str, float] | None = None,
-    baseline_source: str | None = None,
-    stored: dict[str, float] | None = None,
+    comparison: Comparison | None = None,
 ) -> SuiteReport:
     """Import every fixture version, run the dataset through each mode and apply the gates.
 
@@ -59,9 +65,7 @@ async def run_on_fixture(
         modes: The modes to try.
         allow_providers: Run modes that call a hosted model.
         local_roles: The configured roles whose model runs on this machine.
-        baseline: recall@5 per mode to compare with; none: no comparison.
-        baseline_source: Where ``baseline`` came from, for the summary.
-        stored: The branch's stored baseline, which may not be below ``baseline``.
+        comparison: What to compare with (``compare``); none: no comparison.
 
     Returns:
         The judged report.
@@ -83,7 +87,6 @@ async def run_on_fixture(
         dataset.name,
         len(dataset.cases),
         outcomes,
-        baseline or {},
-        baseline_source=baseline_source,
-        stored=stored,
+        comparison or Comparison(),
+        fingerprint=fingerprint(dataset),
     )

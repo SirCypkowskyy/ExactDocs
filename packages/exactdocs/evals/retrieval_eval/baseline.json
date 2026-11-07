@@ -1,5 +1,6 @@
 {
   "note": "Written by `just eval --write-baseline`; CI compares with the copy on develop.",
+  "dataset": "sha256:d7788b8fb1eb30e0",
   "modes": {
     "bm25": {
       "recall_at_1": 0.8,
