@@ -313,8 +313,22 @@ def test_settings_defaults_are_local_and_private(tmp_path_factory: pytest.TempPa
     )
 
 
-def test_unknown_host_is_rejected_app_wide(localhost_client: TestClient) -> None:
-    response = localhost_client.get("/api/health", headers={"host": "evil.example"})
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/openapi.json"),
+        ("GET", "/mcp"),
+        ("GET", "/"),
+        # Only exact GET/HEAD requests on the probe paths skip the check (test_probes.py).
+        ("POST", "/healthz"),
+        ("GET", "/healthz/"),
+        ("GET", "/api/health/x"),
+    ],
+)
+def test_unknown_host_is_rejected_app_wide(
+    localhost_client: TestClient, method: str, path: str
+) -> None:
+    response = localhost_client.request(method, path, headers={"host": "evil.example"})
 
     assert response.status_code == 400
 
