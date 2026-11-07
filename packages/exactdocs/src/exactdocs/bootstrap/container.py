@@ -50,6 +50,7 @@ from exactdocs.bootstrap.database import (
     open_database,
 )
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
@@ -97,6 +98,7 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteChunkRepository,
@@ -178,6 +180,18 @@ def _existing_secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox 
     return None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ReadSide:
+    """The modules the read-only MCP tools use, and on PostgreSQL the search engine to choose."""
+
+    catalog: CatalogModule
+    """The catalog."""
+    retrieval: RetrievalModule
+    """Retrieval."""
+    search_choice: PostgresSearchChoice | None
+    """On PostgreSQL: the search engine, chosen once the schema is migrated."""
+
+
 def _build_read_side(
     engine: AsyncEngine,
     settings: Settings,
@@ -186,7 +200,7 @@ def _build_read_side(
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
-) -> tuple[CatalogModule, RetrievalModule]:
+) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
     Args:
@@ -199,7 +213,8 @@ def _build_read_side(
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
 
     Returns:
-        The two modules (``StartupError`` when the AI configuration is invalid).
+        The two modules (``StartupError`` when the AI configuration is invalid), and on
+        PostgreSQL the search engine to choose at start.
     """
     ai = _ai_configuration(settings)
     catalog = CatalogModule.build(
@@ -209,11 +224,13 @@ def _build_read_side(
         stored_articles=SqliteStoredArticles(engine=engine),
         copier=SqliteManifestCopier(engine=engine),
     )
-    search = (
-        PostgresSearchIndex(engine=engine)
-        if is_postgres(engine)
-        else SqliteSearchIndex(engine=engine)
-    )
+    choice = None
+    search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
+    if is_postgres(engine):
+        full_text = PostgresSearchIndex(engine=engine)
+        choice = search = PostgresSearchChoice(
+            full_text=full_text, bm25=PgSearchIndex(engine=engine, table=full_text)
+        )
     # On PostgreSQL there is no vector store yet (pgvector is #243): the hybrid modes report
     # themselves unavailable and fall back to BM25, as without an embedding model.
     vectors = (
@@ -253,7 +270,7 @@ def _build_read_side(
         tracer=search_tracer(settings),
         vectors=vectors,
     )
-    return catalog, retrieval
+    return _ReadSide(catalog=catalog, retrieval=retrieval, search_choice=choice)
 
 
 def _system_git(settings: Settings, engine: AsyncEngine) -> tuple[GitCli | MissingGit, Path | None]:
@@ -365,6 +382,8 @@ class ReadOnlyContainer:
     engine: AsyncEngine
     catalog: CatalogModule
     retrieval: RetrievalModule
+    search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
+    """On PostgreSQL: the search engine, chosen in ``running()``."""
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
@@ -373,8 +392,13 @@ class ReadOnlyContainer:
         engine = open_database(settings, read_only=True)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
-        catalog, retrieval = _build_read_side(engine, settings, ai_box=ai_box)
-        return cls(engine=engine, catalog=catalog, retrieval=retrieval)
+        read = _build_read_side(engine, settings, ai_box=ai_box)
+        return cls(
+            engine=engine,
+            catalog=read.catalog,
+            retrieval=read.retrieval,
+            search_choice=read.search_choice,
+        )
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
@@ -387,6 +411,8 @@ class ReadOnlyContainer:
             raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
+            if self.search_choice is not None:  # it may not make the BM25 index: it only reads
+                await self.search_choice.choose(create=False)
             yield
         finally:
             try:
@@ -408,6 +434,8 @@ class Container:
     job_worker: DbosJobWorker
     work_owner: Path | None = field(default=None, repr=False)
     """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
+    search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
+    """On PostgreSQL: the search engine, chosen in ``running()`` once the schema is migrated."""
     # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
     # event loop) is refused as well.
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -452,7 +480,7 @@ class Container:
         vault = SqliteCredentialVault(
             engine=engine, box=_secret_box(settings, CREDENTIALS_KEY_PURPOSE)
         )
-        catalog, retrieval = _build_read_side(
+        read = _build_read_side(
             engine,
             settings,
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
@@ -461,60 +489,61 @@ class Container:
             vector_extension=vector_extension,
         )
         index = RetrievalChunkIndex(
-            index_manifest=retrieval.index_manifest,
-            get_chunk_sets=retrieval.get_chunk_sets,
-            discard_pending_chunks=retrieval.discard_pending_chunks,
-            remove_chunks=retrieval.remove_chunks,
-            retag_articles=retrieval.retag_articles,
+            index_manifest=read.retrieval.index_manifest,
+            get_chunk_sets=read.retrieval.get_chunk_sets,
+            discard_pending_chunks=read.retrieval.discard_pending_chunks,
+            remove_chunks=read.retrieval.remove_chunks,
+            retag_articles=read.retrieval.retag_articles,
         )
         tag_locks = _library_locks(engine, "tags")  # tagging and activations take turns
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=chunker or MarkdownChunker(),
             sources=CatalogLibrarySources(
-                get_library=catalog.get_library, list_renames=catalog.list_renames
+                get_library=read.catalog.get_library, list_renames=read.catalog.list_renames
             ),
             versions=CatalogVersionPublisher(
-                store_manifest=catalog.store_manifest,
-                activate_manifest=catalog.activate_manifest,
-                discard_pending_manifests=catalog.discard_pending_manifests,
-                apply_readme=catalog.apply_readme,
-                apply_manual_tags_to=catalog.apply_manual_tags,
-                replace_renames_of=catalog.replace_renames,
+                store_manifest=read.catalog.store_manifest,
+                activate_manifest=read.catalog.activate_manifest,
+                discard_pending_manifests=read.catalog.discard_pending_manifests,
+                apply_readme=read.catalog.apply_readme,
+                apply_manual_tags_to=read.catalog.apply_manual_tags,
+                replace_renames_of=read.catalog.replace_renames,
             ),
             index=index,
             vault=vault,
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
             renames=renames,
-            stored=CatalogStoredArticles(find_stored_articles=catalog.find_stored_articles),
+            stored=CatalogStoredArticles(find_stored_articles=read.catalog.find_stored_articles),
             max_image_bytes=settings.max_image_bytes,
             max_images_bytes=settings.max_images_bytes,
             checkpoints=DbosCheckpoints(),
             batch_files=settings.import_batch_files,
             tag_locks=tag_locks,
             imported_tags=CatalogImportedTags(
-                get_version_tags=catalog.get_version_tags,
-                set_imported_tags_of=catalog.set_imported_tags,
+                get_version_tags=read.catalog.get_version_tags,
+                set_imported_tags_of=read.catalog.set_imported_tags,
             ),
-            copier=CatalogVersionCopier(copy_manifest=catalog.copy_manifest),
+            copier=CatalogVersionCopier(copy_manifest=read.catalog.copy_manifest),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine=engine),
             clock=SystemClock(),
             remote=remote,
             tree=tree,
-            library_ids=CatalogLibraryIds(get_library=catalog.get_library),
+            library_ids=CatalogLibraryIds(get_library=read.catalog.get_library),
             libraries=CatalogNewLibraries(
-                create_library=catalog.create_library, discard_library=catalog.discard_library
+                create_library=read.catalog.create_library,
+                discard_library=read.catalog.discard_library,
             ),
             sources=CatalogLibrarySources(
-                get_library=catalog.get_library, list_renames=catalog.list_renames
+                get_library=read.catalog.get_library, list_renames=read.catalog.list_renames
             ),
             removals=CatalogRemovals(
-                version_remover=catalog.remove_version,
-                library_remover=catalog.remove_library,
-                forget_library=retrieval.forget_library,
+                version_remover=read.catalog.remove_version,
+                library_remover=read.catalog.remove_library,
+                forget_library=read.retrieval.forget_library,
             ),
             index=index,
             vault=vault,
@@ -525,17 +554,17 @@ class Container:
                     **handlers,
                     **collect_job(
                         collectors=[
-                            CatalogCollector(collect_garbage=catalog.collect_garbage),
-                            RetrievalCollector(collect_chunks=retrieval.collect_chunks),
+                            CatalogCollector(collect_garbage=read.catalog.collect_garbage),
+                            RetrievalCollector(collect_chunks=read.retrieval.collect_chunks),
                         ]
                     ),
                 },
             ),
             recovery_hooks=recovery_hooks,
-            manual_tags=CatalogManualTags(set_manual_tags=catalog.set_manual_tags),
+            manual_tags=CatalogManualTags(set_manual_tags=read.catalog.set_manual_tags),
             tag_locks=tag_locks,
             settings_locks=_library_locks(engine, "settings"),
-            settings=CatalogLibrarySettings(set_library_settings=catalog.set_library_settings),
+            settings=CatalogLibrarySettings(set_library_settings=read.catalog.set_library_settings),
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine=engine),
             schedule_switch=DbosScheduleSwitch(SCHEDULE),
@@ -544,7 +573,8 @@ class Container:
             settings=settings,
             engine=engine,
             work_owner=work_owner,
-            catalog=catalog,
+            search_choice=read.search_choice,
+            catalog=read.catalog,
             identity=IdentityModule.build(
                 repository=SqliteAccountRepository(engine=engine),
                 sessions=SqliteSessionRepository(engine=engine),
@@ -554,7 +584,7 @@ class Container:
                 clock=SystemClock(),
             ),
             ingestion=ingestion,
-            retrieval=retrieval,
+            retrieval=read.retrieval,
             job_worker=DbosJobWorker(
                 run_job=ingestion.run_job,
                 recover_jobs=ingestion.recover_jobs,
@@ -588,6 +618,8 @@ class Container:
             raise RuntimeError(message)
         try:
             await migrate(self.engine)
+            if self.search_choice is not None:
+                await self.search_choice.choose(create=True)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
                 stored = (

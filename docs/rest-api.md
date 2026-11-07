@@ -381,10 +381,12 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   `GET /healthz` (liveness; `GET /api/health` is its alias) answers 200 while the process runs,
   giving the database about 0.3 s for its details: `status`, `version`, `database_reachable`, the
   database's `schema_revision`, the `search_index_format` the search index was built in (`null`
-  if none is recorded), and `reindex_required`: `true` when that format is older than this
+  if none is recorded), `reindex_required`: `true` when that format is older than this
   version's or not recorded, until `exactdocs reindex` has run (search keeps answering
-  meanwhile). When the database did not answer in time, `database_reachable` is `false` and the
-  three database fields are `null`. A request whose `Host` the instance does not trust gets only
+  meanwhile), and `search_engine`: the engine that answers searches, `fts5` (SQLite), `pg_search`
+  (ParadeDB's BM25 on PostgreSQL) or `postgres_fts` (PostgreSQL full-text search, when the
+  database has no `pg_search`). When the database did not answer in time, `database_reachable` is
+  `false` and the four database fields are `null`. A request whose `Host` the instance does not trust gets only
   `{"status": "ok"}`. `GET /readyz` (readiness) answers 200 `{"status": "ready"}` when the
   database file exists, answers within 2 s and is at this version's schema revision, else 503
   `{"status": "not_ready", "reason": ...}` with a fixed sentence. Only exact `GET`/`HEAD`

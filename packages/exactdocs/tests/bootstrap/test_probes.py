@@ -144,6 +144,7 @@ def _assert_unknown(body: dict[str, object]) -> None:
         None,
         None,
     )
+    assert body["search_engine"] is None
 
 
 async def test_liveness_answers_without_sign_in_before_setup(

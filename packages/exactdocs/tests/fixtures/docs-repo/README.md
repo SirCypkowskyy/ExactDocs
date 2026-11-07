@@ -124,3 +124,6 @@ prints the actual top 5. To add a case, add an entry to `expected-queries.yaml` 
 content it needs is missing, add it under the *latest* commit that can hold it (see "Adding content
 without breaking the SHAs") and update `GOLDEN_SHAS`. To run the suite on another engine, add it to
 `ENGINES` and to `open_container` in `tests/retrieval/ranking/conftest.py`: the cases stay the same.
+With `EXACTDOCS_TEST_POSTGRES_URL` set it also runs on PostgreSQL full-text search (`postgres_fts`,
+`postgres_fts_c`) and, with `EXACTDOCS_TEST_PG_SEARCH=1` (a server with the extension), on
+ParadeDB's BM25 (`pg_search`); CI runs all of them on ParadeDB.

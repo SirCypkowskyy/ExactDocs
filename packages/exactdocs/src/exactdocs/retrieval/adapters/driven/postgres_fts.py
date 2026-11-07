@@ -4,8 +4,9 @@
 chunk, keyed by `retrieval_chunks.id` with a cascading foreign key, and the same four columns as
 FTS5: the section's own heading, its ancestors, its text and `identifier_tokens` of them. PostgreSQL
 computes `document` from them (the `simple` configuration, labels A to D). It is not BM25: ranking
-follows the same column weights but may order close matches differently from SQLite. ParadeDB's
-`pg_search` (BM25 on PostgreSQL) is a later adapter of the same port.
+follows the same column weights but may order close matches differently from SQLite. Where the
+database has ParadeDB's `pg_search`, its BM25 (`pg_search.py`) answers over these same rows, and
+this adapter still writes and rebuilds them (bootstrap chooses the engine at start).
 """
 
 import json
@@ -25,6 +26,7 @@ from exactdocs.retrieval.constants import (
     _PG_SEARCH,
     _PG_SWAP,
     POSTGRES_FORMAT,
+    POSTGRES_FTS_ENGINE,
     POSTGRES_HEADLINE,
     POSTGRES_SNIPPET_WORDS,
     POSTGRES_TAG_CONDITIONS,
@@ -245,7 +247,9 @@ class PostgresSearchIndex:
         """
         async with self.engine.connect() as connection:
             stored = await connection.scalar(text("SELECT format FROM retrieval_search_format"))
-        return SearchIndexState(stored_format=stored, current_format=POSTGRES_FORMAT)
+        return SearchIndexState(
+            stored_format=stored, current_format=POSTGRES_FORMAT, engine=POSTGRES_FTS_ENGINE
+        )
 
     async def rebuild(self) -> RebuiltIndex:
         """Build ``retrieval_search_next`` of every stored chunk, then swap it in.

@@ -3,7 +3,9 @@
 To run the suite on another engine (hybrid retrieval, ParadeDB), add its name to ``ENGINES`` and
 build its ``Container`` in ``open_container``: the cases and the assertions do not change.
 ``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set, and
-``postgres_fts_c`` runs it again on a database in the ``C`` locale.
+``postgres_fts_c`` runs it again on a database in the ``C`` locale. ``pg_search`` (ParadeDB's BM25)
+runs with ``EXACTDOCS_TEST_PG_SEARCH=1`` (a server with the extension, as CI's ParadeDB); the app
+chooses it by itself, as in production, and the suite checks that it did.
 """
 
 import asyncio
@@ -13,21 +15,25 @@ from pathlib import Path
 
 import pytest
 
-from databases import ADMIN_URL, SECRET_KEY, postgres_database
+from databases import ADMIN_URL, PG_SEARCH, SECRET_KEY, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
 from fixture_import import import_fixture
 from fixture_repo import DocsRepo
 
-ENGINES = ["fts5", *(["postgres_fts", "postgres_fts_c"] if ADMIN_URL else [])]
+ENGINES = [
+    "fts5",
+    *(["postgres_fts", "postgres_fts_c"] if ADMIN_URL else []),
+    *(["pg_search"] if PG_SEARCH else []),
+]
 _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
 
 
 def open_container(engine: str, data_dir: Path) -> Container:
     """The app's container for ``engine``; every engine shares the import and the search port."""
     assert engine in ENGINES, engine
-    if engine.startswith("postgres_fts"):
+    if engine in _DATABASES:
         return Container.build(
             Settings(data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY)
         )
@@ -37,6 +43,8 @@ def open_container(engine: str, data_dir: Path) -> Container:
 async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):
+        state = await container.retrieval.get_search_index_state()
+        assert state.engine == engine.removesuffix("_c"), state  # the engine the app chose
         await import_fixture(container, docs_repo)
 
 
@@ -51,8 +59,10 @@ def imported(
     """
     data_dir = tmp_path_factory.mktemp("ranking")
     with ExitStack() as stack:
-        if request.param.startswith("postgres_fts"):
-            database = postgres_database(c_locale=request.param.endswith("_c"))
+        if request.param != "fts5":
+            database = postgres_database(
+                c_locale=request.param.endswith("_c"), pg_search=request.param == "pg_search"
+            )
             _DATABASES[request.param] = stack.enter_context(database).url
         asyncio.run(_import_all(request.param, data_dir, docs_repo))
         yield request.param, data_dir

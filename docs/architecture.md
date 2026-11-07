@@ -146,7 +146,8 @@ only holds each process's git work folders and `known_hosts`. What changes:
 - **The same adapters.** The SQLAlchemy Core adapters in `adapters/driven/sqlite.py` run on both
   dialects; the little that differs is chosen from the engine's dialect (`ON CONFLICT` inserts
   through the dialect's `insert`, JSON tag lists through `json_each` or
-  `json_array_elements_text`). Only search has an adapter of its own (`postgres_fts.py`, below).
+  `json_array_elements_text`). Only search has adapters of its own (`postgres_fts.py` and
+  `pg_search.py`, below).
   The adapter contract tests run every SQL adapter on both.
 - **Turn-taking.** A transaction that asks for `begin_immediate` (SQLite's `BEGIN IMMEDIATE`, one
   writer at a time) takes a transaction-level advisory lock (`WRITE_LOCK`) on PostgreSQL, so the
@@ -178,8 +179,28 @@ only holds each process's git work folders and `known_hosts`. What changes:
   character), never `[[:alnum:]]`, which follows `LC_CTYPE` and under `C` knows only ASCII; the
   suites run on a `C`-locale database too. In such a database `lower()` folds only ASCII, so an
   upper-case non-ASCII word is matched through the (casefolded) identifiers column. It is not BM25, but the shared ranking suite (`tests/retrieval/ranking`) passes
-  on it with no listed difference (ParadeDB's `pg_search`, true BM25, is #104). `exactdocs reindex` rebuilds it
+  on it with no listed difference. `exactdocs reindex` rebuilds it
   the same way as FTS5's (`retrieval_search_next`, then a swap in one transaction).
+- **BM25 with `pg_search`** (#104, `retrieval.adapters.driven.pg_search`): when the database has
+  ParadeDB's extension, a BM25 index (`retrieval_search_bm25`) over the same `retrieval_search`
+  columns answers instead. Its tokenizer cuts words as FTS5 does (a regular expression for ASCII
+  letters and digits, every non-ASCII character and `-_.`, lower-cased and ASCII-folded; the
+  identifiers column by whitespace). Every term is an alternative; each field's BM25 score is
+  boosted (heading 2, path 1.5, text 1, identifiers 0.1) and the fields' scores add up, and the
+  query's whole identifiers count twice. The boosts are not FTS5's weights: FTS5 weights term
+  counts before saturating them, Tantivy multiplies each field's whole score (with the field's own
+  IDF and length), so FTS5's 20 for a heading would let any word of a short heading win. These
+  keep the ranking suite whole and the retrieval eval's BM25 recall at SQLite's; both run on it in
+  CI. The adapter writes and rebuilds the rows through `postgres_fts` (structurally, as its
+  `table`), and `exactdocs reindex` indexes `retrieval_search_next` with BM25 before the swap.
+  Snippets are `ts_headline`'s, as without `pg_search`.
+- **The engine is chosen at start** (`bootstrap/search_engine.py`): once the schema is migrated,
+  `Container.running()` asks whether the extension is installed and makes the BM25 index if it is
+  missing (under an advisory lock, so processes starting together make it once; a read-only
+  `serve --stdio` never makes it and falls back). Without the extension, or without the index in a
+  read-only process, full-text search answers and the log says why. The table and its `tsvector`
+  stay in both cases, so the extension can come and go with a restart. `SearchIndexState.engine`
+  names the engine in use; `/healthz` reports it as `search_engine`.
 - **Jobs and locks across processes:** see *Several processes on PostgreSQL* under
   [Background jobs](#background-jobs).
 - **Backup** is PostgreSQL's own (`pg_dump`): `exactdocs backup`/`restore` refuse it.
@@ -919,7 +940,8 @@ How the rest fits the structure above:
 - **PostgreSQL** (#103, see [Persistence](#persistence-one-data-directory-one-database)): psycopg 3,
   DBOS's tables in the same database (`system_database_url` plus `dbos_system_schema`), a
   per-library advisory lock replacing `TagLocks`, and PostgreSQL full-text search, the adapter
-  databases without `pg_search` (such as Supabase) keep once #104 adds `pg_search`.
+  databases without `pg_search` (such as Supabase) keep; `pg_search`'s BM25 (#104) answers where
+  the extension is installed, chosen at start.
 
 ## Python conventions
 

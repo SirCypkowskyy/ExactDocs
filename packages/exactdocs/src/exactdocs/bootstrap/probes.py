@@ -1,9 +1,9 @@
 """Liveness and readiness probes for orchestrators, and the Host check that lets them through.
 
 ``/healthz`` (alias ``/api/health``) answers while the event loop runs; it gives the database at
-most ``LIVENESS_DATABASE_SECONDS`` for its details. ``/readyz`` answers 200 only when the database
-file exists, answers, and is at this build's schema revision. Neither connects to a missing
-database file: SQLite would create an empty one.
+most ``LIVENESS_DATABASE_SECONDS`` for its details (schema, search index and engine). ``/readyz``
+answers 200 only when the database file exists, answers, and is at this build's schema revision.
+Neither connects to a missing database file: SQLite would create an empty one.
 """
 
 import asyncio
@@ -60,6 +60,10 @@ class Health(BaseModel):
     reindex_required: bool | None
     """The index is in an older or unrecorded format: run `exactdocs reindex` (it keeps serving).
     Null when the database could not tell."""
+    search_engine: str | None
+    """The search engine that answers: `fts5` (SQLite), `pg_search` (ParadeDB's BM25 on
+    PostgreSQL) or `postgres_fts` (PostgreSQL full-text search, without `pg_search`). Null when the
+    database could not tell."""
 
 
 class Readiness(BaseModel):
@@ -137,6 +141,7 @@ async def _health(container: Container) -> Health:
         schema_revision=None,
         search_index_format=None,
         reindex_required=None,
+        search_engine=None,
     )
     try:
         async with asyncio.timeout(LIVENESS_DATABASE_SECONDS):
@@ -154,6 +159,7 @@ async def _health(container: Container) -> Health:
         schema_revision=revision,
         search_index_format=index.stored_format,
         reindex_required=index.needs_rebuild,
+        search_engine=index.engine,
     )
 
 

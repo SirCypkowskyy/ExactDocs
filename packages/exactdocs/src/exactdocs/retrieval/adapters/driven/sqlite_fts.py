@@ -18,6 +18,7 @@ from exactdocs.retrieval.constants import (
     IDENTIFIERS_WEIGHT,
     PATH_WEIGHT,
     REBUILD_BATCH,
+    SQLITE_ENGINE,
     TAG_CONDITIONS,
     TEXT_WEIGHT,
 )
@@ -193,7 +194,7 @@ class SqliteSearchIndex:
         """Return the format recorded with the index and the one this build writes."""
         async with self.engine.connect() as connection:
             stored = await connection.scalar(text("SELECT format FROM retrieval_search_format"))
-        return SearchIndexState(stored_format=stored, current_format=FORMAT)
+        return SearchIndexState(stored_format=stored, current_format=FORMAT, engine=SQLITE_ENGINE)
 
     async def rebuild(self) -> RebuiltIndex:
         """Build ``retrieval_search_next`` of every stored chunk, then swap it in (`swap`)."""

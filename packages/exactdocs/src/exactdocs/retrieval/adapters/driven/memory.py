@@ -6,7 +6,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from exactdocs.retrieval.constants import MEMORY_FORMAT
+from exactdocs.retrieval.constants import MEMORY_ENGINE, MEMORY_FORMAT
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     RetiredEmbeddingSpaceError,
@@ -224,7 +224,9 @@ class InMemorySearchIndex:
 
     async def state(self) -> SearchIndexState:
         """Return the format the index was "built" in and the current one."""
-        return SearchIndexState(stored_format=self.stored_format, current_format=MEMORY_FORMAT)
+        return SearchIndexState(
+            stored_format=self.stored_format, current_format=MEMORY_FORMAT, engine=MEMORY_ENGINE
+        )
 
     async def rebuild(self) -> RebuiltIndex:
         """Index every stored chunk set again (one step: nothing can search in between)."""

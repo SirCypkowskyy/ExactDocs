@@ -607,9 +607,16 @@ crashed one left (it logs why).
   process starts, and older processes only check the schema when they start, so stop them all,
   then start the new version. This also matters when a release changes how jobs run (its notes
   say so): an older process would otherwise keep running jobs the new one cannot resume.
-- Search uses PostgreSQL's full-text search (`tsvector`, the `simple` configuration, ranked with
-  `ts_rank_cd` over the same column weights, words cut as SQLite's index cuts them). It is not
-  BM25, but the shared ranking suite passes on it as on SQLite.
+- Search is chosen when a process starts, from what the database offers. With ParadeDB's
+  `pg_search` extension installed in the database (the ParadeDB image below installs it), search
+  is BM25, as on SQLite: the first start builds its index (`retrieval_search_bm25`, a while on a
+  large instance), later ones find it. Without it (managed PostgreSQL such as Supabase, or
+  `pg_search` available but not installed: `CREATE EXTENSION pg_search CASCADE` adds it), search
+  uses PostgreSQL's full-text search (`tsvector`, the `simple` configuration, ranked with
+  `ts_rank_cd`, words cut as SQLite's index cuts them), and the log says why. Both pass the shared
+  ranking suite as SQLite does, and both read the same rows: adding or removing the extension
+  needs only a restart, no `exactdocs reindex`. `/healthz` names the engine in use
+  (`search_engine`: `fts5`, `pg_search` or `postgres_fts`).
 - Writes that must not interleave (storing and activating a version, indexing it) take turns
   across all processes, as on SQLite, so several processes serve more readers but do not import
   faster. A writer that waits more than 30 s for its turn gives up with an error, as SQLite does
@@ -798,7 +805,7 @@ Docker, Kubernetes or a load balancer:
 
 | Path | Answers | Use it for |
 |---|---|---|
-| `/healthz` | `200` while the process runs, whatever the database does, within about 0.3 s: `status`, `version`, `database_reachable`, and (when the database answered in time) `schema_revision`, `search_index_format`, `reindex_required` (`null` when unknown) | liveness: restart the process when it stops answering |
+| `/healthz` | `200` while the process runs, whatever the database does, within about 0.3 s: `status`, `version`, `database_reachable`, and (when the database answered in time) `schema_revision`, `search_index_format`, `reindex_required`, `search_engine` (`null` when unknown) | liveness: restart the process when it stops answering |
 | `/readyz` | `200 {"status": "ready"}` when the database file exists, answers within 2 s and is at this version's schema, else `503 {"status": "not_ready", "reason": ...}` | readiness: send traffic only while it is ready |
 
 `/api/health` is an alias of `/healthz`, kept for existing clients. Neither probe creates a

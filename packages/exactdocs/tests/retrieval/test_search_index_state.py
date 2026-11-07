@@ -15,6 +15,6 @@ from exactdocs.retrieval.models import SearchIndexState
 def test_a_reindex_is_needed_only_for_an_older_or_unrecorded_format(
     stored: int | None, needs_rebuild: bool
 ) -> None:
-    state = SearchIndexState(stored_format=stored, current_format=2)
+    state = SearchIndexState(stored_format=stored, current_format=2, engine="fts5")
 
     assert state.needs_rebuild is needs_rebuild

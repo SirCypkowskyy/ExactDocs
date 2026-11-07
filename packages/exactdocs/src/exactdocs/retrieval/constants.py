@@ -368,6 +368,131 @@ POSTGRES_TAG_CONDITIONS: Final[dict[str | None, str]] = {
 }
 """`TAG_CONDITIONS` for PostgreSQL's JSON functions."""
 
+# ---------------------------------------------------------------- search engines (health)
+MEMORY_ENGINE: Final[str] = "memory"
+"""The search engine of the in-memory reference index (tests)."""
+SQLITE_ENGINE: Final[str] = "fts5"
+"""The search engine on SQLite: FTS5's BM25."""
+POSTGRES_FTS_ENGINE: Final[str] = "postgres_fts"
+"""The search engine on PostgreSQL without `pg_search`: its full-text search, `ts_rank_cd`."""
+PG_SEARCH_ENGINE: Final[str] = "pg_search"
+"""The search engine on PostgreSQL with ParadeDB's `pg_search` extension: BM25."""
+
+# ---------------------------------------------------------------- adapters.driven.pg_search
+PG_SEARCH_EXTENSION: Final[str] = "pg_search"
+"""The PostgreSQL extension (ParadeDB) whose BM25 index the `pg_search` adapter needs."""
+_PG_SEARCH_PATTERN: Final[str] = r"[A-Za-z0-9_.\-\x{80}-\x{10FFFF}]+"
+"""What a word is to the BM25 index (a Rust regular expression): ASCII letters and digits, every
+non-ASCII character and `-_.`, as FTS5's `unicode61 tokenchars '-_.'` and PostgreSQL's
+`retrieval_search_words` cut words (`retry_policy`, `v1.4.0` and `--dry-run` stay whole;
+`/v1/tokens` holds `v1` and `tokens`)."""
+_PG_SEARCH_WORDS: Final[str] = f"pdb.regex_pattern('{_PG_SEARCH_PATTERN}', 'ascii_folding=true')"
+"""The tokenizer of the heading, path and text fields: `_PG_SEARCH_PATTERN`, lower-cased and with
+diacritics folded, as FTS5's `unicode61` does (`café` finds `cafe`)."""
+_PG_BM25_COLUMNS: Final[str] = (
+    f"chunk_id, (heading::{_PG_SEARCH_WORDS}), (path::{_PG_SEARCH_WORDS}),"
+    f" (body::{_PG_SEARCH_WORDS}), (identifiers::pdb.whitespace)"
+)
+"""The BM25 index's fields: the key first, then FTS5's four columns. `identifiers` holds the words
+`identifier_tokens` already cut and case-folded: whitespace separates them."""
+_PG_BM25_INDEX: Final[str] = (
+    f"CREATE INDEX retrieval_search_bm25 ON retrieval_search USING bm25 ({_PG_BM25_COLUMNS})"
+)
+"""The BM25 index over `retrieval_search` (revision 0c4e8a2f6b19's table), made at start when the
+database has `pg_search` and the table has no BM25 index yet. The table and its `document` column
+stay, so PostgreSQL's full-text search still answers if the extension is removed."""
+_PG_BM25_INDEX_NEXT: Final[str] = (
+    "CREATE INDEX retrieval_search_next_bm25 ON retrieval_search_next"
+    f" USING bm25 ({_PG_BM25_COLUMNS})"
+)
+"""`exactdocs reindex` indexes the new table once it is full, before it is swapped in."""
+_PG_BM25_RENAME: Final[str] = (
+    "ALTER INDEX IF EXISTS retrieval_search_next_bm25 RENAME TO retrieval_search_bm25"
+)
+"""After the swap the new table's index keeps its name; this gives it the usual one back."""
+_PG_BM25_LOCK: Final[int] = 0x45584453_424D3235
+"""Advisory lock key ("EXDSBM25"): processes that start together make the BM25 index once."""
+_PG_EXTENSION: Final[str] = """
+    SELECT
+        EXISTS (SELECT 1 FROM pg_extension WHERE extname = :extension) AS installed,
+        EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = :extension) AS available
+"""
+"""Whether the database has the extension, and whether its server could install it."""
+_PG_BM25_EXISTS: Final[str] = """
+    SELECT EXISTS (
+        SELECT 1 FROM pg_index i
+        JOIN pg_class ix ON ix.oid = i.indexrelid
+        JOIN pg_am am ON am.oid = ix.relam
+        WHERE i.indrelid = to_regclass('retrieval_search') AND am.amname = 'bm25'
+    )
+"""
+"""Whether `retrieval_search` has a BM25 index, whatever its name (a table has at most one)."""
+PG_SEARCH_BOOSTS: Final[tuple[float, float, float, float]] = (2.0, 1.5, 1.0, 0.1)
+"""Boosts of the heading, path, text and identifiers fields. Not FTS5's weights (20, 4, 1, 0.1):
+FTS5 multiplies a column's term count by its weight before BM25 saturates it, so a heading hit
+counts at most about twice a text hit; here the boost multiplies the field's whole BM25 score,
+whose IDF and length are the field's own (short headings make every word in them rare). These
+values keep the ranking suite whole and the retrieval eval's BM25 recall at SQLite's
+(docs/evals.md); change them only with both run on `pg_search`."""
+_PG_SEARCH_FIELDS: Final[str] = (
+    "s.heading ||| CAST(:{{words}} AS text)::pdb.boost({})"
+    " OR s.path ||| CAST(:{{words}} AS text)::pdb.boost({})"
+    " OR s.body ||| CAST(:{{words}} AS text)::pdb.boost({})"
+    " OR s.identifiers ||| CAST(:{{words}} AS text)::pdb.boost({})"
+).format(*PG_SEARCH_BOOSTS)
+"""Any of the words (``{words}``: a parameter's name) in any field; each field's BM25 score is
+boosted by its weight and the fields' scores add up, as in FTS5's weighted `bm25()`. Each field's
+own tokenizer cuts the words. ``|||`` matches tokens: it parses no query syntax."""
+_PG_SEARCH_MATCH: Final[str] = (
+    f"({_PG_SEARCH_FIELDS.format(words='wanted')} OR {_PG_SEARCH_FIELDS.format(words='whole')})"
+)
+"""``:wanted`` holds every search term, joined by spaces. ``:whole`` holds those that are whole
+identifiers (`retry_policy`, `v1.4.0`; empty when none is): they count twice. FTS5 scores each
+term over the whole row, so the one rare token `retry_policy` beats `retry` and `policy`; BM25
+here scores each field on its own, where a heading "Retry policy" gets two rare words. Counting
+the whole identifier again puts the section named `retry_policy` back first."""
+_PG_WHOLE_IDENTIFIER: Final[re.Pattern[str]] = re.compile(
+    r"[A-Za-z0-9\u0080-\U0010FFFF][-_.][A-Za-z0-9\u0080-\U0010FFFF]"
+)
+"""A search term holding this is a whole identifier (as ``whole`` in `_PG_QUERY`)."""
+_PG_SEARCH_BM25: Final[str] = """
+    WITH ranked AS MATERIALIZED (
+        SELECT s.chunk_id AS id, mc.manifest_id AS manifest_id, mc.chunk_id AS chunk_id,
+               pdb.score(s.chunk_id) AS score
+        FROM retrieval_search s
+        JOIN retrieval_chunks c ON c.id = s.chunk_id
+        JOIN retrieval_manifest_chunks mc
+          ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
+         AND mc.position = c.position
+        WHERE {match} AND mc.manifest_id IN :manifests {tags}
+        ORDER BY score DESC, mc.chunk_id
+        LIMIT :limit
+    ),
+    q AS MATERIALIZED ({query})
+    SELECT r.manifest_id, r.chunk_id, r.score,
+           CASE WHEN cardinality(regexp_split_to_array(btrim(s.body), '\\s+')) <= :words
+                THEN s.body
+                ELSE ts_headline('simple', s.body, q.query, :headline) END AS snippet
+    FROM ranked r
+    JOIN retrieval_search s ON s.chunk_id = r.id
+    CROSS JOIN q
+    ORDER BY r.score DESC, r.chunk_id
+"""
+"""Rank with `pdb.score` and cut to LIMIT, then build snippets for the survivors only, as
+`_PG_SEARCH` does, so both PostgreSQL engines return the same snippets. ``{match}``:
+`_PG_SEARCH_MATCH`; ``{query}``: `_PG_QUERY`; ``{tags}``: the tag condition."""
+_PG_COUNT_BM25: Final[str] = """
+    SELECT mc.manifest_id AS manifest_id, count(*) AS matches
+    FROM retrieval_search s
+    JOIN retrieval_chunks c ON c.id = s.chunk_id
+    JOIN retrieval_manifest_chunks mc
+      ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
+     AND mc.position = c.position
+    WHERE {match} AND mc.manifest_id IN :manifests {tags}
+    GROUP BY mc.manifest_id
+"""
+"""Counts the matches of a search per manifest (``{match}``, ``{tags}``: as `_PG_SEARCH_BM25`)."""
+
 # ---------------------------------------------------------------- adapters/driven/opentelemetry
 TRACER_NAME: Final[str] = "exactdocs.retrieval"
 """OpenTelemetry instrumentation scope of the search spans."""

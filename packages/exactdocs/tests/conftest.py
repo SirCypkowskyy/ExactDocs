@@ -104,6 +104,19 @@ def on_postgres_c(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]
         yield database
 
 
+@pytest.fixture
+def on_pg_search(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """As ``on_postgres``, on a database with ParadeDB's ``pg_search`` installed.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database(pg_search=True) as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
+
+
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Never touch the real data directory: every test starts on an empty one."""

@@ -4,6 +4,7 @@ The scenarios are tagged ``@postgres`` and need ``EXACTDOCS_TEST_POSTGRES_URL`` 
 ``tests/fixtures/databases.py``; ``environment.py`` skips them without it, CI requires it).
 """
 
+import asyncio
 import os
 import shutil
 import socket
@@ -23,10 +24,14 @@ from behave.runner import Context
 from sqlalchemy.engine import make_url
 
 from databases import SECRET_KEY, postgres_database
+from exactdocs.bootstrap.settings import Settings
+from steps.http_steps import running_with
+from steps.search_steps import import_versions, step_search_table
 
 CLI = "from exactdocs.bootstrap.cli import main; main()"
 CREDENTIALS = {"username": "admin", "password": "a long enough test password"}
 REF = "v1.4.0"
+VERSIONS = ("v1.3.0", "v1.4.0")  # as the ranking suite imports them
 STARTUP_SECONDS = 90
 IMPORT_SECONDS = 120
 
@@ -188,3 +193,76 @@ def step_dbos_in_schema(context: Context, schema: str) -> None:
     assert tables == [("workflow_status",)], tables
     after = _query(url, "SELECT datname FROM pg_database ORDER BY datname")
     assert after == context.databases_before, "DBOS created a database"
+
+
+def _ranked_on(
+    context: Context, settings: Settings, *, keep: bool
+) -> list[tuple[str, str, object, list]]:
+    """Serve the fixture library at both versions on ``settings``; search the expected queries.
+
+    ``keep`` leaves the app serving (``context.client``) until the scenario ends; otherwise it
+    stops here: one process runs one job worker at a time.
+
+    Returns:
+        Each query, its version, its expected section and the top 5 (article, heading path).
+    """
+    stack = ExitStack()
+    context.add_cleanup(stack.close)
+    running_with(context, stack, settings)
+    asyncio.run(import_versions(context, list(VERSIONS)))
+    step_search_table(context)
+    if not keep:
+        stack.close()
+    return [
+        (
+            query,
+            version,
+            expected,
+            [(r["article_path"], r["heading_path"]) for r in body["results"]],
+        )
+        for query, version, expected, body in context.ranked
+    ]
+
+
+def _rank_both(context: Context, *, pg_search: bool) -> None:
+    sqlite_dir = Path(tempfile.mkdtemp(prefix="exactdocs-sqlite-"))
+    context.add_cleanup(shutil.rmtree, sqlite_dir, ignore_errors=True)
+    context.sqlite_ranked = _ranked_on(context, Settings(data_dir=sqlite_dir), keep=False)
+    postgres_dir = Path(tempfile.mkdtemp(prefix="exactdocs-postgres-"))
+    context.add_cleanup(shutil.rmtree, postgres_dir, ignore_errors=True)
+    url = _database(context, pg_search=pg_search)
+    context.postgres_ranked = _ranked_on(
+        context,
+        Settings(data_dir=postgres_dir, database_url=url, secret_key=SECRET_KEY),
+        keep=True,
+    )
+
+
+@when("the ranking suite runs on ParadeDB")
+def step_rank_on_paradedb(context: Context) -> None:
+    _rank_both(context, pg_search=True)
+
+
+@when('the ranking suite runs on PostgreSQL without "pg_search"')
+def step_rank_without_pg_search(context: Context) -> None:
+    _rank_both(context, pg_search=False)
+
+
+@then("every expected query ranks its section first, as on SQLite")
+def step_ranks_as_on_sqlite(context: Context) -> None:
+    assert context.postgres_ranked
+    wrong = []
+    for (query, version, expected, top), (_, _, _, sqlite_top) in zip(
+        context.postgres_ranked, context.sqlite_ranked, strict=True
+    ):
+        want = None if expected is None else (expected["article"], expected["heading_path"])
+        first = top[0] if top else None
+        if first != want or first != (sqlite_top[0] if sqlite_top else None):
+            wrong.append(f"{query!r} in {version}: wanted {want}, top 5 {top[:5]}")
+    assert not wrong, "\n".join(wrong)
+
+
+@then('the health check names the search engine "{engine}"')
+def step_health_engine(context: Context, engine: str) -> None:
+    health = context.client.get("/api/health").json()
+    assert health["search_engine"] == engine, health
