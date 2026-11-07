@@ -196,7 +196,8 @@ class CoverageOut(_Dto):
     """How much of the index the answer stands on."""
 
     candidates: int
-    """Lower bound: matching chunks the search looked at, at most `limit` + 1."""
+    """Lower bound: matching chunks the search looked at (`bm25`: usually `limit` + 1 at most;
+    `hybrid`: the chunks of its BM25 and vector halves, each counted once)."""
     reranked: int
     """Of those, how many a reranker reordered."""
     complete: bool

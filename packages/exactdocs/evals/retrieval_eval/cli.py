@@ -5,10 +5,14 @@ import asyncio
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
+from exactdocs.bootstrap.container import Container
 from exactdocs.retrieval.models import ModelRole
 from fixture_repo import DocsRepo, build
+from offline_embedding import offline_data_container
 from retrieval_eval.dataset import DATASET_FILE, fingerprint, load_dataset
 from retrieval_eval.fixture import configured_container, model_free_container, run_on_fixture
 from retrieval_eval.suite import (
@@ -36,6 +40,12 @@ def _parser() -> argparse.ArgumentParser:
         "--configured-models",
         action="store_true",
         help="use the models EXACTDOCS_AI__... configures (default: none, so only BM25 runs)",
+    )
+    parser.add_argument(
+        "--offline-embedding",
+        action="store_true",
+        help="run hybrid with an in-process term-hash embedding (no model, no network): checks "
+        "fusion and the wrong-version gate; its recall says nothing about a real model",
     )
     parser.add_argument(
         "--local-roles",
@@ -93,8 +103,60 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+OFFLINE_NOTE: Final[str] = (
+    "`hybrid` ran on the in-process term-hash embedding (`--offline-embedding`), not a real "
+    "model: its numbers check the fusion and the wrong-version gate, not whether hybrid should "
+    "be a default."
+)
+"""What the summary says of a run on the stand-in embedding."""
+
+
+def _builder(args: argparse.Namespace) -> Callable[[Path], Container]:
+    """Pick how the app is built: model-free, the stand-in embedding, or the configured models.
+
+    Args:
+        args: The parsed arguments.
+
+    Returns:
+        The container builder.
+    """
+    if args.offline_embedding:
+        return offline_data_container
+    return configured_container if args.configured_models else model_free_container
+
+
 def _names(text: str) -> set[str]:
     return {name.strip().lower() for name in text.split(",") if name.strip()}
+
+
+def _usage_problem(args: argparse.Namespace, wanted: set[str], roles: set[str]) -> str | None:
+    """Check the arguments together.
+
+    Args:
+        args: The parsed arguments.
+        wanted: The modes asked for.
+        roles: The local roles named.
+
+    Returns:
+        What is wrong with them, or ``None``.
+    """
+    problems = [
+        (wanted - {m.mode.value for m in MODES}, "unknown mode(s): {}"),
+        (roles - {r.value for r in ModelRole}, "unknown role(s): {}"),
+    ]
+    for names, text in problems:
+        if names:
+            return text.format(", ".join(sorted(names)))
+    if args.baseline is not None and not args.baseline.is_file():
+        return f"baseline not found: {args.baseline}"
+    if args.reference_dataset is not None and not args.reference_dataset.is_file():
+        return f"reference dataset not found: {args.reference_dataset}"
+    if args.offline_embedding and args.configured_models:
+        return "--offline-embedding and --configured-models exclude each other"
+    if args.offline_embedding and args.write_baseline:
+        # The stand-in's recall is no measure of hybrid: it must never become a baseline.
+        return "--offline-embedding numbers are never stored as a baseline"
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,20 +170,12 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = _parser().parse_args(argv)
     wanted = _names(args.modes)
-    unknown = wanted - {m.mode.value for m in MODES}
-    if unknown:
-        sys.stderr.write(f"unknown mode(s): {', '.join(sorted(unknown))}\n")
-        return 2
     roles = _names(args.local_roles)
-    if roles - {r.value for r in ModelRole}:
-        sys.stderr.write(f"unknown role(s): {', '.join(sorted(roles))}\n")
+    if (problem := _usage_problem(args, wanted, roles)) is not None:
+        sys.stderr.write(f"{problem}\n")
         return 2
-    if args.baseline is not None and not args.baseline.is_file():
-        sys.stderr.write(f"baseline not found: {args.baseline}\n")
-        return 2
-    if args.reference_dataset is not None and not args.reference_dataset.is_file():
-        sys.stderr.write(f"reference dataset not found: {args.reference_dataset}\n")
-        return 2
+    if args.offline_embedding:
+        roles.add(ModelRole.EMBEDDING.value)
     reference = read_baseline(args.baseline or BASELINE_FILE)
     comparison = compare(
         fingerprint(load_dataset()), reference, read_baseline(BASELINE_FILE), ratchet=args.ratchet
@@ -147,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_on_fixture(
                     DocsRepo(repo, repo.as_uri(), ""),
                     Path(tmp) / f"data-{index}",
-                    build=configured_container if args.configured_models else model_free_container,
+                    build=_builder(args),
                     modes=[m for m in MODES if m.mode.value in wanted],
                     allow_providers=args.allow_providers,
                     local_roles=frozenset(ModelRole(r) for r in roles),
@@ -158,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
             report_file.parent.mkdir(parents=True, exist_ok=True)
             report_file.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
             summary = markdown(report, title=title)
+            if args.offline_embedding:
+                summary += f"- **Note:** {OFFLINE_NOTE}\n"
             sys.stdout.write(summary)
             if args.summary is not None:
                 with args.summary.open("a", encoding="utf-8") as out:

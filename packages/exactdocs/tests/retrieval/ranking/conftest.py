@@ -3,7 +3,9 @@
 To run the suite on another engine (hybrid retrieval, ParadeDB), add its name to ``ENGINES`` and
 build its ``Container`` in ``open_container``: the cases and the assertions do not change.
 ``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set, and
-``postgres_fts_c`` runs it again on a database in the ``C`` locale.
+``postgres_fts_c`` runs it again on a database in the ``C`` locale. ``hybrid`` is FTS5 fused with
+vectors (RRF), every version embedded by the in-process term-hash stand-in (``offline_embedding``):
+the fusion must keep every expected section where BM25 puts it.
 """
 
 import asyncio
@@ -17,10 +19,11 @@ from databases import ADMIN_URL, SECRET_KEY, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
-from fixture_import import import_fixture
+from fixture_import import embed_fixture, import_fixture
 from fixture_repo import DocsRepo
+from offline_embedding import offline_container
 
-ENGINES = ["fts5", *(["postgres_fts", "postgres_fts_c"] if ADMIN_URL else [])]
+ENGINES = ["fts5", "hybrid", *(["postgres_fts", "postgres_fts_c"] if ADMIN_URL else [])]
 _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
 
 
@@ -31,6 +34,8 @@ def open_container(engine: str, data_dir: Path) -> Container:
         return Container.build(
             Settings(data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY)
         )
+    if engine == "hybrid":
+        return offline_container(Settings(data_dir=data_dir))
     return Container.build(Settings(data_dir=data_dir))
 
 
@@ -38,6 +43,8 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):
         await import_fixture(container, docs_repo)
+        if engine == "hybrid":
+            await embed_fixture(container)
 
 
 @pytest.fixture(scope="session", params=ENGINES)

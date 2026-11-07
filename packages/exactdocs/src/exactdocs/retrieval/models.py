@@ -41,11 +41,13 @@ from exactdocs.retrieval.constants import (
     MAX_RETRIES,
     MICROS_PER_USD,
     PROFILE_NAME,
+    RRF_K,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_INSTANCE,
     SPEND_SCOPE_LIBRARY,
     STOP_WORDS,
     TOKENS_PER_MILLION,
+    VECTOR_SNIPPET_WORDS,
 )
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
@@ -421,6 +423,81 @@ def search_terms(query: str) -> list[str]:
     return list(dict.fromkeys(identifier_tokens(query).split()))
 
 
+def leading_hit(chunk_id: ChunkId, score: float, content: str, terms: Collection[str]) -> SearchHit:
+    """Build the hit of a chunk no full-text match marked: its snippet is the start of its text.
+
+    Args:
+        chunk_id: The chunk.
+        score: Its score in the search.
+        content: The chunk's verbatim text.
+        terms: The query's terms (``search_terms``), marked where they occur.
+
+    Returns:
+        The hit; its snippet is the first ``VECTOR_SNIPPET_WORDS`` words of the text, verbatim
+        (a shorter text is its own snippet).
+    """
+    words = list(re.finditer(r"\S+", content))
+    end = words[VECTOR_SNIPPET_WORDS - 1].end() if len(words) > VECTOR_SNIPPET_WORDS else None
+    snippet = content[:end].strip()
+    return SearchHit(
+        chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FusedRank:
+    """A chunk's place after reciprocal rank fusion, and its place in each half."""
+
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """The sum of ``1 / (k + rank)`` over the halves it is in; higher is better."""
+    bm25_rank: int | None
+    """Its 1-based rank in the BM25 half, if it is there."""
+    vector_rank: int | None
+    """Its 1-based rank in the vector half, if it is there."""
+
+
+def reciprocal_rank_fusion(
+    bm25: Sequence[ChunkId], vectors: Sequence[ChunkId], k: int = RRF_K
+) -> list[FusedRank]:
+    """Fuse two rankings of one version's chunks (RRF, Cormack et al. 2009).
+
+    Only ranks count, never scores, so BM25 scores and cosine distances need no common scale.
+    Ties go to the chunk BM25 ranks higher (exact identifiers first), then to the one the vectors
+    rank higher, then to the chunk ID, so the order is reproducible.
+
+    Args:
+        bm25: The BM25 half, best first.
+        vectors: The vector half, nearest first.
+        k: The constant damping the weight of the first ranks.
+
+    Returns:
+        Every chunk of either half once, best first.
+    """
+    bm25_rank = {c: r for r, c in enumerate(dict.fromkeys(bm25), start=1)}
+    vector_rank = {c: r for r, c in enumerate(dict.fromkeys(vectors), start=1)}
+    fused = [
+        FusedRank(
+            chunk_id=c,
+            score=sum(1 / (k + r) for r in (bm25_rank.get(c), vector_rank.get(c)) if r),
+            bm25_rank=bm25_rank.get(c),
+            vector_rank=vector_rank.get(c),
+        )
+        for c in dict.fromkeys([*bm25_rank, *vector_rank])
+    ]
+    unranked = math.inf
+    fused.sort(
+        key=lambda f: (
+            -f.score,
+            f.bm25_rank or unranked,
+            f.vector_rank or unranked,
+            f.chunk_id,
+        )
+    )
+    return fused
+
+
 def highlights(text: str, terms: Collection[str]) -> tuple[tuple[int, int], ...]:
     """Return ``[start, end)`` offsets of the words of ``text`` that match any of ``terms``.
 
@@ -600,6 +677,8 @@ class FallbackReason(StrEnum):
     """Too many LLM searches in the last minute."""
     VECTOR_STORE_UNAVAILABLE = "vector_store_unavailable"
     """The vector store cannot be loaded here (sqlite-vec), so no hybrid mode can run."""
+    EMBEDDING_UNAVAILABLE = "embedding_unavailable"
+    """The embedding model failed or timed out on the query: BM25 answered alone."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -818,6 +897,8 @@ class PipelineRequest:
     """The embedding space a mode that searches vectors must search: the configured model's, which
     the caller checked covers ``version``. Never look up the active space instead: during a switch
     of models it is another model's. ``None`` when no embedding model resolves (BM25 modes)."""
+    search: str = "search_docs"
+    """The search this runs in (``search_docs``, ``query_docs``): names the spans of its stages."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

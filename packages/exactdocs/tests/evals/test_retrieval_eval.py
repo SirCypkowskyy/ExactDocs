@@ -22,6 +22,7 @@ from exactdocs.retrieval.models import (
 )
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
+from offline_embedding import offline_data_container
 from retrieval_eval.cli import main
 from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import model_free_container, run_on_fixture
@@ -892,3 +893,56 @@ def test_a_stored_recall_the_run_does_not_back_up_fails(
 
 def test_a_mode_without_any_baseline_gets_no_per_mode_warning() -> None:
     assert judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison()).warnings == []
+
+
+# ---------------------------------------------------------------- hybrid on the stand-in embedding
+
+
+async def test_hybrid_is_reported_against_bm25_on_the_offline_embedding(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    report = await run_on_fixture(
+        docs_repo,
+        tmp_path / "data",
+        build=offline_data_container,
+        modes=[BM25, HYBRID],
+        local_roles=frozenset({ModelRole.EMBEDDING}),
+        comparison=Comparison(baseline=read_baseline(BASELINE_FILE).recall_at_5),
+    )
+
+    assert report.passed, report.problems
+    bm25, hybrid = report.modes
+    assert (hybrid.mode, hybrid.status, hybrid.fallbacks) == (RetrievalMode.HYBRID, "ran", 0)
+    assert hybrid.metrics is not None
+    assert bm25.metrics is not None
+    assert hybrid.metrics.wrong_version_rate == 0
+    assert hybrid.wrong_version_cases == []
+    assert hybrid.errors == []
+    # The fusion keeps what BM25 finds: the stand-in may not lower recall@5 below BM25's.
+    assert hybrid.metrics.recall_at_5 >= bm25.metrics.recall_at_5
+    assert hybrid.eligible_as_default is not None  # judged against BM25 (the stand-in is no case)
+
+
+def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.md"
+
+    code = main([
+        "--offline-embedding", "--modes", "bm25,hybrid", "--report", str(tmp_path / "r.json"),
+        "--summary", str(summary), "--baseline", str(BASELINE_FILE),
+    ])  # fmt: skip
+
+    assert code == 0
+    report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert [(m["mode"], m["status"]) for m in report["modes"]] == [
+        ("bm25", "ran"),
+        ("hybrid", "ran"),
+    ]
+    assert "term-hash embedding" in summary.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("other", ["--configured-models", "--write-baseline"])
+def test_the_offline_embedding_never_meets_real_models_or_the_baseline(other: str) -> None:
+    before = BASELINE_FILE.read_text(encoding="utf-8")
+
+    assert main(["--offline-embedding", other]) == 2
+    assert BASELINE_FILE.read_text(encoding="utf-8") == before

@@ -1574,7 +1574,8 @@ export interface components {
         readonly CoverageOut: {
             /**
              * Candidates
-             * @description Lower bound: matching chunks the search looked at, at most `limit` + 1.
+             * @description Lower bound: matching chunks the search looked at (`bm25`: usually `limit` + 1 at most;
+             *     `hybrid`: the chunks of its BM25 and vector halves, each counted once).
              */
             readonly candidates: number;
             /**
@@ -1725,7 +1726,7 @@ export interface components {
          * @description Why a search was answered by a cheaper mode than the one it would have used.
          * @enum {string}
          */
-        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable";
+        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable";
         /**
          * FieldError
          * @description One invalid request field.

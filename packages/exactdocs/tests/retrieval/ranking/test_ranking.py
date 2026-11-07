@@ -62,6 +62,7 @@ async def test_expected_section_ranks_first(
     context = f"\n{entry['query']!r} in {version}; top {TOP}:\n  " + "\n  ".join(top or ["(none)"])
 
     assert result.version == version
+    assert result.fallback_reason is None, "the engine's own mode answered"
     commit = git("rev-parse", f"{version}^{{commit}}", cwd=docs_repo.path)
     assert {h.commit_sha for h in result.results} <= {commit}, "answered from another version"
     if expected is None:

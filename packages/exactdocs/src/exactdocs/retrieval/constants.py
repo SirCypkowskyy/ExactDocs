@@ -111,6 +111,14 @@ DEFAULT_QUERY_DOCS_TOKEN_BUDGET: Final[int] = 10_000
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""
+TERM_HASH_STOP_WORDS: Final[frozenset[str]] = frozenset(
+    {"a", "an", "and", "are", "can", "do", "does", "for", "how", "i", "in", "is", "it", "my"}
+    | {"of", "on", "or", "the", "to", "what", "when", "which", "with", "why", "you"}
+)
+"""Words the term-hash embedding (``HashEmbeddings`` with ``by_terms``) leaves out: a question's
+filler would otherwise make every chunk look alike."""
+TERM_HASH_BIAS: Final[float] = 0.01
+"""The constant first value of a term-hash vector, so a text without terms is not all zeros."""
 
 # ---------------------------------------------------------------- adapters.driven.sqlite_fts
 FORMAT: Final[int] = 2
@@ -395,10 +403,28 @@ SEARCH_DURATION_BUCKETS: Final[tuple[float, ...]] = (
 """Bucket bounds of the search duration histogram, in seconds (a stage can take a millisecond)."""
 
 # ---------------------------------------------------------------- models (retrieval modes)
-DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "hybrid", "bm25")
+DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "bm25")
 """The default mode when neither the call, the library nor the instance names one: the first that
 can run. Agentic is never a default; a call, a library or the instance must choose it.
+
+A mode is listed only once the eval suite marks it ``eligible_as_default`` (its recall@5 beats
+BM25's by 5 points with a wrong-version rate of 0, docs/evals.md). ``hybrid`` is not listed: no
+real embedding model has been evaluated in CI yet (the local models are #245), so an operator
+chooses it (``EXACTDOCS_AI__MODE``, a library's mode or the call). ``hybrid_hyde`` has no pipeline
+yet; #94 applies the same rule before it can be a default.
 """
+
+# ---------------------------------------------------------------- models (hybrid search, #92)
+RRF_K: Final[int] = 60
+"""Reciprocal rank fusion's ``k``: a chunk scores ``1 / (k + rank)`` in each half it is in."""
+RRF_DEPTH: Final[int] = 50
+"""How many of each half (BM25, vectors) are fused; a search asks for at most 50 results."""
+VECTOR_SNIPPET_WORDS: Final[int] = 24
+"""Words of a chunk's start shown as the snippet of a chunk only the vectors found (BM25 marks
+the matches of the others), as FTS5's ``snippet(..., 24)``: a shorter text is returned whole."""
+QUERY_EMBEDDING_TIMEOUT: Final[float] = 5.0
+"""Seconds a search waits for its query's embedding before answering with BM25
+(``embedding_unavailable``): a slow provider makes a search no slower than this."""
 
 # ---------------------------------------------------------------- models (AI providers, #241)
 PROFILE_NAME_PATTERN: Final[str] = r"^[a-z0-9][a-z0-9_-]{0,62}$"

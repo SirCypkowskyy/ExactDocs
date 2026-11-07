@@ -8,7 +8,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.models import ModelRole
 from exactdocs.retrieval.use_cases import NoModelRoles
-from fixture_import import LIBRARY, commits, import_fixture
+from fixture_import import LIBRARY, commits, embed_fixture, import_fixture
 from fixture_repo import DocsRepo, git_bytes, headings
 from retrieval_eval.dataset import DATASET_FILE, RetrievalDataset, fingerprint, load_dataset
 from retrieval_eval.suite import (
@@ -94,7 +94,8 @@ async def run_on_fixture(
         docs_repo: The built fixture repository.
         data_dir: An empty data directory for the container.
         build: Builds the container: model-free by default; ``configured_container`` uses the
-            environment's models, tests pass model roles and pipelines.
+            environment's models, ``offline_data_container`` the in-process term-hash
+            embedding, tests pass model roles and pipelines.
         modes: The modes to try.
         allow_providers: Run modes that call a hosted model.
         local_roles: The configured roles whose model runs on this machine.
@@ -112,6 +113,8 @@ async def run_on_fixture(
     container = build(data_dir)
     async with container.running(jobs=False):
         await import_fixture(container, docs_repo)
+        if ModelRole.EMBEDDING in local_roles or allow_providers:
+            await embed_fixture(container)  # as the embed jobs would; a no-op without a model
         outcomes = await run_modes(
             dataset,
             retrieval=container.retrieval,

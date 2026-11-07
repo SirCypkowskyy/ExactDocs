@@ -313,7 +313,7 @@ only holds each process's git work folders and `known_hosts`. What changes:
   the job fails and the next start or import queues the version again. A search in a hybrid
   mode answers BM25 with `embedding_in_progress` while the configured model's space does not
   cover the version; otherwise the pipeline is given that space (`PipelineRequest.space`) and
-  must search it, never the active one. Saving over REST the profile the embedding role uses
+  must search it, never the active one (*Hybrid search* below). Saving over REST the profile the embedding role uses
   queues the embedding too (`bootstrap/embedding.py`), and the start queues what is missing in
   the background. `retrieval_ai_spend` is one row per (scope kind, scope ID, UTC window, window
   start) with an atomic upsert on SQLite and PostgreSQL: each batch adds to the instance's row
@@ -914,7 +914,10 @@ registers `Bm25Pipeline` and any further pipelines it is given; `RetrievalModes`
 asks the `ModelRoles` port which roles the searched library may use (per library: one with AI off
 has none), builds a `ModeRegistry` (a mode can run when it
 has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
-port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best.
+port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best of
+`DEFAULT_MODE_ORDER`, which lists a mode only once the eval suite marks it `eligible_as_default`
+([Retrieval evals](evals.md#gates)): `hybrid` is not listed yet, so an operator, a library or a
+call chooses it.
 Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
 catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (create, activate and
 retire a space, upsert and delete vectors by `ChunkKey`, nearest within one manifest, a manifest's
@@ -924,7 +927,24 @@ which the pgvector adapter (#243) joins. `OpenEmbeddingSpace` finds the space of
 creates a new one when the model, its dimensions or the input format changed, so two models never
 share one. `RetrievalModes` asks `VectorIndex.available()` once an embedding role is configured:
 when sqlite-vec cannot load, the hybrid modes are unavailable and a setting that needs them falls
-back to BM25 with `fallback_reason: vector_store_unavailable`. Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
+back to BM25 with `fallback_reason: vector_store_unavailable`.
+
+**Hybrid search (#92).** `HybridPipeline` (in `use_cases`, registered for `hybrid` whenever a
+vector store exists) asks the `SearchIndex` for the version's best `RRF_DEPTH` (50) BM25 hits,
+embeds the query with the configured model (`Embeddings.embed_query`, in a `<search>.embed_query`
+span without the query text, within `QUERY_EMBEDDING_TIMEOUT` seconds, its tokens recorded in
+`retrieval_ai_spend`), asks `VectorIndex.nearest` for the 50 nearest chunks of the same manifest
+in `PipelineRequest.space`, and fuses the two rankings with reciprocal rank fusion
+(`reciprocal_rank_fusion`, `k` = 60; ties go to BM25's order, so an exact identifier stays first).
+Both halves are scoped to the version's manifest and filtered by tags before ranking, so no chunk
+of another version can come in. A chunk only the vectors found gets the first 24 words of its text
+as its snippet; `coverage.candidates` counts the chunks of both halves once. The pipeline never
+fails a search: BM25 answers with `embedding_in_progress` when the space no longer matches the
+configured model (a switch of models), `embedding_unavailable` when the model failed or timed out
+on the query (or answered an unusable vector), and `vector_store_unavailable` when the store
+cannot search. A query nothing of the version matches a word of (an identifier the version lacks)
+answers explicitly empty, as BM25 does, without embedding it. Later modes plug in as pipelines;
+their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 

@@ -149,7 +149,7 @@ class Factory:
 
 @dataclass(slots=True)
 class AnswersHybrid:
-    """Stand-in hybrid pipeline (#92): answers ``hybrid`` with no hits, noting the space given."""
+    """Stand-in hybrid pipeline: answers ``hybrid`` with no hits, noting the space given."""
 
     spaces: list[EmbeddingSpace | None] = field(default_factory=list)
 
@@ -194,6 +194,7 @@ def _module(
             embedding=None if model is None else ModelRef(profile="corp", model=model)
         ),
         models=Factory(),
+        instance_mode=RetrievalMode.HYBRID,
         pipelines={RetrievalMode.HYBRID: stores.hybrid},
         clock=Clock(),
         vectors=stores.vectors,
