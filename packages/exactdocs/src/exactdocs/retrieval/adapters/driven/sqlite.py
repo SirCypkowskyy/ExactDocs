@@ -40,6 +40,7 @@ from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
     Chunk,
+    ChunkHeading,
     ChunkId,
     ChunkSet,
     ChunkSetKey,
@@ -85,6 +86,8 @@ chunks = Table(
     Column("content_hash", Text, nullable=False),
     Column("anchor", Text, nullable=False),
     Column("code_languages", Text, nullable=False),  # JSON list
+    # JSON list of [heading path, anchor, starts chunk]; NULL: stored before they were recorded
+    Column("headings", Text, nullable=True),
     ForeignKeyConstraint(
         ["blob_sha", "config_hash"],
         ["retrieval_chunk_sets.blob_sha", "retrieval_chunk_sets.config_hash"],
@@ -214,6 +217,7 @@ class SqliteChunkRepository:
                     "content_hash": c.content_hash,
                     "anchor": c.anchor,
                     "code_languages": json.dumps(c.code_languages),
+                    "headings": _headings_json(c.headings),
                 }
                 for s in new
                 for i, c in enumerate(s.chunks)
@@ -272,6 +276,7 @@ class SqliteChunkRepository:
                             content_hash=row.content_hash,
                             anchor=row.anchor,
                             code_languages=tuple(json.loads(row.code_languages)),
+                            headings=_headings(row.headings),
                         )
                     )
         return {
@@ -331,6 +336,7 @@ class SqliteChunkRepository:
                 chunks.c.occurrence_index,
                 chunks.c.content_hash,
                 chunks.c.anchor,
+                chunks.c.headings,
             )
             .where(
                 manifest_chunks.c.manifest_id == manifest_id,
@@ -348,6 +354,7 @@ class SqliteChunkRepository:
                 occurrence_index=r.occurrence_index,
                 content_hash=r.content_hash,
                 anchor=r.anchor,
+                headings=_headings(r.headings),
             )
             for r in rows
         ]
@@ -468,7 +475,39 @@ def _stored(manifest_id: str, row: Row[Any]) -> StoredChunk:
             content_hash=row.content_hash,
             anchor=row.anchor,
             code_languages=tuple(json.loads(row.code_languages)),
+            headings=_headings(row.headings),
         ),
+    )
+
+
+def _headings_json(headings: tuple[ChunkHeading, ...] | None) -> str | None:
+    """Encode a chunk's heading records for the ``headings`` column.
+
+    Args:
+        headings: The records, or ``None`` when they were not recorded.
+
+    Returns:
+        A JSON list of ``[heading path, anchor, starts chunk]``, or ``None``.
+    """
+    if headings is None:
+        return None
+    return json.dumps([[h.heading_path, h.anchor, h.starts_chunk] for h in headings])
+
+
+def _headings(stored: str | None) -> tuple[ChunkHeading, ...] | None:
+    """Decode the ``headings`` column.
+
+    Args:
+        stored: The column's value.
+
+    Returns:
+        The records, or ``None`` for a chunk stored before they were recorded.
+    """
+    if stored is None:
+        return None
+    return tuple(
+        ChunkHeading(heading_path=tuple(path), anchor=anchor, starts_chunk=starts)
+        for path, anchor, starts in json.loads(stored)
     )
 
 

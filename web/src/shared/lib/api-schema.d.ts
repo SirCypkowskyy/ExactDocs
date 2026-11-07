@@ -1152,7 +1152,8 @@ export interface components {
             readonly source_url: string | null;
             /**
              * Chunks
-             * @description How many chunks the article has, the preamble's included.
+             * @description How many chunks the article has, the preamble's included: fewer than its headings when the
+             *     library's chunking merges sections (headings with `starts_chunk` false).
              */
             readonly chunks: number;
             /**
@@ -2367,14 +2368,21 @@ export interface components {
             readonly heading: string;
             /**
              * Chunk Id
-             * @description The chunk this heading starts, for `read_chunk`; null when only deeper headings start one.
+             * @description The chunk that holds this heading, for `read_chunk`; null when no chunk records it.
              */
             readonly chunk_id: string | null;
             /**
              * Anchor
-             * @description The heading's anchor in the article; null when `chunk_id` is.
+             * @description The heading's own anchor in the article; null when `chunk_id` is.
              */
             readonly anchor: string | null;
+            /**
+             * Starts Chunk
+             * @description True when the chunk starts with this heading; false when the library's chunking merged it
+             *     into a chunk that starts earlier (`read_chunk` then returns that whole chunk); null when
+             *     `chunk_id` is.
+             */
+            readonly starts_chunk: boolean | null;
             /**
              * Children
              * @description The headings directly under it, in document order.

@@ -56,10 +56,17 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Outlines**: `GET /libraries/{owner}/{repo}/outline?path=&ref=` returns an article's heading tree
-  (`sections`, each with `heading`, `chunk_id`, `anchor` and `children`; `preamble_chunk_id` for
-  text before the first heading) with no body text, from exactly that version (MCP:
-  `article_outline`). The tree is made from the chunks, so headings the chunking config merged
-  into a chunk are not in it. A version that is not imported, or a path it lacks, is 404 `not_found`;
+  (`sections`, each with `heading`, `chunk_id`, `anchor`, `starts_chunk` and `children`;
+  `preamble_chunk_id` for text before the first heading) with no body text, from exactly that
+  version (MCP: `article_outline`). Every heading is listed: one the library's chunking merged into
+  a chunk that starts earlier has `starts_chunk: false`, the ID of that chunk and its own anchor.
+  A heading no chunk records (only possible in chunks stored before #251) has null `chunk_id`,
+  `anchor` and `starts_chunk`. Chunks cut before heading records existed list only their first
+  heading. Chunking that cannot merge headings (split level h6, no `min_chars`) loses nothing; for
+  the rest, a version gets full outlines once it is cut again: at an import of a new commit (a
+  re-sync re-cuts only versions whose commit moved), or for every version at once by saving a
+  changed chunking in the library's settings, which queues a `rechunk` job (saving the same
+  chunking queues nothing). A version that is not imported, or a path it lacks, is 404 `not_found`;
   a missing path lists `close_matches` like the article route.
 - **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
   carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.

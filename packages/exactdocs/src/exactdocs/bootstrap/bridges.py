@@ -89,6 +89,7 @@ from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import StoredTextOutdatedError
 from exactdocs.ingestion.models import (
     ArticleChunk,
+    ChunkHeading,
     ChunkingConfig,
     Collected,
     CopiedArticle,
@@ -113,6 +114,7 @@ from exactdocs.ingestion.models import (
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ArticleTagsIn,
+    ChunkHeadingIn,
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
@@ -510,6 +512,16 @@ class RetrievalChunkIndex:
                     content_hash=c.content_hash,
                     anchor=c.anchor,
                     code_languages=tuple(c.code_languages),
+                    headings=None
+                    if c.headings is None
+                    else tuple(
+                        ChunkHeading(
+                            heading_path=tuple(h.heading_path),
+                            anchor=h.anchor,
+                            starts_chunk=h.starts_chunk,
+                        )
+                        for h in c.headings
+                    ),
                 )
                 for position, c in enumerate(chunks)
             )
@@ -822,6 +834,16 @@ def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestC
                         content_hash=c.content_hash,
                         anchor=c.anchor,
                         code_languages=list(c.code_languages),
+                        headings=None
+                        if c.headings is None
+                        else [
+                            ChunkHeadingIn(
+                                heading_path=list(h.heading_path),
+                                anchor=h.anchor,
+                                starts_chunk=h.starts_chunk,
+                            )
+                            for h in c.headings
+                        ],
                     )
                     for c in a.chunks
                 ],
