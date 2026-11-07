@@ -152,7 +152,7 @@ def _ready(url: str) -> bool:
             return True
     except urllib.error.HTTPError as exc:
         return exc.code == HTTPStatus.NOT_FOUND
-    except OSError, ValueError:
+    except OSError:  # unreachable, refused, timed out (a URLError)
         return False
 
 

@@ -231,9 +231,10 @@ jobs:
             exactdocs serve --port "$port" &
           pid=$!
           trap 'kill $pid' EXIT
+          # readiness, not liveness: /api/health answers before the database does
           for _ in $(seq 1 60); do
             kill -0 "$pid" || { echo "::error::the server exited early"; exit 1; }
-            curl -fsS "http://127.0.0.1:$port/api/health" && break
+            curl -fsS "http://127.0.0.1:$port/readyz" && break
             sleep 1
           done
           health=$(curl -fsS "http://127.0.0.1:$port/api/health")
