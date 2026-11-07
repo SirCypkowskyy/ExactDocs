@@ -377,6 +377,7 @@ async def test_an_outline_of_merged_chunks_lists_every_heading_and_marks_the_mer
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
 
     def heading(*path: str, anchor: str, starts: bool = False) -> ChunkHeadingIn:

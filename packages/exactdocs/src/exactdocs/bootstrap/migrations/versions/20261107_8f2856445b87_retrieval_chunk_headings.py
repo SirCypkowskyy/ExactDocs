@@ -6,14 +6,14 @@ headings, so that is every heading; any other chunking gets a new config hash, s
 are cut again (with the records) at the library's next import or re-chunk.
 
 Revision ID: 8f2856445b87
-Revises: b2c5e8a1d7f4
+Revises: a7c3e9b1d5f2
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "8f2856445b87"
-down_revision = "b2c5e8a1d7f4"
+down_revision = "a7c3e9b1d5f2"
 branch_labels = None
 depends_on = None
 
