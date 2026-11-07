@@ -4,7 +4,7 @@ import hashlib
 import itertools
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ from markdown_it import MarkdownIt
 from exactdocs.ingestion import models
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.errors import InvalidChunkingConfigError
-from exactdocs.ingestion.models import ChunkingConfig, parse_article
+from exactdocs.ingestion.models import ArticleChunk, ChunkingConfig, parse_article
 from exactdocs.ingestion.ports import Chunker
 
 ADAPTERS: list[Callable[[ChunkingConfig], Chunker]] = [MarkdownChunker]
@@ -451,3 +451,84 @@ def test_a_chunker_this_adapter_does_not_provide_is_refused(
 
     with pytest.raises(InvalidChunkingConfigError):
         MarkdownChunker().configured(ChunkingConfig(chunker="other"))
+
+
+def _records(chunks: Sequence[ArticleChunk]) -> list[list[tuple[tuple[str, ...], str, bool]]]:
+    """Each chunk's heading records as ``(heading path, anchor, starts chunk)``."""
+    return [[(h.heading_path, h.anchor, h.starts_chunk) for h in c.headings or ()] for c in chunks]
+
+
+def test_a_chunk_of_the_default_setting_records_the_one_heading_that_starts_it(
+    chunker: Chunker,
+) -> None:
+    chunks = chunker.chunk(parse_article("guide/install.md", INSTALL.read_text()))
+
+    assert _records(chunks) == [[(c.heading_path, c.anchor, True)] for c in chunks]
+
+
+def test_merged_sections_record_every_heading_they_hold_in_order() -> None:
+    chunks = MarkdownChunker(ChunkingConfig(min_chars=10)).chunk(parse_article("a.md", TINY))
+
+    assert _records(chunks) == [
+        [(("A",), "a", True), (("A", "B"), "b", False)],
+        [(("A", "C"), "c", True), (("A", "D"), "d", False)],
+    ]
+
+
+def test_headings_below_the_split_level_are_recorded_with_their_own_anchors() -> None:
+    body = "# A\n\n## Foo\n\n### Deep\n\n#### Deeper\n\n## Foo\n\n### Deep\n"
+    chunks = MarkdownChunker(ChunkingConfig(split_depth=2)).chunk(parse_article("a.md", body))
+
+    assert _records(chunks) == [
+        [(("A",), "a", True)],
+        [
+            (("A", "Foo"), "foo", True),
+            (("A", "Foo", "Deep"), "deep", False),
+            (("A", "Foo", "Deep", "Deeper"), "deeper", False),
+        ],
+        [(("A", "Foo"), "foo-1", True), (("A", "Foo", "Deep"), "deep-1", False)],
+    ]
+
+
+def test_a_heading_merged_into_the_text_before_the_first_heading_does_not_start_it() -> None:
+    body = "Intro.\n\n### Deep\n\nx\n\n# A\n\na\n"
+    chunks = MarkdownChunker(ChunkingConfig(split_depth=2)).chunk(parse_article("a.md", body))
+
+    assert [c.heading_path for c in chunks] == [(), ("A",)]
+    assert _records(chunks) == [[(("Deep",), "deep", False)], [(("A",), "a", True)]]
+
+
+def test_the_text_before_the_first_heading_records_no_heading(chunker: Chunker) -> None:
+    chunks = chunker.chunk(parse_article("a.md", "Intro.\n\n# A\n\na\n"))
+
+    assert _records(chunks) == [[], [(("A",), "a", True)]]
+    assert all(c.headings is not None for c in chunks)
+
+
+@pytest.mark.parametrize("path", ARTICLES, ids=lambda p: str(p.relative_to(TESTS)))
+def test_every_setting_records_every_heading_the_default_one_cuts_at(
+    any_chunker: Chunker, path: Path
+) -> None:
+    article = _parse(path)
+    default = MarkdownChunker().chunk(article)
+    chunks = any_chunker.chunk(article)
+
+    every = [(c.heading_path, c.anchor) for c in default if c.heading_path]
+    assert [(h[0], h[1]) for r in _records(chunks) for h in r] == every
+    for chunk, records in zip(chunks, _records(chunks), strict=True):
+        starting = [(p, a) for p, a, starts in records if starts]
+        expected = [(chunk.heading_path, chunk.anchor)] if chunk.heading_path else []
+        assert starting == expected, records
+        assert not records or records[0][2] == bool(chunk.heading_path)
+
+
+def test_a_setting_that_can_merge_headings_changes_the_hash_it_had_before_heading_records() -> None:
+    engine = f"markdown-it-py {markdown_it.__version__}"
+    config = ChunkingConfig(min_chars=400)
+    before = json.dumps(
+        [models.PARSER_VERSION, models.CHUNKER_VERSION, 6, engine, 400, None, "markdown"],
+        separators=(",", ":"),
+    )
+
+    hashed = MarkdownChunker().configured(config).config_hash
+    assert hashed != hashlib.sha256(before.encode()).hexdigest()[:32]

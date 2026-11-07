@@ -15,6 +15,7 @@ from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ArticleOutlineOut,
     ArticleOutlineQuery,
+    ChunkHeadingIn,
     ChunkIn,
     IndexManifestCommand,
     OutlineSectionOut,
@@ -22,6 +23,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import ArticleNotFoundError, VersionNotIndexedError
 from exactdocs.retrieval.models import (
+    ChunkHeading,
     ChunkId,
     DocTarget,
     ManifestStatus,
@@ -252,7 +254,9 @@ def test_bad_input_is_refused(fields: dict[str, str]) -> None:
         ArticleOutlineQuery.model_validate(fields)
 
 
-def section(position: int, *headings: str) -> SectionRef:
+def section(
+    position: int, *headings: str, records: tuple[ChunkHeading, ...] | None = None
+) -> SectionRef:
     return SectionRef(
         chunk_id=ChunkId(f"c{position}"),
         position=position,
@@ -260,19 +264,24 @@ def section(position: int, *headings: str) -> SectionRef:
         occurrence_index=0,
         content_hash=f"h{position}",
         anchor=f"a{position}",
+        headings=records,
     )
+
+
+def record(*path: str, starts: bool = False) -> ChunkHeading:
+    return ChunkHeading(heading_path=path, anchor=f"#{path[-1]}", starts_chunk=starts)
 
 
 def test_a_heading_that_starts_no_chunk_is_a_node_without_one() -> None:
     tree = outline([section(0, "A", "B"), section(1, "A", "C"), section(2, "D")])
 
     a, d = tree.sections
-    assert (a.heading, a.section) == ("A", None)
-    assert [(c.heading, c.section and c.section.chunk_id) for c in a.children] == [
+    assert (a.heading, a.entry) == ("A", None)
+    assert [(c.heading, c.entry and c.entry.chunk_id) for c in a.children] == [
         ("B", "c0"),
         ("C", "c1"),
     ]
-    assert (d.heading, d.section and d.section.chunk_id, d.children) == ("D", "c2", ())
+    assert (d.heading, d.entry and d.entry.chunk_id, d.children) == ("D", "c2", ())
     assert tree.preamble is None
 
 
@@ -291,3 +300,160 @@ def test_an_article_without_headings_is_only_a_preamble() -> None:
     assert tree.preamble is not None
     assert tree.preamble.chunk_id == "c0"
     assert tree.sections == ()
+
+
+def flat(tree) -> list[tuple[str, str | None, str | None, bool | None]]:
+    """Every node as ``(heading, chunk ID, anchor, starts chunk)``, in document order."""
+
+    def walk(nodes) -> list[tuple[str, str | None, str | None, bool | None]]:
+        found = []
+        for n in nodes:
+            e = n.entry
+            found.append((n.heading, e and e.chunk_id, e and e.anchor, e and e.starts_chunk))
+            found += walk(n.children)
+        return found
+
+    return walk(tree.sections)
+
+
+def test_a_merged_heading_is_a_node_of_the_chunk_that_holds_it_with_its_own_anchor() -> None:
+    tree = outline(
+        [
+            section(0, "A", records=(record("A", starts=True), record("A", "B"))),
+            section(1, "A", "C", records=(record("A", "C", starts=True), record("A", "C", "D"))),
+            section(2, "E", records=(record("E", starts=True),)),
+        ]
+    )
+
+    assert [(n.heading, [c.heading for c in n.children]) for n in tree.sections] == [
+        ("A", ["B", "C"]),
+        ("E", []),
+    ]
+    assert flat(tree) == [
+        ("A", "c0", "#A", True),
+        ("B", "c0", "#B", False),
+        ("C", "c1", "#C", True),
+        ("D", "c1", "#D", False),
+        ("E", "c2", "#E", True),
+    ]
+
+
+def test_a_heading_merged_into_the_preamble_points_to_the_preamble() -> None:
+    tree = outline(
+        [
+            section(0, records=(record("Deep"),)),
+            section(1, "A", records=(record("A", starts=True),)),
+        ]
+    )
+
+    assert tree.preamble is not None
+    assert tree.preamble.chunk_id == "c0"
+    assert flat(tree) == [("Deep", "c0", "#Deep", False), ("A", "c1", "#A", True)]
+
+
+def test_sections_stored_without_heading_records_give_the_outline_of_their_first_headings() -> None:
+    old = outline([section(0, "A"), section(1, "A", "C")])
+    mixed = outline(
+        [section(0, "A"), section(1, "A", "C", records=(record("A", "C", starts=True),))]
+    )
+
+    expected = [("A", "c0", "a0", True), ("C", "c1", "a1", True)]
+    assert flat(old) == expected
+    assert flat(mixed) == [("A", "c0", "a0", True), ("C", "c1", "#C", True)]
+
+
+async def test_an_outline_of_merged_chunks_lists_every_heading_and_marks_the_merged_ones() -> None:
+    chunks = InMemoryChunkRepository()
+    index = InMemorySearchIndex(chunks=chunks)
+    fake = FakeVersions()
+    module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
+        libraries=InMemoryLibraries(),
+        searchable=fake,
+        manifests=fake,
+        chunks=chunks,
+        search=index,
+        maintenance=index,
+    )
+
+    def heading(*path: str, anchor: str, starts: bool = False) -> ChunkHeadingIn:
+        return ChunkHeadingIn(heading_path=list(path), anchor=anchor, starts_chunk=starts)
+
+    merged = [
+        ChunkIn(
+            heading_path=["Guide"],
+            occurrence_index=0,
+            content="# Guide\n\nAll.\n\n## Install\n\nPython.\n\n### Docker\n\nrun\n",
+            content_hash="h-0",
+            anchor="guide",
+            headings=[
+                heading("Guide", anchor="guide", starts=True),
+                heading("Guide", "Install", anchor="install"),
+                heading("Guide", "Install", "Docker", anchor="docker"),
+            ],
+        ),
+        ChunkIn(
+            heading_path=["Guide", "Upgrade"],
+            occurrence_index=0,
+            content="## Upgrade\n\npip install -U\n",
+            content_hash="h-1",
+            anchor="upgrade",
+            headings=[heading("Guide", "Upgrade", anchor="upgrade", starts=True)],
+        ),
+    ]
+    await module.index_manifest(
+        IndexManifestCommand(
+            manifest_id="m14",
+            library=LIB,
+            ref="v1.4.0",
+            config_hash="merging",
+            articles=[ArticleChunksIn(path=INSTALL, blob_sha="b", chunks=merged)],
+        )
+    )
+
+    found = await get(module, INSTALL, "v1.4.0")
+
+    assert shape(found.sections) == [("Guide", [("Install", [("Docker", [])]), ("Upgrade", [])])]
+    nodes = every(found.sections)
+    guide, install, docker, upgrade = nodes
+    assert [n.anchor for n in nodes] == ["guide", "install", "docker", "upgrade"]
+    assert [n.starts_chunk for n in nodes] == [True, False, False, True]
+    assert install.chunk_id == docker.chunk_id == guide.chunk_id != upgrade.chunk_id
+    assert found.chunks == 2
+    sent = found.model_dump_json()
+    assert "Python." not in sent
+    assert "pip install" not in sent
+
+
+async def test_every_heading_of_an_outline_stored_without_records_starts_its_chunk(
+    retrieval: RetrievalModule,
+) -> None:
+    found = await get(retrieval, INSTALL, "v1.4.0")
+
+    assert all(n.starts_chunk for n in every(found.sections))
+
+
+@pytest.mark.parametrize(
+    "headings",
+    [
+        [{"heading_path": ["A", "B"], "anchor": "b", "starts_chunk": True}],
+        [
+            {"heading_path": ["A"], "anchor": "a", "starts_chunk": False},
+            {"heading_path": ["A"], "anchor": "a", "starts_chunk": True},
+        ],
+        [{"heading_path": [], "anchor": "", "starts_chunk": False}],
+    ],
+    ids=["another-path-starts-it", "not-first", "no-heading"],
+)
+def test_heading_records_that_do_not_match_their_chunk_are_refused(headings: list) -> None:
+    with pytest.raises(ValidationError):
+        ChunkIn.model_validate(
+            {
+                "heading_path": ["A"],
+                "occurrence_index": 0,
+                "content": "# A",
+                "content_hash": "h",
+                "anchor": "a",
+                "headings": headings,
+            }
+        )

@@ -5854,7 +5854,7 @@
           "chunks": {
             "type": "integer",
             "title": "Chunks",
-            "description": "How many chunks the article has, the preamble's included."
+            "description": "How many chunks the article has, the preamble's included: fewer than its headings when the\nlibrary's chunking merges sections (headings with `starts_chunk` false)."
           },
           "preamble_chunk_id": {
             "anyOf": [
@@ -7887,7 +7887,7 @@
               }
             ],
             "title": "Chunk Id",
-            "description": "The chunk this heading starts, for `read_chunk`; null when only deeper headings start one."
+            "description": "The chunk that holds this heading, for `read_chunk`; null when no chunk records it."
           },
           "anchor": {
             "anyOf": [
@@ -7899,7 +7899,12 @@
               }
             ],
             "title": "Anchor",
-            "description": "The heading's anchor in the article; null when `chunk_id` is."
+            "description": "The heading's own anchor in the article; null when `chunk_id` is."
+          },
+          "starts_chunk": {
+            "type": "boolean",
+            "title": "Starts Chunk",
+            "description": "True when the chunk starts with this heading; false when the library's chunking merged it\ninto a chunk that starts earlier (`read_chunk` then returns that whole chunk)."
           },
           "children": {
             "items": {
@@ -7916,6 +7921,7 @@
           "heading",
           "chunk_id",
           "anchor",
+          "starts_chunk",
           "children"
         ],
         "title": "OutlineSectionOut",

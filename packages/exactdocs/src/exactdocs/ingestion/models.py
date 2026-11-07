@@ -56,6 +56,7 @@ from exactdocs.ingestion.constants import (
     MAX_SIMILARITY,
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
+    MERGED_HEADINGS_VERSION,
     MIN_INTERVAL_MINUTES,
     ONE,
     OPENSSH_MAGIC,
@@ -978,13 +979,31 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     A fix to the parser or the chunker changes it, so stored articles are re-chunked instead of
     reusing a chunk set made by older code. The size bounds and the chunker are added only when
     they differ from the defaults, so the chunk sets stored before they existed stay valid.
+    Every other config can merge headings into a chunk, so its hash also names
+    ``MERGED_HEADINGS_VERSION``: the chunks record those headings, and a set cut before they did
+    is cut again instead of reused. The default config cuts at every heading, so its chunk sets
+    already tell every heading and keep their hash.
     """
     fields: list[object] = [PARSER_VERSION, CHUNKER_VERSION, config.split_depth, engine]
     extra = (config.min_chars, config.max_chars, config.chunker)
     if extra != (0, None, DEFAULT_CHUNKER):
         fields.extend(extra)
+    if config != ChunkingConfig():  # it can merge headings, which its chunks now record
+        fields.append(f"headings-{MERGED_HEADINGS_VERSION}")
     payload = json.dumps(fields, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChunkHeading:
+    """One heading a chunk holds, as the chunker found it."""
+
+    heading_path: tuple[str, ...]
+    """The heading and every heading above it, whatever the split level."""
+    anchor: str
+    """The heading's own GitHub-style anchor in the article."""
+    starts_chunk: bool
+    """True for the heading the chunk starts with (and is named after); false for one merged in."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1002,6 +1021,9 @@ class ArticleChunk:
     anchor: str
     """GitHub-style, unique in the article; empty before the first heading."""
     code_languages: tuple[str, ...] = ()
+    headings: tuple[ChunkHeading, ...] | None = None
+    """Every heading the chunk holds, in order; ``None`` when not recorded (a chunk set stored
+    before heading records existed)."""
 
 
 class RefKind(StrEnum):

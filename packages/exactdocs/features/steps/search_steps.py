@@ -17,7 +17,7 @@ from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreMani
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, VersionRef
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.models import parse_article
-from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
+from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkHeadingIn, ChunkIn, IndexManifestCommand
 from fixture_repo import git_bytes
 from steps.http_steps import step_running
 
@@ -125,6 +125,14 @@ async def import_versions(
                                     content_hash=c.content_hash,
                                     anchor=c.anchor,
                                     code_languages=list(c.code_languages),
+                                    headings=[
+                                        ChunkHeadingIn(
+                                            heading_path=list(h.heading_path),
+                                            anchor=h.anchor,
+                                            starts_chunk=h.starts_chunk,
+                                        )
+                                        for h in c.headings or ()
+                                    ],
                                 )
                                 for c in chunker.chunk(a)
                             ],

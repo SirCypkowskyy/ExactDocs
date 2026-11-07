@@ -13,6 +13,11 @@ a fix here re-chunks stored articles instead of reusing stale chunk sets.
 CHUNKER_VERSION: Final[int] = 1
 """Bump on any change to how a chunker cuts articles. Like PARSER_VERSION it feeds the config hash.
 """
+MERGED_HEADINGS_VERSION: Final[int] = 1
+"""Bump on any change to the heading records of chunks that hold more than one heading (#251). It
+feeds the hash of every config but the default one (which never merges headings), so those
+libraries' chunk sets are cut again when they are next imported or re-chunked.
+"""
 MAX_HEADING_LEVEL: Final[int] = 6
 """Deepest Markdown heading level a chunking config may split at."""
 _ALWAYS_INVISIBLE: Final[re.Pattern[str]] = re.compile(

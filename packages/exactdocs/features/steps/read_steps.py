@@ -156,12 +156,12 @@ INSTALL_OUTLINE = [
 ]
 
 
-def _shape(sections: list[dict[str, Any]]) -> list[tuple[str, Any]]:
+def outline_shape(sections: list[dict[str, Any]]) -> list[tuple[str, Any]]:
     """The headings of an outline as nested ``(heading, children)`` pairs."""
-    return [(s["heading"], _shape(s["children"])) for s in sections]
+    return [(s["heading"], outline_shape(s["children"])) for s in sections]
 
 
-def _nodes(
+def outline_nodes(
     sections: list[dict[str, Any]], above: tuple[str, ...] = ()
 ) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
     """Every section of an outline with its heading path, in document order."""
@@ -169,7 +169,7 @@ def _nodes(
     for section in sections:
         path = (*above, section["heading"])
         found.append((path, section))
-        found += _nodes(section["children"], path)
+        found += outline_nodes(section["children"], path)
     return found
 
 
@@ -191,10 +191,17 @@ def step_outline(context: Context) -> None:
         context.read_ref,
         context.read_path,
     ), data
-    assert _shape(data["sections"]) == INSTALL_OUTLINE, data["sections"]
-    ids = [section["chunk_id"] for _, section in _nodes(data["sections"])]
+    assert outline_shape(data["sections"]) == INSTALL_OUTLINE, data["sections"]
+    ids = [section["chunk_id"] for _, section in outline_nodes(data["sections"])]
     assert all(ids), ids
     assert len(set(ids)) == len(ids), ids
+    step_no_body_text(context)
+
+
+@then("no body text is returned")
+def step_no_body_text(context: Context) -> None:
+    result = context.mcp_result
+    assert not result.is_error, result.content
     _, files = read_version(context, context.read_ref)
     body = parse_article(context.read_path, dict(files)[context.read_path]).body
     prose = [line for line in body.splitlines() if line.strip() and not line.startswith("#")]
@@ -204,9 +211,22 @@ def step_outline(context: Context) -> None:
         assert line not in sent, line
 
 
+@then("the heading tree is the same as before, one chunk per heading")
+def step_outline_unchanged(context: Context) -> None:
+    result = context.mcp_result
+    assert not result.is_error, result.content
+    data = result.structured_content
+    assert outline_shape(data["sections"]) == INSTALL_OUTLINE, data["sections"]
+    nodes = [section for _, section in outline_nodes(data["sections"])]
+    assert all(n["starts_chunk"] for n in nodes), nodes
+    ids = [n["chunk_id"] for n in nodes]
+    assert all(ids), ids
+    assert len(set(ids)) == len(ids) == data["chunks"], data
+
+
 @then("every chunk ID of the outline reads that section of the article")
 def step_outline_ids(context: Context) -> None:
-    for path, section in _nodes(context.mcp_result.structured_content["sections"]):
+    for path, section in outline_nodes(context.mcp_result.structured_content["sections"]):
         response = context.client.get(f"/api/v1/chunks/{section['chunk_id']}")
         assert response.status_code == HTTPStatus.OK, response.text
         chunk = response.json()
@@ -227,7 +247,7 @@ def step_rest_outline(context: Context, path: str, target: str) -> None:
 @then("the outline is the heading tree of the article with its commit SHA")
 def step_rest_outline_body(context: Context) -> None:
     body = context.response.json()
-    assert _shape(body["sections"]) == INSTALL_OUTLINE, body
+    assert outline_shape(body["sections"]) == INSTALL_OUTLINE, body
     assert body["commit_sha"] == context.commits[context.read_ref], body
     assert body["source_url"] == (
         f"{REPOSITORY}/blob/{body['commit_sha']}/{quote(context.read_path)}"
