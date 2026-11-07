@@ -378,7 +378,9 @@ Which mode answers a search: the call's `mode`, else the **library's** mode
 `agentic` (LLM, never a default); reranking is a flag on top of any mode when a reranker is
 configured. A call that asks for a mode that cannot run fails with `mode_unavailable`, naming the
 missing model role; a library or instance mode that cannot run (its model was removed) never fails
-a search: the next one answers, with `fallback_reason: mode_unavailable`. Setting a library's mode
+a search: the next one answers, with `fallback_reason: mode_unavailable` (or
+`vector_store_unavailable` when the hybrid modes cannot run because sqlite-vec cannot be loaded by
+this Python; BM25 keeps answering). Setting a library's mode
 is refused the same way when its model is not configured. Searching across libraries
 (`search_all_docs`, `GET /api/v1/search`) and `resolve-library-id` stay BM25 whatever the library
 and instance modes are: their scores must compare across libraries.

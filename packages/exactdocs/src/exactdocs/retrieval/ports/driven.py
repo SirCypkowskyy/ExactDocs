@@ -8,9 +8,13 @@ from typing import Protocol
 from exactdocs.retrieval.models import (
     CatalogLibrary,
     ChunkId,
+    ChunkKey,
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    EmbeddingSpace,
+    EmbeddingSpaceId,
+    EmbeddingSpec,
     IndexedManifest,
     LibraryAi,
     ManifestChunk,
@@ -30,6 +34,8 @@ from exactdocs.retrieval.models import (
     SectionRef,
     StoredChunk,
     TagFilter,
+    VectorCoverage,
+    VectorHit,
     VersionCounts,
 )
 
@@ -539,5 +545,182 @@ class RetrievalPipeline(Protocol):
 
         Returns:
             At most ``request.limit`` hits, best first, with the mode that really answered.
+        """
+        ...
+
+
+class VectorIndex(Protocol):
+    """Chunk vectors, one store per embedding space; sqlite-vec on SQLite, pgvector later.
+
+    Every engine behaves the same: see ``tests/retrieval/test_vector_index.py``. A space holds
+    the vectors of one ``EmbeddingSpec``; a query runs in one space, so vectors of two models are
+    never compared. A vector belongs to one stored chunk (``ChunkKey``), which every manifest
+    holding the same blob with the same chunking shares, so a blob is embedded once. Vectors die
+    with their chunks: when ``ChunkRepository.remove`` deletes a chunk set, its vectors go in the
+    same step, in every space. Search is exact and scoped to one manifest (no ANN index).
+    """
+
+    async def available(self) -> bool:
+        """Say whether ``nearest`` can run here (SQLite: whether sqlite-vec can be loaded).
+
+        Asked only once an embedding model is configured: the answer may load the store.
+        Storing vectors needs nothing loaded, so the other methods work either way.
+
+        Returns:
+            True when the store can search.
+        """
+        ...
+
+    async def spaces(self) -> Sequence[EmbeddingSpace]:
+        """List every space, retired ones too, oldest first.
+
+        Returns:
+            The spaces.
+        """
+        ...
+
+    async def create_space(self, spec: EmbeddingSpec, at: datetime) -> EmbeddingSpace:
+        """Create an empty space for ``spec``, in state ``building``, with a new ID.
+
+        Args:
+            spec: The model and format its vectors will be made with.
+            at: When it is created.
+
+        Returns:
+            The new space.
+        """
+        ...
+
+    async def activate_space(self, space_id: EmbeddingSpaceId, at: datetime) -> EmbeddingSpace:
+        """Mark the space ``active`` (the caller retires the one it replaces).
+
+        Args:
+            space_id: The space.
+            at: When it became active; kept from the first activation.
+
+        Returns:
+            The space as it is now.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+    async def retire_space(self, space_id: EmbeddingSpaceId) -> None:
+        """Mark the space ``retired`` and drop its vectors; a no-op for a retired space.
+
+        Args:
+            space_id: The space.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+        """
+        ...
+
+    async def upsert(
+        self, space_id: EmbeddingSpaceId, vectors: Mapping[ChunkKey, Sequence[float]]
+    ) -> int:
+        """Store or replace the vectors of these chunks in the space, in one transaction.
+
+        A key with no stored chunk (collected meanwhile) is skipped. Nothing is stored when one
+        vector is invalid.
+
+        Args:
+            space_id: The space.
+            vectors: The vector of each chunk.
+
+        Returns:
+            How many vectors were stored.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+            VectorDimensionError: A vector does not have the space's dimensions.
+            InvalidVectorError: A vector is all zeros or holds a value that is not finite.
+        """
+        ...
+
+    async def delete(self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]) -> int:
+        """Delete the vectors of these chunks from the space.
+
+        Args:
+            space_id: The space.
+            keys: The chunks; those without a vector are ignored.
+
+        Returns:
+            How many vectors were deleted.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+    async def nearest(
+        self,
+        space_id: EmbeddingSpaceId,
+        manifest_id: str,
+        query: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> Sequence[VectorHit]:
+        """Return the manifest's chunks nearest to ``query``, nearest first, ties by chunk ID.
+
+        Version is a hard filter: only chunks of this manifest are looked at, whatever else the
+        space holds. ``tag_filter`` is applied before ranking. Chunks without a vector are left
+        out; an unknown manifest gives no hits.
+
+        Args:
+            space_id: The space; ``query`` must come from its model.
+            manifest_id: The version's manifest.
+            query: The query's vector.
+            tag_filter: Which chunks may be returned.
+            limit: How many hits to return at most.
+
+        Returns:
+            At most ``limit`` hits with their distances.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+            VectorDimensionError: ``query`` does not have the space's dimensions.
+            InvalidVectorError: ``query`` is all zeros or holds a value that is not finite.
+            VectorStoreUnavailableError: The store cannot search here (``available`` is False).
+        """
+        ...
+
+    async def coverage(self, space_id: EmbeddingSpaceId, manifest_id: str) -> VectorCoverage:
+        """Count the manifest's chunks and those with a vector in the space.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest; an unknown one has no chunks.
+
+        Returns:
+            The counts.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+    async def missing(
+        self, space_id: EmbeddingSpaceId, manifest_id: str, limit: int
+    ) -> Sequence[ChunkKey]:
+        """Return chunks of the manifest that have no vector in the space yet, in a stable order.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest.
+            limit: How many keys to return at most (a batch to embed).
+
+        Returns:
+            At most ``limit`` keys, each once; empty when the coverage is complete.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
         """
         ...

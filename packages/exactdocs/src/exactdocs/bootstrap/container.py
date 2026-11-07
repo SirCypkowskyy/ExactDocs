@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import threading
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Self
@@ -95,6 +95,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteProviderProfiles,
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.models import RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs_kernel import DomainError, SystemClock
@@ -175,6 +176,7 @@ def _build_read_side(
     ai_box: FernetSecretBox | None,
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
+    vector_extension: Callable[[], str] | None = None,
 ) -> tuple[CatalogModule, RetrievalModule]:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -185,6 +187,7 @@ def _build_read_side(
             stored or opened.
         model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
+        vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
 
     Returns:
         The two modules (``StartupError`` when the AI configuration is invalid).
@@ -198,6 +201,11 @@ def _build_read_side(
         copier=SqliteManifestCopier(engine=engine),
     )
     search = SqliteSearchIndex(engine=engine)
+    vectors = (
+        SqliteVectorIndex(engine=engine)
+        if vector_extension is None
+        else SqliteVectorIndex(engine=engine, extension=vector_extension)
+    )
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
@@ -226,6 +234,7 @@ def _build_read_side(
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
+        vectors=vectors,
     )
     return catalog, retrieval
 
@@ -297,6 +306,7 @@ class Container:
         chunker: Chunker | None = None,
         model_roles: ModelRoles | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
+        vector_extension: Callable[[], str] | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -306,7 +316,8 @@ class Container:
         fetching and for detecting renames (tests; a given ``gateway`` detects none unless
         ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
         ``model_roles`` stands in for the role resolution over the configured AI profiles and
-        ``pipelines`` for the AI retrieval modes (tests). An invalid AI configuration (or one this
+        ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
+        extension (tests: one that cannot load). An invalid AI configuration (or one this
         installation cannot call) is a ``StartupError``. A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
@@ -335,6 +346,7 @@ class Container:
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
             model_roles=model_roles,
             pipelines=pipelines,
+            vector_extension=vector_extension,
         )
         index = RetrievalChunkIndex(
             index_manifest=retrieval.index_manifest,

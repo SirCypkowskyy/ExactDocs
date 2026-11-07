@@ -1,14 +1,14 @@
 """AI provider profiles stored over the REST API, and each library's AI overrides (#241).
 
 Revision ID: e4b8d2f6a9c1
-Revises: 8f2856445b87
+Revises: 2a34523e0d8e
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "e4b8d2f6a9c1"
-down_revision = "8f2856445b87"
+down_revision = "2a34523e0d8e"
 branch_labels = None
 depends_on = None
 

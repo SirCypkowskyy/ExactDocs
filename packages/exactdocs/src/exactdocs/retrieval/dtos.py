@@ -17,6 +17,8 @@ from exactdocs.retrieval.constants import (
     DEFAULT_GRACE_SECONDS,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
+    EMBEDDING_INPUT_FORMAT,
+    MAX_EMBEDDING_DIMENSIONS,
     MAX_KEY,
     MAX_MODEL_NAME,
     MAX_MODEL_REF,
@@ -30,6 +32,7 @@ from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
     Candidate,
+    EmbeddingSpace,
     FallbackReason,
     KeySource,
     ModelCheck,
@@ -46,8 +49,10 @@ from exactdocs.retrieval.models import (
     SearchableVersion,
     SearchHit,
     SearchIndexState,
+    SpaceState,
     StoredChunk,
     TagMatch,
+    VectorMetric,
     source_link,
 )
 from exactdocs_kernel import (
@@ -834,7 +839,8 @@ class LibraryRetrievalOut(_Dto):
     effective_mode: RetrievalMode
     """The mode a search without `mode` runs in now."""
     fallback_reason: FallbackReason | None = Field(default=None)
-    """Set when a setting cannot run now (a role it needs is not configured) and was skipped."""
+    """Set when a setting cannot run now and was skipped: a role it needs is not configured
+    (`mode_unavailable`), or the vector store cannot be loaded (`vector_store_unavailable`)."""
     available_modes: list[RetrievalMode]
     """The modes a call or a setting may name now."""
     configured_roles: list[ModelRole]
@@ -1124,3 +1130,65 @@ class ModelChecksOut(_Dto):
             True when all are `ok` (and there is at least one).
         """
         return bool(self.checks) and all(c.status == "ok" for c in self.checks)
+
+
+class OpenEmbeddingSpaceCommand(_Dto):
+    """The embedding model the instance uses now: find its space, or create one for it."""
+
+    profile_kind: str = Field(min_length=1, max_length=MAX_NAME)
+    """The provider profile's kind (`openai`, `local`...)."""
+    model: str = Field(min_length=1, max_length=MAX_NAME)
+    """The embedding model, as the provider names it."""
+    dimensions: int = Field(ge=1, le=MAX_EMBEDDING_DIMENSIONS)
+    """How many numbers the model's vectors hold."""
+    input_format: int = Field(default=EMBEDDING_INPUT_FORMAT, ge=1)
+    """What a chunk's embedding is computed from."""
+
+
+class EmbeddingSpaceOut(_Dto):
+    """An embedding space: the vectors of one model, never compared with another's."""
+
+    id: int
+    """The space's ID; its vectors live in `retrieval_vec_<id>`."""
+    profile_kind: str
+    """The provider profile's kind."""
+    model: str
+    """The embedding model."""
+    dimensions: int
+    """How many numbers each vector holds."""
+    metric: VectorMetric
+    """How vectors are compared."""
+    input_format: int
+    """What a chunk's embedding is computed from."""
+    state: SpaceState
+    """`building`, `active` or `retired`."""
+    created_at: datetime
+    """When the space was created."""
+    activated_at: datetime | None
+    """When it became the active space, if it did."""
+    created: bool
+    """True when this call created the space (the model changed); False when it existed."""
+
+    @classmethod
+    def from_model(cls, space: EmbeddingSpace, *, created: bool) -> Self:
+        """Map the domain entity.
+
+        Args:
+            space: The space.
+            created: Whether the call created it.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            id=space.id,
+            profile_kind=space.spec.profile_kind,
+            model=space.spec.model,
+            dimensions=space.spec.dimensions,
+            metric=space.spec.metric,
+            input_format=space.spec.input_format,
+            state=space.state,
+            created_at=space.created_at,
+            activated_at=space.activated_at,
+            created=created,
+        )

@@ -352,3 +352,72 @@ ARTICLE_OUTLINE_DESCRIPTION: Final[str] = (
     "matches."
 )
 """Description of the ``article_outline`` MCP tool, what the agent reads to choose it."""
+
+# ---------------------------------------------------------------- models (vector store)
+EMBEDDING_INPUT_FORMAT: Final[int] = 1
+"""What an embedding of a chunk is computed from: its article title and heading path, then its
+text (docs/decisions/ai-retrieval.md, *Vector store*). A new format needs a new space.
+"""
+MAX_EMBEDDING_DIMENSIONS: Final[int] = 16_000
+"""The most dimensions a space may have: pgvector's ``vector`` type stops there."""
+MAX_FLOAT32: Final[float] = 3.4028234663852886e38
+"""The largest value a vector may hold: stores keep vectors as 32-bit floats."""
+
+# ---------------------------------------------------------------- adapters/driven/sqlite_vectors
+SQLITE_VEC_MODULE: Final[str] = "sqlite_vec"
+"""The Python package of sqlite-vec (``[ai]`` extra), imported only to find its extension."""
+VECTOR_TABLE_PREFIX: Final[str] = "retrieval_vec_"
+"""Each embedding space keeps its vectors in ``retrieval_vec_<space ID>``."""
+VECTOR_MMAP_BYTES: Final[int] = 1 << 30
+"""``PRAGMA mmap_size`` of a connection that searches vectors: reading 4 KB BLOBs through a map
+instead of copying overflow pages cut the p95 of a 50,000-vector search by about a fifth (#242).
+Address space, not memory: the pages are the OS page cache's."""
+_LOADED: Final[str] = "exactdocs.sqlite_vec"
+"""Key in a pooled connection's ``info``: sqlite-vec is loaded into it."""
+_DIMENSIONS: Final[str] = "exactdocs.vector_dimensions"
+"""Key in a pooled connection's ``info``: the dimensions of each space it searched."""
+VECTOR_BATCH: Final[int] = 500
+"""Vectors written, or chunk keys looked up, per statement (SQLite's bound-variable limit)."""
+_VECTOR_JOIN: Final[str] = """
+    FROM retrieval_manifest_chunks mc
+    JOIN retrieval_chunks c
+      ON c.blob_sha = mc.blob_sha AND c.config_hash = mc.config_hash AND c.position = mc.position
+"""
+"""A manifest's rows joined with their stored chunks (by the unique (blob, config, position))."""
+_VECTOR_CREATE: Final[str] = (
+    "CREATE TABLE {table} ("
+    "chunk_key INTEGER PRIMARY KEY REFERENCES retrieval_chunks (id) ON DELETE CASCADE, "
+    "embedding BLOB NOT NULL CHECK (length(embedding) = {size}))"
+)
+"""A space's vector table: one float32 BLOB of fixed size per ``retrieval_chunks`` row."""
+_VECTOR_DROP: Final[str] = "DROP TABLE IF EXISTS {table}"
+"""Drops a retired space's vectors."""
+_VECTOR_UPSERT: Final[str] = (
+    "INSERT INTO {table} (chunk_key, embedding) VALUES (:key, :embedding) "
+    "ON CONFLICT (chunk_key) DO UPDATE SET embedding = excluded.embedding"
+)
+"""Stores or replaces one vector."""
+_VECTOR_DELETE: Final[str] = "DELETE FROM {table} WHERE chunk_key IN :keys"
+"""Deletes the vectors of some chunk rows (``keys`` expands)."""
+_VECTOR_NEAREST: Final[str] = (
+    "SELECT mc.chunk_id, max(0.0, vec_distance_cosine(v.embedding, :query)) AS distance"
+    + _VECTOR_JOIN
+    + "JOIN {table} v ON v.chunk_key = c.id WHERE mc.manifest_id = :manifest {tags} "
+    "ORDER BY distance, mc.chunk_id LIMIT :limit"
+)
+"""Exact cosine search over one manifest's chunks; tags filter before the ORDER BY. Rounding
+can make the distance of a vector to itself a hair below zero: it is clamped to 0."""
+_VECTOR_COVERAGE: Final[str] = (
+    "SELECT count(*) AS chunks, count(v.chunk_key) AS embedded"
+    + _VECTOR_JOIN
+    + "LEFT JOIN {table} v ON v.chunk_key = c.id WHERE mc.manifest_id = :manifest"
+)
+"""Counts a manifest's chunk rows and those with a vector."""
+_VECTOR_MISSING: Final[str] = (
+    "SELECT DISTINCT c.blob_sha, c.config_hash, c.position"
+    + _VECTOR_JOIN
+    + "LEFT JOIN {table} v ON v.chunk_key = c.id "
+    "WHERE mc.manifest_id = :manifest AND v.chunk_key IS NULL "
+    "ORDER BY c.blob_sha, c.config_hash, c.position LIMIT :limit"
+)
+"""A manifest's chunks without a vector, in a stable order."""

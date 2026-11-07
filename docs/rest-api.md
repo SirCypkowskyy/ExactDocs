@@ -306,7 +306,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best mode configured); it must be available with the
-  settings sent: 422 `mode_unavailable` names the model role it needs that is not configured.
+  settings sent: 422 `mode_unavailable` names the model role it needs that is not configured, or
+  says the vector store is unavailable (sqlite-vec cannot be loaded; `fallback_reason`
+  `vector_store_unavailable` where a setting is skipped for that reason).
   `ai_enabled: false` sends nothing of the library to any AI provider: its searches are BM25.
   `llm`, `judge` and `reranker` (`<profile>:<model>`) replace the instance's role for this library
   (404 `unknown_provider` for a profile that does not exist, 422 `invalid_model` when not written

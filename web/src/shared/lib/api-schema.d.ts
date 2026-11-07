@@ -1645,7 +1645,7 @@ export interface components {
          * @description Why a search was answered by a cheaper mode than the one it would have used.
          * @enum {string}
          */
-        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited";
+        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable";
         /**
          * FieldError
          * @description One invalid request field.
@@ -1970,7 +1970,10 @@ export interface components {
             readonly instance_mode: components["schemas"]["RetrievalMode"] | null;
             /** @description The mode a search without `mode` runs in now. */
             readonly effective_mode: components["schemas"]["RetrievalMode"];
-            /** @description Set when a setting cannot run now (a role it needs is not configured) and was skipped. */
+            /**
+             * @description Set when a setting cannot run now and was skipped: a role it needs is not configured
+             *     (`mode_unavailable`), or the vector store cannot be loaded (`vector_store_unavailable`).
+             */
             readonly fallback_reason: components["schemas"]["FallbackReason"] | null;
             /**
              * Available Modes
