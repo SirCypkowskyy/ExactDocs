@@ -1,4 +1,5 @@
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import type { Credential } from "@/shared/lib/credentials";
 import { getJson, sendJson } from "@/shared/lib/http";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import type {
@@ -47,7 +48,7 @@ export const reprocessJobsQueryOptions = (owner: string, repo: string) =>
     },
   });
 
-/** Whether the library has a stored credential: a preview cannot use it yet. */
+/** Whether the library has a stored credential (a preview cannot use it yet; an add-version can). */
 export const accessQueryOptions = (owner: string, repo: string) =>
   queryOptions({
     queryKey: [...BROWSE_KEY, owner, repo, "access"] as const,
@@ -59,8 +60,12 @@ export const accessQueryOptions = (owner: string, repo: string) =>
 export const saveSelection = (owner: string, repo: string, draft: SelectionDraft) =>
   sendJson<SavedSettings>("PUT", `${lib(owner, repo)}/settings`, settingsOf(draft));
 
-export const addVersion = (owner: string, repo: string, ref: string) =>
-  sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, { ref });
+/** A `credential` replaces the library's stored one; it rides in the body and nothing keeps it. */
+export const addVersion = (owner: string, repo: string, ref: string, credential?: Credential) =>
+  sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, {
+    ref,
+    ...(credential && { credential }),
+  });
 
 /** The ref goes in the body: a ref may hold slashes, so nothing could follow it in the path. */
 export const reimportVersion = (owner: string, repo: string, ref: string) =>

@@ -92,6 +92,12 @@ async def test_secrets_never_reach_logs_responses_or_the_database(
         url=docs_repo.private_url,
         credential={"kind": "ssh_key", "private_key": KEY},
     )
+    listed = await post("/api/v1/repositories/refs", url=docs_repo.private_url, credential=ok)
+    refused = await post(
+        "/api/v1/repositories/refs",
+        url=docs_repo.private_url,
+        credential={"kind": "token", "token": wrong},
+    )
     added = await post(
         "/api/v1/libraries",
         url=docs_repo.private_url,
@@ -112,6 +118,9 @@ async def test_secrets_never_reach_logs_responses_or_the_database(
     assert (insecure.status_code, insecure.json()["error"]) == (422, "invalid_credential")
     assert (wrong_kind.status_code, wrong_kind.json()["error"]) == (422, "invalid_credential")
     assert (added.status_code, job["state"]) == (201, "succeeded")
+    assert listed.status_code == 200
+    assert "v1.3.0" in [t["name"] for t in listed.json()["tags"]]
+    assert (refused.status_code, refused.json()["error"]) == (422, "repository_auth_required")
     secrets = (token, wrong, KEY_BODY)
     for secret in secrets:
         assert not any(secret in text for text in texts), secret
@@ -208,6 +217,22 @@ async def test_an_api_token_cannot_send_a_credential_but_may_add_public_docs(
     assert public.status_code == 200  # no credential: an API token is enough
     assert docs_repo.token not in check.text + add.text + version.text
     assert (await client.get("/api/v1/libraries/fixture/docs-repo")).status_code == 404
+
+
+async def test_a_key_sent_on_one_line_through_the_api_is_refused_saying_why(
+    client: httpx.AsyncClient,
+) -> None:
+    flat = await client.post(
+        "/api/v1/repositories/check",
+        json={
+            "url": "git@git.example.com:acme/x.git",
+            "credential": {"kind": "ssh_key", "private_key": KEY.replace("\n", "")},
+        },
+    )
+
+    assert (flat.status_code, flat.json()["error"]) == (422, "invalid_credential")
+    assert "lost its line breaks" in flat.json()["detail"]
+    assert KEY_BODY not in flat.text
 
 
 async def test_a_session_may_send_a_credential(

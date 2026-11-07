@@ -557,8 +557,13 @@ class ListRepositoryRefsUseCase:
     remote: GitRemote
 
     async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
-        """Parse the URL and list what the remote advertises, at most ``MAX_LISTED_REFS`` each."""
-        refs = await self.remote.list_refs(RepositoryUrl.parse(query.url))
+        """Parse the URL and list what the remote advertises, at most ``MAX_LISTED_REFS`` each.
+
+        A credential is only used for this one listing: nothing is stored.
+        """
+        repository = RepositoryUrl.parse(query.url)
+        credential = _credential(query.credential, repository)
+        refs = await self.remote.list_refs(repository, credential=credential)
         tips = ref_tips(refs)
         branches = [
             RefOut(name=t.name, commit_sha=t.commit_sha) for t in tips if t.kind is RefKind.BRANCH

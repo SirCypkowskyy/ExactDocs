@@ -5,6 +5,7 @@ touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX, ``
 ``export`` lines stay in the body as text and are never executed.
 """
 
+import base64
 import hashlib
 import ipaddress
 import json
@@ -57,6 +58,7 @@ from exactdocs.ingestion.constants import (
     MAX_TAG_RULES,
     MIN_INTERVAL_MINUTES,
     ONE,
+    OPENSSH_MAGIC,
     PARSER_VERSION,
     PEELED,
     README_DESCRIPTION_MAX,
@@ -814,14 +816,47 @@ class DeployKey:
         if len(key) > _MAX_KEY:
             raise InvalidCredentialError(CredentialProblem.TOO_LONG)
         lines = key.split("\n")
+        if len(lines) == 1 and key.startswith("-----BEGIN ") and "-----END " in key:
+            # A password box or a JSON client flattened it. Re-wrapping a secret here would
+            # guess at its layout; saying why is safer, and the web form re-wraps it itself.
+            raise InvalidCredentialError(CredentialProblem.ONE_LINE_KEY)
         if (
             not (lines[0].startswith("-----BEGIN ") and lines[0].endswith("PRIVATE KEY-----"))
             or not lines[-1].startswith("-----END ")
-            or "ENCRYPTED" in lines[0]
             or any(not line.isprintable() for line in lines)
         ):
             raise InvalidCredentialError(CredentialProblem.KEY)
+        if _has_passphrase(lines):
+            raise InvalidCredentialError(CredentialProblem.ENCRYPTED_KEY)
         object.__setattr__(self, "private_key", key + "\n")  # ssh wants the final newline
+
+
+def _has_passphrase(lines: Sequence[str]) -> bool:
+    """Whether the key is encrypted: said in a PEM armour or header, or an OpenSSH cipher.
+
+    ssh would only prompt for it (and, with no terminal, fail as if the repository refused the
+    key), so it is refused here with words that say why. An OpenSSH key names its cipher right
+    after the magic: ``none`` when there is no passphrase.
+
+    Args:
+        lines: The key's lines, armour included.
+
+    Returns:
+        True when the key needs a passphrase.
+    """
+    if "ENCRYPTED" in lines[0] or any(line.startswith("Proc-Type: 4,ENCRYPTED") for line in lines):
+        return True
+    if "OPENSSH" not in lines[0]:
+        return False
+    try:
+        blob = base64.b64decode("".join(lines[1:-1]), validate=True)
+    except ValueError:
+        return False
+    if not blob.startswith(OPENSSH_MAGIC):
+        return False
+    rest = blob[len(OPENSSH_MAGIC) :]
+    size = int.from_bytes(rest[:4])
+    return rest[4 : 4 + size] not in {b"none", b""}
 
 
 Credential = AccessToken | DeployKey

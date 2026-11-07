@@ -440,9 +440,15 @@ class ReimportedVersion(_Dto):
 
 
 class ListRepositoryRefsQuery(_Dto):
-    """Ask a repository for its tags and branches."""
+    """Ask a repository for its tags and branches (a private one with a credential)."""
 
-    url: str = Field(min_length=1, max_length=2048)
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description=CheckRepositoryCommand.model_fields["url"].description,
+    )
+    credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
+    """The credential of a private repository; it is used for this call only, never stored."""
 
 
 class RefOut(_Dto):

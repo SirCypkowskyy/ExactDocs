@@ -3734,7 +3734,7 @@
           "ingestion"
         ],
         "summary": "List Refs",
-        "description": "List the tags and branches of a repository (the URL is never echoed back).",
+        "description": "List the tags and branches of a public repository (the URL is never echoed back).\n\nA private repository uses `POST /repositories/refs`: a credential never goes in a URL.",
         "operationId": "ingestion-list_refs",
         "security": [
           {
@@ -3757,6 +3757,104 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRefs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "List Refs With Credential",
+        "description": "List the tags and branches of a repository, private ones with a `credential`.\n\nThe same answer as `GET /repositories/refs`; the body keeps the credential out of URLs\nand logs, and nothing is stored. A `credential` needs a signed-in session, not an API\ntoken.",
+        "operationId": "ingestion-list_refs_with_credential",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRepositoryRefsQuery"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7418,6 +7516,50 @@
         ],
         "title": "LibrarySummary",
         "description": "A library and its imported versions."
+      },
+      "ListRepositoryRefsQuery": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "description": "Https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AccessTokenIn"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeployKeyIn"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "ssh_key": "#/components/schemas/DeployKeyIn",
+                    "token": "#/components/schemas/AccessTokenIn"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential",
+            "description": "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "ListRepositoryRefsQuery",
+        "description": "Ask a repository for its tags and branches (a private one with a credential)."
       },
       "LoginForTokenCommand": {
         "properties": {

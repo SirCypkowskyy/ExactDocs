@@ -256,7 +256,6 @@ describe("add library flow", () => {
     ],
     ["unreachable", err(422, "repository_unreachable", "boom"), /Couldn't reach that address/],
     ["no repository", err(422, "not_a_git_repository"), /No git repository there/],
-    ["login required", err(422, "repository_auth_required"), /asks for a login/],
   ])("explains a failed check: %s", async (_name, reply, text) => {
     serve({ check: () => reply });
     renderAdd();

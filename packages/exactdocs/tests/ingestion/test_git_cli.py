@@ -1,6 +1,7 @@
 import asyncio
 import http.server
 import os
+import shutil
 import signal
 import socket
 import sys
@@ -275,6 +276,69 @@ async def test_a_cancelled_fingerprint_lookup_kills_ssh_keygen(
 
     assert open_files() == before
     assert await gone(str(tmp_path / "bin")), processes_mentioning(str(tmp_path / "bin"))
+
+
+async def _run(*args: str) -> str:
+    process = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+    )
+    out, _ = await process.communicate()
+    assert process.returncode == 0, args
+    return out.decode()
+
+
+async def _host_key(tmp_path: Path, keygen: str, kind: str) -> tuple[str, str]:
+    """A fresh host key of ``kind``: its public line and the fingerprint ssh-keygen gives it."""
+    key = tmp_path / f"host_{kind}"
+    await _run(keygen, "-q", "-t", kind, "-N", "", "-f", str(key))
+    shown = await _run(keygen, "-l", "-E", "sha256", "-f", f"{key}.pub")
+    fingerprint = next(p for p in shown.split() if p.startswith("SHA256:"))
+    kind_name, body = Path(f"{key}.pub").read_text(encoding="ascii").split()[:2]  # ruff: ignore[blocking-path-method-in-async-function]
+    return f"{kind_name} {body}", fingerprint
+
+
+@pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="needs OpenSSH's ssh-keygen")
+async def test_the_host_key_fingerprint_is_read_from_real_ssh_keygen_output(
+    tmp_path: Path,
+) -> None:
+    keygen = shutil.which("ssh-keygen") or ""
+    ed_line, ed_print = await _host_key(tmp_path, keygen, "ed25519")
+    rsa_line, _ = await _host_key(tmp_path, keygen, "rsa")
+    known = tmp_path / "known_hosts"
+    # RSA first: the ED25519 key is the one shown, wherever it sits in the file.
+    known.write_text(
+        f"[127.0.0.1]:2231 {rsa_line}\n[127.0.0.1]:2231 {ed_line}\ngit.example.com {rsa_line}\n"
+    )
+    cli = GitCli(git=GIT.git, known_hosts=known)
+
+    assert await cli.host_key_fingerprint(repository("ssh://git@127.0.0.1:2231/a/b.git")) == (
+        ed_print
+    )
+    only_rsa = await cli.host_key_fingerprint(repository("git@git.example.com:a/b.git"))
+    assert only_rsa is not None
+    assert only_rsa.startswith("SHA256:")
+    assert await cli.host_key_fingerprint(repository("git@unknown.example.com:a/b.git")) is None
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        # OpenSSH 9: `-F` prints "host TYPE fingerprint".
+        ("[h]:22 RSA SHA256:rrr\n[h]:22 ED25519 SHA256:eee\n", "SHA256:eee"),
+        # Older: the `-l` layout, "bits fingerprint comment (TYPE)".
+        (
+            "# Host h found: line 1\n3072 SHA256:rrr h (RSA)\n256 SHA256:eee h (ED25519)\n",
+            "SHA256:eee",
+        ),
+        ("h ECDSA SHA256:ccc\n", "SHA256:ccc"),
+        ("", None),
+        ("h ED25519 MD5:aa:bb\n", None),
+    ],
+)
+def test_the_fingerprint_is_the_sha256_field_with_ed25519_first(
+    output: str, expected: str | None
+) -> None:
+    assert git_cli._pick_fingerprint(output) == expected  # ruff: ignore[private-member-access]
 
 
 async def test_a_flood_of_refs_is_cut_off_at_once_and_reported(tmp_path: Path) -> None:

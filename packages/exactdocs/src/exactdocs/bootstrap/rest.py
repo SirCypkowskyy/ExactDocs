@@ -19,6 +19,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs.bootstrap.constants import (
     _STATUS_BY_ERROR,
+    DOCSTRING_SECTIONS,
     ERROR_DESCRIPTIONS,
     SETUP_EXEMPT,
     V1_PREFIX,
@@ -136,7 +137,28 @@ def v1_openapi(app: FastAPI) -> dict[str, Any]:
     ]
     # `version` is the API version, not the release, so the committed document only changes
     # when the API does.
-    return get_openapi(title="ExactDocs REST API", version="1", routes=routes)
+    document = get_openapi(title="ExactDocs REST API", version="1", routes=routes)
+    for operations in document.get("paths", {}).values():
+        for operation in operations.values():
+            if "description" in operation:
+                operation["description"] = _without_sections(operation["description"])
+    return document
+
+
+def _without_sections(docstring: str) -> str:
+    """Cut a handler's docstring before its ``Args:`` / ``Returns:`` / ``Raises:`` sections.
+
+    They document the Python function, not the HTTP operation (FastMCP drops them the same way).
+
+    Args:
+        docstring: The description FastAPI took from the handler's docstring.
+
+    Returns:
+        The text before the first section, without trailing blank lines.
+    """
+    lines = docstring.splitlines()
+    end = next((i for i, line in enumerate(lines) if line.strip() in DOCSTRING_SECTIONS), None)
+    return "\n".join(lines[:end]).rstrip() if end is not None else docstring
 
 
 def v1_openapi_json(app: FastAPI) -> str:

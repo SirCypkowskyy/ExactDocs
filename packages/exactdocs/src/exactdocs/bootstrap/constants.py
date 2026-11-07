@@ -192,3 +192,7 @@ ERROR_DESCRIPTIONS: Final[dict[int, str]] = {
     422: "A field is invalid (`fields` names them) or a business rule is violated.",
 }
 """The error answers every ``/api/v1`` operation documents, by status."""
+DOCSTRING_SECTIONS: Final[frozenset[str]] = frozenset(
+    {"Args:", "Arguments:", "Returns:", "Return:", "Yields:", "Raises:"}
+)
+"""Google docstring sections that end an operation's OpenAPI description."""

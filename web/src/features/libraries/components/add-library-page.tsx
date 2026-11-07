@@ -1,18 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check } from "lucide-react";
-import { type FormEvent, useCallback, useRef, useState } from "react";
+import { type FormEvent, type Ref, useCallback, useRef, useState } from "react";
+import { type Credential, type CredentialDraft, credentialKindFor } from "@/shared/lib/credentials";
 import { filledRules, lines, type TagRuleDraft } from "@/shared/lib/path-selection";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
+import { CredentialField } from "@/shared/ui/credential-field";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
 import { addLibrary, checkRepository } from "../api/add-library";
 import { librariesKeys } from "../api/libraries-query";
 import { useOlderVersions, usePreview } from "../hooks/use-preview";
+import { usePrivateAccess } from "../hooks/use-private-access";
 import {
   type AddedLibrary,
   type AddField,
@@ -37,6 +40,7 @@ const HOSTS: Record<string, string> = {
 };
 const FOCUS: Record<AddField, string> = {
   url: "url",
+  credential: "credential",
   id: "library-id",
   ref: "ref",
   paths: "include",
@@ -45,19 +49,96 @@ const FOCUS: Record<AddField, string> = {
 
 function RepoFound({ checked }: { checked: Checked | undefined }) {
   return (
-    <p role="status" className="min-h-5 text-sm text-muted-foreground">
-      {checked && (
-        <span className="fade-in inline-flex items-start gap-1.5">
-          <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
-          <span>
-            Found on {HOSTS[checked.host] ?? "a git server"}.{" "}
-            {checked.default_branch
-              ? `Default branch is ${checked.default_branch}.`
-              : "It has no default branch, so choose one below."}
+    <>
+      <p role="status" className="min-h-5 text-sm text-muted-foreground">
+        {checked && (
+          <span className="fade-in inline-flex items-start gap-1.5">
+            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+            <span>
+              Found on {HOSTS[checked.host] ?? "a git server"}.{" "}
+              {checked.default_branch
+                ? `Default branch is ${checked.default_branch}.`
+                : "It has no default branch, so choose one below."}
+            </span>
           </span>
-        </span>
-      )}
-    </p>
+        )}
+      </p>
+      {checked?.host_key_fingerprint && <HostKey fingerprint={checked.host_key_fingerprint} />}
+    </>
+  );
+}
+
+/** An SSH server's key, to compare with the one the host publishes before anything is added. */
+function HostKey({ fingerprint }: { fingerprint: string }) {
+  return (
+    <div className="fade-in rounded-md border border-border bg-secondary/60 px-3 py-2.5 text-sm">
+      <p className="font-medium">SSH host key of the server</p>
+      <code className="mt-1 block font-mono text-[13px] break-all text-foreground select-all">
+        {fingerprint}
+      </code>
+      <p className="mt-1 text-muted-foreground">
+        Compare it with the fingerprint your git host publishes before you add the library. If they
+        differ, don't add it: someone may be in the middle.
+      </p>
+    </div>
+  );
+}
+
+/** Opt in to a token or deploy key; the kind follows the address (https or ssh). */
+function PrivateAccess({
+  open,
+  url,
+  draft,
+  error,
+  onOpen,
+  onChange,
+}: {
+  open: boolean;
+  url: string;
+  draft: CredentialDraft;
+  error: string | undefined;
+  onOpen: (open: boolean) => void;
+  onChange: (draft: CredentialDraft) => void;
+}) {
+  const kind = credentialKindFor(url);
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="inline-flex min-h-11 cursor-pointer items-center gap-2.5 self-start text-sm font-medium md:min-h-8">
+        <input
+          id="private"
+          type="checkbox"
+          checked={open}
+          onChange={(e) => onOpen(e.target.checked)}
+          className="size-4 cursor-pointer accent-primary"
+        />
+        This repository is private
+      </label>
+      {open &&
+        (kind ? (
+          <div className="fade-in">
+            <CredentialField
+              id="credential"
+              kind={kind}
+              draft={draft}
+              error={error}
+              onChange={onChange}
+            />
+          </div>
+        ) : (
+          <p
+            id="credential"
+            tabIndex={-1}
+            className={
+              error
+                ? "fade-in text-sm font-medium text-destructive outline-none"
+                : "fade-in text-sm text-muted-foreground outline-none"
+            }
+          >
+            {error ??
+              "A private repository needs an https:// address (with an access token) or an ssh:// or git@host:path address (with a deploy key)."}
+          </p>
+        ))}
+    </div>
   );
 }
 
@@ -95,6 +176,130 @@ function firstMistake(form: { id?: string | undefined; paths?: string | undefine
 
 interface Checked extends CheckedRepository {
   url: string;
+  /** The token or key the check passed with; every later request of this form sends it. */
+  credential?: Credential | undefined;
+}
+
+/** The address, and how to get into it when it is private; then what the check found. */
+function AddressStep({
+  url,
+  error,
+  alertId,
+  access,
+  accessError,
+  checked,
+  onEdit,
+  onAccessChanged,
+}: {
+  url: string;
+  error: string | undefined;
+  alertId: string | undefined;
+  access: ReturnType<typeof usePrivateAccess>;
+  accessError: string | undefined;
+  checked: Checked | undefined;
+  onEdit: (url: string) => void;
+  /** `restart`: what was checked no longer holds, so the form goes back to the check. */
+  onAccessChanged: (restart: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <Field
+        id="url"
+        label="Repository address"
+        type="url"
+        inputMode="url"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="https://github.com/acme/payments"
+        value={url}
+        error={error}
+        alertId={alertId}
+        hint={error ? undefined : "A git repository with Markdown docs."}
+        onChange={(e) => onEdit(e.target.value)}
+      />
+      <PrivateAccess
+        open={access.open}
+        url={url}
+        draft={access.draft}
+        error={accessError}
+        onOpen={(open) => {
+          access.setOpen(open);
+          onAccessChanged(Boolean(checked && (open || checked.credential)));
+        }}
+        onChange={(draft) => {
+          access.setDraft(draft);
+          onAccessChanged(Boolean(checked));
+        }}
+      />
+      <RepoFound checked={checked} />
+    </div>
+  );
+}
+
+function FormActions({ pending, checked }: { pending: boolean; checked: boolean }) {
+  return (
+    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <Link
+        to="/"
+        className="inline-flex h-11 items-center justify-center rounded-md px-3 text-sm font-medium outline-none transition-colors duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Cancel
+      </Link>
+      <SubmitButton pending={pending} checked={checked} />
+    </div>
+  );
+}
+
+/** Back to the list, and the title: the import screen takes the heading's place once added. */
+function PageHeading({
+  heading,
+  added,
+}: {
+  heading: Ref<HTMLHeadingElement> | undefined;
+  added: boolean;
+}) {
+  return (
+    <>
+      <Link
+        to="/"
+        className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+      >
+        <ArrowLeft aria-hidden="true" className="size-4" />
+        Libraries
+      </Link>
+      <h1
+        ref={heading}
+        tabIndex={-1}
+        className="mt-2 font-serif text-3xl font-semibold tracking-tight outline-none"
+      >
+        {added ? "Import" : "Add a library"}
+      </h1>
+    </>
+  );
+}
+
+function LibraryIdField({
+  value,
+  error,
+  onChange,
+}: {
+  value: string;
+  error: string | undefined;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field
+      id="library-id"
+      label="Library ID"
+      autoComplete="off"
+      spellCheck={false}
+      value={value}
+      error={error}
+      hint="How agents refer to this library, as /owner/repo."
+      className="font-mono text-[15px]"
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
 }
 
 export function AddLibraryPage() {
@@ -102,6 +307,8 @@ export function AddLibraryPage() {
   const heading = usePageTitle("Add a library");
   const focusAfterRender = useFocusAfterRender();
   const [url, setUrl] = useState("");
+  // The secret lives there and in `checked` only: never a query, storage or the URL.
+  const access = usePrivateAccess();
   const [checked, setChecked] = useState<Checked>();
   const [libraryId, setLibraryId] = useState("");
   const [choice, setChoice] = useState<RefChoice>({ kind: "default" });
@@ -127,6 +334,7 @@ export function AddLibraryPage() {
       setErrors({ [field]: p.message });
       setProblem(undefined);
       if (field === "paths" || field === "tags") setAdvanced(true);
+      if (field === "credential") access.setOpen(true);
       // In the commit that shows the field (or opens its details), never a frame later.
       focusAfterRender(
         () =>
@@ -157,29 +365,44 @@ export function AddLibraryPage() {
   const unavailable = useCallback(() => setChoice({ kind: "other" }), []);
   const clear = (field: AddField) => setErrors((e) => ({ ...e, [field]: undefined }));
 
-  function edit(value: string) {
-    setUrl(value);
-    current.current = value;
-    // Whatever was in flight is about the old address now.
+  /** Whatever was in flight is about the old address or credential now. */
+  function cancelRun() {
     run.current++;
     busy.current = false;
     setPending(false);
-    setErrors((e) => ({ ...e, url: undefined }));
-    // A different address is a different repository: start the form over from the check.
-    if (checked && value.trim() !== checked.url) {
-      setChecked(undefined);
-      setChoice({ kind: "default" });
-      setTypedRef("");
-      setProblem(undefined);
-      setErrors({});
-      setShowRuleErrors(false);
-      preview.forget();
-    }
+  }
+
+  /** A different repository, or another way in: start the form over from the check. */
+  function startOver() {
+    setChecked(undefined);
+    setChoice({ kind: "default" });
+    setTypedRef("");
+    setProblem(undefined);
+    setErrors({});
+    setShowRuleErrors(false);
+    preview.forget();
+  }
+
+  function edit(value: string) {
+    setUrl(value);
+    current.current = value;
+    cancelRun();
+    setErrors((e) => ({ ...e, url: undefined, credential: undefined }));
+    if (checked && value.trim() !== checked.url) startOver();
+  }
+
+  /** Another token, key or none: what was checked no longer says how to get in. */
+  function accessChanged(restart: boolean) {
+    cancelRun();
+    clear("credential");
+    if (restart) startOver();
   }
 
   async function check() {
     const invalid = validateUrl(url);
     if (invalid) return fail({ field: "url", message: invalid });
+    const sent = access.toSend(url);
+    if (sent.error) return fail({ field: "credential", message: sent.error });
     const target = url.trim();
     const mine = ++run.current;
     busy.current = true;
@@ -187,12 +410,12 @@ export function AddLibraryPage() {
     setProblem(undefined);
     setPending(true);
     try {
-      const result = await checkRepository(target);
+      const result = await checkRepository(target, sent.credential);
       if (run.current !== mine) return;
-      setChecked({ ...result, url: target });
+      setChecked({ ...result, url: target, credential: sent.credential });
       setLibraryId(result.library_id);
     } catch (error) {
-      if (run.current === mine) fail(explainCheckError(error));
+      if (run.current === mine) fail(explainCheckError(error, sent.credential?.kind));
     } finally {
       if (run.current === mine) {
         busy.current = false;
@@ -233,17 +456,21 @@ export function AddLibraryPage() {
           pattern: r.pattern.trim(),
           tag: r.tag.trim(),
         })),
+        ...(checked.credential && { credential: checked.credential }),
       });
       // Only the list and the newest-job feed; the progress screen owns the job's own query.
       void queryClient.invalidateQueries({ queryKey: librariesKeys.list() });
       void queryClient.invalidateQueries({ queryKey: librariesKeys.latestJobs() });
+      // Stored encrypted on the server now: the form lets go of its copy.
+      access.forget();
+      setChecked((c) => c && { ...c, credential: undefined });
       if (run.current === mine) {
         setAdded(result);
         const tags = preview.chosen([ref, result.ref]);
         if (tags.length) void older.queue(result.library_id, tags);
       }
     } catch (error) {
-      if (run.current === mine) fail(explainAddError(error, ref));
+      if (run.current === mine) fail(explainAddError(error, ref, checked.credential?.kind));
     } finally {
       if (run.current === mine) {
         busy.current = false;
@@ -255,6 +482,7 @@ export function AddLibraryPage() {
   function reset() {
     setUrl("");
     current.current = "";
+    access.reset();
     setChecked(undefined);
     setChoice({ kind: "default" });
     setTypedRef("");
@@ -272,20 +500,7 @@ export function AddLibraryPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
-      <Link
-        to="/"
-        className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-      >
-        <ArrowLeft aria-hidden="true" className="size-4" />
-        Libraries
-      </Link>
-      <h1
-        ref={added ? undefined : heading}
-        tabIndex={-1}
-        className="mt-2 font-serif text-3xl font-semibold tracking-tight outline-none"
-      >
-        {added ? "Import" : "Add a library"}
-      </h1>
+      <PageHeading heading={added ? undefined : heading} added={Boolean(added)} />
 
       <div className="mt-8 max-w-xl">
         {added ? (
@@ -299,42 +514,30 @@ export function AddLibraryPage() {
         ) : (
           <form onSubmit={submit} noValidate className="flex flex-col gap-6">
             <FormAlert id={ALERT_ID} message={problem?.message} link={problem?.link} />
-            <div className="flex flex-col gap-3">
-              <Field
-                id="url"
-                label="Repository address"
-                type="url"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="https://github.com/acme/payments"
-                value={url}
-                error={errors.url}
-                alertId={problem?.message ? ALERT_ID : undefined}
-                hint={errors.url ? undefined : "A public git repository with Markdown docs."}
-                onChange={(e) => edit(e.target.value)}
-              />
-              <RepoFound checked={checked} />
-            </div>
+            <AddressStep
+              url={url}
+              error={errors.url}
+              alertId={problem?.message ? ALERT_ID : undefined}
+              access={access}
+              accessError={errors.credential}
+              checked={checked}
+              onEdit={edit}
+              onAccessChanged={accessChanged}
+            />
 
             {checked && (
               <div className="fade-in flex flex-col gap-6">
-                <Field
-                  id="library-id"
-                  label="Library ID"
-                  autoComplete="off"
-                  spellCheck={false}
+                <LibraryIdField
                   value={libraryId}
                   error={errors.id}
-                  hint="How agents refer to this library, as /owner/repo."
-                  className="font-mono text-[15px]"
-                  onChange={(e) => {
-                    setLibraryId(e.target.value);
+                  onChange={(v) => {
+                    setLibraryId(v);
                     clear("id");
                   }}
                 />
                 <RefPicker
                   url={checked.url}
+                  credential={checked.credential}
                   choice={choice}
                   typed={typedRef}
                   error={errors.ref}
@@ -376,20 +579,18 @@ export function AddLibraryPage() {
                 />
                 <PreviewPanel
                   preview={preview}
-                  form={{ url: checked.url, ref: refToSend(choice, typedRef), include, exclude }}
+                  form={{
+                    url: checked.url,
+                    ref: refToSend(choice, typedRef),
+                    include,
+                    exclude,
+                    credential: checked.credential,
+                  }}
                 />
               </div>
             )}
 
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Link
-                to="/"
-                className="inline-flex h-11 items-center justify-center rounded-md px-3 text-sm font-medium outline-none transition-colors duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                Cancel
-              </Link>
-              <SubmitButton pending={pending} checked={Boolean(checked)} />
-            </div>
+            <FormActions pending={pending} checked={Boolean(checked)} />
           </form>
         )}
       </div>

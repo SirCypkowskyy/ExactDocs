@@ -10,3 +10,5 @@ _HKDF_INFO: Final[bytes] = b"exactdocs credentials v1"
 """HKDF context of the credential encryption key, so the key serves nothing else."""
 _OWNER_ONLY: Final[int] = 0o600
 """File mode of the secret key file: readable by its owner only."""
+OPENSSH_MAGIC: Final[bytes] = b"openssh-key-v1\0"
+"""How the binary body of an OpenSSH private key starts; its cipher name follows."""

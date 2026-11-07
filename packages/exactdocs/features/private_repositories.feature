@@ -32,3 +32,16 @@ Feature: Private repositories import with an encrypted access token
     And ExactDocs restarts with a different secret key
     When a user adds a version with the token again
     Then the version imports
+
+  Scenario: The versions of a private repository are listed with the token
+    When a user lists its branches and tags with that token
+    Then the tag "v1.3.0" is listed
+    And the token is never returned by the API
+
+  Scenario: Listing the versions of a private repository without the token is refused
+    When a user lists its branches and tags without a token
+    Then the request fails with "repository_auth_required"
+
+  Scenario: Only a signed-in person may list versions with a token
+    When an API token client lists its branches and tags with that token
+    Then the request is refused as not signed in

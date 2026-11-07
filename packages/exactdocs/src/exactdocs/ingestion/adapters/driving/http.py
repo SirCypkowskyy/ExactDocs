@@ -118,8 +118,31 @@ def build_router(
     async def list_refs(
         url: Annotated[str, Query(min_length=1, max_length=2048)],
     ) -> RepositoryRefs:
-        """List the tags and branches of a repository (the URL is never echoed back)."""
+        """List the tags and branches of a public repository (the URL is never echoed back).
+
+        A private repository uses `POST /repositories/refs`: a credential never goes in a URL.
+        """
         return await list_repository_refs(ListRepositoryRefsQuery(url=url))
+
+    @router.post("/repositories/refs")
+    async def list_refs_with_credential(
+        query: ListRepositoryRefsQuery, request: Request
+    ) -> RepositoryRefs:
+        """List the tags and branches of a repository, private ones with a `credential`.
+
+        The same answer as `GET /repositories/refs`; the body keeps the credential out of URLs
+        and logs, and nothing is stored. A `credential` needs a signed-in session, not an API
+        token.
+
+        Args:
+            query: The repository URL and, for a private one, the credential.
+            request: The HTTP request, for the caller's session.
+
+        Returns:
+            The repository's refs.
+        """
+        await _session_for(require_session, query.credential, request)
+        return await list_repository_refs(query)
 
     @router.post(
         "/repositories/preview",
