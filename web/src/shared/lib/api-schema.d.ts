@@ -996,6 +996,11 @@ export interface components {
              */
             readonly commit_sha: string;
             /**
+             * Manifest Id
+             * @description The version's active manifest, the one `read_article` reads at the same moment.
+             */
+            readonly manifest_id: string;
+            /**
              * Article Path
              * @description The article's path in the version.
              */
@@ -1007,7 +1012,7 @@ export interface components {
             readonly source_url: string | null;
             /**
              * Chunks
-             * @description How many chunks the article has; each is one heading below, or the preamble.
+             * @description How many chunks the article has, the preamble's included.
              */
             readonly chunks: number;
             /**

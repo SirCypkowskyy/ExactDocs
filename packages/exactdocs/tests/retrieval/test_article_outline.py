@@ -156,7 +156,7 @@ async def test_an_outline_is_the_heading_tree_with_a_chunk_id_per_heading(
     assert len({found.preamble_chunk_id, *ids}) == len(SECTIONS) == found.chunks
     assert [n.anchor for n in nodes][:3] == ["guide", "install", "docker"]
     assert (found.library, found.version, found.article_path) == (LIB, "v1.4.0", INSTALL)
-    assert found.commit_sha == "c" * 40
+    assert (found.commit_sha, found.manifest_id) == ("c" * 40, "m14")
     assert found.source_url == f"{REPO}/blob/{'c' * 40}/{INSTALL}"
     assert found.notice == NOTICE
 
@@ -196,6 +196,41 @@ async def test_a_path_of_another_version_is_not_found_in_this_one(
     assert "list_articles" in str(missing.value)
 
     assert (await get(retrieval, "docs/guide/setup.md", "v1.3.0")).sections[0].heading == "Setup"
+
+
+@dataclass(slots=True)
+class FakeSuggestions:
+    """Plays the catalog's close-path lookup for one version."""
+
+    asked: list[tuple[DocTarget, str]]
+
+    async def close_to(self, target: DocTarget, path: str) -> list[str]:
+        self.asked.append((target, path))
+        return [INSTALL]
+
+
+async def test_a_wrong_path_lists_the_close_matches_of_that_version() -> None:
+    chunks = InMemoryChunkRepository()
+    index = InMemorySearchIndex(chunks=chunks)
+    fake, suggestions = FakeVersions(), FakeSuggestions(asked=[])
+    module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
+        libraries=InMemoryLibraries(),
+        searchable=fake,
+        manifests=fake,
+        chunks=chunks,
+        search=index,
+        maintenance=index,
+        suggestions=suggestions,
+    )
+
+    with pytest.raises(ArticleNotFoundError) as missing:
+        await get(module, "docs/guide/instal.md", None)
+
+    assert missing.value.close_matches == (INSTALL,)
+    assert repr(INSTALL) in str(missing.value)
+    assert "not instructions" in str(missing.value)
+    assert suggestions.asked == [(DocTarget(library=LIB, version="v1.4.0"), "docs/guide/instal.md")]
 
 
 async def test_a_version_that_is_not_imported_gets_nothing(retrieval: RetrievalModule) -> None:

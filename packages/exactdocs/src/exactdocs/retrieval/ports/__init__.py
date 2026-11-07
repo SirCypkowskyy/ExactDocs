@@ -1,5 +1,6 @@
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    ArticleSuggestions,
     ChunkRepository,
     DefaultVersions,
     Libraries,
@@ -28,6 +29,7 @@ from exactdocs.retrieval.ports.driving import (
 __all__ = [
     "ActiveManifests",
     "ArticleOutline",
+    "ArticleSuggestions",
     "ChunkRepository",
     "CollectChunks",
     "DefaultVersions",

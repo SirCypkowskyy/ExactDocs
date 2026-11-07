@@ -86,6 +86,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    ArticleSuggestions,
     ChunkRepository,
     DefaultVersions,
     Libraries,
@@ -472,6 +473,8 @@ class ArticleOutlineUseCase:
     """Which version answers: the exact ref, or the default one."""
     chunks: ChunkRepository
     """The article's chunk rows in that version's active manifest."""
+    suggestions: ArticleSuggestions | None = None
+    """Close paths for a miss, as ``read_article`` lists them; none without it."""
 
     async def __call__(self, query: ArticleOutlineQuery) -> ArticleOutlineOut:
         """Build the outline from the article's chunk rows in the version's active manifest.
@@ -491,7 +494,9 @@ class ArticleOutlineUseCase:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         sections = await self.chunks.article(version.manifest_id, query.path)
         if not sections:
-            raise ArticleNotFoundError(version.library, version.version, query.path)
+            target = DocTarget(library=version.library, version=version.version)
+            close = await self.suggestions.close_to(target, query.path) if self.suggestions else ()
+            raise ArticleNotFoundError(version.library, version.version, query.path, close)
         return ArticleOutlineOut.from_model(
             version, query.path, outline(sections), chunks=len(sections)
         )

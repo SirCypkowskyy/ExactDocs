@@ -41,6 +41,10 @@ Feature: Reading whole articles and single chunks verbatim
     Then it gets the heading tree with chunk IDs and no body text
     And every chunk ID of the outline reads that section of the article
 
+  Scenario: A wrong path in an outline suggests close matches
+    When an agent calls "article_outline" for "docs/guide/instal.md" of "/fixture/docs-repo/v1.4.0"
+    Then the tool error lists "docs/guide/install.md" as a close match
+
   Scenario: An outline is not answered from another version
     When an agent calls "article_outline" for "docs/guide/setup.md" of "/fixture/docs-repo/v1.4.0"
     Then the tool error code is "not_found"

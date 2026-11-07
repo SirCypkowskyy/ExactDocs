@@ -5829,6 +5829,11 @@
             "title": "Commit Sha",
             "description": "The commit the version was imported at."
           },
+          "manifest_id": {
+            "type": "string",
+            "title": "Manifest Id",
+            "description": "The version's active manifest, the one `read_article` reads at the same moment."
+          },
           "article_path": {
             "type": "string",
             "title": "Article Path",
@@ -5849,7 +5854,7 @@
           "chunks": {
             "type": "integer",
             "title": "Chunks",
-            "description": "How many chunks the article has; each is one heading below, or the preamble."
+            "description": "How many chunks the article has, the preamble's included."
           },
           "preamble_chunk_id": {
             "anyOf": [
@@ -5879,6 +5884,7 @@
           "library",
           "version",
           "commit_sha",
+          "manifest_id",
           "article_path",
           "source_url",
           "chunks",

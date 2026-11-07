@@ -59,7 +59,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (`sections`, each with `heading`, `chunk_id`, `anchor` and `children`; `preamble_chunk_id` for
   text before the first heading) with no body text, from exactly that version (MCP:
   `article_outline`). The tree is made from the chunks, so headings the chunking config merged
-  into a chunk are not in it. A version that is not imported, or a path it lacks, is 404 `not_found`.
+  into a chunk are not in it. A version that is not imported, or a path it lacks, is 404 `not_found`;
+  a missing path lists `close_matches` like the article route.
 - **Tags**: `GET /libraries/{owner}/{repo}/tags?ref=` lists the version's tags with how many articles
   carry each (`{"tags": [{"tag", "count"}], "truncated"}`), most used first, 100 at most.
 - **Manual tags**: `PUT /libraries/{owner}/{repo}/tags?path=` with `{"tags": [...]}` (at most 20,

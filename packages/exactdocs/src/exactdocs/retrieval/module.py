@@ -4,6 +4,7 @@ from typing import Self
 from exactdocs.retrieval.constants import DEFAULT_QUERY_DOCS_TOKEN_BUDGET
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    ArticleSuggestions,
     ChunkRepository,
     DefaultVersions,
     Libraries,
@@ -81,6 +82,7 @@ class RetrievalModule:
         search: SearchIndex,
         maintenance: SearchIndexMaintenance,
         renames: RenamedPaths | None = None,
+        suggestions: ArticleSuggestions | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
         tracer: SearchTracer | None = None,
@@ -103,7 +105,9 @@ class RetrievalModule:
             read_chunk=ReadChunkUseCase(
                 versions=searchable, manifests=manifests, chunks=chunks, renames=renames
             ),
-            article_outline=ArticleOutlineUseCase(versions=searchable, chunks=chunks),
+            article_outline=ArticleOutlineUseCase(
+                versions=searchable, chunks=chunks, suggestions=suggestions
+            ),
             resolve_library_id=ResolveLibraryIdUseCase(
                 libraries=libraries,
                 versions=searchable,

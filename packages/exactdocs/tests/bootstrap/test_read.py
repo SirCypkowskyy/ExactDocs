@@ -412,4 +412,5 @@ async def test_rest_outlines_an_article_without_its_text_and_refuses_another_ver
     assert (body["commit_sha"], body["notice"]) == ("b" * 40, NOTICE)
     assert "v2" not in response.text
     assert (missing.status_code, missing.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")
+    assert missing.json()["close_matches"] == ["a.md"]
     assert (unknown.status_code, unknown.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")

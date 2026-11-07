@@ -521,12 +521,14 @@ class ArticleOutlineOut(_Dto):
     """The exact ref that answered (the default version when none was asked)."""
     commit_sha: str
     """The commit the version was imported at."""
+    manifest_id: str
+    """The version's active manifest, the one `read_article` reads at the same moment."""
     article_path: str
     """The article's path in the version."""
     source_url: str | None
     """Link to the article at the commit; null when the host is unknown."""
     chunks: int
-    """How many chunks the article has; each is one heading below, or the preamble."""
+    """How many chunks the article has, the preamble's included."""
     preamble_chunk_id: str | None
     """The chunk of the text before the first heading, if it is one; null otherwise."""
     sections: list[OutlineSectionOut]
@@ -551,6 +553,7 @@ class ArticleOutlineOut(_Dto):
             library=version.library,
             version=version.version,
             commit_sha=version.commit_sha,
+            manifest_id=version.manifest_id,
             article_path=article_path,
             source_url=source_link(version, article_path, ""),
             chunks=chunks,
