@@ -214,8 +214,25 @@ def test_with_a_metrics_token_prometheus_scrapes_with_it(metrics_client: Any) ->
     assert scraped.text == "exactdocs_up 1\n"
 
 
-def test_a_blank_metrics_token_is_unset() -> None:
-    assert Settings(metrics_token=" ").metrics_token is None
+@pytest.mark.parametrize("blank", ["", " ", "\n", " \t\r\n"])
+def test_a_blank_metrics_token_is_unset(blank: str) -> None:
+    assert Settings(metrics_token=blank).metrics_token is None
+
+
+def test_the_metrics_token_loses_surrounding_whitespace_like_prometheus_credentials_files(
+    monkeypatch: pytest.MonkeyPatch, metrics_client: Any
+) -> None:
+    """A token read from a file usually ends in a newline; Prometheus trims its own copy."""
+    monkeypatch.setenv("EXACTDOCS_METRICS_TOKEN", " s3cret-scrape-token\n")
+
+    token = Settings().metrics_token
+
+    assert token is not None
+    assert token.get_secret_value() == "s3cret-scrape-token"
+    scraped = metrics_client(token.get_secret_value()).get(
+        "/metrics", headers={"authorization": "Bearer s3cret-scrape-token"}
+    )
+    assert scraped.status_code == 200
 
 
 def test_off_nothing_is_traced() -> None:
