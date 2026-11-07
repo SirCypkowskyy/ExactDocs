@@ -157,6 +157,11 @@ onnxruntime, model2vec, tensorflow or pydantic-ai, and that a started app import
 `deploy/check_artifacts.py`, shared by the script and the test. Optional AI extras (`[ai]`) are
 allowed to carry them: both checks skip `extra ==` requirements.
 
+**Planned image variants** ([AI retrieval decisions](decisions/ai-retrieval.md#image-variants), #246):
+this image stays as it is; `exactdocs:<v>-ai` adds `exactdocs[ai]` (budget 560 MB, still free of
+ML packages and models) and `exactdocs:<v>-local` adds `exactdocs[local]` with its two default
+ONNX models (budget 950 MB).
+
 **Chonkie is not banned** (the chunker is markdown-it-py, issue #27; Chonkie's Markdown recipe needs the
 HF Hub and network, which breaks RUN-02). If it is ever added, these extras must stay off: anything
 pulling torch, transformers, sentence-transformers, onnx/onnxruntime, huggingface-hub or model2vec

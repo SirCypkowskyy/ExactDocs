@@ -6,14 +6,15 @@ grouped into **epics** and **milestones**. It is **filed on GitHub** (2026-11-04
 #1-#12) with the features as sub-issues (#13-#115), and "blocked by" links for the *Depends on*
 lines. GitHub is now the source of truth for status; this page keeps the rationale.
 
-It holds **103 feature issues** plus **12 epic tracking issues**:
+It holds **110 feature issues** plus **12 epic tracking issues**: 103 filed on 2026-11-04
+(#13-#115) and 7 added for *Next: AI retrieval* in 2026-11 (#241-#246, #248):
 
 | Milestone | Feature issues |
 |---|---|
 | MVP-1 | 46 |
 | MVP-2 | 27 |
-| Next: AI retrieval | 14 |
-| Next: Teams & integrations | 13 |
+| Next: AI retrieval | 23 (14 planned, 7 added and 2 moved from Teams in 2026-11, see below) |
+| Next: Teams & integrations | 11 |
 | Next: Operations | 4 |
 
 !!! info "Status: MVP-1 is built (v0.2.0)"
@@ -217,8 +218,10 @@ What MVP-1 turned out differently from the issues as first written (source: the 
 | **Next: Operations** | The instance can be monitored and backed up like any other service. | `/healthz`, `/readyz`, backup/restore round-trip, OTLP traces and Prometheus metrics demonstrated, with query text excluded by default and nothing sent anywhere but the operator's collector. | E10 |
 | **Later** | Other sources and extras. | Not planned yet; see [Later](#later). | - |
 
-Next milestones are independent and may run in parallel; RET-07's metrics need E10-08,
-MCP-08 needs ACL-01, and E12-02's pgvector part needs E11-03 (all called out in the issues).
+Next milestones are independent and may run in parallel; RET-07's metrics need E10-08 and
+MCP-08 needs ACL-01 (both called out in the issues). Since 2026-11, E12-01 and E12-02
+(PostgreSQL, ParadeDB) belong to *Next: AI retrieval*, and the pgvector work is its own issue
+(E11-17), so E12-02 no longer waits for E11-03.
 
 ## Epics
 
@@ -2337,6 +2340,29 @@ Scenario: Metrics are exposed when enabled
 
 ## E11 AI retrieval
 
+!!! info "Decisions (2026-11)"
+    The [AI retrieval decisions](decisions/ai-retrieval.md) (#240) settle providers, vector
+    storage, local models, image variants, configuration, budgets, telemetry, evals and the order
+    of work, and supersede the hints below where they differ (vector storage, the
+    `OpenAICompatibleProvider` hint, the FastMCP rate-limit middleware). Seven issues were added,
+    and E12-01 (#103) and E12-02 (#104) moved into this milestone; they stay sub-issues of epic
+    E12 (#12), whose stories they deliver:
+
+    | Plan ID | Issue | Title | Depends on |
+    |---|---|---|---|
+    | E11-15 | #241 | operators configure AI providers once per instance, with per-library overrides and sealed keys | E11-01 |
+    | E11-16 | #242 | vectors are stored per embedding space behind one port, in SQLite with sqlite-vec | E11-01 |
+    | E11-17 | #243 | vectors are stored in pgvector on PostgreSQL | E11-16, E12-01 |
+    | E11-18 | #244 | ExactDocs runs on Supabase, with BM25 that works without pg_search | E12-02, E11-17 |
+    | E11-19 | #245 | a local embedding model and reranker run fully offline | E11-03, E11-05 |
+    | E11-20 | #246 | the image ships in three variants (base, -ai, -local), each with its own size budget | E11-15, E11-19 |
+    | E11-21 | #248 | the secret box moves to bootstrap so every domain can seal secrets through its own port | - |
+
+    Changed dependencies: E11-03 now depends on E11-15 and E11-16; E11-05 on E11-15; E11-08
+    (budgets) on E11-15 and E11-03 instead of E11-06, and E11-06 (HyDE) on E11-04 and E11-08, so
+    no LLM call ships unmetered; E11-14 also on E11-15; E11-15 and E12-03 also on E11-21; E12-02 no longer on E11-03. GitHub holds
+    the current bodies.
+
 All E11 issues: milestone **Next: AI retrieval**, labels `type: feature` `status: triage`
 `area: backend`, Area *backend / retrieval* (E11-14: `area: web`, Area *web UI*). Code lives in retrieval adapters
 and is imported only through the `exactdocs[ai]` extra (Decisions *Agent stack*); every model
@@ -2827,9 +2853,9 @@ Every story ID → the issues that deliver it. *(MVP-2)* parts are listed separa
 | RUN-03 | E10-01, E7-02 | E10-07 (collector only) |
 | RUN-04 | - | E10-04 |
 | RUN-05 | E1-06, E5-04 | E11-02 |
-| RET-01 | - | E11-03, E11-04, E12-02 (pgvector) |
-| RET-02 | - | E11-05, E11-07 |
-| RET-03 | - | E11-06 (incl. extra headers) |
+| RET-01 | - | E11-03, E11-04, E11-15, E11-16, E11-17 (pgvector), E11-18, E11-19 |
+| RET-02 | - | E11-05, E11-07, E11-19 (local) |
+| RET-03 | - | E11-06 (incl. extra headers), E11-15 (providers), E11-20 (image) |
 | RET-04 | - | E11-09, E11-10, E11-11 (and E10-07 for spans) |
 | RET-05 | - | E11-12 |
 | RET-06 | - | E11-01, E11-14 |
@@ -2842,7 +2868,7 @@ Every story ID → the issues that deliver it. *(MVP-2)* parts are listed separa
 | ACL-04 | - | E12-08 |
 | ACL-05 | - | E12-09 |
 | ACL-06 | - | E12-13 |
-| TEAM-01 | - | E12-01, E12-02 |
+| TEAM-01 | - | E12-01, E12-02, E11-17, E11-18 (Supabase) |
 | TEAM-02 | - | E12-10 |
 | TEAM-03 | - | E12-11 |
 | OPS-01 | - | E10-07, E10-08 |
@@ -2862,5 +2888,6 @@ Every story ID → the issues that deliver it. *(MVP-2)* parts are listed separa
       E4-04 dissolved into E4-03 (listing) and E5-03 (search); E3-05 → E3-05a, E3-05b;
       E8-10 → E8-10a, E8-10b; E10-03 → E10-03a, E10-03b.
     - **Cross-milestone dependencies:** RET-07 metrics need E10-08; RUN-03's test grows with
-      E10-07 (collector) and E11 (model endpoints); E12-02's pgvector part needs E11-03; E12-10
+      E10-07 (collector) and E11 (model endpoints); E12-01 and E12-02 moved to *Next: AI
+      retrieval* (2026-11) and pgvector is E11-17; E12-10
       needs MVP-2's E9-05, E4-05 and E6-02.
