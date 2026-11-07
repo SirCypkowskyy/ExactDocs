@@ -1,14 +1,14 @@
 """The spend ledger of AI calls: usage per scope and UTC window (#91; budgets read it in #95).
 
 Revision ID: 9c4e1a7b3f52
-Revises: e4b8d2f6a9c1
+Revises: 0c4e8a2f6b19
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "9c4e1a7b3f52"
-down_revision = "e4b8d2f6a9c1"
+down_revision = "0c4e8a2f6b19"
 branch_labels = None
 depends_on = None
 

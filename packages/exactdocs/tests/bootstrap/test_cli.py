@@ -112,3 +112,19 @@ def test_serve_runs_one_process_even_when_web_concurrency_asks_for_more(
     cli.app(["serve"], exit_on_error=False, result_action="return_value")
 
     assert started["workers"] == 1
+    assert started["timeout_graceful_shutdown"] is None
+
+
+def test_serve_on_postgresql_lets_web_concurrency_decide_and_bounds_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On PostgreSQL each worker is a process of its own (#103); a stop must not hang."""
+    started: dict[str, object] = {}
+    monkeypatch.setenv("EXACTDOCS_DATABASE_URL", "postgresql://u:p@db/x")
+    monkeypatch.setattr(cli, "_check_startup", lambda _settings: None)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *_args, **kwargs: started.update(kwargs))
+
+    cli.app(["serve"], exit_on_error=False, result_action="return_value")
+
+    assert started["workers"] is None  # uvicorn reads WEB_CONCURRENCY
+    assert started["timeout_graceful_shutdown"] == 30

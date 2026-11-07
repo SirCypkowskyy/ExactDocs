@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
@@ -33,12 +34,14 @@ def queued(
     )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def repository(request: pytest.FixtureRequest) -> AsyncIterator[JobRepository]:
     if request.param == "memory":
         yield InMemoryJobRepository()
         return
     # Not a Container: its worker would pick up the queued jobs these tests look at.
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     engine = open_database(Settings())
     await migrate(engine)
     yield SqliteJobRepository(engine=engine)

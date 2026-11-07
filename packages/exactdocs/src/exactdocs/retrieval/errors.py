@@ -414,11 +414,13 @@ class VectorStoreUnavailableError(DomainError):
 
     code = "vector_store_unavailable"
 
-    def __init__(self) -> None:
-        """Say why the store cannot search."""
-        super().__init__(
-            "the vector store is unavailable: sqlite-vec cannot be loaded by this Python"
-        )
+    def __init__(self, reason: str = "sqlite-vec cannot be loaded by this Python") -> None:
+        """Say why the store cannot search.
+
+        Args:
+            reason: A fixed text: why there is no vector store here.
+        """
+        super().__init__(f"the vector store is unavailable: {reason}")
 
 
 class EmbeddingFailedError(DomainError):

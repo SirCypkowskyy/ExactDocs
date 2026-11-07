@@ -14,14 +14,36 @@ from pydantic_ai.exceptions import ModelHTTPError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
-from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.settings import AiSettings, Settings
+from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.memory import InMemorySpendLedger
-from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger, ai_spend
-from exactdocs.retrieval.errors import EmbeddingFailedError, ProviderUnsupportedError
-from exactdocs.retrieval.models import SpendWindow, embedding_spend
+from exactdocs.retrieval.adapters.driven.sqlite import (
+    SqliteChunkRepository,
+    SqliteSpendLedger,
+    ai_spend,
+)
+from exactdocs.retrieval.dtos import (
+    ArticleChunksIn,
+    ChunkIn,
+    EmbedVersionCommand,
+    IndexManifestCommand,
+    UnembeddedVersionsQuery,
+)
+from exactdocs.retrieval.errors import (
+    EmbeddingFailedError,
+    ProviderUnsupportedError,
+    VectorStoreUnavailableError,
+)
+from exactdocs.retrieval.models import (
+    EmbeddingSkip,
+    EmbeddingSource,
+    SpendWindow,
+    embedding_spend,
+)
 
 T0 = datetime(2026, 11, 7, 23, 59, tzinfo=UTC)
 
@@ -109,11 +131,31 @@ def test_prices_come_from_the_bundled_price_list() -> None:
 # ---------------------------------------------------------------- the spend ledger
 
 
+@pytest.fixture(params=SQL_BACKENDS)
+async def container(request: pytest.FixtureRequest) -> AsyncIterator[Container]:
+    """The app on each SQL database, with an embedding model configured.
+
+    Yields:
+        The running container.
+    """
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
+    ai = AiSettings.model_validate(
+        {
+            "providers": {
+                "corp": {"kind": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"}
+            },
+            "embedding": {"model": "corp:e5"},
+        }
+    )
+    built = Container.build(Settings(ai=ai))
+    async with built.running(jobs=False):
+        yield built
+
+
 @pytest.fixture
-async def engine() -> AsyncIterator[AsyncEngine]:
-    container = Container.build(Settings())
-    async with container.running(jobs=False):
-        yield container.engine
+def engine(container: Container) -> AsyncEngine:
+    return container.engine
 
 
 async def test_the_sqlite_ledger_adds_usage_to_its_rows(engine: AsyncEngine) -> None:
@@ -140,3 +182,66 @@ async def test_the_sqlite_ledger_adds_usage_to_its_rows(engine: AsyncEngine) -> 
     by_window = {key[2]: row for key, row in memory.rows.items()}
     assert by_window[SpendWindow.DAY].input_tokens == 150
     assert by_window[SpendWindow.MONTH].usd_micros == 3
+
+
+async def test_embedding_sources_are_read_on_every_sql_database(container: Container) -> None:
+    await container.retrieval.index_manifest(
+        IndexManifestCommand(
+            manifest_id="m1",
+            library="/acme/x",
+            ref="v1",
+            config_hash="cfg",
+            articles=[
+                ArticleChunksIn(
+                    path=path,
+                    blob_sha="b1",
+                    chunks=[
+                        ChunkIn(
+                            heading_path=["Guide", "Retries"],
+                            occurrence_index=0,
+                            content="Use retry_policy.",
+                            content_hash="h1",
+                            anchor="retries",
+                        )
+                    ],
+                )
+                for path in ("docs/b.md", "docs/a.md")  # one blob at two paths
+            ],
+        )
+    )
+
+    found = await SqliteChunkRepository(engine=container.engine).embedding_sources(
+        "m1", [("b1", "cfg", 0), ("zz", "cfg", 0)]
+    )
+
+    assert found == {
+        ("b1", "cfg", 0): EmbeddingSource(
+            article_path="docs/a.md", heading_path=("Guide", "Retries"), content="Use retry_policy."
+        )
+    }
+
+
+async def test_without_a_vector_store_nothing_is_embedded_or_queued(
+    on_postgres: object,
+) -> None:
+    del on_postgres  # PostgreSQL has no vector store until #243
+    ai = AiSettings.model_validate(
+        {
+            "providers": {
+                "corp": {"kind": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"}
+            },
+            "embedding": {"model": "corp:e5"},
+        }
+    )
+    container = Container.build(Settings(ai=ai))
+    async with container.running(jobs=False):
+        plan = await container.retrieval.plan_embedding(
+            EmbedVersionCommand(library="/acme/x", ref="v1")
+        )
+        listed = await container.retrieval.list_unembedded_versions(UnembeddedVersionsQuery())
+        queued = await container.ingestion.queue_embedding(QueueEmbeddingCommand())
+        with pytest.raises(VectorStoreUnavailableError, match="pgvector"):
+            await container.retrieval.estimate_embedding()
+
+    assert plan.skipped is EmbeddingSkip.VECTOR_STORE_UNAVAILABLE
+    assert (listed.versions, queued.queued) == ([], 0)

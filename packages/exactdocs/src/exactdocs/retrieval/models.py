@@ -1816,6 +1816,8 @@ class EmbeddingSkip(StrEnum):
     """The library has AI off: nothing of it is ever sent to a provider."""
     NO_VERSION = "no_version"
     """The version has no active manifest (it was removed meanwhile)."""
+    VECTOR_STORE_UNAVAILABLE = "vector_store_unavailable"
+    """The database has no vector store (PostgreSQL until #243): nothing could be stored."""
     SPACE_CHANGED = "space_changed"
     """The embedding model changed meanwhile: the job of the new model embeds the version."""
 

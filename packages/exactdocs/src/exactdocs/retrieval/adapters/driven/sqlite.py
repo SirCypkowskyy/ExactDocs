@@ -29,6 +29,7 @@ from sqlalchemy import (
     tuple_,
     update,
 )
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -827,7 +828,10 @@ def _profile(row: Row[Any]) -> ProviderProfile | None:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteSpendLedger:
-    """Implements ``ports.driven.SpendLedger`` with an upsert per row (``retrieval_ai_spend``)."""
+    """Implements ``ports.driven.SpendLedger`` with an upsert per row (``retrieval_ai_spend``).
+
+    Atomic on SQLite and PostgreSQL alike, so processes sharing a database add up correctly.
+    """
 
     engine: AsyncEngine
     """The database."""
@@ -840,7 +844,12 @@ class SqliteSpendLedger:
         """
         if not entries:
             return
-        statement = sqlite_insert(ai_spend)
+        # The same upsert on both databases: SQLite's and PostgreSQL's ON CONFLICT DO UPDATE.
+        statement = (
+            postgres_insert(ai_spend)
+            if self.engine.dialect.name == "postgresql"
+            else sqlite_insert(ai_spend)
+        )
         statement = statement.on_conflict_do_update(
             index_elements=[
                 ai_spend.c.scope_kind,

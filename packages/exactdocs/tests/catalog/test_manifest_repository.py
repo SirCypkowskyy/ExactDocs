@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import Select, func, select, text
 from sqlalchemy.exc import IntegrityError
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import (
@@ -131,7 +132,7 @@ class Stores:
     stored_articles: StoredArticleFinder
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
     if request.param == "memory":
         libraries = InMemoryLibraryRepository()
@@ -149,8 +150,10 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
             InMemoryStoredArticles(repository=manifests),
         )
     else:
+        if request.param == "postgres":
+            request.getfixturevalue("on_postgres")
         container = Container.build(Settings())
-        async with container.running():
+        async with container.running(jobs=False):
 
             async def count() -> int:
                 async with container.engine.connect() as connection:
@@ -716,7 +719,7 @@ async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_
 @pytest.fixture
 async def sqlite() -> AsyncIterator[Container]:
     container = Container.build(Settings())
-    async with container.running():
+    async with container.running(jobs=False):
         await SqliteLibraryRepository(engine=container.engine).save(PAYMENTS)
         yield container
 

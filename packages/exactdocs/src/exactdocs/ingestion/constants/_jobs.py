@@ -1,5 +1,6 @@
 """Constants of the DBOS job queue and worker."""
 
+from datetime import timedelta
 from typing import Final
 
 QUEUE: Final[str] = "exactdocs-jobs"
@@ -46,3 +47,8 @@ LEGACY_CODES: Final[dict[str, str]] = {
     "file name is not valid UTF-8": "bad_file_name",
 }
 """The ``ProblemCode`` of a file problem stored before problems had codes, by its reason text."""
+_LOCK_NAMESPACE: Final[str] = "exactdocs:{purpose}:{library}"
+"""Text a PostgreSQL library lock is hashed from (``hashtextextended``): one key per purpose and
+library, so tag and settings locks of a library never wait on each other."""
+_MIN_TICK_RETENTION: Final[timedelta] = timedelta(minutes=10)
+"""Shortest time an ended tick workflow is kept on PostgreSQL (see ``tick_retention``)."""

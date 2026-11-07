@@ -186,6 +186,7 @@ from exactdocs.ingestion.ports.driven import (
     JobRepository,
     JobRunner,
     LibraryIds,
+    LibraryLocks,
     LibrarySettingsStore,
     LibrarySources,
     ManualTagStore,
@@ -340,9 +341,9 @@ class RecoverJobsUseCase:
         left alone. Every other queued job is then submitted to the runner, oldest first: also
         the ones queued while it was not running.
         """
-        # ponytail: assumes one live process runs jobs on the database (the HTTP server; stdio
-        # does not). Several would re-queue each other's running jobs: add a lease/heartbeat
-        # column and re-queue only expired leases if that ever changes.
+        # Safe with several processes on one database: a job runs inside its workflow, and the
+        # runner lists every executor's live workflows in ``resuming``, so another process's
+        # running job is never re-queued here.
         for job in await self.jobs.list_running():
             if job.id in resuming:
                 continue
@@ -1133,7 +1134,7 @@ class UpdateLibrarySettingsUseCase:
     settings: LibrarySettingsStore
     jobs: JobRepository
     enqueue_job: EnqueueJob
-    locks: TagLocks = field(default_factory=TagLocks)
+    locks: LibraryLocks = field(default_factory=TagLocks)
     """Its own per-library locks (not the tag locks): edits of one library take turns."""
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
@@ -1396,7 +1397,7 @@ class RetagLibraryUseCase:
     sources: LibrarySources
     tags: ImportedTagStore
     index: ChunkIndex
-    tag_locks: TagLocks
+    tag_locks: LibraryLocks
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
@@ -1467,7 +1468,7 @@ class RechunkLibraryUseCase:
     tags: ImportedTagStore
     versions: VersionPublisher
     index: ChunkIndex
-    tag_locks: TagLocks
+    tag_locks: LibraryLocks
     importer: JobHandler
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
 
@@ -1635,7 +1636,7 @@ class ImportVersionUseCase:
     """Makes the steps durable: a resumed import skips the files it had parsed and chunked."""
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES
     """Files parsed and chunked per durable step."""
-    tag_locks: TagLocks = field(default_factory=TagLocks)
+    tag_locks: LibraryLocks = field(default_factory=TagLocks)
     """Shared with ``TagArticleUseCase``: see there."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
@@ -2115,7 +2116,7 @@ def _cut(
 async def _activate(
     versions: VersionPublisher,
     index: ChunkIndex,
-    tag_locks: TagLocks,
+    tag_locks: LibraryLocks,
     library: str,
     manifest_id: str,
 ) -> None:
@@ -2612,13 +2613,13 @@ class TagArticleUseCase:
     The catalog re-tags its manifests, then the chunk index gets the same tags. The library's
     lock (``locks``, shared with the importer) keeps that pair whole against an import that
     re-tags the manifest it is about to activate: otherwise the older of two writes could land
-    last in the chunk index. One process runs the jobs and serves the API (``serve`` pins one
-    worker), so a process lock is enough.
+    last in the chunk index. On SQLite one process runs the jobs and serves the API, so
+    ``TagLocks`` is enough; processes sharing a PostgreSQL database share an advisory lock.
     """
 
     tags: ManualTagStore
     index: ChunkIndex
-    locks: TagLocks
+    locks: LibraryLocks
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
         """Store the tags, then copy every touched article's tags onto its chunks."""

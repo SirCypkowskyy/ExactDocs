@@ -673,3 +673,24 @@ class VersionEmbedder(Protocol):
             The versions.
         """
         ...
+
+
+class LibraryLocks(Protocol):
+    """One lock per library: work under it never overlaps other work under the same library's.
+
+    ``TagLocks`` (in-process ``asyncio.Lock`` objects) is enough while one process runs jobs
+    and serves the API; processes sharing a database need a lock that database holds for them
+    (a PostgreSQL advisory lock per library). Each purpose (re-tagging, settings edits) has its
+    own object, so they never wait on each other.
+    """
+
+    def of(self, library: str) -> AbstractAsyncContextManager[None]:
+        """Return the lock of ``library`` (`/owner/repo`, any letter case), to ``async with``.
+
+        Args:
+            library: The library's ID.
+
+        Returns:
+            An async context manager that holds the lock while it is entered.
+        """
+        ...

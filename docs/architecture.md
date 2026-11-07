@@ -138,6 +138,54 @@ on aiosqlite, in WAL mode with a busy timeout and `foreign_keys=ON`. Next to it,
 durable state of running jobs in `jobs.sqlite` (its own schema and migrations; see
 [Background jobs](#background-jobs)): back up the data directory as a whole.
 
+**PostgreSQL (#103).** `EXACTDOCS_DATABASE_URL=postgresql+psycopg://...` (or `postgresql://`)
+puts every table in a PostgreSQL 14+ database instead, through psycopg 3 async (already in the
+image as a DBOS dependency), so several server processes can share it. The data directory then
+only holds each process's git work folders and `known_hosts`. What changes:
+
+- **The same adapters.** The SQLAlchemy Core adapters in `adapters/driven/sqlite.py` run on both
+  dialects; the little that differs is chosen from the engine's dialect (`ON CONFLICT` inserts
+  through the dialect's `insert`, JSON tag lists through `json_each` or
+  `json_array_elements_text`). Only search has an adapter of its own (`postgres_fts.py`, below).
+  The adapter contract tests run every SQL adapter on both.
+- **Turn-taking.** A transaction that asks for `begin_immediate` (SQLite's `BEGIN IMMEDIATE`, one
+  writer at a time) takes a transaction-level advisory lock (`WRITE_LOCK`) on PostgreSQL, so the
+  read-then-write transactions that rely on it (the first admin, activations, the search index)
+  keep that guarantee across processes. A turn waits at most `WRITE_LOCK_TIMEOUT_MS` (30 s,
+  `SET LOCAL lock_timeout`), then fails with `WriteTurnTimeoutError`, as SQLite gives up after
+  `BUSY_TIMEOUT_MS`. **The trade-off is SQLite's single writer:** every such transaction of every
+  process takes turns on one key, so more processes serve more reads but do not import faster.
+  Per-library keys (the transactions mostly touch one library) are the way to lift that when it
+  matters. `migrate()` runs in one transaction under another advisory lock: processes starting
+  together migrate one after the other.
+- **Text compares like SQLite's.** After migrating, every `text` column of ExactDocs' tables gets
+  the "C" collation (code-point order, as SQLite's `BINARY`), whatever the database's locale, so
+  listings sort the same on both. Revisions keep creating plain `Text` columns; the column keeps
+  its exact type (`format_type`). A column a generated column or a view reads cannot change type,
+  so such a column is created with `Text(collation="C")` in its revision (as `0c4e8a2f6b19` does).
+- **One Alembic history.** The revisions run on both: `render_as_batch` is SQLite's only, partial
+  indexes carry `postgresql_where` next to `sqlite_where`, the FTS5 steps are skipped on
+  PostgreSQL, and `0c4e8a2f6b19` creates PostgreSQL's search table instead (a no-op on SQLite).
+- **Search** is PostgreSQL full-text search (`retrieval.adapters.driven.postgres_fts`):
+  `retrieval_search` keeps FTS5's four columns per chunk (a cascading foreign key replaces the
+  delete trigger) and a generated `tsvector` with the `simple` configuration, labels A to D for
+  heading, path, text and identifiers, ranked with `ts_rank_cd` over FTS5's weights scaled to 0..1
+  and length normalisation 1, plus the rank of the query's identifiers (`retry_policy`) matched as
+  whole words, as BM25 weighs a rare whole token high; snippets come from `ts_headline`. Every
+  column passes through the SQL function `retrieval_search_words` first, so PostgreSQL's parser
+  cuts words as FTS5's `tokenchars '-_.'` does (`/v1/tokens` holds `tokens`, an underscore stays
+  inside a word). Its word characters are spelled out (ASCII letters and digits, every non-ASCII
+  character), never `[[:alnum:]]`, which follows `LC_CTYPE` and under `C` knows only ASCII; the
+  suites run on a `C`-locale database too. In such a database `lower()` folds only ASCII, so an
+  upper-case non-ASCII word is matched through the (casefolded) identifiers column. It is not BM25, but the shared ranking suite (`tests/retrieval/ranking`) passes
+  on it with no listed difference (ParadeDB's `pg_search`, true BM25, is #104). `exactdocs reindex` rebuilds it
+  the same way as FTS5's (`retrieval_search_next`, then a swap in one transaction).
+- **Jobs and locks across processes:** see *Several processes on PostgreSQL* under
+  [Background jobs](#background-jobs).
+- **Backup** is PostgreSQL's own (`pg_dump`): `exactdocs backup`/`restore` refuse it.
+- `EXACTDOCS_SECRET_KEY` is required: one key for every process, or credentials one stored could
+  not be opened by another.
+
 - **Each domain owns its tables**, prefixed with its name (`catalog_libraries`, `retrieval_...`).
   Foreign keys only between tables of the same domain; another domain's IDs are held by value
   and its tables are never read.
@@ -169,8 +217,10 @@ durable state of running jobs in `jobs.sqlite` (its own schema and migrations; s
   of the tags on each chunk row; ingestion's `TagArticle` (REST `PUT/DELETE .../tags?path=`) has the
   catalog re-tag the pending and active manifests and then the chunk rows (`RetagArticles`, an
   `UPDATE`, no re-chunking). An import applies them last (`ApplyManualTags`, then the chunk rows,
-  then activation) under its library's lock (`TagLocks`, one object shared with `TagArticle`), so the
-  older of two re-tags never lands last; one process runs jobs and serves the API.
+  then activation) under its library's lock (the `LibraryLocks` port, one object shared with
+  `TagArticle`: `TagLocks` on SQLite, where one process runs jobs and serves the API, and a
+  PostgreSQL advisory lock per library that every process shares), so the older of two re-tags
+  never lands last.
 - **Renames between versions (E3-12):** on import, `RenameSource.renames` (the system-`git`
   adapter) asks git which Markdown files (any letter case) moved between two commits. Which two
   (`previous_version`): a numeric tag (`v1.4.0`, `2.1`; `1.4` equals `1.4.0`) is compared with the
@@ -183,7 +233,7 @@ durable state of running jobs in `jobs.sqlite` (its own schema and migrations; s
   `v1.4.0`, then `v1.3.0`) is closer to the newer tags than what they were compared with: after
   its activation the import detects the map of each version whose previous version it now is
   again (git only, no re-chunking), replaces it (`ReplaceRenames`, which also re-tags the manifest
-  from the new map) and copies the tags to the chunk rows, under the library's `TagLocks`. A map
+  from the new map) and copies the tags to the chunk rows, under the library's tag lock. A map
   git cannot give leaves the newer version as it was; this never fails the older import. Every
   pending and active manifest of the library is then re-tagged, because a version after the newer
   one follows its map too (`v1.5.0` gets a tag through `v1.4.0`'s new map). Each import of a tag
@@ -206,7 +256,7 @@ durable state of running jobs in `jobs.sqlite` (its own schema and migrations; s
   hostile repository), git's rename limit (400: above 400 x 400 added x deleted files the scoring
   is skipped and only exact renames are kept; it bounds CPU, not downloads), a 16 MiB cap on git's
   list and 10,000 renames kept.
-- **Backup and restore (E10-06):** `bootstrap/backup.py`, behind the local `exactdocs backup` /
+- **Backup and restore (E10-06), SQLite only:** `bootstrap/backup.py`, behind the local `exactdocs backup` /
   `restore` commands. A backup is a gzipped tar: `manifest.json` (format, version, schema revision,
   a SHA-256 and size per member), the database copied with SQLite's online backup API in one step
   (one read transaction's view; WAL writers carry on), `jobs.sqlite` copied the same way *before* it
@@ -505,8 +555,11 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   the job's ID and whose body is the `RunJob` driving port. `EnqueueJob` stores the job, then
   hands it to the `JobRunner` driven port (`adapters/driven/dbos.py` queues the workflow by
   name). The queue runs two jobs at once and one per library: the library is its partition key.
-  DBOS keeps its workflows and their steps in its own SQLite file, `<data dir>/jobs.sqlite`; the
-  `ingestion_jobs` table stays what the API reads. DBOS is imported only by ingestion's adapters
+  DBOS keeps its workflows and their steps in its own SQLite file, `<data dir>/jobs.sqlite`, or
+  on PostgreSQL in the schema `EXACTDOCS_DBOS_SYSTEM_SCHEMA` (`dbos`) of the app's own database
+  (`system_database_url` is the app's URL, so DBOS never runs `CREATE DATABASE`; it still first
+  connects to `postgres` to check that the database exists and only logs a warning when the role
+  may not); the `ingestion_jobs` table stays what the API reads. DBOS is imported only by ingestion's adapters
   and `bootstrap` (architecture test).
 - **Durable steps.** A handler marks its steps with the `Checkpoints` driven port
   (`step(name, run)`, DBOS steps in production, `InMemoryCheckpoints` in tests): a completed
@@ -535,13 +588,60 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   no longer resume), and the other two change the executor and the version that recovery
   matches. ExactDocs sets the version itself (`STEPS_VERSION`), opens no DBOS Conductor
   connection (no key is configured) and keeps DBOS's logs at warnings.
-- **One process runs jobs.** Only the HTTP server starts the worker (`serve --stdio`, `reindex`
-  and the account commands do not), and DBOS allows one worker per process. Two servers on one
-  data directory would both resume the same workflows; that needs DBOS executor IDs per process
-  first. Manual tags rest on it too: `TagArticle` and an import's activation take turns
-  through a per-library `asyncio.Lock` (`TagLocks`), which only orders one process's writes; with
-  two, an older re-tag could land last in the chunk copies. So `serve` pins uvicorn to one worker
-  (`workers=1`, whatever `WEB_CONCURRENCY` says).
+- **One process runs jobs on SQLite.** Only the HTTP server starts the worker (`serve --stdio`,
+  `reindex` and the account commands do not), and DBOS allows one worker per process. On SQLite
+  `serve` pins uvicorn to one worker (`workers=1`, whatever `WEB_CONCURRENCY` says): DBOS runs as
+  its one `local` executor and `TagLocks` orders re-tags within the process.
+- **Several processes on PostgreSQL.** `serve` lets `WEB_CONCURRENCY` decide, and any number of
+  servers may share the database. Each process runs DBOS on the shared queue (DBOS claims a queued
+  workflow in one transaction, so a job runs once, and the partition limit of one per library
+  holds across processes) under an **executor slot** (`bootstrap/executors.py`): the lowest slot
+  `n` whose two-key advisory lock (`EXECUTOR_LOCKS`, `n`) is free gives the executor ID
+  `exactdocs-<n>`. The lock is held by a connection of its own (not the pool), with TCP keepalives
+  (`SLOT_KEEPALIVES`), for the process's lifetime. A process that dies releases it; the next one
+  to start takes the lowest free slot, often the same, waits `claim_grace` (15 s, logged) if that
+  executor left pending workflows, and DBOS resumes them.
+  - **Watchdog.** A connection can die while its process lives (a failover, a NAT timeout,
+    `idle_session_timeout`), which frees the slot. Every 2 s (`slot_check_interval`) the worker
+    checks in `pg_locks` that its own backend still holds it, the whole check bounded by 1.5 s
+    (`slot_check_timeout`; the slot connection also has `tcp_user_timeout`), so a host that
+    stopped answering cannot hold the check. If the slot is free it takes it again, and goes on
+    only if every job it runs is still its own pending workflow. A database that cannot be
+    reached is `unknown`: the worker adopts nothing and waits, and gives up 15 s
+    (`slot_give_up`) after the slot was **last confirmed held**, so outages up to about 15 s are
+    waited out and longer ones restart the process. When another process holds the slot (or
+    after that wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands
+    over is refused), cancels the running ones, stops DBOS (and gives the event loop a new thread
+    pool, as its normal teardown does), then queues the refused jobs again through a
+    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`; `serve`
+    bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and a restart policy brings it back.
+  - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
+    watchdog round the worker lists the pending job workflows of other executors and takes the
+    locks of the free slots (so no process holds them, and no other can adopt them meanwhile). A
+    slot must have stayed free for `adopt_grace` (30 s) first. It then lists their workflows
+    again and re-queues them (`resume_workflows`).
+  - **Timing invariants**, checked when the worker is built (a `ValueError` otherwise):
+    `slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout < adopt_grace`
+    (15 + 2 + 1.5 + 5 = 23.5 < 30: a process whose slot went unconfirmed has stopped its jobs
+    before anyone adopts them), and `claim_grace > slot_check_interval + slot_check_timeout +
+    halt_timeout` (15 > 8.5: a process that lost its slot to a newly started one stops before the
+    newcomer's DBOS resumes the slot's jobs).
+  - **Start.** Recovery (`sort_workflows`) deletes or recovers only the workflows of this process's
+    executor and of free slots: a live process's workflows, of any `STEPS_VERSION`, are never
+    touched, and `RecoverJobs` leaves their jobs alone. A release that changes `STEPS_VERSION`
+    still needs every process stopped before the upgrade (README, *Upgrading*): an older process
+    would keep running jobs the new build cannot resume.
+  - **Scheduled ticks.** DBOS starts a tick only if its workflow ID (`sched-<name>-<time>`) is new,
+    and each process's scheduler may come up to a tenth of an interval late. On PostgreSQL the
+    tick's workflow is therefore kept for `tick_retention` (two intervals, at least 10 minutes)
+    before the worker deletes it, so a tick runs once across processes. Re-tags and an import's activation, and settings edits, take turns
+  through `PostgresLibraryLocks` (`ingestion.adapters.driven.postgres`): a session-level advisory
+  lock per purpose and library, held on a connection of its own while the work runs (released by
+  PostgreSQL if the process dies), behind an in-process `asyncio.Lock` so waiters do not each hold
+  a connection. Each process fetches in a `work/process-*` folder of its own, which it creates and
+  `flock`s in one step when it starts running (then checks the locked file is still the folder's);
+  a starting process removes only the folders whose lock it can take, while it holds it. The
+  sign-in throttle (`InMemoryFailedSignInLog`) stays per process.
 - **The scheduled check (SYNC-02).** The worker also keeps a DBOS schedule
   (`exactdocs-scheduled-checks`, `EXACTDOCS_AUTO_SYNC_SCHEDULE`, a cron expression with seconds,
   every minute by default) whose workflow runs `RunScheduledChecks` outside its own workflow
@@ -834,9 +934,10 @@ How the rest fits the structure above:
   exactly within the active manifest (sqlite-vec on SQLite, pgvector on PostgreSQL and Supabase).
 - **Jobs.** Embedding runs are an `embed` ingestion job kind with resumable steps, reaching
   retrieval through a bridge, like indexing.
-- **PostgreSQL** (#103) arrives with this milestone: psycopg 3, DBOS's tables in the same database
-  (`system_database_url` plus `dbos_system_schema`), a per-library advisory lock replacing `TagLocks`, and a third search adapter
-  (PostgreSQL full-text search) for databases without `pg_search`, such as Supabase.
+- **PostgreSQL** (#103, see [Persistence](#persistence-one-data-directory-one-database)): psycopg 3,
+  DBOS's tables in the same database (`system_database_url` plus `dbos_system_schema`), a
+  per-library advisory lock replacing `TagLocks`, and PostgreSQL full-text search, the adapter
+  databases without `pg_search` (such as Supabase) keep once #104 adds `pg_search`.
 
 ## Python conventions
 

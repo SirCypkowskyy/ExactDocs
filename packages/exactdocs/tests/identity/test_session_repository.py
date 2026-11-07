@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.adapters.driven.memory import InMemorySessionRepository
@@ -36,13 +37,15 @@ def session(token_hash: str, *, owner: AccountId = ADA, created: datetime = NOW)
     )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def repository(request: pytest.FixtureRequest) -> AsyncIterator[SessionRepository]:
     if request.param == "memory":
         yield InMemorySessionRepository()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
-    async with container.running():
+    async with container.running(jobs=False):
         accounts = SqliteAccountRepository(engine=container.engine)
         await accounts.add_first(account("ada"))
         yield SqliteSessionRepository(engine=container.engine)

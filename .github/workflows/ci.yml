@@ -20,7 +20,23 @@ jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 20
+    timeout-minutes: 25
+    # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
+    # also has pg_search and pgvector. A service container on the runner VM's own Docker, on a
+    # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
+    # a role without CREATEDB for the scenario that needs one.
+    services:
+      postgres:
+        image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
+        env:
+          POSTGRES_USER: exactdocs
+          POSTGRES_PASSWORD: exactdocs-ci
+          POSTGRES_DB: exactdocs
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U exactdocs -d exactdocs"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -34,9 +50,15 @@ jobs:
         run: uv run ruff check --output-format=github .
       - name: ty
         run: uv run ty check --output-format=github
-      - name: pytest (unit, integration, architecture)
+      - name: pytest (unit, integration, architecture; adapters on SQLite and PostgreSQL)
+        env:
+          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_POSTGRES: "1"
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
+        env:
+          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_POSTGRES: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # docs/evals.md: the baseline the eval compares with is develop's, so a pull request cannot
       # lower its own bar. Checked out on its own (that file, and the dataset it was measured on),
@@ -211,6 +233,43 @@ jobs:
           docker exec exactdocs-ci ssh -V
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
+      # #103: the README's PostgreSQL example as written (two server processes on ParadeDB), with
+      # this build's image and the fixture repository mounted; the smoke flow runs against it.
+      - name: PostgreSQL compose example (README) runs the smoke flow
+        env:
+          EXACTDOCS_IMAGE: exactdocs:ci
+          COMPOSE_PROJECT_NAME: exactdocs-ci-pg
+        run: |
+          # The runner VMs declare their tools in deploy/runners/create-vms.sh; CI changes nothing on
+          # the host. A VM provisioned before the compose plugin was added gets a standalone, pinned
+          # compose binary in this job's temp directory instead, with a warning.
+          compose=(docker compose)
+          if ! docker compose version >/dev/null 2>&1; then
+            echo "::warning::this runner lacks the docker compose plugin: install docker-compose-v2 on the VM (deploy/runners/README.md); using a pinned standalone compose for this job"
+            # docker/compose v2.32.4 (released 2025-01), linux-aarch64 (the runners are ARM64);
+            # sha256 from the release's docker-compose-linux-aarch64.sha256.
+            curl -fsSL -o "$RUNNER_TEMP/docker-compose" \
+              https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-aarch64
+            echo "0c4591cf3b1ed039adcd803dbbeddf757375fc08c11245b0154135f838495a2f  $RUNNER_TEMP/docker-compose" \
+              | sha256sum -c -
+            chmod +x "$RUNNER_TEMP/docker-compose"
+            compose=("$RUNNER_TEMP/docker-compose")
+          fi
+          export POSTGRES_PASSWORD=$(openssl rand -hex 16) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+          cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML
+          services:
+            exactdocs:
+              volumes: ["$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro"]
+          YAML
+          compose+=(-f deploy/compose.postgres.yaml -f "$RUNNER_TEMP/compose.fixture.yaml")
+          trap '"${compose[@]}" logs; "${compose[@]}" down -v' EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 180
+          deploy/smoke.sh http://127.0.0.1:3000 file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
+          # Both server processes run DBOS, each under an executor slot of its own.
+          slots=$("${compose[@]}" exec -T db psql -U exactdocs -d exactdocs -Atc \
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1163412547 AND objsubid = 2")
+          test "$slots" = 2 || { echo "::error::expected 2 executor slots, got $slots"; exit 1; }
       # #242: the vector store needs a Python that loads SQLite extensions. The image's Python
       # (python:3.14-slim-trixie) is checked natively here (arm64). amd64 cannot be checked on this
       # runner: tried once in #257 (run 42399925910), `docker run --platform linux/amd64` of the
