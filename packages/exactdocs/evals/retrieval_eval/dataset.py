@@ -53,6 +53,8 @@ class Answer(_Model):
     """Model tokens the answer cost (0 without a model)."""
     usd: float = 0.0
     """What those tokens cost, in USD."""
+    search_ms: float | None = None
+    """How long the search took, when the retriever measured it (else the whole task counts)."""
 
 
 class CaseInfo(_Model):

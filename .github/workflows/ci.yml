@@ -38,21 +38,34 @@ jobs:
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
-      # docs/evals.md: every mode on the fixture; BM25 gates (wrong-version rate 0, recall@5 within
-      # 2 points of the baseline on develop, so a pull request cannot lower its own bar). Modes
-      # needing a model are reported unavailable; hosted ones never run here (no secrets).
+      # docs/evals.md: the baseline the eval compares with is develop's, so a pull request cannot
+      # lower its own bar. Checked out on its own (that one file), so the workspace clone is never
+      # changed, and a failed fetch fails the job instead of falling back.
+      - name: Check out develop's eval baseline
+        uses: actions/checkout@v7
+        with:
+          ref: develop
+          path: .develop-baseline
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: packages/exactdocs/evals/retrieval_eval/baseline.json
+          sparse-checkout-cone-mode: false
+      # Every mode on the fixture, model-free; BM25 gates: wrong-version rate 0, recall@5 within
+      # 2 points of develop's baseline, and the branch's baseline.json not below develop's
+      # (--ratchet). Hosted models are never called here (no secrets).
       - name: Retrieval eval (BM25, gating)
         run: |
           baseline=packages/exactdocs/evals/retrieval_eval/baseline.json
-          if git fetch --no-tags --depth=1 origin develop \
-              && git show "FETCH_HEAD:$baseline" > "$RUNNER_TEMP/baseline.json"; then
-            echo "Comparing with the baseline on develop"
+          flags=(--baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/retrieval.json)
+          if git -C .develop-baseline cat-file -e "HEAD:$baseline"; then
+            cp ".develop-baseline/$baseline" "$RUNNER_TEMP/baseline.json"
+            flags+=(--ratchet)
           else
-            echo "::notice::no baseline on develop yet; comparing with this branch's"
+            echo "::warning::develop has no $baseline yet; comparing with this branch's own"
+            echo "> **Warning:** develop has no eval baseline yet, so this run compares with the branch's own \`baseline.json\`." >> "$GITHUB_STEP_SUMMARY"
             cp "$baseline" "$RUNNER_TEMP/baseline.json"
           fi
-          uv run python packages/exactdocs/evals/run_retrieval_eval.py \
-            --baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/retrieval.json
+          uv run python packages/exactdocs/evals/run_retrieval_eval.py "${flags[@]}"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

@@ -10,16 +10,20 @@ import yaml
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
 from exactdocs.retrieval.models import (
+    ChunkId,
     ModelRole,
     PipelineAnswer,
     PipelineRequest,
     RetrievalMode,
+    SearchHit,
 )
+from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
 from retrieval_eval.cli import main
 from retrieval_eval.dataset import Answer, Hit, Question, load_dataset
-from retrieval_eval.fixture import run_on_fixture
+from retrieval_eval.fixture import model_free_container, run_on_fixture
 from retrieval_eval.suite import (
     BASELINE_FILE,
     MODES,
@@ -31,6 +35,7 @@ from retrieval_eval.suite import (
     judge,
     markdown,
     read_baseline,
+    run_modes,
     with_evaluators,
 )
 
@@ -50,12 +55,24 @@ def _expected_queries() -> list[tuple[dict[str, Any], str, dict[str, Any] | None
 # ---------------------------------------------------------------- the dataset
 
 
+def _identifier_name(entry: dict[str, Any], version: str) -> str:
+    tags = f" [{','.join(entry['tags'])}]" if "tags" in entry else ""
+    return f"{version}: {entry['query']}{tags}"
+
+
+def test_the_identifier_cases_are_exactly_the_fixture_expected_queries() -> None:
+    identifiers = {
+        c.name for c in load_dataset().cases if c.metadata and c.metadata.kind == "identifier"
+    }
+
+    assert identifiers == {_identifier_name(e, v) for e, v, _ in _expected_queries()}
+
+
 def test_the_dataset_holds_every_expected_query_of_the_fixture() -> None:
     cases = {c.name: c for c in load_dataset().cases}
 
     for entry, version, expected in _expected_queries():
-        tags = f" [{','.join(entry['tags'])}]" if "tags" in entry else ""
-        case = cases[f"{version}: {entry['query']}{tags}"]
+        case = cases[_identifier_name(entry, version)]
         assert case.metadata is not None
         assert case.metadata.kind == "identifier"
         assert case.inputs == Question(
@@ -276,6 +293,25 @@ def test_a_mode_may_become_a_default_only_when_it_beats_bm25_by_five_points(
     assert report.modes[1].eligible_as_default is eligible
 
 
+def test_a_gating_mode_without_a_baseline_entry_warns() -> None:
+    report = judge("retrieval", 10, [_ran(BM25, 0.9)], {"hybrid": 0.5})
+
+    assert report.passed
+    assert report.warnings == ["bm25: no baseline to compare with, so its recall@5 is not gated"]
+
+
+@pytest.mark.parametrize(
+    ("stored", "passed"), [({"bm25": 0.90}, True), ({"bm25": 0.95}, True), ({"bm25": 0.89}, False),
+                           ({}, False)],
+)  # fmt: skip
+def test_the_stored_baseline_may_only_move_up(stored: dict[str, float], passed: bool) -> None:
+    report = judge("retrieval", 10, [_ran(BM25, 0.9)], {"bm25": 0.90}, stored=stored)
+
+    assert report.passed is passed
+    if not passed:
+        assert "the baseline only moves up" in report.problems[0]
+
+
 def test_the_baseline_keeps_ranking_metrics_not_latency(tmp_path: Path) -> None:
     report = judge("retrieval", 10, [_ran(BM25, 0.9)], {})
     path = tmp_path / "baseline.json"
@@ -310,10 +346,14 @@ async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_res
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
     report = await run_on_fixture(
-        docs_repo, tmp_path / "data", baseline=read_baseline(BASELINE_FILE)
+        docs_repo,
+        tmp_path / "data",
+        build=model_free_container,
+        baseline=read_baseline(BASELINE_FILE),
     )
 
     assert report.passed, report.problems
+    assert not report.warnings
     bm25, *others = report.modes
     assert bm25.status == "ran"
     assert bm25.metrics is not None
@@ -360,9 +400,11 @@ async def test_a_new_mode_plugs_in_and_hosted_ones_stay_off_without_permission(
             Settings(data_dir=data_dir), model_roles=AllRoles(), pipelines=pipelines
         )
 
-    report = await run_on_fixture(docs_repo, tmp_path / "data", build=build)
+    local = frozenset({ModelRole.EMBEDDING, ModelRole.RERANKER})
+    report = await run_on_fixture(docs_repo, tmp_path / "data", build=build, local_roles=local)
 
     outcomes = {o.mode: o for o in report.modes}
+    assert outcomes[RetrievalMode.BM25].status == "ran"
     hybrid = outcomes[RetrievalMode.HYBRID]
     assert hybrid.status == "ran"
     assert hybrid.metrics is not None
@@ -371,7 +413,150 @@ async def test_a_new_mode_plugs_in_and_hosted_ones_stay_off_without_permission(
     assert report.passed  # a report-only mode that finds nothing does not fail the suite
     for hosted in (RetrievalMode.HYBRID_HYDE, RetrievalMode.AGENTIC):
         assert outcomes[hosted].status == "skipped"
+        assert "(llm)" in (outcomes[hosted].reason or "")
         assert pipelines[hosted].calls == []
+
+
+async def test_a_local_tier_mode_on_a_hosted_model_is_skipped_without_permission(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    pipelines = {m: Silent(m) for m in RetrievalMode if m is not RetrievalMode.BM25}
+
+    def build(data_dir: Path) -> Container:
+        return Container.build(
+            Settings(data_dir=data_dir), model_roles=EmbeddingOnly(), pipelines=pipelines
+        )
+
+    report = await run_on_fixture(docs_repo, tmp_path / "data", build=build)
+
+    hybrid = next(o for o in report.modes if o.mode is RetrievalMode.HYBRID)
+    assert hybrid.tier is Tier.LOCAL
+    assert hybrid.status == "skipped"
+    assert hybrid.reason is not None
+    assert hybrid.reason.startswith("would call a hosted model (embedding)")
+    assert pipelines[RetrievalMode.HYBRID].calls == []
+
+    allowed = await run_on_fixture(docs_repo, tmp_path / "again", build=build, allow_providers=True)
+    assert next(o for o in allowed.modes if o.mode is RetrievalMode.HYBRID).status == "ran"
+
+
+@dataclass(frozen=True)
+class EmbeddingOnly:
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        del library
+        return frozenset({ModelRole.EMBEDDING})
+
+
+@dataclass
+class LeakingResponses:
+    """The real retrieval module, except that one answer carries a chunk of another version.
+
+    It is labelled with the version asked for, as a search that lost its version filter would
+    label it: only reading the chunk back shows where it came from.
+    """
+
+    inner: Any
+    question: Question
+    leaked: str
+
+    @property
+    def get_library_retrieval(self) -> Any:
+        return self.inner.get_library_retrieval
+
+    @property
+    def read_chunk(self) -> Any:
+        return self.inner.read_chunk
+
+    @property
+    def search_docs(self) -> Any:
+        async def search(query: SearchDocsQuery) -> SearchDocsResult:
+            result = await self.inner.search_docs(query)
+            if (query.ref, query.query) != (self.question.version, self.question.query):
+                return result
+            first, *rest = result.results
+            stray = first.model_copy(update={"chunk_id": self.leaked})
+            return result.model_copy(update={"results": [stray, *rest]})
+
+        return search
+
+
+async def test_a_chunk_of_another_version_in_a_real_answer_fails_the_suite(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    container = model_free_container(tmp_path / "data")
+    async with container.running(jobs=False):
+        await import_fixture(container, docs_repo)
+        older = await container.retrieval.search_docs(
+            SearchDocsQuery(library=LIBRARY, ref="v1.3.0", query="docker")
+        )
+        retrieval = LeakingResponses(
+            inner=container.retrieval,
+            question=Question(query="docker", version="v1.4.0"),
+            leaked=older.results[0].chunk_id,
+        )
+        outcomes = await run_modes(
+            with_evaluators(load_dataset()),
+            retrieval=retrieval,
+            library=LIBRARY,
+            commits=commits(docs_repo),
+            modes=[BM25],
+        )
+
+    report = judge("retrieval", len(load_dataset().cases), outcomes, {})
+
+    assert not report.passed
+    assert outcomes[0].wrong_version_cases == [
+        "v1.4.0: docker: v1.3.0 docs/guide/setup.md > Guide > Install > Docker"
+    ]
+
+
+@dataclass
+class OtherVersionPipeline:
+    """A hybrid stand-in that answers every question with one chunk of ``v1.3.0``."""
+
+    leaked: list[str] = field(default_factory=list)
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        del request
+        hits = tuple(
+            SearchHit(chunk_id=ChunkId(c), score=1.0, snippet="", highlights=())
+            for c in self.leaked
+        )
+        return PipelineAnswer(
+            mode=RetrievalMode.HYBRID, hits=hits, candidates=1, reranked=0, complete=True
+        )
+
+
+async def test_the_app_drops_a_pipeline_hit_of_another_version_before_it_is_answered(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    pipeline = OtherVersionPipeline()
+    container = Container.build(
+        Settings(data_dir=tmp_path / "data"),
+        model_roles=EmbeddingOnly(),
+        pipelines={RetrievalMode.HYBRID: pipeline},
+    )
+    async with container.running(jobs=False):
+        await import_fixture(container, docs_repo)
+        older = await container.retrieval.search_docs(
+            SearchDocsQuery(library=LIBRARY, ref="v1.3.0", query="docker", mode="bm25")
+        )
+        pipeline.leaked.append(older.results[0].chunk_id)
+        outcomes = await run_modes(
+            with_evaluators(load_dataset()),
+            retrieval=container.retrieval,
+            library=LIBRARY,
+            commits=commits(docs_repo),
+            modes=[HYBRID],
+            local_roles=frozenset({ModelRole.EMBEDDING}),
+        )
+
+    (hybrid,) = outcomes
+    assert hybrid.status == "ran"
+    assert hybrid.metrics is not None
+    # Questions pinned to v1.3.0 get the chunk (it is theirs); every other version gets nothing.
+    assert hybrid.wrong_version_cases == []
+    assert hybrid.metrics.recall_at_10 > 0
 
 
 def test_the_command_writes_the_json_report_and_the_job_summary(tmp_path: Path) -> None:
@@ -396,3 +581,21 @@ def test_the_command_writes_the_json_report_and_the_job_summary(tmp_path: Path) 
 
 def test_the_command_refuses_an_unknown_mode() -> None:
     assert main(["--modes", "magic"]) == 2
+
+
+def test_the_command_refuses_a_baseline_it_was_given_that_does_not_exist(tmp_path: Path) -> None:
+    assert main(["--baseline", str(tmp_path / "typo.json")]) == 2
+
+
+def test_the_command_fails_when_the_branch_lowers_the_baseline(tmp_path: Path) -> None:
+    higher = tmp_path / "develop.json"
+    higher.write_text(json.dumps({"modes": {"bm25": {"recall_at_5": 0.99}}}), encoding="utf-8")
+
+    code = main([
+        "--modes", "bm25", "--baseline", str(higher), "--ratchet",
+        "--report", str(tmp_path / "r.json"),
+    ])  # fmt: skip
+
+    assert code == 1
+    report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert any("the baseline only moves up" in p for p in report["problems"])

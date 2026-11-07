@@ -23,7 +23,7 @@ from pydantic_evals.reporting import EvaluationReport, ReportCase
 
 from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery, LibraryRetrievalOut
 from exactdocs.retrieval.models import ModelRole, RetrievalMode
-from exactdocs.retrieval.ports.driving import GetLibraryRetrieval, SearchDocs
+from exactdocs.retrieval.ports.driving import GetLibraryRetrieval, ReadChunk, SearchDocs
 from retrieval_eval.dataset import Answer, CaseInfo, Question, RetrievalDataset
 from retrieval_eval.evaluators import (
     RECALL_AT,
@@ -47,6 +47,8 @@ _EPSILON: Final[float] = 1e-9
 """Float noise tolerated when comparing points."""
 _DIGITS: Final[int] = 4
 """Rates are rounded to this many decimals, so a stored baseline reads plainly."""
+_USD_DIGITS: Final[int] = 6
+"""USD per question is rounded to this many decimals (a millionth of a dollar)."""
 
 
 class Tier(StrEnum):
@@ -57,7 +59,11 @@ class Tier(StrEnum):
     LOCAL = "local"
     """Local models (the ``[local]`` extra): runs without secrets, report-only on pull requests."""
     PROVIDER = "provider"
-    """A hosted LLM: only by hand (``--allow-providers``), never in CI's pull request jobs."""
+    """Usually a hosted LLM: by hand (``--allow-providers``), never in CI's pull request jobs.
+
+    The tier says where a mode is expected to run; whether a run may call a model is decided per
+    role (``run_modes``' ``local_roles``), so a hosted embedding model is not called either.
+    """
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -142,6 +148,8 @@ class SuiteReport(_Model):
 
     dataset: str
     cases: int
+    baseline: str | None = None
+    """Where the baseline compared with came from (a path, or the copy on ``develop``)."""
     passed: bool
     problems: list[str]
     """What failed the suite."""
@@ -181,7 +189,10 @@ def metrics_of(report: EvaluationReport[Question, Answer, CaseInfo]) -> ModeMetr
     answerable = [c for c in cases if recall_key(1) in c.scores]
     wrong = [c for c in cases if not c.assertions[RIGHT_VERSION].value]
     questions = len(cases) + len(report.failures)
-    latencies = [c.task_duration * 1000 for c in cases]
+    latencies = [
+        c.output.search_ms if c.output.search_ms is not None else c.task_duration * 1000
+        for c in cases
+    ]
     return ModeMetrics(
         questions=questions,
         answerable=len(answerable),
@@ -192,8 +203,8 @@ def metrics_of(report: EvaluationReport[Question, Answer, CaseInfo]) -> ModeMetr
         wrong_version_rate=round(len(wrong) / questions if questions else 0.0, _DIGITS),
         latency_p50_ms=round(_percentile(latencies, 0.5), 3),
         latency_p95_ms=round(_percentile(latencies, 0.95), 3),
-        tokens_per_question=_mean(_score(c, TOKENS) for c in cases),
-        usd_per_question=_mean(_score(c, USD) for c in cases),
+        tokens_per_question=round(_mean(_score(c, TOKENS) for c in cases), 1),
+        usd_per_question=round(_mean(_score(c, USD) for c in cases), _USD_DIGITS),
     )
 
 
@@ -261,12 +272,27 @@ def with_evaluators(dataset: RetrievalDataset) -> RetrievalDataset:
     return dataset
 
 
+def _roles_used(mode: EvalMode, configured: frozenset[ModelRole]) -> frozenset[ModelRole]:
+    """The model roles a search in ``mode`` calls: its own, and the reranker when one is set."""
+    rerank = {ModelRole.RERANKER} & configured
+    return mode.mode.roles | rerank
+
+
 def _not_running(
-    mode: EvalMode, status: LibraryRetrievalOut, *, allow_providers: bool
+    mode: EvalMode,
+    status: LibraryRetrievalOut,
+    *,
+    allow_providers: bool,
+    local_roles: frozenset[ModelRole],
 ) -> ModeOutcome:
-    """The outcome of a mode that will not run, or a ``ran`` placeholder for one that will."""
+    """The outcome of a mode that will not run, or a ``ran`` placeholder for one that will.
+
+    Whether a mode may run is decided per model role, not per tier: every role the search would
+    call (its own and the reranker) must be one that runs on this machine (``local_roles``),
+    unless ``allow_providers`` lets it call a hosted model.
+    """
+    configured = frozenset(status.configured_roles)
     if mode.mode not in status.available_modes:
-        configured = set(status.configured_roles)
         missing = [r.value for r in ModelRole if r in mode.mode.roles and r not in configured]
         plural = "s" if len(missing) > 1 else ""
         reason = (
@@ -277,13 +303,18 @@ def _not_running(
         return ModeOutcome(
             mode=mode.mode, tier=mode.tier, gating=mode.gating, status="unavailable", reason=reason
         )
-    if mode.tier is Tier.PROVIDER and not allow_providers:
+    hosted = [r.value for r in ModelRole if r in _roles_used(mode, configured) - local_roles]
+    if hosted and not allow_providers:
+        roles = ", ".join(hosted)
         return ModeOutcome(
             mode=mode.mode,
             tier=mode.tier,
             gating=mode.gating,
             status="skipped",
-            reason="calls a hosted model: run by hand with --allow-providers",
+            reason=(
+                f"would call a hosted model ({roles}): run by hand with --allow-providers, or "
+                f"pass --local-roles {','.join(hosted)} if it runs on this machine"
+            ),
         )
     return ModeOutcome(mode=mode.mode, tier=mode.tier, gating=mode.gating, status="ran")
 
@@ -301,6 +332,11 @@ class RetrievalUnderTest(Protocol):
         """Which modes can run now, and which model roles are configured."""
         ...
 
+    @property
+    def read_chunk(self) -> ReadChunk:
+        """Reads a returned chunk back from the version its ID names."""
+        ...
+
 
 async def run_modes(
     dataset: RetrievalDataset,
@@ -310,6 +346,7 @@ async def run_modes(
     commits: Mapping[str, str],
     modes: Sequence[EvalMode] = MODES,
     allow_providers: bool = False,
+    local_roles: frozenset[ModelRole] = frozenset(),
 ) -> list[ModeOutcome]:
     """Run every mode the app can run now; record the others as unavailable or skipped.
 
@@ -320,6 +357,8 @@ async def run_modes(
         commits: The commit SHA each version points at.
         modes: The modes to try.
         allow_providers: Run modes that call a hosted model (never in CI's pull request jobs).
+        local_roles: The configured roles whose model runs on this machine; any other role is
+            taken to call a hosted provider.
 
     Returns:
         One outcome per mode, in order.
@@ -327,10 +366,16 @@ async def run_modes(
     status = await retrieval.get_library_retrieval(GetLibraryRetrievalQuery(library=library))
     outcomes = []
     for mode in modes:
-        outcome = _not_running(mode, status, allow_providers=allow_providers)
+        outcome = _not_running(
+            mode, status, allow_providers=allow_providers, local_roles=local_roles
+        )
         if outcome.status == "ran":
             retriever = SearchDocsRetriever(
-                search=retrieval.search_docs, library=library, mode=mode.mode.value, commits=commits
+                search=retrieval.search_docs,
+                read_chunk=retrieval.read_chunk,
+                library=library,
+                mode=mode.mode.value,
+                commits=commits,
             )
             outcome = await evaluate_mode(dataset, mode, retriever)
         outcomes.append(outcome)
@@ -379,7 +424,13 @@ def _points(value: float) -> float:
 
 
 def judge(
-    dataset: str, cases: int, outcomes: Sequence[ModeOutcome], baseline: Mapping[str, float]
+    dataset: str,
+    cases: int,
+    outcomes: Sequence[ModeOutcome],
+    baseline: Mapping[str, float],
+    *,
+    baseline_source: str | None = None,
+    stored: Mapping[str, float] | None = None,
 ) -> SuiteReport:
     """Apply the gates.
 
@@ -387,14 +438,19 @@ def judge(
         dataset: The dataset's name.
         cases: How many cases it has.
         outcomes: Every mode's outcome.
-        baseline: recall@5 per mode, from ``develop``.
+        baseline: recall@5 per mode to compare with (CI: the copy on ``develop``).
+        baseline_source: Where ``baseline`` came from, for the summary.
+        stored: The branch's own stored baseline; when given, a gating mode's stored recall@5
+            may not be below ``baseline``'s, so the bar only moves up.
 
     Returns:
-        The report: passed only with no wrong version and no error in any mode, and no recall@5
-        drop beyond the limit in a gating mode.
+        The report: passed only with no wrong version and no error in any mode, no recall@5
+        drop beyond the limit in a gating mode, and no lowered stored baseline.
     """
     problems: list[str] = []
     warnings: list[str] = []
+    if stored is not None:
+        problems.extend(_lowered(outcomes, baseline, stored))
     bm25 = next((o.metrics for o in outcomes if o.mode is RetrievalMode.BM25 and o.metrics), None)
     judged = []
     for outcome in outcomes:
@@ -411,6 +467,8 @@ def judge(
         if outcome.errors:
             problems.append(f"{name}: {len(outcome.errors)} question(s) failed to run")
         base = baseline.get(name)
+        if base is None and outcome.gating:
+            warnings.append(f"{name}: no baseline to compare with, so its recall@5 is not gated")
         delta = None if base is None else _points(metrics.recall_at_5 - base)
         if delta is not None and delta < -MAX_RECALL_DROP_POINTS - _EPSILON:
             drop = (
@@ -438,11 +496,31 @@ def judge(
     return SuiteReport(
         dataset=dataset,
         cases=cases,
+        baseline=baseline_source,
         passed=not problems,
         problems=problems,
         warnings=warnings,
         modes=judged,
     )
+
+
+def _lowered(
+    outcomes: Sequence[ModeOutcome], baseline: Mapping[str, float], stored: Mapping[str, float]
+) -> list[str]:
+    """Problems for each gating mode whose stored recall@5 is below the reference baseline's."""
+    problems = []
+    for outcome in outcomes:
+        name = outcome.mode.value
+        if not outcome.gating or name not in baseline:
+            continue
+        mine = stored.get(name)
+        if mine is None or mine < baseline[name] - _EPSILON:
+            have = "nothing" if mine is None else f"{_points(mine)}"
+            problems.append(
+                f"{name}: the branch's baseline.json stores recall@5 {have}, below the "
+                f"{_points(baseline[name])} it is compared with; the baseline only moves up"
+            )
+    return problems
 
 
 def _cell(value: float | None, *, points: bool = False, digits: int = 3) -> str:
@@ -461,13 +539,14 @@ def markdown(report: SuiteReport) -> str:
         A Markdown table per mode, then the verdict and its reasons.
     """
     verdict = "passed" if report.passed else "failed"
+    against = f"in `{report.baseline}`" if report.baseline else "given (none)"
     lines = [
         f"## Retrieval eval: {verdict}",
         "",
         (
             f"{report.cases} questions of the `{report.dataset}` dataset, per mode. Recall and MRR "
             "are over the questions whose version has an answer; recall@5 delta is against the "
-            "baseline on `develop`."
+            f"baseline {against}."
         ),
         "",
         (
