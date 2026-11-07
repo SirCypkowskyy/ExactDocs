@@ -3,10 +3,12 @@
 It does not pick adapters itself; the composition root (``exactdocs.bootstrap``) passes them in.
 """
 
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Self
 
 from exactdocs.catalog.ports.driven import (
+    ArticleTitleFinder,
     ImportedTagWriter,
     LibraryRepository,
     ManifestCopier,
@@ -25,6 +27,7 @@ from exactdocs.catalog.ports.driving import (
     FindStoredArticles,
     GetActiveManifest,
     GetArticle,
+    GetArticleTitles,
     GetAsset,
     GetLibrary,
     GetManifestStates,
@@ -57,6 +60,7 @@ from exactdocs.catalog.use_cases import (
     DiscardPendingManifestsUseCase,
     FindStoredArticlesUseCase,
     GetActiveManifestUseCase,
+    GetArticleTitlesUseCase,
     GetArticleUseCase,
     GetAssetUseCase,
     GetLibraryUseCase,
@@ -83,6 +87,23 @@ from exactdocs.catalog.use_cases import (
 from exactdocs_kernel import Clock, SystemClock
 
 
+class _NoTitles:
+    """The default ``article_titles`` of ``build``: no title is known."""
+
+    async def titles(self, manifest_id: str, paths: Collection[str]) -> Mapping[str, str]:
+        """Know no title.
+
+        Args:
+            manifest_id: The manifest.
+            paths: The article paths.
+
+        Returns:
+            Nothing.
+        """
+        del manifest_id, paths
+        return {}
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogModule:
     """The catalog's driving ports, ready to be exposed by driving adapters."""
@@ -103,6 +124,8 @@ class CatalogModule:
     discard_pending_manifests: DiscardPendingManifests
     collect_garbage: CollectGarbage
     get_manifest_states: GetManifestStates
+    get_article_titles: GetArticleTitles
+    """Titles of a manifest's articles by path, for other domains (embedding input)."""
     get_active_manifest: GetActiveManifest
     list_default_manifests: ListDefaultManifests
     update_library: UpdateLibrary
@@ -129,12 +152,14 @@ class CatalogModule:
         stored_articles: StoredArticleFinder,
         copier: ManifestCopier,
         clock: Clock | None = None,
+        article_titles: ArticleTitleFinder | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores,
         ``copier`` copies them and ``stored_articles`` finds their articles by what they were
-        imported from.
+        imported from. ``article_titles`` looks titles up by path for other domains; without
+        it none are known.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository=repository, manifests=manifests)
@@ -163,6 +188,7 @@ class CatalogModule:
             ),
             collect_garbage=CollectGarbageUseCase(manifests=manifests, clock=clock),
             get_manifest_states=GetManifestStatesUseCase(manifests=manifests),
+            get_article_titles=GetArticleTitlesUseCase(titles=article_titles or _NoTitles()),
             get_active_manifest=GetActiveManifestUseCase(
                 repository=repository, manifests=manifests
             ),

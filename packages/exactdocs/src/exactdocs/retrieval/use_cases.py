@@ -7,10 +7,12 @@ from typing import NoReturn
 
 from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
+    DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     FOOTER_CHARS,
     MAX_RESOLVED,
     MAX_SEARCHED_LIBRARIES,
+    NO_VECTOR_STORE,
     POINTER_TEXT,
     QUERY_DOCS_CANDIDATES,
     QUERY_HITS_CAP,
@@ -31,7 +33,14 @@ from exactdocs.retrieval.dtos import (
     CoverageOut,
     DiscardPendingChunksCommand,
     DocSectionOut,
+    EmbedBatchCommand,
+    EmbeddedBatchOut,
+    EmbeddingEstimateOut,
+    EmbeddingPlanOut,
     EmbeddingSpaceOut,
+    EmbedVersionCommand,
+    FinishedEmbeddingOut,
+    FinishEmbeddingCommand,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
@@ -68,6 +77,9 @@ from exactdocs.retrieval.dtos import (
     SearchResultOut,
     SetChunkOut,
     SetLibraryRetrievalCommand,
+    UnembeddedVersionsOut,
+    UnembeddedVersionsQuery,
+    VersionRefOut,
 )
 from exactdocs.retrieval.errors import (
     ArticleNotFoundError,
@@ -79,8 +91,10 @@ from exactdocs.retrieval.errors import (
     ProviderInUseError,
     ProviderReadOnlyError,
     ProviderUnsupportedError,
+    RetiredEmbeddingSpaceError,
     SecretKeyRequiredError,
     StaleChunkError,
+    UnknownEmbeddingSpaceError,
     UnknownLibraryError,
     UnknownProviderError,
     VectorStoreUnavailableError,
@@ -95,12 +109,18 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    EmbeddingSkip,
+    EmbeddingSpace,
+    EmbeddingSpaceId,
     EmbeddingSpec,
+    EmbeddingTarget,
+    FallbackReason,
     IndexedManifest,
     InstanceRoles,
     KeySource,
     LibraryAi,
     ManifestChunk,
+    ManifestPaths,
     ManifestStatus,
     ModeChoice,
     ModelCheck,
@@ -108,6 +128,7 @@ from exactdocs.retrieval.models import (
     ModelRole,
     ModeRegistry,
     NameMatch,
+    PendingChunks,
     PipelineAnswer,
     PipelineRequest,
     ProfileOrigin,
@@ -123,6 +144,10 @@ from exactdocs.retrieval.models import (
     TagMatch,
     article_chunk_rows,
     bind_role,
+    current_space,
+    embedding_spend,
+    embedding_text,
+    estimated_usd,
     language_first,
     name_match,
     outline,
@@ -131,12 +156,16 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ArticleSuggestions,
+    ArticleTitles,
     ChunkRepository,
     DefaultVersions,
+    EmbeddingModels,
+    Embeddings,
     Libraries,
     LibraryModes,
     ModelFactory,
     ModelRoles,
+    Prices,
     ProviderProfiles,
     RenamedPaths,
     RetrievalPipeline,
@@ -146,9 +175,10 @@ from exactdocs.retrieval.ports.driven import (
     SearchSpan,
     SearchTracer,
     SecretBox,
+    SpendLedger,
     VectorIndex,
 )
-from exactdocs_kernel import NOTICE, Clock
+from exactdocs_kernel import NOTICE, Clock, SystemClock
 
 
 async def _confirmed_removals(
@@ -282,6 +312,9 @@ class RetrievalModes:
     vectors: VectorIndex | None = None
     """The vector store the hybrid modes search; asked whether it can load only once an
     embedding model is configured. Without one, nothing is checked (pipelines decide)."""
+    embedded: EmbeddingRuns | None = None
+    """Which versions the configured embedding model has embedded: a mode that searches vectors
+    answers BM25 (``embedding_in_progress``) for a version its space does not cover yet."""
 
     async def registry(self, library: str, ai: LibraryAi | None = None) -> ModeRegistry:
         """Say which modes can run now for a library's searches.
@@ -341,16 +374,24 @@ class RetrievalModes:
 
         Returns:
             The pipeline's answer; the choice's fallback reason unless the pipeline gave one.
+            A mode that searches vectors answers BM25 with ``embedding_in_progress`` while the
+            configured model has not embedded every chunk of the version (never two models'
+            vectors in one search).
         """
-        answer = await self.pipelines[choice.mode].run(
-            PipelineRequest(
-                version=version,
-                query=query,
-                tag_filter=tag_filter,
-                limit=limit,
-                rerank=choice.rerank,
-            )
+        request = PipelineRequest(
+            version=version,
+            query=query,
+            tag_filter=tag_filter,
+            limit=limit,
+            rerank=choice.rerank,
         )
+        if choice.mode.needs_vectors and self.embedded is not None:
+            found = await self.embedded.search_space(version.manifest_id)
+            if not found.searchable:
+                answer = await self.pipelines[RetrievalMode.BM25].run(request)
+                return replace(answer, fallback_reason=FallbackReason.EMBEDDING_IN_PROGRESS)
+            request = replace(request, space=found.space)
+        answer = await self.pipelines[choice.mode].run(request)
         if answer.fallback_reason is None and choice.fallback_reason is not None:
             return replace(answer, fallback_reason=choice.fallback_reason)
         return answer
@@ -1862,3 +1903,507 @@ class OpenEmbeddingSpaceUseCase:
                 return EmbeddingSpaceOut.from_model(space, created=False)
         space = await self.vectors.create_space(spec, self.clock.now())
         return EmbeddingSpaceOut.from_model(space, created=True)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ActiveVersion:
+    """A version with an active manifest, of a library with AI on."""
+
+    library: str
+    """The library ID."""
+    ref: str
+    """The version."""
+    manifest_id: str
+    """Its active manifest."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _SearchSpace:
+    """Whether a version can be searched with vectors now, and in which space."""
+
+    searchable: bool
+    """False while the configured model has not embedded the whole version."""
+    space: EmbeddingSpace | None
+    """The configured model's space, which covers the version; ``None`` without a model."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Configured:
+    """The embedding role as it resolves now."""
+
+    target: EmbeddingTarget
+    """The model and the format its vectors are made with."""
+    ref: ModelRef
+    """The role's ``<profile>:<model>``."""
+    profile: ProviderProfile
+    """Its profile, as it is now."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddingRuns:
+    """The instance's embedding model, its spaces and which versions they cover (RET-01).
+
+    The embedding role is instance-wide: a library can only opt out (AI off), and then nothing
+    of it is ever sent. Everything is read at each call, so a changed role or profile counts at
+    once: the space of the configured model is the newest one it made that is not retired.
+    """
+
+    providers: AiProviders
+    """The profiles, the roles and each library's overrides."""
+    vectors: VectorIndex | None
+    """The vector store; without one nothing is embedded."""
+    chunks: ChunkRepository
+    """The indexed manifests and their chunks."""
+    manifests: ActiveManifests
+    """Which manifests are active (the catalog answers)."""
+    models: EmbeddingModels | None = None
+    """Wraps the embedder the factory builds; without it nothing can be embedded."""
+    titles: ArticleTitles | None = None
+    """Article titles, part of what is embedded; without it they are left out."""
+    spend: SpendLedger | None = None
+    """Where usage is recorded; without it nothing is."""
+    prices: Prices | None = None
+    """The bundled price list; without it nothing is priced."""
+    clock: Clock = field(default_factory=SystemClock)
+    """Stamps spaces and usage."""
+    dimensions: int | None = None
+    """The configured dimensions of the embedding role, if any."""
+    batch_size: int = DEFAULT_EMBEDDING_BATCH
+    """Chunks per call and per batch of a job."""
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
+    """One plan or finish at a time: two jobs never create two spaces for one model."""
+
+    async def configured(self) -> _Configured | None:
+        """Resolve the embedding role to its profile, as they are now.
+
+        Returns:
+            The role, or ``None`` when no model is configured or its profile is missing.
+        """
+        ref = self.providers.roles.embedding
+        if ref is None:
+            return None
+        profile = await self.providers.profile(ref.profile)
+        if profile is None:
+            return None
+        target = EmbeddingTarget(
+            profile_kind=profile.kind.value, model=ref.model, dimensions=self.dimensions
+        )
+        return _Configured(target=target, ref=ref, profile=profile)
+
+    async def space(self, target: EmbeddingTarget) -> EmbeddingSpace | None:
+        """Find the configured model's space.
+
+        Args:
+            target: The configured model.
+
+        Returns:
+            Its newest space that is not retired, or ``None``.
+        """
+        vectors = self.store()
+        return current_space(target, await vectors.spaces())
+
+    async def model(self, configured: _Configured) -> Embeddings:
+        """Build the configured model, from its profile as it is now.
+
+        Args:
+            configured: The role.
+
+        Returns:
+            The model, ready to call.
+
+        Raises:
+            ProviderUnsupportedError: This process cannot call it.
+        """
+        if self.models is None:
+            raise ProviderUnsupportedError(configured.ref.profile, "this process embeds nothing")
+        handle = await self.providers.factory.embedder(configured.profile, configured.ref.model)
+        return self.models.bind(
+            handle,
+            name=str(configured.ref),
+            dimensions=self.dimensions,
+            batch_size=self.batch_size,
+        )
+
+    async def active_versions(self, library: str | None = None) -> list[_ActiveVersion]:
+        """List the versions with an active manifest, of libraries with AI on.
+
+        Args:
+            library: Only this library's (any letter case); every library's when ``None``.
+
+        Returns:
+            The versions, by library and version.
+        """
+        indexed = await self.chunks.find_manifests(
+            manifest_id=None, library=None, indexed_before=None
+        )
+        if library is not None:
+            indexed = [m for m in indexed if m.library.lower() == library.lower()]
+        statuses = await self.manifests.statuses([m.manifest_id for m in indexed])
+        enabled: dict[str, bool] = {}
+        found: list[_ActiveVersion] = []
+        for manifest in indexed:
+            if statuses.get(manifest.manifest_id) is not ManifestStatus.ACTIVE:
+                continue
+            if manifest.library not in enabled:
+                ai = await self.providers.library_modes.ai_of(manifest.library)
+                enabled[manifest.library] = ai.enabled
+            if enabled[manifest.library]:
+                found.append(
+                    _ActiveVersion(
+                        library=manifest.library,
+                        ref=manifest.version_id.removeprefix(f"{manifest.library}/"),
+                        manifest_id=manifest.manifest_id,
+                    )
+                )
+        return sorted(found, key=lambda v: (v.library, v.ref))
+
+    async def covers(self, space: EmbeddingSpace, manifest_id: str) -> bool:
+        """Say whether every chunk of a manifest has a vector in the space.
+
+        Args:
+            space: The space.
+            manifest_id: The manifest.
+
+        Returns:
+            True when nothing of it is left to embed.
+        """
+        return (await self.store().coverage(space.id, manifest_id)).complete
+
+    async def search_space(self, manifest_id: str) -> _SearchSpace:
+        """Find the space a version's vector search must use, if it covers the version.
+
+        Args:
+            manifest_id: The version's active manifest.
+
+        Returns:
+            Not searchable while the configured model's space does not cover the version yet
+            (or does not exist); searchable in that space when it does; searchable with no
+            space when no embedding model or no vector store is configured (the pipeline
+            decides).
+        """
+        configured = await self.configured()
+        if configured is None or self.vectors is None:
+            return _SearchSpace(searchable=True, space=None)
+        space = await self.space(configured.target)
+        if space is None or not await self.covers(space, manifest_id):
+            return _SearchSpace(searchable=False, space=None)
+        return _SearchSpace(searchable=True, space=space)
+
+    def price(self, configured: _Configured) -> float | None:
+        """Look up the configured model's input price.
+
+        Args:
+            configured: The role.
+
+        Returns:
+            US dollars per million input tokens, or ``None`` when unknown.
+        """
+        if self.prices is None:
+            return None
+        return self.prices.input_usd_per_million(
+            configured.target.profile_kind, configured.ref.model
+        )
+
+    def store(self) -> VectorIndex:
+        """Return the vector store.
+
+        Returns:
+            It.
+
+        Raises:
+            VectorStoreUnavailableError: The instance has none (PostgreSQL until #243).
+        """
+        if self.vectors is None:
+            raise VectorStoreUnavailableError(NO_VECTOR_STORE)
+        return self.vectors
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PlanEmbeddingUseCase:
+    """Implements ``ports.driving.PlanEmbedding``."""
+
+    runs: EmbeddingRuns
+    """The embedding model and its spaces."""
+    versions: SearchableVersions
+    """Finds the version's active manifest."""
+
+    async def __call__(self, command: EmbedVersionCommand) -> EmbeddingPlanOut:
+        """Pick the version's space (creating it for a new model) and count what is missing.
+
+        Args:
+            command: The version.
+
+        Returns:
+            The plan; ``skipped`` when nothing of the version is to be sent.
+        """
+        configured = await self.runs.configured()
+        if configured is None:
+            return _skipped(EmbeddingSkip.NO_MODEL)
+        if not (await self.runs.providers.library_modes.ai_of(command.library)).enabled:
+            return _skipped(EmbeddingSkip.AI_OFF)
+        if self.runs.vectors is None:
+            return _skipped(EmbeddingSkip.VECTOR_STORE_UNAVAILABLE)
+        version = await self.versions.find(command.library, command.ref)
+        if version is None:
+            return _skipped(EmbeddingSkip.NO_VERSION)
+        async with self.runs.lock:
+            space = await self.runs.space(configured.target)
+            created = space is None
+            if space is None:
+                dimensions = configured.target.dimensions
+                if dimensions is None:
+                    dimensions = await (await self.runs.model(configured)).dimensions()
+                spec = configured.target.spec(dimensions)
+                space = await self.runs.store().create_space(spec, self.runs.clock.now())
+        coverage = await self.runs.store().coverage(space.id, version.manifest_id)
+        return EmbeddingPlanOut(
+            space_id=space.id,
+            manifest_id=version.manifest_id,
+            missing=coverage.chunks - coverage.embedded,
+            created=created,
+            skipped=None,
+        )
+
+
+def _skipped(reason: EmbeddingSkip) -> EmbeddingPlanOut:
+    """Plan to send nothing.
+
+    Args:
+        reason: Why.
+
+    Returns:
+        The plan.
+    """
+    return EmbeddingPlanOut(
+        space_id=None, manifest_id=None, missing=0, created=False, skipped=reason
+    )
+
+
+def _done() -> EmbeddedBatchOut:
+    """Say a batch embedded nothing and the job is done.
+
+    Returns:
+        The batch.
+    """
+    return EmbeddedBatchOut(embedded=0, input_tokens=0, finished=True)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbedBatchUseCase:
+    """Implements ``ports.driving.EmbedBatch``."""
+
+    runs: EmbeddingRuns
+    """The embedding model and its spaces."""
+
+    async def __call__(self, command: EmbedBatchCommand) -> EmbeddedBatchOut:
+        """Embed the next chunks of the manifest without a vector, and record the usage.
+
+        Args:
+            command: The plan's version, manifest and space.
+
+        Returns:
+            What was stored; ``finished`` when nothing is left, or nothing may be sent any more.
+        """
+        runs = self.runs
+        configured = await runs.configured()
+        if configured is None or runs.vectors is None:
+            return _done()
+        if not (await runs.providers.library_modes.ai_of(command.library)).enabled:
+            return _done()  # switched off meanwhile: nothing more of it is sent
+        space = await runs.space(configured.target)
+        if space is None or space.id != command.space_id:
+            return _done()  # the model changed: its own jobs embed the version
+        vectors = runs.store()
+        keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
+        sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
+        if not sources:
+            return _done()
+        ordered = sorted(sources)
+        titles: Mapping[str, str] = {}
+        if runs.titles is not None:  # the plan's manifest: the job's library runs one job at a time
+            paths = tuple(sorted({sources[k].article_path for k in ordered}))
+            titles = await runs.titles.titles(
+                ManifestPaths(manifest_id=command.manifest_id, paths=paths)
+            )
+        texts = [
+            embedding_text(titles.get(sources[k].article_path, ""), sources[k]) for k in ordered
+        ]
+        embedded = await (await runs.model(configured)).embed_documents(texts)
+        if runs.spend is not None:
+            await runs.spend.add(
+                embedding_spend(
+                    runs.clock.now(),
+                    input_tokens=embedded.input_tokens,
+                    requests=embedded.requests,
+                    library=command.library,
+                    usd_per_million=runs.price(configured),
+                )
+            )
+        try:
+            stored = await vectors.upsert(
+                space.id, dict(zip(ordered, embedded.vectors, strict=True))
+            )
+        except RetiredEmbeddingSpaceError:
+            return _done()
+        return EmbeddedBatchOut(
+            embedded=stored,
+            input_tokens=embedded.input_tokens,
+            finished=len(keys) < runs.batch_size or stored == 0,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FinishEmbeddingUseCase:
+    """Implements ``ports.driving.FinishEmbedding``."""
+
+    runs: EmbeddingRuns
+    """The embedding model and its spaces."""
+
+    async def __call__(self, command: FinishEmbeddingCommand) -> FinishedEmbeddingOut:
+        """Activate the configured model's space once it covers every version; retire older ones.
+
+        Until then the older spaces stay (a search of a version the new space does not cover
+        answers BM25 meanwhile); afterwards their vectors are dropped.
+
+        Args:
+            command: The space a job embedded into.
+
+        Returns:
+            Its state, and the spaces retired now.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+        """
+        runs = self.runs
+        vectors = runs.store()
+        async with runs.lock:
+            spaces = await vectors.spaces()
+            space = next((s for s in spaces if s.id == command.space_id), None)
+            if space is None:
+                raise UnknownEmbeddingSpaceError(command.space_id)
+            configured = await runs.configured()
+            current = None if configured is None else current_space(configured.target, spaces)
+            if current is None or current.id != space.id:
+                return _finished(space, [])  # another model is configured now: not this one's
+            if space.state is SpaceState.BUILDING:
+                for version in await runs.active_versions():
+                    if not await runs.covers(space, version.manifest_id):
+                        return _finished(space, [])
+                space = await vectors.activate_space(space.id, runs.clock.now())
+            # Every other space, newer ones too: a model switched to and then away from (A, B,
+            # back to A) leaves a half-filled space that no configured model will finish.
+            retired = [
+                s.id for s in spaces if s.id != space.id and s.state is not SpaceState.RETIRED
+            ]
+            for space_id in retired:
+                await vectors.retire_space(space_id)
+        return _finished(space, retired)
+
+
+def _finished(space: EmbeddingSpace, retired: Sequence[EmbeddingSpaceId]) -> FinishedEmbeddingOut:
+    """Describe a space after ``FinishEmbedding``.
+
+    Args:
+        space: The space.
+        retired: The spaces retired now.
+
+    Returns:
+        The DTO.
+    """
+    return FinishedEmbeddingOut(space_id=space.id, state=space.state, retired=list(retired))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListUnembeddedVersionsUseCase:
+    """Implements ``ports.driving.ListUnembeddedVersions``."""
+
+    runs: EmbeddingRuns
+    """The embedding model and its spaces."""
+
+    async def __call__(self, query: UnembeddedVersionsQuery) -> UnembeddedVersionsOut:
+        """List the versions the configured model's space does not cover (all without a space).
+
+        Args:
+            query: Every library, or one.
+
+        Returns:
+            The versions; none when no embedding model or no vector store is configured.
+        """
+        configured = await self.runs.configured()
+        if configured is None or self.runs.vectors is None:
+            return UnembeddedVersionsOut(versions=[])
+        space = await self.runs.space(configured.target)
+        versions = [
+            VersionRefOut(library=v.library, ref=v.ref)
+            for v in await self.runs.active_versions(query.library)
+            if space is None or not await self.runs.covers(space, v.manifest_id)
+        ]
+        return UnembeddedVersionsOut(versions=versions)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EstimateEmbeddingUseCase:
+    """Implements ``ports.driving.EstimateEmbedding``."""
+
+    runs: EmbeddingRuns
+    """The embedding model and its spaces."""
+
+    async def __call__(self) -> EmbeddingEstimateOut:
+        """Count what the configured model has not embedded, and price it.
+
+        Returns:
+            The estimate; zeros and no model when no embedding model is configured. Fails with
+            ``VectorStoreUnavailableError`` when the database has no vector store (PostgreSQL
+            until #243).
+        """
+        configured = await self.runs.configured()
+        if configured is None:
+            return EmbeddingEstimateOut(
+                model=None,
+                space_id=None,
+                versions=0,
+                chunks=0,
+                characters=0,
+                estimated_tokens=0,
+                usd_per_million_tokens=None,
+                estimated_usd=None,
+            )
+        space = await self.runs.space(configured.target)
+        versions = await self.runs.active_versions()
+        pending = await self.runs.store().pending(
+            None if space is None else space.id, [v.manifest_id for v in versions]
+        )
+        pending = pending.with_titles(await self._titles(pending))
+        price = self.runs.price(configured)
+        return EmbeddingEstimateOut(
+            model=str(configured.ref),
+            space_id=None if space is None else space.id,
+            versions=len(versions),
+            chunks=pending.chunks,
+            characters=pending.characters,
+            estimated_tokens=pending.estimated_tokens,
+            usd_per_million_tokens=price,
+            estimated_usd=estimated_usd(pending.estimated_tokens, price),
+        )
+
+    async def _titles(self, pending: PendingChunks) -> dict[tuple[str, str], str]:
+        """Read the titles the pending chunks are embedded with: one lookup per manifest.
+
+        Args:
+            pending: The chunks, per article.
+
+        Returns:
+            The title of each (manifest ID, article path).
+        """
+        if self.runs.titles is None:
+            return {}
+        by_manifest: dict[str, set[str]] = {}
+        for article in pending.articles:
+            by_manifest.setdefault(article.manifest_id, set()).add(article.article_path)
+        found: dict[tuple[str, str], str] = {}
+        for manifest_id, paths in sorted(by_manifest.items()):
+            titles = await self.runs.titles.titles(
+                ManifestPaths(manifest_id=manifest_id, paths=tuple(sorted(paths)))
+            )
+            found |= {(manifest_id, path): title for path, title in titles.items()}
+        return found

@@ -10,6 +10,7 @@ import io
 import logging
 import os
 import tempfile
+import time
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from http import HTTPStatus
 from pathlib import Path
@@ -31,6 +32,8 @@ from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE
 
 KEY = "sk-corp-key-never-shown"
 SEARCH = "/api/v1/libraries/fixture/docs-repo/search"
+JOBS = "/api/v1/libraries/fixture/docs-repo/jobs"
+EMBEDDING_SECONDS = 60.0
 
 
 def _gateway(context: Context, name: str = "corp") -> FakeGateway:
@@ -213,10 +216,29 @@ def step_every_role(context: Context, name: str) -> None:
         },
         pipelines={RetrievalMode.HYBRID: SendsTheQuery(corp.v1)},
     )
+    _wait_for_embedding(context)  # until then, a version answers BM25 (#91)
     before = context.client.get(SEARCH, params={"q": "retry_policy"})
     assert before.json()["retrieval_mode"] == "hybrid", before.text
     assert corp.seen, "with AI on, the stand-in pipeline reaches the gateway"
     corp.seen.clear()
+
+
+def _wait_for_embedding(context: Context) -> None:
+    """Wait until the background embedding of the fixture library is done.
+
+    Args:
+        context: The behave context.
+    """
+    deadline = time.monotonic() + EMBEDDING_SECONDS
+    while time.monotonic() < deadline:
+        listed = context.client.get(JOBS, params={"limit": 100}).json()["jobs"]
+        embeds = [job for job in listed if job["kind"] == "embed"]
+        if embeds and all(job["state"] in {"succeeded", "failed"} for job in embeds):
+            assert all(job["state"] == "succeeded" for job in embeds), embeds
+            return
+        time.sleep(0.05)
+    message = "the background embedding did not finish"
+    raise AssertionError(message)
 
 
 @when('the admin sets library "{library}" to AI "off"')

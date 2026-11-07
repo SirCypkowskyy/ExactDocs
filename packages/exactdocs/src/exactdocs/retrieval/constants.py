@@ -498,6 +498,43 @@ MAX_EMBEDDING_DIMENSIONS: Final[int] = 16_000
 MAX_FLOAT32: Final[float] = 3.4028234663852886e38
 """The largest value a vector may hold: stores keep vectors as 32-bit floats."""
 
+# ---------------------------------------------------------------- models (embedding jobs)
+DEFAULT_EMBEDDING_BATCH: Final[int] = 64
+"""Chunks per embedding call and per durable step of an ``embed`` job (``batch_size``)."""
+MAX_EMBEDDING_BATCH: Final[int] = 2048
+"""The most chunks one embedding call may carry (OpenAI's limit of inputs per request)."""
+HEADING_SEPARATOR: Final[str] = " > "
+"""Joins a chunk's heading path in the text it is embedded from (input format 1)."""
+NO_VECTOR_STORE: Final[str] = (
+    "this database has no vector store yet (PostgreSQL gets pgvector with #243), so nothing is "
+    "embedded"
+)
+"""Why an instance without a vector store embeds nothing."""
+DIMENSIONS_PROBE: Final[str] = "ExactDocs embedding dimensions"
+"""The fixed text embedded once to learn a model's dimensions when none are configured: no
+library text, so it may be sent before any library is known to have AI on."""
+SPEND_SCOPE_INSTANCE: Final[str] = "instance"
+"""The ledger scope kind of what the whole instance spends (docs/decisions/ai-retrieval.md)."""
+SPEND_INSTANCE_ID: Final[str] = ""
+"""The scope ID of the instance's rows: there is one instance."""
+SPEND_SCOPE_LIBRARY: Final[str] = "library"
+"""The ledger scope kind of what one library spends; its scope ID is the library ID."""
+MICROS_PER_USD: Final[int] = 1_000_000
+"""The ledger keeps US dollars as whole millionths, so atomic additions stay exact."""
+TOKENS_PER_MILLION: Final[int] = 1_000_000
+"""Prices are per million tokens."""
+ESTIMATE_NOTE: Final[str] = (
+    "An estimate: tokens are counted as 4 characters per token, never by the model's tokenizer, "
+    "and the price is the bundled price list's."
+)
+"""What ``exactdocs ai estimate`` and its REST route say about their numbers."""
+TRANSIENT_STATUSES: Final[frozenset[int]] = frozenset({408, 409, 425, 429})
+"""HTTP statuses below 500 an embedding call may succeed after: timeouts and rate limits."""
+SERVER_ERROR: Final[int] = 500
+"""From here on a provider's answer is its own failure, which may pass."""
+MAX_EMBEDDING_ERROR: Final[int] = 200
+"""Longest provider error text kept in a failed embedding job (keys are never in it)."""
+
 # ---------------------------------------------------------------- adapters/driven/sqlite_vectors
 SQLITE_VEC_MODULE: Final[str] = "sqlite_vec"
 """The Python package of sqlite-vec (``[ai]`` extra), imported only to find its extension."""
@@ -556,3 +593,57 @@ _VECTOR_MISSING: Final[str] = (
     "ORDER BY c.blob_sha, c.config_hash, c.position LIMIT :limit"
 )
 """A manifest's chunks without a vector, in a stable order."""
+_HEADING_CHARACTERS: Final[str] = (
+    "(SELECT coalesce(sum(length(h.value)), 0) FROM json_each(c.heading_path) h)"
+)
+"""The characters of a chunk's heading path (a JSON list)."""
+_PENDING_CHUNKS: Final[str] = "FROM retrieval_chunks c WHERE c.id IN (SELECT c.id"
+"""The stored chunks of some manifests, opened for ``_VECTOR_JOIN``."""
+_VECTOR_PENDING: Final[str] = (
+    "SELECT count(*) AS chunks, coalesce(sum(length(c.content) + "
+    + _HEADING_CHARACTERS
+    + "), 0) AS characters "
+    + _PENDING_CHUNKS
+    + _VECTOR_JOIN
+    + "WHERE mc.manifest_id IN :manifests) {missing}"
+)
+"""Counts the distinct stored chunks of some manifests (and their characters), ``missing``
+narrowing them to those without a vector in a space."""
+_PENDING_FIRST: Final[str] = (
+    "SELECT c.id, mc.manifest_id, mc.article_path, row_number() OVER (PARTITION BY c.id "
+    "ORDER BY mc.manifest_id, mc.article_path) AS n"
+)
+"""Each stored chunk with every (manifest, path) holding it, its first one numbered 1."""
+_PENDING_PER_ARTICLE: Final[str] = "SELECT manifest_id, article_path, count(*) AS chunks"
+"""Counts per article (``FROM`` follows in ``_VECTOR_PENDING_ARTICLES``)."""
+_VECTOR_PENDING_ARTICLES: Final[str] = (
+    _PENDING_PER_ARTICLE
+    + " FROM ("
+    + _PENDING_FIRST
+    + _VECTOR_JOIN
+    + "WHERE mc.manifest_id IN :manifests {missing}) first_holders WHERE n = 1 "
+    "GROUP BY manifest_id, article_path ORDER BY manifest_id, article_path"
+)
+"""The pending chunks per article, each chunk under its first manifest and path (for titles)."""
+_VECTOR_ABSENT: Final[str] = "AND c.id NOT IN (SELECT chunk_key FROM {table})"
+"""Narrows ``_VECTOR_PENDING`` to chunks without a vector in one space's table."""
+
+# ---------------------------------------------------------------- adapters/driven/ai_embeddings
+EMBEDDINGS_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_embeddings_sdk"
+"""The pydantic-ai side of the embedding adapter, imported once an embedding model is called."""
+
+# ---------------------------------------------------------------- adapters/driven/genai_prices
+PRICE_PROVIDERS: Final[dict[str, str]] = {
+    "openai": "openai",
+    "azure": "azure",
+    "google": "google",
+    "google-vertex": "google",
+    "openrouter": "openrouter",
+}
+"""The ``genai-prices`` provider of each profile kind that has one of its own."""
+FALLBACK_PRICE_PROVIDER: Final[str] = "openai"
+"""Where a gateway's model is looked up last: gateways mostly serve OpenAI's embedding models
+under their own names."""
+GATEWAY_PRICE_KINDS: Final[frozenset[str]] = frozenset({"openai-compatible", "litellm"})
+"""Kinds whose models are looked up in ``FALLBACK_PRICE_PROVIDER``'s list too. Never a model the
+instance runs itself (``ollama``, ``vllm``, ``local``): those stay unpriced."""

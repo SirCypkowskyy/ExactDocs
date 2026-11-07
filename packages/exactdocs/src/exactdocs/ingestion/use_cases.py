@@ -28,6 +28,9 @@ from exactdocs.ingestion.constants import (
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
+    EMBED_ATTEMPTS,
+    EMBED_JOB,
+    EMBED_RETRY_SECONDS,
     IMPORT_JOB,
     IMPORT_KINDS,
     KNOWN_BATCH,
@@ -71,6 +74,8 @@ from exactdocs.ingestion.dtos import (
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PreviewRepositoryCommand,
+    QueuedEmbedding,
+    QueueEmbeddingCommand,
     RefOut,
     ReimportedVersion,
     ReimportVersionCommand,
@@ -94,6 +99,7 @@ from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     CommitImportedError,
     CredentialsRequiredError,
+    EmbeddingUnavailableError,
     ImportInProgressError,
     ImportNotPinnedError,
     ImportTooLargeError,
@@ -124,6 +130,8 @@ from exactdocs.ingestion.models import (
     Context7Config,
     CopiedVersion,
     Credential,
+    EmbeddedBatch,
+    EmbedPlan,
     FetchedFile,
     FileProblem,
     GitRename,
@@ -193,6 +201,7 @@ from exactdocs.ingestion.ports.driven import (
     ScheduleSwitch,
     StoredArticleSource,
     VersionCopier,
+    VersionEmbedder,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibraryFromRefs
@@ -228,7 +237,7 @@ class EnqueueJobUseCase:
         if kind not in self.handlers:
             raise UnknownJobKindError(kind)
         job = Job.queued(
-            job_id=JobId(str(uuid.uuid7())),  # time-ordered, so IDs sort like creation time
+            job_id=_new_job_id(),
             kind=kind,
             library=command.library,
             version=command.version,
@@ -240,6 +249,15 @@ class EnqueueJobUseCase:
         await self.jobs.add(job)
         await self.runner.submit(job)
         return JobSummary.from_model(job)
+
+
+def _new_job_id() -> JobId:
+    """Make a job ID.
+
+    Returns:
+        A UUIDv7: time-ordered, so IDs sort like creation time.
+    """
+    return JobId(str(uuid.uuid7()))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2946,3 +2964,181 @@ def _backoff(tried: Sequence[Job], interval: timedelta) -> timedelta:
         in_a_row += 1
     doublings = min(in_a_row - 1, _MAX_DOUBLINGS)
     return min(interval * (2**doublings - 1), UNEXPECTED_BACKOFF_CAP)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbeddingQueue:
+    """Queues ``embed`` jobs for the versions the embedding model has not fully embedded.
+
+    Only a *queued* job counts as one already: a running one may be embedding with a model
+    that changed meanwhile, and stops without covering the version for the new one.
+    """
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    runner: JobRunner
+    """Told about each new job."""
+    clock: Clock
+    """Stamps new jobs."""
+    embedder: VersionEmbedder
+    """Names the versions not fully embedded."""
+
+    async def __call__(self, library: str | None, *, besides: tuple[str, str] | None = None) -> int:
+        """Queue one ``embed`` job per version not fully embedded, unless one is queued already.
+
+        Args:
+            library: Only this library's versions; ``None``: every library's.
+            besides: A (library, version) to leave out: the job that is embedding it.
+
+        Returns:
+            How many jobs were queued.
+        """
+        queued = 0
+        waiting: dict[str, set[str | None]] = {}
+        for version in await self.embedder.unembedded(library):
+            if (version.library, version.ref) == besides:
+                continue
+            if version.library not in waiting:
+                waiting[version.library] = {
+                    job.version
+                    for job in await self.jobs.list_for_library(version.library)
+                    if job.kind == EMBED_JOB and job.state is JobState.QUEUED
+                }
+            if version.ref in waiting[version.library]:
+                continue
+            job = Job.queued(
+                job_id=_new_job_id(),
+                kind=EMBED_JOB,
+                library=version.library,
+                version=version.ref,
+                now=self.clock.now(),
+            )
+            await self.jobs.add(job)
+            await self.runner.submit(job)
+            waiting[version.library].add(version.ref)
+            queued += 1
+        return queued
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class QueueEmbeddingUseCase:
+    """Implements ``ports.driving.QueueEmbedding``."""
+
+    queue: EmbeddingQueue | None = None
+    """Queues the jobs; ``None`` when this process embeds nothing."""
+
+    async def __call__(self, command: QueueEmbeddingCommand) -> QueuedEmbedding:
+        """Queue the ``embed`` jobs the library (or every library) needs.
+
+        Args:
+            command: Which library.
+
+        Returns:
+            How many jobs were queued.
+        """
+        if self.queue is None:
+            return QueuedEmbedding(queued=0)
+        return QueuedEmbedding(queued=await self.queue(command.library))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbedAfterJob:
+    """Implements ``ports.driven.JobHandler`` around a job that stores chunks: embeds them next.
+
+    When the job succeeds, the library's versions that are not fully embedded get ``embed``
+    jobs; they run after it (one job per library at a time). Failing to queue them never fails
+    the job: the next start queues what is still missing.
+    """
+
+    inner: JobHandler
+    """The job that stores chunks (an import, a re-processing)."""
+    queue: EmbeddingQueue
+    """Queues the ``embed`` jobs."""
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Run the job, then queue the embedding of what it stored.
+
+        Args:
+            job: The job.
+            progress: Where it reports.
+        """
+        await self.inner(job, progress)
+        try:
+            await self.queue(job.library)
+        except Exception:
+            log.exception("could not queue the embedding of %s after job %s", job.library, job.id)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EmbedVersionUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``EMBED_JOB``: embeds one version (RET-01).
+
+    Durable steps: the plan, then one per batch of chunks, then the switch of spaces. A job that
+    resumes after a crash continues at its first unfinished batch; a batch done twice stores the
+    same vectors again (keyed by chunk). A plan that created the space of a new model queues the
+    other versions' jobs too, so every version is embedded again and no search mixes models.
+    """
+
+    embedder: VersionEmbedder
+    """Retrieval: plans, embeds a batch, switches spaces."""
+    queue: EmbeddingQueue
+    """Queues the other versions when the model changed."""
+    checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
+    """Makes each step durable; without it an interrupted job starts over."""
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    """Waits between tries of a batch the model did not answer for now (tests: no wait)."""
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Embed the job's version, batch by batch.
+
+        Args:
+            job: The ``embed`` job (its library and version).
+            progress: Where it reports: ``done`` of ``total`` chunks.
+        """
+        if job.version is None:
+            return
+        steps, library, ref = self.checkpoints, job.library, job.version
+        plan: EmbedPlan = await steps.step(
+            "plan the embedding", partial(self.embedder.plan, library, ref)
+        )
+        if plan.space_id is None:
+            return
+        if plan.created:
+            await steps.step(
+                "queue the other versions",
+                partial(self.queue, None, besides=(library, ref)),
+            )
+        await progress.report(done=0, total=plan.missing)
+        done, number = 0, 0
+        while True:
+            number += 1
+            batch: EmbeddedBatch = await steps.step(
+                f"embed batch {number}", partial(self._batch, library, ref, plan)
+            )
+            done += batch.embedded
+            await progress.report(done=done, total=max(done, plan.missing))
+            if batch.finished:
+                break
+        await steps.step("switch embedding spaces", partial(self.embedder.finish, plan))
+
+    async def _batch(self, library: str, ref: str, plan: EmbedPlan) -> EmbeddedBatch:
+        """Embed one batch, trying again with a growing wait while the model is unavailable.
+
+        Inside the batch's step, so a try that succeeds is what the step records.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            plan: The job's plan.
+
+        Returns:
+            What the batch embedded. After ``EMBED_ATTEMPTS`` tries the last
+            ``EmbeddingUnavailableError`` fails the job; the next start or import queues the
+            version again.
+        """
+        for attempt in range(EMBED_ATTEMPTS - 1):
+            try:
+                return await self.embedder.embed_batch(library, ref, plan)
+            except EmbeddingUnavailableError:
+                await self.sleep(EMBED_RETRY_SECONDS * 2**attempt)
+        return await self.embedder.embed_batch(library, ref, plan)
