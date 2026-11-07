@@ -1,81 +1,72 @@
-"""Steps for selecting folders whose names have brackets, fetched from a small real repository."""
+"""Steps for importing folders whose names have brackets, from a branch of a private copy."""
 
-import asyncio
-import shutil
-import tempfile
-from pathlib import Path
+import json
 
 from behave import given, then, when
 from behave.runner import Context
 
-from exactdocs.ingestion.adapters.driven.git_cli import GitCli
-from exactdocs.ingestion.models import (
-    PathSelection,
-    ProposedId,
-    RepositoryHost,
-    RepositoryUrl,
-    context7_selection,
-)
+from steps.import_steps import articles_of, import_version
+
+CONTEXT7 = "context7.json"
 
 
 def _names(text: str) -> list[str]:
     return [name.strip() for name in text.split(",") if name.strip()]
 
 
-@given('a repository with the files "{files}"')
-def step_repository(context: Context, files: str) -> None:
-    root = Path(tempfile.mkdtemp(prefix="brackets-"))
-    context.add_cleanup(shutil.rmtree, root, ignore_errors=True)
-    git = context.fixture_git
-    git("init", "-q", "-b", "main", str(root))
+def _git(context: Context, *args: str) -> str:
+    return context.fixture_git(*args, cwd=context.fixture_repo.path)
+
+
+@given('a branch "{branch}" adds "{files}"')
+def step_branch(context: Context, branch: str, files: str) -> None:
+    """Branch off ``next`` (which has a context7.json) and commit the files there."""
+    _git(context, "checkout", "-q", "-b", branch, "next")
     for name in _names(files):
-        target = root / name
+        target = context.fixture_repo.path / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"# {name}\n", encoding="utf-8")
-    git("add", "-A", cwd=root)
-    git("-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "x", cwd=root)
-    context.bracket_repo = root
-    context.bracket_commit = git("rev-parse", "HEAD", cwd=root)
+        target.write_text(f"# {name}\n\nAn article at {name}.\n", encoding="utf-8")
+    _git(context, "add", "-A")
+    _git(context, "-c", "user.name=Fixture", "-c", "user.email=f@exactdocs.invalid",
+         "commit", "-q", "-m", "docs: bracketed folders")  # fmt: skip
+    context.bracket_branch = branch
 
 
-def _import(context: Context, selection: PathSelection) -> None:
-    root: Path = context.bracket_repo
-    url = RepositoryUrl(
-        url=root.as_uri(), host_kind=RepositoryHost.GIT, library_id=ProposedId("/acme/brackets")
-    )
-
-    async def fetch() -> list[str]:
-        async with GitCli.locate().fetch(url, context.bracket_commit, selection) as folder:
-            return sorted(
-                path
-                for p in folder.rglob("*")
-                if p.is_file()
-                and ".git" not in p.relative_to(folder).parts
-                and selection.selects(path := p.relative_to(folder).as_posix())
-            )
-
-    context.imported = asyncio.run(fetch())
+@given('its context7.json has the folders "{folders}" and the excluded folders "{excluded}"')
+def step_context7(context: Context, folders: str, excluded: str) -> None:
+    path = context.fixture_repo.path / CONTEXT7
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document |= {"folders": _names(folders), "excludeFolders": _names(excluded)}
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _git(context, "-c", "user.name=Fixture", "-c", "user.email=f@exactdocs.invalid",
+         "commit", "-q", "-am", "docs: context7 names bracketed folders")  # fmt: skip
+    _git(context, "checkout", "-q", "main")
 
 
-@when('it is imported with the paths "{include}" excluding "{exclude}"')
-def step_import_paths(context: Context, include: str, exclude: str) -> None:
-    _import(context, PathSelection.of(_names(include), _names(exclude)))
+def _added(context: Context) -> None:
+    assert context.job["state"] == "succeeded", context.job
 
 
-@when('it is imported with the paths "{include}" excluding ""')
-def step_import_paths_only(context: Context, include: str) -> None:
-    _import(context, PathSelection.of(_names(include), []))
+@when('"{ref}" is added with the paths "{include}" excluding "{exclude}"')
+def step_add_paths(context: Context, ref: str, include: str, exclude: str) -> None:
+    import_version(context, ref, include_paths=_names(include), exclude_paths=_names(exclude))
+    _added(context)
 
 
-@when(
-    'it is imported with a context7.json with folders "{folders}" and excluded folders "{excluded}"'
-)
-def step_import_context7(context: Context, folders: str, excluded: str) -> None:
-    selection = context7_selection(_names(folders), _names(excluded), [])
-    assert selection is not None
-    _import(context, selection)
+@when('"{ref}" is added with the paths "{include}" excluding ""')
+def step_add_include(context: Context, ref: str, include: str) -> None:
+    import_version(context, ref, include_paths=_names(include))
+    _added(context)
 
 
-@then('the imported articles are "{articles}"')
-def step_articles(context: Context, articles: str) -> None:
-    assert context.imported == sorted(_names(articles)), context.imported
+@when('"{ref}" is added without paths')
+def step_add_no_paths(context: Context, ref: str) -> None:
+    import_version(context, ref)  # the committed context7.json gives the paths
+    _added(context)
+
+
+@then('the articles of "{ref}" below "{folder}" are "{articles}"')
+@then('the articles of "{ref}" below "{folder}" are ""')
+def step_articles(context: Context, ref: str, folder: str, articles: str = "") -> None:
+    found = sorted(a["path"] for a in articles_of(context, ref) if a["path"].startswith(folder))
+    assert found == sorted(_names(articles)), found
