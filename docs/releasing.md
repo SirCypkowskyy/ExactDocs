@@ -147,8 +147,8 @@ enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land 
 
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
-| wheel (with the UI) | 5 MB | 0.4 MB | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 374.5 MB (CI, PR #218) | no such model file anywhere in the filesystem |
+| wheel (with the UI) | 5 MB | 0.9 MB (CI, PR #237) | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
+| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 384.4 MB (CI, PR #237) | no such model file anywhere in the filesystem |
 
 The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
 extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
@@ -180,6 +180,15 @@ the budget was raised to 400 MB: the same headroom (about 7 %) as before, for de
 updates. A smaller footprint stays possible behind the same `Checkpoints` port (an ingestion-owned
 checkpoint table instead of DBOS). psycopg is LGPL-3.0: list it if the image ever gets a
 third-party notices file.
+
+**Telemetry since E10-07 (#87): 384.4 MB.** The OpenTelemetry SDK and its OTLP/HTTP exporter (with
+protobuf, googleapis-common-protos and requests) are imported only when `EXACTDOCS_TELEMETRY=otlp`,
+but ship in the image so operators can turn them on (#218 measured 374.5 MB before them).
+With Logfire as the SDK, as the Telemetry decision first named, the image was 393.3 MB (6.7 MB
+of headroom); Logfire (a second copy of its package for its migration, plus executing, wrapt and
+opentelemetry-instrumentation) was about 9 MB of that, which is part of why the plain SDK is used.
+The 15.6 MB left is about 4 %: the next dependency that needs room should first look for something
+to drop.
 
 ## Image scan
 
