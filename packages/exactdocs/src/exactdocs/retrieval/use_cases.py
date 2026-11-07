@@ -1,7 +1,7 @@
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from exactdocs.retrieval.constants import (
@@ -28,11 +28,14 @@ from exactdocs.retrieval.dtos import (
     CoverageOut,
     DiscardPendingChunksCommand,
     DocSectionOut,
+    ForgetLibraryCommand,
     GetChunkSetsQuery,
+    GetLibraryRetrievalQuery,
     IndexedManifestOut,
     IndexManifestCommand,
     LibraryFacetOut,
     LibraryMatchOut,
+    LibraryRetrievalOut,
     LibrarySearchResultOut,
     QueryDocsQuery,
     QueryDocsResult,
@@ -51,13 +54,14 @@ from exactdocs.retrieval.dtos import (
     SearchIndexStateOut,
     SearchResultOut,
     SetChunkOut,
+    SetLibraryRetrievalCommand,
 )
 from exactdocs.retrieval.errors import (
     ArticleNotFoundError,
     ChunkNotFoundError,
     MovedSection,
     StaleChunkError,
-    UnavailableModeError,
+    UnknownLibraryError,
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
@@ -71,7 +75,12 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestStatus,
+    ModeChoice,
+    ModelRole,
+    ModeRegistry,
     NameMatch,
+    PipelineAnswer,
+    PipelineRequest,
     RetrievalMode,
     SearchableVersion,
     SearchText,
@@ -90,10 +99,14 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     DefaultVersions,
     Libraries,
+    LibraryModes,
+    ModelRoles,
     RenamedPaths,
+    RetrievalPipeline,
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
+    SearchSpan,
     SearchTracer,
 )
 from exactdocs_kernel import NOTICE, Clock
@@ -129,12 +142,25 @@ async def _confirmed_removals(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _UntracedSpan:
+    """Implements ``ports.driven.SearchSpan`` by recording nothing."""
+
+    def answered_by(self, mode: str) -> None:
+        """Record nothing.
+
+        Args:
+            mode: The mode that answered.
+        """
+        del mode
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UntracedSearches:
     """Implements ``ports.driven.SearchTracer`` by recording nothing (telemetry is off)."""
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
-    ) -> AbstractContextManager[object]:
+    ) -> AbstractContextManager[SearchSpan]:
         """Open nothing.
 
         Args:
@@ -147,7 +173,138 @@ class UntracedSearches:
             A context manager that does nothing.
         """
         del name, mode, query, attributes
-        return nullcontext()
+        return nullcontext(_UntracedSpan())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NoModelRoles:
+    """Implements ``ports.driven.ModelRoles`` for an instance with no model configured."""
+
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        """Say that no role is set, for any library.
+
+        Args:
+            library: The library searched.
+
+        Returns:
+            The empty set: BM25 is the only mode.
+        """
+        del library
+        return frozenset()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Bm25Pipeline:
+    """Implements ``ports.driven.RetrievalPipeline`` for ``bm25``: the full-text index alone."""
+
+    search: SearchIndex
+    """The full-text index."""
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Rank the version's chunks with BM25.
+
+        Args:
+            request: What to search; ``rerank`` is ignored until a reranker exists.
+
+        Returns:
+            The best hits, and whether more matched than the limit allowed.
+        """
+        # One more than asked for tells whether the answer was cut short.
+        found = await self.search.search(
+            request.version.manifest_id, request.query, request.tag_filter, request.limit + 1
+        )
+        return PipelineAnswer(
+            mode=RetrievalMode.BM25,
+            hits=tuple(found[: request.limit]),
+            candidates=len(found),
+            reranked=0,
+            complete=len(found) <= request.limit,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RetrievalModes:
+    """Picks the mode of a search and runs its pipeline (RET-06, MCP-05).
+
+    The mode is the call's, else the library's, else the instance's, else the best one that can
+    run: a mode can run when a pipeline is registered for it and the model roles it needs are
+    configured. Roles and library settings are read at every search, so changes count at once.
+    """
+
+    pipelines: Mapping[RetrievalMode, RetrievalPipeline]
+    """The pipeline of each mode this build can run; BM25 always."""
+    roles: ModelRoles
+    """Which model roles are configured, asked at every search."""
+    library_modes: LibraryModes
+    """Each library's own mode."""
+    instance_mode: RetrievalMode | None = None
+    """The operator's default for every library (``EXACTDOCS_AI__MODE``)."""
+
+    async def registry(self, library: str) -> ModeRegistry:
+        """Say which modes can run now for a library's searches.
+
+        Args:
+            library: The library, any letter case: roles can differ per library.
+
+        Returns:
+            The registry of the library's configured roles and the registered pipelines.
+        """
+        return ModeRegistry(
+            roles=await self.roles.configured(library), pipelines=frozenset(self.pipelines)
+        )
+
+    async def choose(self, *, asked: str | None, library: str) -> ModeChoice:
+        """Pick the mode of a search of ``library``.
+
+        Args:
+            asked: The mode the call names, if any.
+            library: The library searched, any letter case.
+
+        Returns:
+            The mode, whether to rerank, and why a setting was skipped. A call that names a
+            mode that cannot run now fails with ``UnavailableModeError``.
+        """
+        registry = await self.registry(library)
+        if asked is not None:  # checked first: the library's setting does not matter then
+            return registry.choose(asked=asked, library=None, instance=None)
+        return registry.choose(
+            asked=None,
+            library=await self.library_modes.mode_of(library),
+            instance=self.instance_mode,
+        )
+
+    async def run(
+        self,
+        choice: ModeChoice,
+        version: SearchableVersion,
+        query: str,
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> PipelineAnswer:
+        """Run the chosen mode's pipeline on one version.
+
+        Args:
+            choice: The mode picked by ``choose``.
+            version: The exact version searched.
+            query: The query text.
+            tag_filter: Which chunks may be returned.
+            limit: How many hits to return at most.
+
+        Returns:
+            The pipeline's answer; the choice's fallback reason unless the pipeline gave one.
+        """
+        answer = await self.pipelines[choice.mode].run(
+            PipelineRequest(
+                version=version,
+                query=query,
+                tag_filter=tag_filter,
+                limit=limit,
+                rerank=choice.rerank,
+            )
+        )
+        if answer.fallback_reason is None and choice.fallback_reason is not None:
+            return replace(answer, fallback_reason=choice.fallback_reason)
+        return answer
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -155,7 +312,8 @@ class SearchDocsUseCase:
     """Implements ``ports.driving.SearchDocs``."""
 
     versions: SearchableVersions
-    search: SearchIndex
+    modes: RetrievalModes
+    """Picks the mode and runs its pipeline."""
     chunks: ChunkRepository
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
@@ -164,59 +322,64 @@ class SearchDocsUseCase:
         """Search the active manifest of one exact version; never fall back to another version."""
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
-        # E11: replace with the modes this instance has configured.
-        available = [m.value for m in RetrievalMode]
-        if query.mode is not None and query.mode.strip().lower() not in available:
-            raise UnavailableModeError(query.mode, available)
-        mode = RetrievalMode.BM25.value
+        choice = await self.modes.choose(asked=query.mode, library=query.library)
         with self.tracer.span(
-            "search_docs", mode=mode, query=text.value, library=query.library, ref=query.ref
-        ):
-            return await self._search(query, text, mode)
+            "search_docs",
+            mode=choice.mode.value,
+            query=text.value,
+            library=query.library,
+            ref=query.ref,
+        ) as whole:
+            return await self._search(query, text, choice, whole)
 
     async def _search(
-        self, query: SearchDocsQuery, text: SearchText, mode: str
+        self, query: SearchDocsQuery, text: SearchText, choice: ModeChoice, whole: SearchSpan
     ) -> SearchDocsResult:
         """Resolve the version, rank its chunks and load the shown ones, one span per stage.
 
         Args:
             query: The search as asked.
             text: Its validated query text.
-            mode: The retrieval mode it runs in.
+            choice: The retrieval mode it runs in.
+            whole: The search's span, told which mode answered.
 
         Returns:
             The results of the one version searched.
         """
+        mode = choice.mode.value
         with self.tracer.span("search_docs.version", mode=mode):
             version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
-        # One more than asked for tells whether the answer was cut short.
-        with self.tracer.span("search_docs.rank", mode=mode):
-            found = await self.search.search(
-                version.manifest_id, text.value, tag_filter, query.limit + 1
+        with self.tracer.span("search_docs.rank", mode=mode) as rank:
+            answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
+            rank.answered_by(answer.mode.value)
+        whole.answered_by(answer.mode.value)
+        with self.tracer.span("search_docs.chunks", mode=answer.mode.value):
+            stored = await self.chunks.get_many(
+                version.manifest_id, [h.chunk_id for h in answer.hits]
             )
-        shown = found[: query.limit]
-        with self.tracer.span("search_docs.chunks", mode=mode):
-            stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in shown])
         # A chunk gone since the search (the manifest was collected) leaves no result, and is not
         # counted as a candidate either, so results and coverage stay consistent.
         results = [
             SearchResultOut.from_models(version, stored[hit.chunk_id], hit)
-            for hit in shown
+            for hit in answer.hits
             if hit.chunk_id in stored
         ]
-        vanished = len(shown) - len(results)
+        vanished = len(answer.hits) - len(results)
         return SearchDocsResult(
             library=version.library,
             version=version.version,
             commit_sha=version.commit_sha,
-            retrieval_mode=RetrievalMode.BM25,
-            reranked=False,
+            retrieval_mode=answer.mode,
+            reranked=answer.reranked > 0,
             coverage=CoverageOut(
-                candidates=len(found) - vanished, reranked=0, complete=len(found) <= query.limit
+                candidates=answer.candidates - vanished,
+                reranked=answer.reranked,
+                complete=answer.complete,
             ),
+            fallback_reason=answer.fallback_reason,
             results=results,
         )
 
@@ -785,7 +948,8 @@ class QueryDocsUseCase:
     """Implements ``ports.driving.QueryDocs``."""
 
     versions: SearchableVersions
-    search: SearchIndex
+    modes: RetrievalModes
+    """Picks the mode (the library's, else the instance's) and runs its pipeline."""
     chunks: ChunkRepository
     token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET
     tracer: SearchTracer = field(default_factory=UntracedSearches)
@@ -805,12 +969,21 @@ class QueryDocsUseCase:
         _, owner, repo, *rest = query.library_id.split("/", 3)
         ref = rest[0] if rest else None
         library = f"/{owner}/{repo}"
-        mode = RetrievalMode.BM25.value
-        with self.tracer.span("query_docs", mode=mode, query=text.value, library=library, ref=ref):
-            return await self._answer(query, text, library, ref, mode)
+        # context7's tool has no mode argument: the library's mode, else the instance's (C7-02).
+        choice = await self.modes.choose(asked=None, library=library)
+        with self.tracer.span(
+            "query_docs", mode=choice.mode.value, query=text.value, library=library, ref=ref
+        ) as whole:
+            return await self._answer(query, text, library, ref, choice, whole)
 
     async def _answer(
-        self, query: QueryDocsQuery, text: SearchText, library: str, ref: str | None, mode: str
+        self,
+        query: QueryDocsQuery,
+        text: SearchText,
+        library: str,
+        ref: str | None,
+        choice: ModeChoice,
+        whole: SearchSpan,
     ) -> QueryDocsResult:
         """Resolve the version, rank, load the chunks and pack them, one span per stage.
 
@@ -819,27 +992,34 @@ class QueryDocsUseCase:
             text: Its validated query text.
             library: The library ID it names.
             ref: The version it names; ``None`` for the default version.
-            mode: The retrieval mode it runs in.
+            choice: The retrieval mode it runs in.
+            whole: The search's span, told which mode answered.
 
         Returns:
             The packed sections of the one version searched.
         """
+        mode = choice.mode.value
         with self.tracer.span("query_docs.version", mode=mode):
             version = await self.versions.find(library, ref)
         if version is None:
             raise VersionNotIndexedError(library, ref or "(default version)")
-        with self.tracer.span("query_docs.rank", mode=mode):
-            found = await self.search.search(
-                version.manifest_id,
+        with self.tracer.span("query_docs.rank", mode=mode) as rank:
+            answer = await self.modes.run(
+                choice,
+                version,
                 text.value,
                 TagFilter(tags=(), match=TagMatch.ANY),
                 QUERY_DOCS_CANDIDATES,
             )
-        with self.tracer.span("query_docs.chunks", mode=mode):
-            stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in found])
+            rank.answered_by(answer.mode.value)
+        whole.answered_by(answer.mode.value)
+        with self.tracer.span("query_docs.chunks", mode=answer.mode.value):
+            stored = await self.chunks.get_many(
+                version.manifest_id, [h.chunk_id for h in answer.hits]
+            )
         sections = [
             DocSectionOut.from_stored(version, stored[hit.chunk_id])
-            for hit in found
+            for hit in answer.hits
             if hit.chunk_id in stored
         ]
         if query.language:
@@ -854,9 +1034,106 @@ class QueryDocsUseCase:
             library=version.library,
             version=version.version,
             commit_sha=version.commit_sha,
-            retrieval_mode=RetrievalMode.BM25,
+            retrieval_mode=answer.mode,
+            reranked=answer.reranked > 0,
+            fallback_reason=answer.fallback_reason,
             sections=kept,
             omitted=len(sections) - len(kept),
             budget_chars=budget,
             rules=rules,
         )
+
+
+async def _library_retrieval(
+    modes: RetrievalModes, library: str, mode: RetrievalMode | None
+) -> LibraryRetrievalOut:
+    """Describe a library's setting and what a search without ``mode`` would run in now.
+
+    Args:
+        modes: The instance's modes.
+        library: The library's ID as the catalog spells it.
+        mode: The library's setting.
+
+    Returns:
+        The setting, the effective mode and the modes on offer.
+    """
+    registry = await modes.registry(library)
+    choice = registry.choose(asked=None, library=mode, instance=modes.instance_mode)
+    return LibraryRetrievalOut(
+        library=library,
+        mode=mode,
+        instance_mode=modes.instance_mode,
+        effective_mode=choice.mode,
+        fallback_reason=choice.fallback_reason,
+        available_modes=list(registry.available()),
+        configured_roles=[r for r in ModelRole if r in registry.roles],
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetLibraryRetrievalUseCase:
+    """Implements ``ports.driving.GetLibraryRetrieval``."""
+
+    libraries: Libraries
+    """Spells the library ID as the catalog does."""
+    modes: RetrievalModes
+    """The instance's modes and the libraries' settings."""
+
+    async def __call__(self, query: GetLibraryRetrievalQuery) -> LibraryRetrievalOut:
+        """Read the library's mode and the one its searches use now.
+
+        Args:
+            query: The library.
+
+        Returns:
+            Its setting, the effective mode and the modes available.
+        """
+        library = await self.libraries.canonical_id(query.library)
+        if library is None:
+            raise UnknownLibraryError(query.library)
+        mode = await self.modes.library_modes.mode_of(library)
+        return await _library_retrieval(self.modes, library, mode)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SetLibraryRetrievalUseCase:
+    """Implements ``ports.driving.SetLibraryRetrieval``."""
+
+    libraries: Libraries
+    """Spells the library ID as the catalog does."""
+    modes: RetrievalModes
+    """The instance's modes and the libraries' settings."""
+
+    async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
+        """Validate the mode against what can run now, then store it (or clear it).
+
+        Args:
+            command: The library and its mode.
+
+        Returns:
+            The stored setting, the effective mode and the modes available.
+        """
+        library = await self.libraries.canonical_id(command.library)
+        if library is None:
+            raise UnknownLibraryError(command.library)
+        mode = None
+        if command.mode is not None:
+            mode = (await self.modes.registry(library)).check(command.mode)
+        await self.modes.library_modes.set_mode(library, mode)
+        return await _library_retrieval(self.modes, library, mode)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForgetLibraryUseCase:
+    """Implements ``ports.driving.ForgetLibrary``."""
+
+    library_modes: LibraryModes
+    """Each library's own mode, dropped with the library."""
+
+    async def __call__(self, command: ForgetLibraryCommand) -> None:
+        """Drop what retrieval keeps per library, so a library re-added later starts clean.
+
+        Args:
+            command: The removed library.
+        """
+        await self.library_modes.forget(command.library)

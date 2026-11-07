@@ -300,7 +300,7 @@ writable for that), and files owned by another user can stop the server from sta
 | `list_libraries(limit?, cursor?)` | Libraries and imported versions (`refs`: ref, kind, commit SHA, default flag) |
 | `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` | The article tree of a version |
 | `read_article(library, ref?, path)` | A full article, verbatim; an unknown path lists close matches |
-| `search_docs(library, query, ref?, tags?, tags_match?, limit?, mode?)` | Search one version; results carry location, neighbors (`prev_chunk_id` / `next_chunk_id`), `coverage` and the retrieval mode used (`bm25` is the only one; any other `mode` is an error listing the available ones) |
+| `search_docs(library, query, ref?, tags?, tags_match?, limit?, mode?)` | Search one version; results carry location, neighbors (`prev_chunk_id` / `next_chunk_id`), `coverage`, the retrieval mode that answered (`retrieval_mode`, `reranked`) and, when a cheaper mode answered, `fallback_reason`. Without `mode` the library's mode is used, else the instance's, else the best one configured; asking for a mode that is not available is an error (`mode_unavailable`) naming the missing model role and listing the available modes (see [Retrieval](#retrieval)) |
 | `search_all_docs(query, library?, tags?, tags_match?, limit?)` | Search the default version of every library at once; each result names its library and version, `libraries` counts matches per library; at most 500 libraries are searched and `libraries_omitted` says how many were left out (REST: `GET /api/v1/search`) |
 | `read_chunk(chunk_id)` | One chunk verbatim, e.g. a neighbor of a search result; a chunk ID from before a re-sync answers `stale_chunk` |
 | `article_outline(library, path, ref?)` | An article's heading tree with the chunk ID of each heading and no body text, to see what it covers before reading it (REST: `GET /api/v1/libraries/{owner}/{repo}/outline?path=&ref=`); a path the version lacks is `not_found` |
@@ -370,6 +370,18 @@ itself to whatever you configure; the rows below that need an endpoint are **pla
 ([Roadmap](#roadmap)), and [Flows](https://sircypkowskyy.github.io/ExactDocs/flows/) draws how
 the mode is chosen.
 
+Which mode answers a search: the call's `mode`, else the **library's** mode
+(`PUT /api/v1/libraries/{owner}/{repo}/retrieval`), else the **instance's**
+(`EXACTDOCS_AI__MODE`), else the best mode the configured models allow. The modes are
+`bm25`, `hybrid` (needs an embedding model), `hybrid_hyde` (embedding model and LLM) and
+`agentic` (LLM, never a default); reranking is a flag on top of any mode when a reranker is
+configured. A call that asks for a mode that cannot run fails with `mode_unavailable`, naming the
+missing model role; a library or instance mode that cannot run (its model was removed) never fails
+a search: the next one answers, with `fallback_reason: mode_unavailable`. Setting a library's mode
+is refused the same way when its model is not configured. Searching across libraries
+(`search_all_docs`, `GET /api/v1/search`) and `resolve-library-id` stay BM25 whatever the library
+and instance modes are: their scores must compare across libraries.
+
 | Configured | Retrieval | Status |
 |---|---|---|
 | nothing | BM25 | **available** |
@@ -403,6 +415,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
+| `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best mode the configured models allow (BM25 while none is). An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -477,9 +490,10 @@ PostgreSQL (planned with TEAM-01) is backed up with its own tools: `pg_dump -Fc`
 plus `jobs.sqlite`, `known_hosts` and the key from the data directory; `exactdocs backup` refuses a
 non-SQLite `EXACTDOCS_DATABASE_URL`.
 
-**Planned, not read by this version:** `EXACTDOCS_EMBEDDING_*`, `EXACTDOCS_RERANKER_*` and
-`EXACTDOCS_LLM_*` (optional model endpoints), `EXACTDOCS_RETRIEVAL_MODE` (`auto`, `bm25`, `hybrid`,
-`hybrid_hyde`, `agentic`).
+**Planned, not read by this version:** the model endpoints and roles (`EXACTDOCS_AI__...` and a
+TOML file, see [AI retrieval decisions](https://sircypkowskyy.github.io/ExactDocs/decisions/ai-retrieval/)). The optional
+`exactdocs[ai]` extra (`uvx --from 'exactdocs[ai]' exactdocs serve`) already installs their
+dependencies; nothing of it is imported while no model is configured.
 
 ### Private repositories
 

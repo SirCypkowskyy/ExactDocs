@@ -15,6 +15,8 @@ from pydantic import (
 from exactdocs.retrieval.constants import DEFAULT_GRACE_SECONDS, MAX_QUERY, MAX_TAG, MAX_TAGS
 from exactdocs.retrieval.models import (
     Candidate,
+    FallbackReason,
+    ModelRole,
     Outline,
     OutlineNode,
     RebuiltIndex,
@@ -71,7 +73,9 @@ class SearchDocsQuery(_Dto):
     """`any`: at least one of `tags`; `all`: every one."""
     limit: int = Field(default=5, ge=1, le=50)
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """Retrieval mode; default is the best one configured. Only `bm25` for now."""
+    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if configured; default: the library's mode,
+    else the instance's, else the best one configured.
+    """
 
     @field_validator("ref", "mode", mode="before")
     @classmethod
@@ -165,7 +169,6 @@ class CoverageOut(_Dto):
 
     candidates: int
     """Lower bound: matching chunks the search looked at, at most `limit` + 1."""
-    # Constant (0) while BM25 is the only mode; the shape is mode-agnostic on purpose.
     reranked: int
     """Of those, how many a reranker reordered."""
     complete: bool
@@ -183,11 +186,11 @@ class SearchDocsResult(_Dto):
     version: str
     commit_sha: str
     retrieval_mode: RetrievalMode
+    """The mode that answered (the call's, the library's, the instance's, or the best one)."""
     reranked: bool
     coverage: CoverageOut
-    # Always null until a mode that can fall back exists.
-    fallback_reason: str | None = Field(default=None)
-    """Why a better mode was not used, when one was asked for."""
+    fallback_reason: FallbackReason | None = Field(default=None)
+    """Set when a cheaper mode answered than the one that would have: says why."""
     results: list[SearchResultOut]
 
 
@@ -686,6 +689,10 @@ class QueryDocsResult(_Dto):
     version: str
     commit_sha: str
     retrieval_mode: RetrievalMode
+    reranked: bool = False
+    """A reranker reordered the candidates."""
+    fallback_reason: FallbackReason | None = None
+    """Set when a cheaper mode answered than the one that would have: says why."""
     sections: list[DocSectionOut]
     omitted: int
     """Matching chunks neither shown nor pointed to: the budget was used up."""
@@ -694,3 +701,62 @@ class QueryDocsResult(_Dto):
     """The library's `context7.json` rules that fit the budget, shown before the sections. Untrusted
     repository text.
     """
+
+
+class GetLibraryRetrievalQuery(_Dto):
+    """Which library's retrieval setting to read."""
+
+    library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`, any letter case."""
+
+
+class SetLibraryRetrievalCommand(_Dto):
+    """Set (or clear, with no ``mode``) the retrieval mode a library's searches use by default."""
+
+    library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`, any letter case."""
+    mode: str | None = Field(default=None, max_length=MAX_NAME)
+    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now. Empty: use the
+    instance's mode.
+    """
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        """Treat a blank mode as none.
+
+        Args:
+            value: The raw mode.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class LibraryRetrievalOut(_Dto):
+    """A library's retrieval setting and the mode its searches use now when a call names none."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    library: str
+    """`/owner/repo` as the catalog spells it."""
+    mode: RetrievalMode | None
+    """The library's own setting; null: the instance's mode applies."""
+    instance_mode: RetrievalMode | None
+    """The instance's setting (`EXACTDOCS_AI__MODE`); null: the best mode configured."""
+    effective_mode: RetrievalMode
+    """The mode a search without `mode` runs in now."""
+    fallback_reason: FallbackReason | None = Field(default=None)
+    """Set when a setting cannot run now (a role it needs is not configured) and was skipped."""
+    available_modes: list[RetrievalMode]
+    """The modes a call or a setting may name now."""
+    configured_roles: list[ModelRole]
+    """The model roles configured on this instance (`embedding`, `reranker`, `llm`)."""
+
+
+class ForgetLibraryCommand(_Dto):
+    """A library was removed: drop what retrieval stores for it (its retrieval mode)."""
+
+    library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`, any letter case."""

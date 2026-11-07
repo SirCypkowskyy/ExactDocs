@@ -9,6 +9,9 @@ dependencies = ["exactdocs", "exactdocs-kernel"]
 dev = [
     "archunitpython>=1.8.1",
     "behave>=1.3",
+    # The AI extra is installed for development and CI, so the tests prove it stays unimported
+    # while no model is configured (RUN-02), and later AI tests can use pydantic-ai's test models.
+    "exactdocs[ai]",
     "httpx>=0.28",
     "pytest>=9",
     "pytest-asyncio>=1.2",

@@ -14,8 +14,10 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     ManifestHit,
+    ModelRole,
     RebuiltIndex,
     Removed,
+    RetrievalMode,
     SearchableVersion,
     SearchHit,
     SearchIndexState,
@@ -254,3 +256,74 @@ class InMemoryLibraries:
     async def all(self) -> Sequence[CatalogLibrary]:
         """Return the libraries that have a default version."""
         return [lib for lib in self.libraries if lib.default_version is not None]
+
+    async def canonical_id(self, library: str) -> str | None:
+        """Find the listed library that matches in any letter case.
+
+        Args:
+            library: The ID asked for.
+
+        Returns:
+            Its ID as listed, or ``None``.
+        """
+        wanted = library.casefold()
+        return next((lib.id for lib in self.libraries if lib.id.casefold() == wanted), None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StaticModelRoles:
+    """Implements ``ports.driven.ModelRoles`` with a fixed set (tests, until #241 reads config)."""
+
+    roles: frozenset[ModelRole] = frozenset()
+    """The roles that count as configured."""
+
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        """Say which roles are set; the same for every library.
+
+        Args:
+            library: The library searched.
+
+        Returns:
+            The fixed set.
+        """
+        del library
+        return self.roles
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryLibraryModes:
+    """Implements ``ports.driven.LibraryModes`` in a dict keyed by the case-folded library ID."""
+
+    modes: dict[str, RetrievalMode] = field(default_factory=dict)
+    """Mode by case-folded library ID."""
+
+    async def mode_of(self, library: str) -> RetrievalMode | None:
+        """Read the library's mode.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its mode, or ``None`` when it has none.
+        """
+        return self.modes.get(library.casefold())
+
+    async def forget(self, library: str) -> None:
+        """Drop the library's mode.
+
+        Args:
+            library: The library ID, any letter case.
+        """
+        self.modes.pop(library.casefold(), None)
+
+    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
+        """Store or remove the library's mode.
+
+        Args:
+            library: The library ID, any letter case.
+            mode: The mode; ``None`` removes it.
+        """
+        if mode is None:
+            self.modes.pop(library.casefold(), None)
+        else:
+            self.modes[library.casefold()] = mode

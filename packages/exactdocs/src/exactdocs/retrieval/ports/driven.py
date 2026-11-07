@@ -15,8 +15,12 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     ManifestStatus,
+    ModelRole,
+    PipelineAnswer,
+    PipelineRequest,
     RebuiltIndex,
     Removed,
+    RetrievalMode,
     SearchableVersion,
     SearchHit,
     SearchIndexState,
@@ -54,6 +58,18 @@ class Libraries(Protocol):
 
     async def all(self) -> Sequence[CatalogLibrary]:
         """Return every library that has a default version; the rest cannot be queried."""
+        ...
+
+    async def canonical_id(self, library: str) -> str | None:
+        """Spell the library's ID as the catalog does (IDs match in any letter case).
+
+        Args:
+            library: The ID as asked.
+
+        Returns:
+            The catalog's spelling; ``None`` when there is no such library, whether or not it
+            has a version yet.
+        """
         ...
 
 
@@ -243,6 +259,18 @@ class SearchIndexMaintenance(Protocol):
         ...
 
 
+class SearchSpan(Protocol):
+    """An open search span: it can still learn which mode really answered."""
+
+    def answered_by(self, mode: str) -> None:
+        """Record the mode that answered, when a pipeline fell back to a cheaper one.
+
+        Args:
+            mode: The mode in the result (``retrieval_mode``).
+        """
+        ...
+
+
 class SearchTracer(Protocol):
     """Marks a search and its stages for whoever observes them (traces and metrics, OPS-01).
 
@@ -252,16 +280,99 @@ class SearchTracer(Protocol):
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
-    ) -> AbstractContextManager[object]:
+    ) -> AbstractContextManager[SearchSpan]:
         """Open the span ``name`` (``search_docs``, ``search_docs.rank``...) until the block ends.
 
         Args:
             name: The search, or the search and its stage after a dot.
-            mode: The retrieval mode the search runs in (``bm25``).
+            mode: The retrieval mode the search was chosen to run in (``bm25``); the block may
+                replace it with the mode that answered (``SearchSpan.answered_by``).
             query: The query text, recorded only when the adapter was told to.
             attributes: Further labels (library, ref); ``None`` ones are left out.
 
         Returns:
             A context manager: the span lasts as long as its block.
+        """
+        ...
+
+
+class ModelRoles(Protocol):
+    """Which model roles a library's searches may use: the availability view of role resolution.
+
+    In the decision record's terms (docs/decisions/ai-retrieval.md, *Where the code lives*),
+    retrieval resolves the profile and model of each role from ``ProviderProfiles`` (instance
+    roles from the environment, the TOML file or the UI, #241) plus the library's overrides
+    (AI on or off, its own ``llm``/``judge``/``reranker``, #102); ``ModelFactory`` then turns a
+    resolved profile into something callable. This port only says which roles resolve for a
+    library, so #241 implements it inside retrieval over ``ProviderProfiles``, not as a second
+    source of truth in bootstrap. A library with AI off has no role at all: nothing of it is
+    sent to a provider. Asked at every search, so a change counts at the next one.
+    """
+
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        """Say which roles a search of ``library`` may use.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            The roles; empty when nothing is configured or the library has AI off (BM25 only).
+        """
+        ...
+
+
+class LibraryModes(Protocol):
+    """Each library's own retrieval mode, which a search uses when the call names none.
+
+    Library IDs match in any letter case.
+    """
+
+    async def mode_of(self, library: str) -> RetrievalMode | None:
+        """Read the library's mode.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            The mode, or ``None`` when it has none (the instance's applies).
+        """
+        ...
+
+    async def forget(self, library: str) -> None:
+        """Drop everything stored for a library that was removed (a no-op when nothing is).
+
+        Args:
+            library: The library ID, any letter case.
+        """
+        ...
+
+    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
+        """Store the library's mode.
+
+        Args:
+            library: The library ID as the catalog spells it.
+            mode: The mode; ``None`` removes it.
+        """
+        ...
+
+
+class RetrievalPipeline(Protocol):
+    """One way of finding the chunks of one version that answer a query (a retrieval mode).
+
+    The use cases pick the mode (call, then library, then instance, then the best available, see
+    ``ModeRegistry``) and run the pipeline registered for it. Version is a hard filter: every
+    hit must come from ``request.version``. A pipeline that cannot do its part (a version not
+    embedded yet, a budget reached) answers with a cheaper mode and says why in the answer; it
+    raises only for what would fail any mode.
+    """
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Search the version.
+
+        Args:
+            request: The version, the query, the tag filter, the limit and the rerank flag.
+
+        Returns:
+            At most ``request.limit`` hits, best first, with the mode that really answered.
         """
         ...

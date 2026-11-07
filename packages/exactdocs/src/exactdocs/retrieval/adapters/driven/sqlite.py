@@ -38,6 +38,7 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     ManifestChunk,
     Removed,
+    RetrievalMode,
     SectionRef,
     StoredChunk,
     VersionCounts,
@@ -109,6 +110,14 @@ manifest_chunks = Table(
     ),
     Index("ix_retrieval_manifest_chunks_article", "manifest_id", "article_path", "position"),
     Index("ix_retrieval_manifest_chunks_chunk_id", "chunk_id"),
+)
+
+library_settings = Table(
+    "retrieval_library_settings",
+    metadata,
+    # The library ID case-folded: IDs match in any letter case.
+    Column("library", Text, primary_key=True),
+    Column("mode", Text),  # RetrievalMode value; NULL: the instance's mode applies
 )
 
 
@@ -444,3 +453,56 @@ def _manifest(row: Row[Any]) -> IndexedManifest:
 def _batches(items: list[str], size: int = 500) -> list[list[str]]:
     """Slices small enough for SQLite's bound-variable limit."""
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteLibraryModes:
+    """Implements ``ports.driven.LibraryModes`` in ``retrieval_library_settings``."""
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def mode_of(self, library: str) -> RetrievalMode | None:
+        """Read the stored mode; a value this build does not know counts as none.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its mode, or ``None``.
+        """
+        async with self.engine.connect() as connection:
+            stored = await connection.scalar(
+                select(library_settings.c.mode).where(
+                    library_settings.c.library == library.casefold()
+                )
+            )
+        return RetrievalMode(stored) if stored in RetrievalMode else None
+
+    async def forget(self, library: str) -> None:
+        """Delete the library's row.
+
+        Args:
+            library: The library ID, any letter case.
+        """
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(library_settings).where(library_settings.c.library == library.casefold())
+            )
+
+    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
+        """Replace the library's row.
+
+        Args:
+            library: The library ID, any letter case.
+            mode: The mode; ``None`` deletes the row.
+        """
+        key = library.casefold()
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(library_settings).where(library_settings.c.library == key)
+            )
+            if mode is not None:
+                await connection.execute(
+                    insert(library_settings).values(library=key, mode=mode.value)
+                )

@@ -337,7 +337,12 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Search */
+        /**
+         * Search
+         * @description Search one exact version; never another one.
+         *
+         *     `retrieval_mode` says which mode answered and `fallback_reason` why a cheaper one did.
+         */
         readonly get: operations["retrieval-search"];
         readonly put?: never;
         readonly post?: never;
@@ -429,6 +434,34 @@ export interface paths {
          */
         readonly get: operations["retrieval-context_docs"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/retrieval": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Library Retrieval
+         * @description Read the library's retrieval mode and the mode a search without `mode` runs in now.
+         */
+        readonly get: operations["retrieval-get_library_retrieval"];
+        /**
+         * Set Library Retrieval
+         * @description Set the mode the library's searches use when a call names none (RET-06).
+         *
+         *     A call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to
+         *     libraries without one. A mode set here that later cannot run (a model role was removed)
+         *     does not fail searches: they fall back with `fallback_reason` `mode_unavailable`.
+         */
+        readonly put: operations["retrieval-set_library_retrieval"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1494,6 +1527,12 @@ export interface components {
             readonly message: string;
         };
         /**
+         * FallbackReason
+         * @description Why a search was answered by a cheaper mode than the one it would have used.
+         * @enum {string}
+         */
+        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited";
+        /**
          * FieldError
          * @description One invalid request field.
          */
@@ -1762,6 +1801,47 @@ export interface components {
             readonly description?: string | null;
         };
         /**
+         * LibraryRetrievalIn
+         * @description A library's retrieval mode, as the admin sets it.
+         */
+        readonly LibraryRetrievalIn: {
+            /**
+             * Mode
+             * @description `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now (422
+             *     `mode_unavailable` names the missing model role otherwise). Null: the instance's mode.
+             */
+            readonly mode?: string | null;
+        };
+        /**
+         * LibraryRetrievalOut
+         * @description A library's retrieval setting and the mode its searches use now when a call names none.
+         */
+        readonly LibraryRetrievalOut: {
+            /**
+             * Library
+             * @description `/owner/repo` as the catalog spells it.
+             */
+            readonly library: string;
+            /** @description The library's own setting; null: the instance's mode applies. */
+            readonly mode: components["schemas"]["RetrievalMode"] | null;
+            /** @description The instance's setting (`EXACTDOCS_AI__MODE`); null: the best mode configured. */
+            readonly instance_mode: components["schemas"]["RetrievalMode"] | null;
+            /** @description The mode a search without `mode` runs in now. */
+            readonly effective_mode: components["schemas"]["RetrievalMode"];
+            /** @description Set when a setting cannot run now (a role it needs is not configured) and was skipped. */
+            readonly fallback_reason: components["schemas"]["FallbackReason"] | null;
+            /**
+             * Available Modes
+             * @description The modes a call or a setting may name now.
+             */
+            readonly available_modes: readonly components["schemas"]["RetrievalMode"][];
+            /**
+             * Configured Roles
+             * @description The model roles configured on this instance (`embedding`, `reranker`, `llm`).
+             */
+            readonly configured_roles: readonly components["schemas"]["ModelRole"][];
+        };
+        /**
          * LibrarySearchResultOut
          * @description A result of a search across libraries: also names the library and version it came from.
          */
@@ -1955,6 +2035,15 @@ export interface components {
              */
             readonly tags: readonly string[];
         };
+        /**
+         * ModelRole
+         * @description A model an operator can configure; which ones are set decides the modes on offer.
+         *
+         *     The decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),
+         *     is not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank.
+         * @enum {string}
+         */
+        readonly ModelRole: "embedding" | "reranker" | "llm";
         /**
          * OutlineSectionOut
          * @description One heading of the outline, with the chunk it starts and the headings under it.
@@ -2233,7 +2322,7 @@ export interface components {
          * @description How a search found its results. One result shape serves every mode.
          * @enum {string}
          */
-        readonly RetrievalMode: "bm25";
+        readonly RetrievalMode: "bm25" | "hybrid" | "hybrid_hyde" | "agentic";
         /**
          * SearchAllResult
          * @description Results across libraries, best first, with the libraries that answer and their counts.
@@ -2284,15 +2373,13 @@ export interface components {
             readonly version: string;
             /** Commit Sha */
             readonly commit_sha: string;
+            /** @description The mode that answered (the call's, the library's, the instance's, or the best one). */
             readonly retrieval_mode: components["schemas"]["RetrievalMode"];
             /** Reranked */
             readonly reranked: boolean;
             readonly coverage: components["schemas"]["CoverageOut"];
-            /**
-             * Fallback Reason
-             * @description Why a better mode was not used, when one was asked for.
-             */
-            readonly fallback_reason: string | null;
+            /** @description Set when a cheaper mode answered than the one that would have: says why. */
+            readonly fallback_reason: components["schemas"]["FallbackReason"] | null;
             /** Results */
             readonly results: readonly components["schemas"]["SearchResultOut"][];
         };
@@ -4683,6 +4770,8 @@ export interface operations {
                 readonly tags?: readonly string[] | null;
                 readonly tags_match?: components["schemas"]["exactdocs__retrieval__models__TagMatch"];
                 readonly limit?: number;
+                /** @description `bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured. */
+                readonly mode?: string | null;
             };
             readonly header?: never;
             readonly path: {
@@ -5019,6 +5108,164 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["C7ContextResponse"];
                     readonly "text/plain": string;
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "retrieval-get_library_retrieval": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryRetrievalOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "retrieval-set_library_retrieval": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LibraryRetrievalIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryRetrievalOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

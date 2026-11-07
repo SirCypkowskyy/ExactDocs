@@ -26,7 +26,9 @@ from exactdocs.retrieval.dtos import (
     ArticleOutlineOut,
     ArticleOutlineQuery,
     ChunkOut,
+    GetLibraryRetrievalQuery,
     LibraryMatchOut,
+    LibraryRetrievalOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -35,17 +37,31 @@ from exactdocs.retrieval.dtos import (
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
+    SetLibraryRetrievalCommand,
 )
 from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
+    GetLibraryRetrieval,
     QueryDocs,
     ReadChunk,
     ResolveLibraryId,
     SearchAllLibraries,
     SearchDocs,
+    SetLibraryRetrieval,
 )
 from exactdocs_kernel import NOTICE
+
+
+class LibraryRetrievalIn(BaseModel):
+    """A library's retrieval mode, as the admin sets it."""
+
+    model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
+
+    mode: str | None = Field(default=None, max_length=MAX_NAME)
+    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now (422
+    `mode_unavailable` names the missing model role otherwise). Null: the instance's mode.
+    """
 
 
 class _Camel(BaseModel):
@@ -173,7 +189,35 @@ def build_router(
         ] = None,
         tags_match: TagMatch = TagMatch.ANY,
         limit: Annotated[int, Query(ge=1, le=50)] = 5,
+        mode: Annotated[
+            str | None,
+            Query(
+                max_length=MAX_NAME,
+                description=(
+                    "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 "
+                    "`mode_unavailable` otherwise). Default: the library's mode, else the "
+                    "instance's, else the best one configured."
+                ),
+            ),
+        ] = None,
     ) -> SearchDocsResult:
+        """Search one exact version; never another one.
+
+        `retrieval_mode` says which mode answered and `fallback_reason` why a cheaper one did.
+
+        Args:
+            owner: The library's owner.
+            repo: The library's repository name.
+            q: The query.
+            ref: The exact version; the default version without one.
+            tags: Only chunks of articles so tagged.
+            tags_match: `any` or `all` of the tags.
+            limit: How many results at most.
+            mode: The retrieval mode; the default without one.
+
+        Returns:
+            The results of that version.
+        """
         try:
             query = SearchDocsQuery(
                 library=f"/{owner}/{repo}",
@@ -182,6 +226,7 @@ def build_router(
                 tags=tags or [],
                 tags_match=tags_match,
                 limit=limit,
+                mode=mode,
             )
         except ValidationError as error:  # what the Query() bounds above cannot see
             raise RequestValidationError(error.errors()) from error
@@ -297,6 +342,56 @@ def build_router(
         # The notice leads the body, as it leads the MCP result, and repeats in a header.
         return PlainTextResponse(
             f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
+        )
+
+    return router
+
+
+def build_library_retrieval_router(
+    *, get_library_retrieval: GetLibraryRetrieval, set_library_retrieval: SetLibraryRetrieval
+) -> APIRouter:
+    """Build the routes of a library's retrieval mode (RET-06).
+
+    Args:
+        get_library_retrieval: Reads a library's mode.
+        set_library_retrieval: Sets or clears it.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["retrieval"])
+
+    @router.get("/libraries/{owner}/{repo}/retrieval", name="get_library_retrieval")
+    async def get_retrieval(owner: str, repo: str) -> LibraryRetrievalOut:
+        """Read the library's retrieval mode and the mode a search without `mode` runs in now.
+
+        Args:
+            owner: The library's owner.
+            repo: The library's repository name.
+
+        Returns:
+            The setting, the effective mode and the modes available.
+        """
+        return await get_library_retrieval(GetLibraryRetrievalQuery(library=f"/{owner}/{repo}"))
+
+    @router.put("/libraries/{owner}/{repo}/retrieval", name="set_library_retrieval")
+    async def set_retrieval(owner: str, repo: str, body: LibraryRetrievalIn) -> LibraryRetrievalOut:
+        """Set the mode the library's searches use when a call names none (RET-06).
+
+        A call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to
+        libraries without one. A mode set here that later cannot run (a model role was removed)
+        does not fail searches: they fall back with `fallback_reason` `mode_unavailable`.
+
+        Args:
+            owner: The library's owner.
+            repo: The library's repository name.
+            body: The mode, or null to clear it.
+
+        Returns:
+            The setting, the effective mode and the modes available.
+        """
+        return await set_library_retrieval(
+            SetLibraryRetrievalCommand(library=f"/{owner}/{repo}", mode=body.mode)
         )
 
     return router

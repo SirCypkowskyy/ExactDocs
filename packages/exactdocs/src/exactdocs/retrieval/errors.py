@@ -27,14 +27,40 @@ class EmptySearchTextError(ValidationError):
 
 
 class UnavailableModeError(ValidationError):
-    """The asked retrieval mode is not configured on this instance."""
+    """The asked retrieval mode is unknown, or cannot run on this instance now.
 
-    def __init__(self, mode: str, available: list[str]) -> None:
+    ``missing_roles`` names the model roles it needs that are not configured; it is empty for an
+    unknown mode, or for one whose pipeline this build does not have yet.
+    """
+
+    code = "mode_unavailable"
+
+    def __init__(self, mode: str, available: list[str], missing_roles: list[str]) -> None:
+        if missing_roles:
+            plural = "s" if len(missing_roles) > 1 else ""
+            why = f": it needs the {' and '.join(missing_roles)} role{plural}, not configured"
+        else:
+            why = ""
         super().__init__(
-            f"retrieval mode {mode!r} is not available; available modes: {', '.join(available)}. "
-            "Omit mode to use the default."
+            f"retrieval mode {_data(mode)} is not available{why}; available modes: "
+            f"{', '.join(available)}. Omit mode to use the default."
         )
         self.mode = mode
+        self.available = available
+        self.missing_roles = missing_roles
+
+
+class UnknownLibraryError(NotFoundError):
+    """No library has this ID."""
+
+    def __init__(self, library: str) -> None:
+        """Name the library that was asked for.
+
+        Args:
+            library: The ID as asked, quoted as untrusted text.
+        """
+        super().__init__(f"no library {_data(library)}")
+        self.library = library
 
 
 class VersionNotIndexedError(NotFoundError):

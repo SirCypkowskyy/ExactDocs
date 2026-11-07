@@ -2918,6 +2918,7 @@
           "retrieval"
         ],
         "summary": "Search",
+        "description": "Search one exact version; never another one.\n\n`retrieval_mode` says which mode answered and `fallback_reason` why a cheaper one did.",
         "operationId": "retrieval-search",
         "security": [
           {
@@ -3019,6 +3020,25 @@
               "default": 5,
               "title": "Limit"
             }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured.",
+              "title": "Mode"
+            },
+            "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured."
           }
         ],
         "responses": {
@@ -3568,6 +3588,234 @@
               "text/plain": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/retrieval": {
+      "get": {
+        "tags": [
+          "retrieval"
+        ],
+        "summary": "Get Library Retrieval",
+        "description": "Read the library's retrieval mode and the mode a search without `mode` runs in now.",
+        "operationId": "retrieval-get_library_retrieval",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryRetrievalOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "retrieval"
+        ],
+        "summary": "Set Library Retrieval",
+        "description": "Set the mode the library's searches use when a call names none (RET-06).\n\nA call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to\nlibraries without one. A mode set here that later cannot run (a model role was removed)\ndoes not fail searches: they fall back with `fallback_reason` `mode_unavailable`.",
+        "operationId": "retrieval-set_library_retrieval",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRetrievalIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryRetrievalOut"
                 }
               }
             }
@@ -6836,6 +7084,17 @@
         "title": "ErrorResponse",
         "description": "The one error shape of the API: a stable machine ``error`` code and a human ``detail``."
       },
+      "FallbackReason": {
+        "type": "string",
+        "enum": [
+          "mode_unavailable",
+          "embedding_in_progress",
+          "llm_budget_reached",
+          "llm_rate_limited"
+        ],
+        "title": "FallbackReason",
+        "description": "Why a search was answered by a cheaper mode than the one it would have used."
+      },
       "FieldError": {
         "properties": {
           "loc": {
@@ -7448,6 +7707,102 @@
         "title": "LibraryPatch",
         "description": "The fields a user may change; at least one must be given."
       },
+      "LibraryRetrievalIn": {
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode",
+            "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now (422\n`mode_unavailable` names the missing model role otherwise). Null: the instance's mode."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LibraryRetrievalIn",
+        "description": "A library's retrieval mode, as the admin sets it."
+      },
+      "LibraryRetrievalOut": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library",
+            "description": "`/owner/repo` as the catalog spells it."
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetrievalMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The library's own setting; null: the instance's mode applies."
+          },
+          "instance_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetrievalMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The instance's setting (`EXACTDOCS_AI__MODE`); null: the best mode configured."
+          },
+          "effective_mode": {
+            "$ref": "#/components/schemas/RetrievalMode",
+            "description": "The mode a search without `mode` runs in now."
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FallbackReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when a setting cannot run now (a role it needs is not configured) and was skipped."
+          },
+          "available_modes": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalMode"
+            },
+            "type": "array",
+            "title": "Available Modes",
+            "description": "The modes a call or a setting may name now."
+          },
+          "configured_roles": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRole"
+            },
+            "type": "array",
+            "title": "Configured Roles",
+            "description": "The model roles configured on this instance (`embedding`, `reranker`, `llm`)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "mode",
+          "instance_mode",
+          "effective_mode",
+          "fallback_reason",
+          "available_modes",
+          "configured_roles"
+        ],
+        "title": "LibraryRetrievalOut",
+        "description": "A library's retrieval setting and the mode its searches use now when a call names none."
+      },
       "LibrarySearchResultOut": {
         "properties": {
           "chunk_id": {
@@ -7869,6 +8224,16 @@
         ],
         "title": "ManualTagsIn",
         "description": "The tags to set by hand on an article path; they replace its earlier manual tags."
+      },
+      "ModelRole": {
+        "type": "string",
+        "enum": [
+          "embedding",
+          "reranker",
+          "llm"
+        ],
+        "title": "ModelRole",
+        "description": "A model an operator can configure; which ones are set decides the modes on offer.\n\nThe decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),\nis not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank."
       },
       "OutlineSectionOut": {
         "properties": {
@@ -8428,7 +8793,10 @@
       "RetrievalMode": {
         "type": "string",
         "enum": [
-          "bm25"
+          "bm25",
+          "hybrid",
+          "hybrid_hyde",
+          "agentic"
         ],
         "title": "RetrievalMode",
         "description": "How a search found its results. One result shape serves every mode."
@@ -8513,7 +8881,8 @@
             "title": "Commit Sha"
           },
           "retrieval_mode": {
-            "$ref": "#/components/schemas/RetrievalMode"
+            "$ref": "#/components/schemas/RetrievalMode",
+            "description": "The mode that answered (the call's, the library's, the instance's, or the best one)."
           },
           "reranked": {
             "type": "boolean",
@@ -8525,14 +8894,13 @@
           "fallback_reason": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/FallbackReason"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Fallback Reason",
-            "description": "Why a better mode was not used, when one was asked for."
+            "description": "Set when a cheaper mode answered than the one that would have: says why."
           },
           "results": {
             "items": {

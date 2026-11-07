@@ -142,16 +142,26 @@ most recently imported version.
 
 ## Retrieval modes
 
-Only BM25 is built. The rest is the design for the *Next: AI retrieval* milestone: the pipeline
-upgrades itself to what is configured, and a call can still pick a mode (`mode`, today only
-`bm25`; anything else is an error that lists the available modes).
+Only BM25 is built; the other modes are the design for the *Next: AI retrieval* milestone. Which
+mode answers is decided per call (RET-06): the call's `mode`, else the library's mode, else the
+instance's (`EXACTDOCS_AI__MODE`), else the best mode the configured model roles allow. A
+mode is available when it has a pipeline and its roles are configured (`hybrid`: embedding;
+`hybrid_hyde`: embedding and LLM; `agentic`: LLM); reranking is a flag on top. A mode the call asks
+for that is not available is an error naming the missing role; a library or instance mode that is
+not available is skipped, and the result says so (`fallback_reason: mode_unavailable`).
 
 ```mermaid
 flowchart TD
-    q["query + library version"] --> mode{"mode asked for?"}
-    mode -->|"bm25 (or none)"| bm25
-    mode -->|"anything else"| err["tool error listing the available modes"]
-    bm25["BM25 on SQLite FTS5<br/>version-pinned, identifier-aware"] --> out["verbatim chunks + retrieval_mode + coverage"]
+    q["query + library version"] --> asked{"mode in the call?"}
+    asked -->|"available"| run
+    asked -->|"not available"| err["error mode_unavailable:<br/>missing role + available modes"]
+    asked -->|"none"| lib{"library mode<br/>available?"}
+    lib -->|yes| run
+    lib -->|"none or not available"| inst{"instance mode<br/>available?"}
+    inst -->|yes| run
+    inst -->|"none or not available"| best["best available<br/>(HyDE, hybrid, BM25)"]
+    best --> run
+    run["the mode's pipeline, on this one version"] --> out["verbatim chunks + retrieval_mode + reranked<br/>+ coverage + fallback_reason"]
 
     subgraph planned ["Planned: configured endpoints upgrade the pipeline"]
         direction TB

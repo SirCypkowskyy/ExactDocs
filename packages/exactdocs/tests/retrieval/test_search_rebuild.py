@@ -14,7 +14,11 @@ from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.retrieval.adapters.driven.memory import InMemoryDefaultVersions, InMemoryLibraries
+from exactdocs.retrieval.adapters.driven.memory import (
+    InMemoryDefaultVersions,
+    InMemoryLibraries,
+    InMemoryLibraryModes,
+)
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.constants import FORMAT
@@ -108,6 +112,7 @@ async def db() -> AsyncIterator[Db]:
             chunks=SqliteChunkRepository(engine=container.engine),
             search=index,
             maintenance=index,
+            library_modes=InMemoryLibraryModes(),
         )
         yield Db(container, index, retrieval)
 

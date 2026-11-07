@@ -294,6 +294,16 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   These are the codes adding a version answers, not the sync's own `repo_unreachable` /
   `auth_failed`: a script that branches on codes handles both sets.
 
+- **Retrieval mode** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with `{"mode": "hybrid"}`
+  sets the mode the library's searches use when a call names none (`null` clears it: the
+  instance's `EXACTDOCS_AI__MODE` applies, else the best mode configured). The mode must be
+  available now: 422 `mode_unavailable` names the model role it needs that is not configured.
+  `GET .../retrieval` returns the setting with `instance_mode`, the `effective_mode` a search
+  without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
+  `available_modes` and the `configured_roles`. 404 for an unknown library. A search's own `mode`
+  (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable one is a 422
+  `mode_unavailable` as well.
+
 ## Jobs, access and health
 
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag` or

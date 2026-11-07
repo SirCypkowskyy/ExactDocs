@@ -9,6 +9,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.dtos import (
@@ -106,6 +107,7 @@ async def retrieval() -> RetrievalModule:
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
     for manifest, ref, articles in [
         ("m13", "v1.3.0", [article("docs/guide/setup.md", [(["Setup"], "# Setup")])]),
@@ -221,6 +223,7 @@ async def test_a_wrong_path_lists_the_close_matches_of_that_version() -> None:
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
         suggestions=suggestions,
     )
 
