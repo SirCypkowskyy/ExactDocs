@@ -170,13 +170,13 @@ class DbosJobWorker:
     monotonic: Callable[[], float] = time.monotonic
     """The clock ``adopt_grace`` is measured with (tests pass their own)."""
     _suspects: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    """Executors whose slots were seen free, and since when (``monotonic``)."""
     _unconfirmed: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     """Since when (``monotonic``) the slot could not be confirmed, while it cannot."""
     _lost: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     """Set once the slot is lost: no job starts here any more."""
     _refused: set[str] = field(default_factory=set, init=False, repr=False)
     """Jobs DBOS handed over after the slot was lost: queued again for another process."""
-    """Executors whose slots were seen free, and since when (``time.monotonic``)."""
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
 
     @asynccontextmanager
