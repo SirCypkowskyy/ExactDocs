@@ -1,14 +1,12 @@
 """Telemetry (OPS-01): off by default; with ``EXACTDOCS_TELEMETRY=otlp``, traces to a collector.
 
 Only the OpenTelemetry *API* is imported here, which records nothing until an SDK is set up.
-The SDK (Logfire, used only as an OpenTelemetry SDK) is configured by ``start_telemetry`` when the
-operator turned telemetry on, never otherwise: a default process has no provider and no exporter.
-(pydantic imports Logfire's plugin in every process; unconfigured, it records nothing.)
+The SDK (``bootstrap/otlp.py``) is loaded by ``start_telemetry`` when the operator turned
+telemetry on, never otherwise: a default process has no SDK, no provider and no exporter.
 """
 
 import importlib
 import logging
-import os
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import Any
@@ -17,7 +15,7 @@ from opentelemetry import trace
 
 from exactdocs.bootstrap.constants import (
     JOB_TRACER_NAME,
-    OTLP_ENDPOINT_VARIABLES,
+    OTLP_ENDPOINT_VARIABLE,
     OTLP_MODULE,
     UNTRACED_PATHS,
 )
@@ -38,14 +36,15 @@ def start_telemetry(settings: Settings) -> None:
     """
     if settings.telemetry != "otlp":
         return
-    if not any(os.environ.get(name) for name in OTLP_ENDPOINT_VARIABLES):
-        logger.warning(
-            "EXACTDOCS_TELEMETRY=otlp, but neither %s is set: no traces are exported",
-            " nor ".join(OTLP_ENDPOINT_VARIABLES),
-        )
     # Loaded here, not imported at the top: with telemetry off the SDK is never loaded.
     otlp = importlib.import_module(OTLP_MODULE)
-    otlp.configure_otlp(record_query_text=settings.telemetry_query_text)
+    if not otlp.exports("TRACES"):
+        logger.warning(
+            "EXACTDOCS_TELEMETRY=otlp, but no OTLP endpoint is set (%s): no traces are exported",
+            OTLP_ENDPOINT_VARIABLE,
+        )
+    if not otlp.configure_otlp(record_query_text=settings.telemetry_query_text):
+        logger.warning("telemetry was already set up in this process; it is left as it is")
 
 
 def search_tracer(settings: Settings) -> SearchTracer | None:

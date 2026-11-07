@@ -407,7 +407,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_MAX_IMPORT_BYTES` | `268435456` (256 MiB) | An import whose selected text adds up to more fails with `import_too_large` instead of exhausting memory |
 | `EXACTDOCS_IMPORT_BATCH_FILES` | `100` | Files an import parses and chunks per durable step. An import that a crash, `kill -9` or a deploy interrupted resumes on the next start after its last completed step (DBOS keeps them in `<data dir>/jobs.sqlite`: about 3x the version's text while the import runs, compacted once no job runs), so it loses at most this many files of work |
 | `EXACTDOCS_JOB_POLL_SECONDS` | `1` | How often the job worker looks for a queued job to start (at most 60). An idle server polls no more often than this; lower it only if a second of delay before an import starts matters |
-| `EXACTDOCS_TELEMETRY` | `off` | `otlp`: traces (and metrics and logs) over OTLP/HTTP to your OpenTelemetry collector, named by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`); nothing is exported while neither is set. See [Privacy and observability](#privacy-and-observability) |
+| `EXACTDOCS_TELEMETRY` | `off` | `otlp`: traces and metrics over OTLP/HTTP to your OpenTelemetry collector, named by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `..._METRICS_ENDPOINT`); a signal with no endpoint, or with `OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` set to `none`, is not exported. See [Privacy and observability](#privacy-and-observability) |
 | `EXACTDOCS_TELEMETRY_QUERY_TEXT` | `false` | Keep the text of search queries in the traces. Off, it is left out of every span and redacted from request URLs |
 | `EXACTDOCS_AUTO_SYNC_SCHEDULE` | `0 * * * * *` | When the scheduled check ticks (a DBOS cron expression, seconds first). Each tick checks the libraries whose own interval is up (`PUT /api/v1/libraries/{owner}/{repo}/auto-sync`): new matching tags imported, old automatic versions pruned, branches re-synced. Paused while no library has a schedule. An invalid expression stops startup |
 
@@ -568,12 +568,13 @@ ExactDocs makes no outbound connections you did not configure: only your git hos
 endpoints (planned) and, if you turn it on, your trace collector. No analytics, no update checks.
 The Prometheus endpoint is planned.
 
-**Traces (opt-in).** With `EXACTDOCS_TELEMETRY=otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT` pointing at
-your collector (e.g. `http://otel-collector:4318`), ExactDocs exports OpenTelemetry traces over
-OTLP/HTTP; the other standard `OTEL_*` variables (headers, service name, sampling) apply. The SDK
-is [Logfire](https://logfire.pydantic.dev)'s, used only as an OpenTelemetry SDK: it never sends to
-Logfire's cloud and never writes to the console (stdout belongs to stdio MCP). Off (the default),
-it is not even set up, and setting the `OTEL_*` variables alone exports nothing. You get:
+**Traces and metrics (opt-in).** With `EXACTDOCS_TELEMETRY=otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT`
+pointing at your collector (e.g. `http://otel-collector:4318`), ExactDocs exports OpenTelemetry
+traces and metrics over OTLP/HTTP, with the plain OpenTelemetry SDK; the other standard `OTEL_*`
+variables (headers, service name, resource attributes, sampling) apply. Nothing is written to the
+console (stdout belongs to stdio MCP). Off (the default), the SDK is not even imported, and setting
+the `OTEL_*` variables alone exports nothing. The metrics are FastAPI's request metrics
+(`http.server.request.duration`, `http.server.active_requests`, by route and status). The spans:
 
 | Span | Where from |
 |---|---|
@@ -581,12 +582,19 @@ it is not even set up, and setting the `OTEL_*` variables alone exports nothing.
 | `tools/call search_docs`, ... | every MCP request, named after the tool (FastMCP) |
 | `retrieval.search_docs`, `retrieval.search_all_libraries`, `retrieval.query_docs`, `retrieval.resolve_library_id` | every search, with `exactdocs.retrieval.mode` (`bm25`), library and ref |
 | `retrieval.<search>.version`, `.rank`, `.chunks` (`.versions` for the cross-library ones) | each stage of a search: finding the version, ranking, loading the chunks |
-| `ingestion.import`, `ingestion.refresh` (a branch sync), `ingestion.reprocess`, `ingestion.rechunk`, `ingestion.retag`, `ingestion.collect` | every job, with its library and version, inside DBOS's workflow and step spans |
+| `ingestion.import`, `ingestion.refresh` (a branch sync), `ingestion.reprocess`, `ingestion.rechunk`, `ingestion.retag`, `ingestion.collect` | every job, with its library and version |
 
-**Query text stays out** unless you set `EXACTDOCS_TELEMETRY_QUERY_TEXT=true`: no span carries it,
-and the values of `q`, `query` and `url` (a repository URL may hold a token) in request URLs are
-replaced with `REDACTED`. LLM calls will be traced without their prompts and answers
-(pydantic-ai's `include_content=False`) once the AI retrieval modes exist.
+**Query text stays out** unless you set `EXACTDOCS_TELEMETRY_QUERY_TEXT=true`: no span carries it;
+the values of `q`, `query`, `libraryName` and `url` (a repository URL may hold a token) in request
+URLs are replaced with `REDACTED`; and an error keeps its exception type but not its message or
+stack trace, which can quote the input (a refused, over-long query is named in its validation
+error). LLM calls will be traced without their prompts and answers (pydantic-ai's
+`include_content=False`) once the AI retrieval modes exist.
+
+**Access logs are not covered.** uvicorn's access log on stdout (`GET /api/v1/...?q=... 200`)
+holds the full URL, query text included, whatever the telemetry settings, as it always did. If your
+container logs are shipped somewhere, filter those lines (logger `uvicorn.access`) in your log
+pipeline.
 
 This is tested, not just promised, in
 [`test_no_outbound.py`](packages/exactdocs/tests/bootstrap/test_no_outbound.py): an import over

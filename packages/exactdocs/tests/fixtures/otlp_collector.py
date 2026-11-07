@@ -12,7 +12,10 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from opentelemetry import metrics, trace
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.trace import TracerProvider
 
 TRACES = "/v1/traces"
 
@@ -100,3 +103,15 @@ def collecting() -> Generator[Collector]:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def shut_telemetry_down() -> None:
+    """Flush and stop this process's SDK providers while the collector still listens.
+
+    Otherwise they export once more at exit, to a collector that is gone, and retry for seconds.
+    """
+    tracer_provider, meter_provider = trace.get_tracer_provider(), metrics.get_meter_provider()
+    assert isinstance(tracer_provider, TracerProvider), tracer_provider
+    tracer_provider.shutdown()
+    if isinstance(meter_provider, MeterProvider):
+        meter_provider.shutdown()

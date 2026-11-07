@@ -149,11 +149,7 @@ rules = { call-non-callable = "ignore" }
 minversion = "9.0"
 testpaths = ["packages/exactdocs-kernel/tests", "packages/exactdocs/tests"]
 pythonpath = ["packages/exactdocs/tests/fixtures"]  # fixture_repo.py
-# Logfire (the telemetry SDK) ships pytest plugins; they never run here.
-addopts = [
-    "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
-    "-p", "no:logfire", "-p", "no:pytest_logfire",
-]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true

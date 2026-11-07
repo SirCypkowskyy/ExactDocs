@@ -24,9 +24,9 @@ What is *observed* and what is only *pinned*:
 - Dependency audit: fastmcp, mcp, FastAPI and DBOS only emit OpenTelemetry spans through
   ``opentelemetry-api``, which exports nothing until an SDK is set up; neither they nor uvicorn or
   pydantic call an analytics or error-reporting endpoint; the one PyPI call, FastMCP's update
-  check, is forced off. Logfire (the SDK behind ``EXACTDOCS_TELEMETRY=otlp``) is installed, and
-  pydantic loads its plugin into every process, but it stays unconfigured unless telemetry is on:
-  ``test_a_fresh_process_...`` starts the app with the defaults and finds no SDK provider set.
+  check, is forced off. The OpenTelemetry SDK (behind ``EXACTDOCS_TELEMETRY=otlp``) is installed
+  but not even imported unless telemetry is on: ``test_a_fresh_process_...`` starts the app with
+  the defaults, in a hostile environment, and finds neither the SDK nor a provider.
 - Telemetry on (OPS-01): ``test_with_telemetry_on_...`` runs the loop again, in its own process
   (the providers are global) and in a network namespace where available, with a loopback
   collector: the spans reach it, and nothing else is contacted.
@@ -50,7 +50,6 @@ from typing import Any
 
 import httpx
 import httpx2
-import logfire
 import pytest
 from fastapi import FastAPI
 from fastmcp import Client, settings
@@ -77,7 +76,7 @@ from exactdocs.ingestion.models import Job, JobId, RefKind, RepositoryUrl
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
-from otlp_collector import Collector, collecting
+from otlp_collector import Collector, collecting, shut_telemetry_down
 
 LIBRARY = "/fixture/docs-repo"
 REF = "v1.3.0"
@@ -362,9 +361,9 @@ def test_nothing_that_phones_home_is_on_by_default() -> None:
 def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str | None) -> None:
     """In its own process, so other tests (or OPS-01's) configuring telemetry cannot change it.
 
-    The app is started with the defaults, even with a collector named in the environment: no SDK
-    provider is set up and Logfire stays unconfigured (pydantic imports its plugin anyway, which
-    records nothing). The update check stays off even when the environment asks for it.
+    The app is started with the defaults in a hostile environment (a collector, exporters and
+    FastAPI's auto-configuration asked for; Logfire variables, should Logfire ever come back): the
+    SDK is not even imported. The update check stays off even when the environment asks for it.
     """
     code = (
         "import sys\n"
@@ -380,11 +379,11 @@ def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str
         "    assert client.get('/api/health').status_code == 200\n"
         "assert settings.check_for_updates == 'off', settings.check_for_updates\n"
         "assert 'exactdocs.bootstrap.otlp' not in sys.modules\n"
+        "loaded = [m for m in sys.modules if m.startswith(('logfire', 'opentelemetry.sdk'))]\n"
+        "assert not loaded, loaded\n"
         "assert type(trace.get_tracer_provider()).__name__ == 'ProxyTracerProvider'\n"
         "assert type(metrics.get_meter_provider()).__name__ == '_ProxyMeterProvider'\n"
         "assert type(_logs.get_logger_provider()).__name__ == 'ProxyLoggerProvider'\n"
-        "config = sys.modules.get('logfire._internal.config')\n"
-        "assert config is None or not config.GLOBAL_CONFIG._initialized\n"
     )
     env = {
         k: v
@@ -392,8 +391,18 @@ def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str
         if k not in {"FASTMCP_CHECK_FOR_UPDATES", "EXACTDOCS_TELEMETRY"}
     }
     # A collector in the environment is not enough: EXACTDOCS_TELEMETRY=otlp turns tracing on.
-    env["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"http://{NOWHERE}:4318"
-    env["FASTAPI_OTEL_AUTO_CONFIGURE"] = "true"
+    env |= {
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{NOWHERE}:4318",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "FASTAPI_OTEL_AUTO_CONFIGURE": "true",
+        "LOGFIRE_TOKEN": "hostile",
+        "LOGFIRE_SEND_TO_LOGFIRE": "true",
+        "LOGFIRE_PYDANTIC_PLUGIN_RECORD": "all",
+        "LOGFIRE_CONSOLE": "true",
+        "LOGFIRE_BASE_URL": f"http://{NOWHERE}",
+    }
     if inherited:
         env["FASTMCP_CHECK_FOR_UPDATES"] = inherited
     run = subprocess.run(
@@ -431,7 +440,7 @@ def telemetry_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[Collector]:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.url)
         monkeypatch.setenv("OTEL_BSP_SCHEDULE_DELAY", "50")  # export within the test
         yield collector
-        logfire.shutdown()  # flush while the collector still listens (not at exit, after it)
+        shut_telemetry_down()
 
 
 @pytest.mark.skipif(not os.environ.get(TELEMETRY_RUN), reason="runs in its own process")

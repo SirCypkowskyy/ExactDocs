@@ -1,45 +1,90 @@
 """The OpenTelemetry SDK behind ``EXACTDOCS_TELEMETRY=otlp``, loaded only when it is on.
 
-Logfire is used only as an OpenTelemetry SDK: ``send_to_logfire=False`` always (nothing goes to
-Logfire's cloud) and ``console=False`` (stdout belongs to stdio MCP). Traces, metrics and logs go
-over OTLP/HTTP to the collector the standard ``OTEL_EXPORTER_OTLP_*`` variables name, and nowhere
-when none is named.
+Traces (and metrics) go over OTLP/HTTP to the collector the standard ``OTEL_EXPORTER_OTLP_*``
+variables name, and nowhere when none is named; nothing is written to the console (stdout belongs
+to stdio MCP). Unless the operator opted in to query text, every span is scrubbed on its way out:
+the query-text values of ``url.query``, and exception messages and stack traces, which can quote
+the input (a pydantic ``ValidationError`` names its ``input_value``).
 """
 
 import os
+from collections.abc import Sequence
 from urllib.parse import parse_qsl, urlencode
 
-import logfire
-from opentelemetry.context import Context
-from opentelemetry.sdk.trace import Span, SpanProcessor
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import Event, ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.trace import Status
 
 from exactdocs import __version__
 from exactdocs.bootstrap.constants import (
+    EXPORTER_VARIABLE,
+    OTLP_ENDPOINT_VARIABLE,
     QUERY_TEXT_PARAMETERS,
     REDACTED,
+    SCRUBBED_EXCEPTION_ATTRIBUTES,
     SERVICE_NAME,
     URL_QUERY_ATTRIBUTE,
 )
 
 
-def configure_otlp(*, record_query_text: bool) -> None:
-    """Set up the global tracer, meter and logger providers and their OTLP exporters.
+def configure_otlp(*, record_query_text: bool) -> bool:
+    """Set up the global tracer and meter providers and their OTLP exporters, once per process.
 
     Args:
-        record_query_text: Keep query text in spans (the operator opted in); redacted otherwise.
+        record_query_text: Keep query text and exception messages in spans (the operator opted
+            in); scrubbed otherwise.
+
+    Returns:
+        Whether the providers were set up (``False``: this process already has a tracer
+        provider, which OpenTelemetry does not let anyone replace).
     """
-    logfire.configure(
-        send_to_logfire=False,
-        console=False,
-        service_name=os.environ.get("OTEL_SERVICE_NAME") or SERVICE_NAME,
-        service_version=__version__,
-        additional_span_processors=[] if record_query_text else [QueryTextRedaction()],
-        # No argument capture, no client-supplied baggage copied into spans.
-        inspect_arguments=False,
-        add_baggage_to_attributes=False,
-        # A trace started by the caller (a `traceparent` header) is continued, not warned about.
-        distributed_tracing=True,
+    if not isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider):
+        return False
+    resource = _resource()
+    tracer_provider = TracerProvider(resource=resource)
+    if exports("TRACES"):
+        exporter = OTLPSpanExporter()
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(exporter if record_query_text else ScrubbingExporter(exporter))
+        )
+    trace.set_tracer_provider(tracer_provider)
+    if exports("METRICS"):
+        reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+        metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[reader]))
+    return True
+
+
+def exports(signal: str) -> bool:
+    """Tell whether a signal has somewhere to go: an OTLP endpoint and no ``none`` exporter.
+
+    Args:
+        signal: ``TRACES`` or ``METRICS``.
+
+    Returns:
+        Whether that signal is exported.
+    """
+    endpoint = os.environ.get(OTLP_ENDPOINT_VARIABLE) or os.environ.get(
+        f"{OTLP_ENDPOINT_VARIABLE.removesuffix('ENDPOINT')}{signal}_ENDPOINT"
     )
+    return bool(endpoint) and os.environ.get(EXPORTER_VARIABLE.format(signal), "otlp") == "otlp"
+
+
+def _resource() -> Resource:
+    """Name the service ``exactdocs`` unless ``OTEL_SERVICE_NAME`` or the resource attributes do.
+
+    Returns:
+        The resource every span and metric carries.
+    """
+    detected = Resource.create({"service.version": __version__})
+    if str(detected.attributes.get("service.name", "")).startswith("unknown_service"):
+        detected = detected.merge(Resource({"service.name": SERVICE_NAME}))
+    return detected
 
 
 def redact_query(query: str) -> str:
@@ -59,21 +104,83 @@ def redact_query(query: str) -> str:
     )
 
 
-class QueryTextRedaction(SpanProcessor):
-    """Redact query text from a request span's ``url.query`` as the span starts.
+def scrub(span: ReadableSpan) -> ReadableSpan:
+    """Return the span without query text: redacted ``url.query``, no exception text.
 
-    FastAPI's built-in OpenTelemetry records the whole query string; ``/search?q=...`` would put
-    every query into the traces.
+    The exception's type stays (``exception.type`` and the span's error status); its message and
+    stack trace go: a validation error quotes the value it refused, e.g. the query.
+
+    Args:
+        span: A finished span.
+
+    Returns:
+        A copy of it, scrubbed.
     """
+    attributes = dict(span.attributes or {})
+    query = attributes.get(URL_QUERY_ATTRIBUTE)
+    if isinstance(query, str):
+        attributes[URL_QUERY_ATTRIBUTE] = redact_query(query)
+    events = [
+        Event(
+            event.name,
+            {
+                key: value
+                for key, value in (event.attributes or {}).items()
+                if key not in SCRUBBED_EXCEPTION_ATTRIBUTES
+            },
+            event.timestamp,
+        )
+        for event in span.events
+    ]
+    return ReadableSpan(
+        name=span.name,
+        context=span.context,
+        parent=span.parent,
+        resource=span.resource,
+        attributes=attributes,
+        events=events,
+        links=span.links,
+        kind=span.kind,
+        status=Status(span.status.status_code),
+        start_time=span.start_time,
+        end_time=span.end_time,
+        instrumentation_scope=span.instrumentation_scope,
+    )
 
-    def on_start(self, span: Span, parent_context: Context | None = None) -> None:
-        """Rewrite ``url.query`` while the span can still be changed.
+
+class ScrubbingExporter(SpanExporter):
+    """Hands spans to the OTLP exporter only once they are ``scrub``-bed."""
+
+    def __init__(self, exporter: SpanExporter) -> None:
+        """Wrap the exporter.
 
         Args:
-            span: The span that just started.
-            parent_context: Its parent's context (unused).
+            exporter: Where the scrubbed spans go.
         """
-        del parent_context
-        query = (span.attributes or {}).get(URL_QUERY_ATTRIBUTE)
-        if isinstance(query, str):
-            span.set_attribute(URL_QUERY_ATTRIBUTE, redact_query(query))
+        self._exporter = exporter
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        """Export the scrubbed copies.
+
+        Args:
+            spans: Finished spans.
+
+        Returns:
+            What the OTLP exporter returned.
+        """
+        return self._exporter.export([scrub(span) for span in spans])
+
+    def shutdown(self) -> None:
+        """Shut the OTLP exporter down."""
+        self._exporter.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush the OTLP exporter.
+
+        Args:
+            timeout_millis: How long to wait at most.
+
+        Returns:
+            Whether it flushed in time.
+        """
+        return self._exporter.force_flush(timeout_millis)

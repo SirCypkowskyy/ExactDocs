@@ -14,7 +14,6 @@ from typing import Any
 
 import httpx
 import httpx2
-import logfire
 import pytest
 from fastapi import FastAPI
 from fastmcp import Client
@@ -22,12 +21,13 @@ from fastmcp.client.transports import StreamableHttpTransport
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from pydantic import SecretStr
 
 from app_lifespan import serving
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.otlp import QueryTextRedaction, redact_query
+from exactdocs.bootstrap.otlp import redact_query, scrub
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import (
     TracedJobHandler,
@@ -47,13 +47,16 @@ from exactdocs.identity.dtos import CreateFirstAdminCommand
 from exactdocs.ingestion.models import Job, JobId, JobKind, RefKind
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs_kernel import SystemClock
-from otlp_collector import Collector, Span, collecting
+from otlp_collector import Collector, Span, collecting, shut_telemetry_down
 
 RUN = "EXACTDOCS_TELEMETRY_E2E"  # set in the process the end-to-end tests run in
 QUERY = "retry_policy"
 LIBRARY = "/acme/payments"
 REF = "v1.4.0"
 HORSE = "correct horse battery staple"
+LIBRARY_NAME = "paymentsxyz"  # a name only a search would contain
+TOO_LONG = "LONGSECRET77 " + "x" * 1100  # over MAX_QUERY: a validation error quotes it
+REFUSED = "SECRETLIMIT"  # not a number: a validation error quotes it
 SEARCH_ROUTE = "/api/v1/libraries/{owner}/{repo}/search"
 
 
@@ -83,18 +86,39 @@ def test_the_values_of_query_text_parameters_are_redacted_and_the_rest_kept() ->
     # A repository URL can carry a token.
     assert redact_query("url=https%3A%2F%2Fx%3Asecret%40git.example.com") == "url=REDACTED"
     assert redact_query("q=") == "q=REDACTED"
+    assert redact_query("libraryName=payments&query=x") == "libraryName=REDACTED&query=REDACTED"
 
 
 def test_a_request_span_keeps_its_path_but_loses_the_query_text() -> None:
-    provider, exporter = provider_with(QueryTextRedaction())
+    provider, exporter = provider_with()
 
     attributes = {"url.path": "/api/v1/search", "url.query": f"q={QUERY}&limit=5"}
     provider.get_tracer("t").start_span("GET", attributes=attributes).end()
 
     (span,) = recorded(exporter)
-    assert dict(span.attributes or {}) == {
+    assert dict(scrub(span).attributes or {}) == {
         "url.path": "/api/v1/search",
         "url.query": "q=REDACTED&limit=5",
+    }
+
+
+def test_a_failed_span_keeps_the_exception_type_but_not_its_text() -> None:
+    provider, exporter = provider_with()
+    error = ValueError(f"1 validation error: input_value='{QUERY}'")
+
+    span = provider.get_tracer("t").start_span("tools/call search_docs")
+    span.record_exception(error)
+    span.set_status(StatusCode.ERROR, str(error))
+    span.end()
+
+    (finished,) = recorded(exporter)
+    scrubbed = scrub(finished)
+    assert QUERY in str(finished.events[0].attributes)  # sanity: the raw span has it
+    assert scrubbed.status.status_code is StatusCode.ERROR
+    assert scrubbed.status.description is None
+    assert dict(scrubbed.events[0].attributes or {}) == {
+        "exception.type": "ValueError",
+        "exception.escaped": "False",
     }
 
 
@@ -190,7 +214,7 @@ def collector(monkeypatch: pytest.MonkeyPatch, query_text: bool) -> Iterator[Col
         monkeypatch.setenv("OTEL_BSP_SCHEDULE_DELAY", "50")  # export within the test
         monkeypatch.setenv("EXACTDOCS_TELEMETRY_QUERY_TEXT", "true" if query_text else "false")
         yield collector
-        logfire.shutdown()  # flush while the collector still listens
+        shut_telemetry_down()
 
 
 @pytest.fixture
@@ -283,6 +307,10 @@ async def search_everywhere(app: FastAPI) -> None:
             "/api/v1/c7/docs", params={"libraryId": f"{LIBRARY}/{REF}", "query": QUERY}
         )
         assert docs.status_code == 200, docs.text
+        named = await client.get(
+            "/api/v1/c7/search", params={"libraryName": LIBRARY_NAME, "query": QUERY}
+        )
+        assert named.status_code == 200, named.text
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -309,6 +337,13 @@ async def search_everywhere(app: FastAPI) -> None:
         )
         assert result.structured_content
         assert result.structured_content["results"]
+        # Refused arguments: their validation errors quote the input.
+        for arguments in [
+            {"library": LIBRARY, "ref": REF, "query": TOO_LONG},
+            {"library": LIBRARY, "ref": REF, "query": QUERY, "limit": REFUSED},
+        ]:
+            refused = await mcp.call_tool("search_docs", arguments, raise_on_error=False)
+            assert refused.is_error
 
 
 EXPECTED = {
@@ -325,20 +360,28 @@ def names(spans: list[Span]) -> set[str]:
     return {s.name for s in spans}
 
 
+def tool_calls(spans: list[Span]) -> list[Span]:
+    return [s for s in spans if s.name == "tools/call search_docs"]
+
+
 @pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
 async def test_traces_reach_the_collector_without_query_text(
     collector: Collector, app: FastAPI
 ) -> None:
     await search_everywhere(app)
 
-    spans = collector.wait_for(lambda found: names(found) >= EXPECTED)
+    spans = collector.wait_for(
+        lambda found: names(found) >= EXPECTED and len(tool_calls(found)) >= 3  # 2 refused
+    )
     requests = [s for s in spans if "http.request.method" in s.attributes]
     assert SEARCH_ROUTE in {s.attributes.get("http.route") for s in requests}
     assert "/api/health" not in {s.attributes.get("url.path") for s in requests}
     searches = [s for s in spans if s.name == "retrieval.search_docs"]
     assert {s.attributes["exactdocs.retrieval.mode"] for s in searches} == {"bm25"}
-    # Nowhere: no span name or attribute, no metric, no log record holds the query text.
-    assert QUERY.encode() not in collector.received()
+    # Nowhere: no span name, attribute, event or status, and no metric holds the search input.
+    received = collector.received()
+    for text in [QUERY, LIBRARY_NAME, "LONGSECRET77", REFUSED]:
+        assert text.encode() not in received, text
 
 
 @pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
@@ -354,21 +397,31 @@ async def test_the_query_text_is_kept_only_when_the_operator_opted_in(
     assert {s.attributes.get("exactdocs.query") for s in searches} == {QUERY}
     request = next(s for s in spans if s.attributes.get("http.route") == SEARCH_ROUTE)
     assert f"q={QUERY}" in str(request.attributes["url.query"])
+    # So the scrubbing is what keeps the refused inputs out by default: here they arrive.
+    collector.wait_for(lambda found: len(tool_calls(found)) >= 3)
+    assert b"LONGSECRET77" in collector.received()
 
 
 @pytest.mark.skipif(bool(os.environ.get(RUN)), reason="this is the run itself")
-def test_telemetry_end_to_end_in_its_own_process() -> None:
-    tests = [
-        f"{__file__}::test_traces_reach_the_collector_without_query_text",
-        f"{__file__}::test_the_query_text_is_kept_only_when_the_operator_opted_in",
-    ]
+@pytest.mark.parametrize(
+    "test",
+    [
+        "test_traces_reach_the_collector_without_query_text",
+        "test_the_query_text_is_kept_only_when_the_operator_opted_in",
+    ],
+)
+def test_telemetry_end_to_end_in_its_own_process(test: str) -> None:
+    """One process per test: a process's tracer provider is set once and cannot be replaced."""
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header", *tests],
+        [
+            sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header",
+            f"{__file__}::{test}",
+        ],
         env={**os.environ, RUN: "1"},
         capture_output=True,
         text=True,
         check=False,
         timeout=300,
-    )
+    )  # fmt: skip
     assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
-    assert "2 passed" in run.stdout, run.stdout[-1000:]
+    assert "1 passed" in run.stdout, run.stdout[-1000:]

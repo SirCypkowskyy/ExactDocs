@@ -200,17 +200,22 @@ DOCSTRING_SECTIONS: Final[frozenset[str]] = frozenset(
 # ---------------------------------------------------------------- telemetry, otlp
 SERVICE_NAME: Final[str] = "exactdocs"
 """``service.name`` of the exported telemetry, unless ``OTEL_SERVICE_NAME`` names another."""
-OTLP_ENDPOINT_VARIABLES: Final[tuple[str, ...]] = (
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-)
-"""Where traces go. With neither set, nothing is exported (there is no default collector)."""
+OTLP_ENDPOINT_VARIABLE: Final[str] = "OTEL_EXPORTER_OTLP_ENDPOINT"
+"""The collector for every signal; ``OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`` names one per signal.
+With neither set, that signal is not exported (there is no default collector).
+"""
+EXPORTER_VARIABLE: Final[str] = "OTEL_{}_EXPORTER"
+"""``OTEL_TRACES_EXPORTER`` / ``OTEL_METRICS_EXPORTER``: ``none`` turns that signal off."""
 UNTRACED_PATHS: Final[frozenset[str]] = frozenset({"/api/health", "/healthz", "/readyz"})
 """Health checks: polled every few seconds by orchestrators, so they get no request span."""
-QUERY_TEXT_PARAMETERS: Final[frozenset[str]] = frozenset({"q", "query", "url"})
-"""URL query parameters whose value is query text (or a repository URL that may carry a token):
+QUERY_TEXT_PARAMETERS: Final[frozenset[str]] = frozenset({"q", "query", "libraryName", "url"})
+"""URL query parameters whose value is search input (or a repository URL that may carry a token):
 redacted from request spans unless the operator opted in to query text.
 """
+SCRUBBED_EXCEPTION_ATTRIBUTES: Final[frozenset[str]] = frozenset(
+    {"exception.message", "exception.stacktrace"}
+)
+"""Left out of exception events unless the operator opted in: they can quote the input."""
 REDACTED: Final[str] = "REDACTED"
 """What a redacted URL query value is replaced with."""
 URL_QUERY_ATTRIBUTE: Final[str] = "url.query"
