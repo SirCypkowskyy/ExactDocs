@@ -97,18 +97,21 @@ VALID = {
     },
     "azure with entra": {
         "kind": ProviderKind.AZURE,
-        "base_url": "https://x.openai.azure.com",
+        "origin": ProfileOrigin.CONFIGURATION,
+        "resource": "acme",
         "api_version": "2024-10-21",
         "auth": AzureAuth.ENTRA,
     },
     "vertex with a service account": {
         "kind": ProviderKind.GOOGLE_VERTEX,
+        "origin": ProfileOrigin.CONFIGURATION,
         "project": "acme-ml",
         "location": "europe-west4",
         "credentials_file": "/run/secrets/vertex.json",
     },
     "vertex with adc": {
         "kind": ProviderKind.GOOGLE_VERTEX,
+        "origin": ProfileOrigin.CONFIGURATION,
         "project": "acme-ml",
         "location": "global",
         "adc": True,
@@ -117,6 +120,7 @@ VALID = {
     "claude": {"kind": ProviderKind.ANTHROPIC, "key": KeySource.ENVIRONMENT},
     "claude on vertex": {
         "kind": ProviderKind.ANTHROPIC,
+        "origin": ProfileOrigin.CONFIGURATION,
         "platform": AnthropicPlatform.VERTEX,
         "project": "acme-ml",
         "location": "us-east5",
@@ -124,6 +128,7 @@ VALID = {
     },
     "claude on foundry with entra": {
         "kind": ProviderKind.ANTHROPIC,
+        "origin": ProfileOrigin.CONFIGURATION,
         "platform": AnthropicPlatform.FOUNDRY,
         "resource": "acme",
         "auth": AzureAuth.ENTRA,
@@ -153,8 +158,9 @@ INVALID = {
     ),
     "azure entra with a key": (
         {
+            "origin": ProfileOrigin.CONFIGURATION,
             "kind": ProviderKind.AZURE,
-            "base_url": "https://x",
+            "resource": "acme",
             "api_version": "v",
             "auth": AzureAuth.ENTRA,
             "key": KeySource.ENVIRONMENT,
@@ -163,6 +169,7 @@ INVALID = {
     ),
     "vertex with two credentials": (
         {
+            "origin": ProfileOrigin.CONFIGURATION,
             "kind": ProviderKind.GOOGLE_VERTEX,
             "project": "p",
             "location": "l",
@@ -172,11 +179,17 @@ INVALID = {
         "exactly one",
     ),
     "vertex without project": (
-        {"kind": ProviderKind.GOOGLE_VERTEX, "location": "l", "adc": True},
+        {
+            "origin": ProfileOrigin.CONFIGURATION,
+            "kind": ProviderKind.GOOGLE_VERTEX,
+            "location": "l",
+            "adc": True,
+        },
         "project and location",
     ),
     "claude on vertex with a key": (
         {
+            "origin": ProfileOrigin.CONFIGURATION,
             "kind": ProviderKind.ANTHROPIC,
             "platform": AnthropicPlatform.VERTEX,
             "project": "p",
@@ -207,6 +220,77 @@ INVALID = {
         {"base_url": "https://x", "headers": (("X-Team", "a\r\nInjected: 1"),)},
         "line break",
     ),
+    "adc over the api": (
+        {"kind": ProviderKind.GOOGLE_VERTEX, "project": "p", "location": "l", "adc": True},
+        "configure them in the environment",
+    ),
+    "a service-account file over the api": (
+        {
+            "kind": ProviderKind.GOOGLE_VERTEX,
+            "project": "p",
+            "location": "l",
+            "credentials_file": "/etc/shadow",
+        },
+        "configure them in the environment",
+    ),
+    "entra over the api": (
+        {"kind": ProviderKind.AZURE, "resource": "r", "api_version": "v", "auth": AzureAuth.ENTRA},
+        "configure them in the environment",
+    ),
+    "adc with a base_url": (
+        {
+            "kind": ProviderKind.GOOGLE_VERTEX,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "base_url": "https://evil.example/",
+            "project": "p",
+            "location": "l",
+            "adc": True,
+        },
+        "takes no base_url",
+    ),
+    "entra with a base_url": (
+        {
+            "kind": ProviderKind.AZURE,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "base_url": "https://evil.example/",
+            "api_version": "v",
+            "auth": AzureAuth.ENTRA,
+        },
+        "takes no base_url",
+    ),
+    "foundry entra with a base_url": (
+        {
+            "kind": ProviderKind.ANTHROPIC,
+            "origin": ProfileOrigin.CONFIGURATION,
+            "platform": AnthropicPlatform.FOUNDRY,
+            "base_url": "https://evil.example/",
+            "auth": AzureAuth.ENTRA,
+        },
+        "takes no base_url",
+    ),
+    "azure with base_url and resource": (
+        {
+            "kind": ProviderKind.AZURE,
+            "base_url": "https://x",
+            "resource": "r",
+            "api_version": "v",
+            "key": KeySource.ENVIRONMENT,
+        },
+        "not both",
+    ),
+    "an authorization header": (
+        {"base_url": "https://x", "headers": (("Authorization", "Bearer s"),)},
+        "use the key field",
+    ),
+    "a key header": (
+        {"base_url": "https://x", "headers": (("X-Portkey-Api-Key", "s"),)},
+        "use the key field",
+    ),
+    "a token header": (
+        {"base_url": "https://x", "headers": (("X-Gateway-Token", "s"),)},
+        "use the key field",
+    ),
+    "a cookie": ({"base_url": "https://x", "headers": (("Cookie", "s=1"),)}, "use the key field"),
     "timeout too long": ({"base_url": "https://x", "request_timeout": 6000.0}, "request_timeout"),
 }
 
@@ -229,7 +313,7 @@ def test_the_repr_of_a_profile_shows_no_secret() -> None:
         base_url="https://x",
         key=KeySource.SEALED,
         sealed_key="sealed-secret",
-        headers=(("X-Api-Key", "header-secret"),),
+        headers=(("X-Team", "header-secret"),),
         proxy="http://user:proxy-secret@proxy.example.com:3128",
     )
 
@@ -238,7 +322,7 @@ def test_the_repr_of_a_profile_shows_no_secret() -> None:
     assert not {"sealed-secret", "header-secret", "proxy-secret"} & set(shown.split("'"))
     assert "proxy-secret" not in shown
     assert profile.shown_proxy == "http://user:***@proxy.example.com:3128"
-    assert profile.header_names == ("X-Api-Key",)
+    assert profile.header_names == ("X-Team",)
 
 
 # ---------------------------------------------------------------- roles
@@ -303,6 +387,10 @@ class FakeFactory:
 
     built: list[tuple[ProviderProfile, str]] = field(default_factory=list)
     unsupported_kinds: set[ProviderKind] = field(default_factory=set)
+    released: list[str] = field(default_factory=list)
+
+    async def release(self, name: str) -> None:
+        self.released.append(name)
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         return "not installed" if profile.kind in self.unsupported_kinds else None
@@ -517,6 +605,15 @@ async def test_a_profile_an_instance_role_uses_cannot_be_deleted() -> None:
 
     with pytest.raises(ProviderInUseError, match="reranker"):
         await world.module.delete_provider(ProviderNameQuery(name="gw"))
+
+
+async def test_deleting_a_profile_releases_its_client() -> None:
+    world = _world()
+    await world.module.save_provider(_save())
+
+    await world.module.delete_provider(ProviderNameQuery(name="gw"))
+
+    assert world.factory.released == ["gw"]
 
 
 async def test_deleting_an_unknown_profile_is_not_found() -> None:

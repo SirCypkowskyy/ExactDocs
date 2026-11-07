@@ -885,7 +885,9 @@ class SaveProviderCommand(_Dto):
     keep_key: bool = True
     """When `api_key` is omitted, keep the key stored before; false removes it."""
     headers: dict[str, str] = Field(default_factory=dict)
-    """Extra headers of every call; their values are never returned or logged."""
+    """Extra headers of every call (never returned or logged). No credentials: `Authorization`,
+    `Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`.
+    """
     proxy: str | None = Field(default=None, max_length=MAX_URL)
     """An HTTP(S) proxy for this profile only."""
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT
@@ -899,15 +901,17 @@ class SaveProviderCommand(_Dto):
     location: str | None = Field(default=None, max_length=MAX_NAME)
     """Google Cloud location, or the AWS region of Claude on Bedrock."""
     credentials_file: str | None = Field(default=None, max_length=MAX_PATH)
-    """A Google service-account file on the server."""
+    """Refused here (422 `invalid_provider`): the server's own cloud identity is configured in
+    the environment or the configuration file only.
+    """
     credentials: Literal["adc"] | None = None
-    """`adc`: Google Application Default Credentials (workload identity, the metadata server)."""
+    """Refused here, as `credentials_file`: configuration only."""
     platform: AnthropicPlatform | None = None
     """`anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock` (needs boto3)."""
     auth: AzureAuth | None = None
-    """`azure`, and `anthropic` on `foundry`: `key` (default) or `entra` (Entra ID)."""
+    """`key` (the default); `entra` (Entra ID) is refused here: configuration only."""
     resource: str | None = Field(default=None, max_length=MAX_NAME)
-    """Claude on Azure AI Foundry: the resource name, instead of `base_url`."""
+    """Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."""
 
     @field_validator("base_url", "proxy", "api_version", "project", "location", mode="before")
     @classmethod

@@ -1340,6 +1340,14 @@ class NoModelFactory:
         """
         return self._refuse(profile, model)
 
+    async def release(self, name: str) -> None:
+        """Hold nothing, so release nothing.
+
+        Args:
+            name: The profile's name.
+        """
+        del name
+
     def _refuse(self, profile: ProviderProfile, model: str) -> NoReturn:
         """Refuse to build a model.
 
@@ -1714,6 +1722,7 @@ class DeleteProviderUseCase:
             raise ProviderInUseError(command.name, [r.value for r in roles])
         if not await self.providers.stored.delete(command.name):
             raise UnknownProviderError(command.name)
+        await self.providers.factory.release(command.name)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -9216,7 +9216,7 @@
             },
             "type": "object",
             "title": "Headers",
-            "description": "Extra headers of every call; their values are never returned or logged."
+            "description": "Extra headers of every call (never returned or logged). No credentials: `Authorization`,\n`Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`."
           },
           "proxy": {
             "anyOf": [
@@ -9293,7 +9293,7 @@
               }
             ],
             "title": "Credentials File",
-            "description": "A Google service-account file on the server."
+            "description": "Refused here (422 `invalid_provider`): the server's own cloud identity is configured in\nthe environment or the configuration file only."
           },
           "credentials": {
             "anyOf": [
@@ -9306,7 +9306,7 @@
               }
             ],
             "title": "Credentials",
-            "description": "`adc`: Google Application Default Credentials."
+            "description": "Refused here, as `credentials_file`: configuration only."
           },
           "platform": {
             "anyOf": [
@@ -9328,7 +9328,7 @@
                 "type": "null"
               }
             ],
-            "description": "`azure`, and `anthropic` on `foundry`: `key` (default) or `entra`."
+            "description": "`key` (the default); `entra` (Entra ID) is refused here: configuration only."
           },
           "resource": {
             "anyOf": [
@@ -9341,7 +9341,7 @@
               }
             ],
             "title": "Resource",
-            "description": "Claude on Azure AI Foundry: the resource name, instead of `base_url`."
+            "description": "Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."
           },
           "name": {
             "type": "string",
@@ -9626,7 +9626,7 @@
             },
             "type": "object",
             "title": "Headers",
-            "description": "Extra headers of every call; their values are never returned or logged."
+            "description": "Extra headers of every call (never returned or logged). No credentials: `Authorization`,\n`Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`."
           },
           "proxy": {
             "anyOf": [
@@ -9703,7 +9703,7 @@
               }
             ],
             "title": "Credentials File",
-            "description": "A Google service-account file on the server."
+            "description": "Refused here (422 `invalid_provider`): the server's own cloud identity is configured in\nthe environment or the configuration file only."
           },
           "credentials": {
             "anyOf": [
@@ -9716,7 +9716,7 @@
               }
             ],
             "title": "Credentials",
-            "description": "`adc`: Google Application Default Credentials."
+            "description": "Refused here, as `credentials_file`: configuration only."
           },
           "platform": {
             "anyOf": [
@@ -9738,7 +9738,7 @@
                 "type": "null"
               }
             ],
-            "description": "`azure`, and `anthropic` on `foundry`: `key` (default) or `entra`."
+            "description": "`key` (the default); `entra` (Entra ID) is refused here: configuration only."
           },
           "resource": {
             "anyOf": [
@@ -9751,7 +9751,7 @@
               }
             ],
             "title": "Resource",
-            "description": "Claude on Azure AI Foundry: the resource name, instead of `base_url`."
+            "description": "Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."
           }
         },
         "additionalProperties": false,

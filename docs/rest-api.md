@@ -336,7 +336,12 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   elsewhere. 409 `provider_read_only` for a configured name; 422 `invalid_provider` with the field
   at fault; 422 `provider_unsupported` when this installation cannot call the kind (the `[ai]`
   extra, boto3 for Bedrock); 422 `secret_key_required` for a key when the process has no secret
-  key. A change counts at the next call, without a restart.
+  key. A change counts at the next call, without a restart. The server's own cloud identity
+  (`credentials: "adc"`, `credentials_file`, `auth: "entra"`) is refused here with 422
+  `invalid_provider`: it is configured in the environment or the TOML file only, without a
+  `base_url`. Extra `headers` that carry a credential (`Authorization`, `Cookie`, `x-api-key`,
+  `api-key`, `*-key`, `*-token`, `*-secret`, `*-password`) are refused too: the key goes in
+  `api_key`.
 - `GET /ai/providers/{name}`; `DELETE /ai/providers/{name}` (204; 409 `provider_in_use` while an
   instance role uses it; a library override naming it stops counting until it exists again).
 - `POST /ai/providers/{name}/check`, optionally with `{"role": "embedding", "model": "e5"}`: one

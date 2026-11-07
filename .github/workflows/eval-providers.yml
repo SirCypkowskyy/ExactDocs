@@ -1,7 +1,8 @@
 name: Retrieval eval (real providers)
 
 # Manual only: it calls hosted models with the repository's keys, so it never runs on a push or a
-# pull request. It runs the retrieval eval suite (docs/evals.md, `just eval --allow-providers`)
+# pull request. It runs the retrieval eval suite (docs/evals.md,
+# `just eval --configured-models --allow-providers`)
 # with one provider profile, `eval`, configured the way an operator configures ExactDocs
 # (EXACTDOCS_AI__..., docs/decisions/ai-retrieval.md):
 #
@@ -12,13 +13,13 @@ name: Retrieval eval (real providers)
 #   repository secret      EVAL_PROVIDER_API_KEY
 #
 # Blank variables count as unset. Roles left empty stay unset, and the modes that need them are
-# reported `unavailable`. Needs the eval suite of #90 (`packages/exactdocs/evals/`).
+# reported `unavailable`.
 
 on:
   workflow_dispatch:
     inputs:
       args:
-        description: Extra arguments for the eval runner (e.g. --mode hybrid)
+        description: Extra arguments for the eval runner (e.g. --modes hybrid)
         required: false
         default: ""
 
@@ -42,7 +43,6 @@ jobs:
       EXACTDOCS_AI__PROVIDERS__EVAL__KIND: ${{ vars.EVAL_PROVIDER_KIND }}
       EXACTDOCS_AI__PROVIDERS__EVAL__BASE_URL: ${{ vars.EVAL_PROVIDER_BASE_URL }}
       EXACTDOCS_AI__PROVIDERS__EVAL__API_VERSION: ${{ vars.EVAL_PROVIDER_API_VERSION }}
-      EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
       EVAL_EMBEDDING_MODEL: ${{ vars.EVAL_EMBEDDING_MODEL }}
       EVAL_RERANKER_MODEL: ${{ vars.EVAL_RERANKER_MODEL }}
       EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
@@ -50,6 +50,8 @@ jobs:
       EXTRA_ARGS: ${{ inputs.args }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
         with:
           enable-cache: true
@@ -64,12 +66,18 @@ jobs:
               echo "EXACTDOCS_AI__${upper}__MODEL=eval:${!model_var}" >> "$GITHUB_ENV"
             fi
           done
+      # The key is given to the two steps that call the provider only, not to `uv sync`
+      # (third-party build backends) or the other steps of this persistent runner.
       - name: Check the roles reach the provider (exactdocs ai check)
+        env:
+          EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
         run: EXACTDOCS_DATA_DIR="$RUNNER_TEMP/exactdocs-check" uv run exactdocs ai check
-      - name: Retrieval eval (just eval --allow-providers)
+      - name: Retrieval eval (just eval --configured-models --allow-providers)
+        env:
+          EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
         run: |
           # shellcheck disable=SC2086 # EXTRA_ARGS is a list of arguments
-          uv run python packages/exactdocs/evals/run_retrieval_eval.py --allow-providers $EXTRA_ARGS
+          uv run python packages/exactdocs/evals/run_retrieval_eval.py --configured-models --allow-providers $EXTRA_ARGS
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

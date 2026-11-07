@@ -2294,7 +2294,8 @@ export interface components {
             readonly keep_key: boolean;
             /**
              * Headers
-             * @description Extra headers of every call; their values are never returned or logged.
+             * @description Extra headers of every call (never returned or logged). No credentials: `Authorization`,
+             *     `Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`.
              */
             readonly headers?: {
                 readonly [key: string]: string;
@@ -2333,21 +2334,22 @@ export interface components {
             readonly location?: string | null;
             /**
              * Credentials File
-             * @description A Google service-account file on the server.
+             * @description Refused here (422 `invalid_provider`): the server's own cloud identity is configured in
+             *     the environment or the configuration file only.
              */
             readonly credentials_file?: string | null;
             /**
              * Credentials
-             * @description `adc`: Google Application Default Credentials.
+             * @description Refused here, as `credentials_file`: configuration only.
              */
             readonly credentials?: "adc" | null;
             /** @description `anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock`. */
             readonly platform?: components["schemas"]["AnthropicPlatform"] | null;
-            /** @description `azure`, and `anthropic` on `foundry`: `key` (default) or `entra`. */
+            /** @description `key` (the default); `entra` (Entra ID) is refused here: configuration only. */
             readonly auth?: components["schemas"]["AzureAuth"] | null;
             /**
              * Resource
-             * @description Claude on Azure AI Foundry: the resource name, instead of `base_url`.
+             * @description Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`.
              */
             readonly resource?: string | null;
             /**
@@ -2490,7 +2492,8 @@ export interface components {
             readonly keep_key: boolean;
             /**
              * Headers
-             * @description Extra headers of every call; their values are never returned or logged.
+             * @description Extra headers of every call (never returned or logged). No credentials: `Authorization`,
+             *     `Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`.
              */
             readonly headers?: {
                 readonly [key: string]: string;
@@ -2529,21 +2532,22 @@ export interface components {
             readonly location?: string | null;
             /**
              * Credentials File
-             * @description A Google service-account file on the server.
+             * @description Refused here (422 `invalid_provider`): the server's own cloud identity is configured in
+             *     the environment or the configuration file only.
              */
             readonly credentials_file?: string | null;
             /**
              * Credentials
-             * @description `adc`: Google Application Default Credentials.
+             * @description Refused here, as `credentials_file`: configuration only.
              */
             readonly credentials?: "adc" | null;
             /** @description `anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock`. */
             readonly platform?: components["schemas"]["AnthropicPlatform"] | null;
-            /** @description `azure`, and `anthropic` on `foundry`: `key` (default) or `entra`. */
+            /** @description `key` (the default); `entra` (Entra ID) is refused here: configuration only. */
             readonly auth?: components["schemas"]["AzureAuth"] | null;
             /**
              * Resource
-             * @description Claude on Azure AI Foundry: the resource name, instead of `base_url`.
+             * @description Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`.
              */
             readonly resource?: string | null;
         };

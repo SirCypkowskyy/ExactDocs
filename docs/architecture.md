@@ -729,10 +729,17 @@ fills with the Fernet box under its own HKDF purpose (`AI_KEYS_PURPOSE`). The `M
 (`unsupported`, `chat_model`, `embedder`, `reranker`, `check`) is implemented in bootstrap by
 `ai_models.PydanticAiModels`, which imports no SDK itself: the first call loads `ai_sdk.py`
 (pydantic-ai, the OpenAI, Anthropic and Google SDKs, azure-identity) and builds every client with
-explicit values. Each profile has one `httpx2` client (proxy on the transport, `trust_env=False`,
-extra headers, no transport retries so the SDK's are the one layer, an overall timeout, and a
-request hook that refuses any host but the profile's endpoint and drops `OpenAI-Organization` /
-`OpenAI-Project` filled from the environment), rebuilt when the profile changes. `AiProviders.
+explicit values, after removing `OPENAI_CUSTOM_HEADERS` / `ANTHROPIC_CUSTOM_HEADERS` from the
+process (the SDKs merge them over the key, in the constructor, so `copy()` cannot undo them).
+Each profile has one `httpx2` client, built under a per-profile lock (proxy on the transport,
+`trust_env=False`, extra headers, no transport retries so the SDK's are the one layer, an overall
+timeout, and a request hook that refuses any scheme, host or port but the profile's endpoint,
+drops `OpenAI-Organization` / `OpenAI-Project` filled from the environment and, for Claude on
+Foundry with Entra ID, signs each request with a fresh token), rebuilt when the profile changes
+and closed when it is deleted (`ModelFactory.release`). An Entra ID token provider is built once
+per profile. Profiles signed with the server's own cloud identity (ADC, a service-account file,
+Entra ID) come from configuration only and take no `base_url`: `ProviderProfile` refuses both,
+so their endpoint is always derived (Google's or Azure's). `AiProviders.
 model_for(role, library)` is the path every AI pipeline takes, so a profile edited over REST counts
 at the next call. `exactdocs ai check` and `POST /api/v1/ai/providers/{name}/check` make one minimal
 call per role. The socket-guard test (`tests/bootstrap/test_ai_no_outbound.py`) runs with the SDKs'

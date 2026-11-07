@@ -5,8 +5,10 @@ base URLs, projects, regions. Real pydantic-ai calls go to a fake gateway on loo
 records what each request carried.
 """
 
+import asyncio
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,7 @@ from exactdocs.retrieval.models import (
     AzureAuth,
     KeySource,
     ModelRole,
+    ProfileOrigin,
     ProviderKind,
     ProviderProfile,
 )
@@ -56,6 +59,8 @@ POISON = {
     "GOOGLE_CLOUD_LOCATION": "env-gcp-location",
     "DEEPSEEK_API_KEY": "env-deepseek-key",
     "HTTPS_PROXY": "http://env-proxy.invalid:3128",
+    "OPENAI_CUSTOM_HEADERS": "Authorization: Bearer env-custom-openai\napi-key: env-custom-azure",
+    "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: env-custom-anthropic\nAuthorization: Bearer env-custom",
     "HTTP_PROXY": "http://env-proxy.invalid:3128",
 }
 
@@ -78,14 +83,48 @@ def fake() -> Iterator[FakeGateway]:
         yield running
 
 
+@dataclass(slots=True)
+class FakeEntra:
+    """Entra ID without Azure: counts the providers built and the tokens handed out."""
+
+    providers: int = 0
+    tokens: int = 0
+
+    def provider(self, profile: ProviderProfile) -> Callable[[], str]:
+        del profile
+        self.providers += 1
+
+        def token() -> str:
+            self.tokens += 1
+            return f"entra-token-{self.tokens}"
+
+        return token
+
+
 @pytest.fixture
-def entra(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Entra ID without Azure: the token provider hands out a fixed token."""
+def entra(monkeypatch: pytest.MonkeyPatch) -> FakeEntra:
+    fake_entra = FakeEntra()
+    monkeypatch.setattr(ai_sdk, "entra_token_provider", fake_entra.provider)
+    return fake_entra
 
-    def provider() -> Callable[[], str]:
-        return lambda: "entra-token"
 
-    monkeypatch.setattr(ai_sdk, "_entra_token_provider", provider)
+@pytest.fixture
+def official(fake: FakeGateway, monkeypatch: pytest.MonkeyPatch) -> FakeGateway:
+    """The fake gateway stands in for the official endpoint a profile's identity derives.
+
+    A profile signed with the server's cloud identity takes no ``base_url``: its endpoint is
+    Google's or Azure's own, which a test cannot reach, so the derived URL is swapped.
+    """
+    derived = ai_sdk.base_url
+
+    def stand_in(profile: ProviderProfile) -> str:
+        assert profile.base_url is None
+        official_url = derived(profile)
+        assert official_url.startswith("https://")
+        return fake.url + ("/anthropic/" if "anthropic" in official_url else "/")
+
+    monkeypatch.setattr(ai_sdk, "base_url", stand_in)
+    return fake
 
 
 def _endpoint(profile: ProviderProfile, key: str | None = "profile-key") -> Endpoint:
@@ -194,40 +233,51 @@ async def test_azure_with_a_key_sends_the_api_version_and_its_key(fake: FakeGate
     assert seen.headers["api-key"] == "azure-key"
 
 
-@pytest.mark.usefixtures("entra")
-async def test_azure_with_entra_sends_a_token_and_no_key(fake: FakeGateway) -> None:
+async def test_azure_with_entra_sends_a_fresh_token_and_no_key(
+    official: FakeGateway, entra: FakeEntra
+) -> None:
     profile = ProviderProfile(
         name="azure",
         kind=ProviderKind.AZURE,
-        base_url=fake.url,
+        origin=ProfileOrigin.CONFIGURATION,
+        resource="acme",
         api_version="2024-10-21",
         auth=AzureAuth.ENTRA,
     )
+    models = PydanticAiModels()
 
-    check = await PydanticAiModels().check(profile, "my-deployment", ModelRole.LLM)
+    first = await models.check(profile, "my-deployment", ModelRole.LLM)
+    second = await models.check(profile, "my-deployment", ModelRole.LLM)
 
-    assert check.ok, check.error
-    (seen,) = fake.seen
-    assert seen.headers["authorization"] == "Bearer entra-token"
-    assert seen.headers.get("api-key") != POISON["AZURE_OPENAI_API_KEY"]
+    assert first.ok, first.error
+    assert second.ok, second.error
+    assert entra.providers == 1  # one credential (and its token cache) per profile
+    headers = [seen.headers for seen in official.seen]
+    assert [h["authorization"] for h in headers] == ["Bearer entra-token-1", "Bearer entra-token-2"]
+    assert POISON["AZURE_OPENAI_API_KEY"] not in str(headers)
 
 
-@pytest.mark.usefixtures("entra")
-async def test_claude_on_foundry_with_entra_reads_no_foundry_variable(fake: FakeGateway) -> None:
+async def test_claude_on_foundry_with_entra_signs_every_request_with_a_fresh_token(
+    official: FakeGateway, entra: FakeEntra
+) -> None:
     profile = ProviderProfile(
         name="foundry",
         kind=ProviderKind.ANTHROPIC,
+        origin=ProfileOrigin.CONFIGURATION,
         platform=AnthropicPlatform.FOUNDRY,
-        base_url=fake.url + "/anthropic/",
+        resource="acme",
         auth=AzureAuth.ENTRA,
     )
+    models = PydanticAiModels()
 
-    check = await PydanticAiModels().check(profile, "claude-test", ModelRole.LLM)
+    await models.check(profile, "claude-test", ModelRole.LLM)
+    check = await models.check(profile, "claude-test", ModelRole.LLM)
 
     assert check.ok, check.error
-    (seen,) = fake.seen
-    assert seen.headers["authorization"] == "Bearer entra-token"
-    assert seen.headers.get("x-api-key") != POISON["ANTHROPIC_FOUNDRY_API_KEY"]
+    assert entra.providers == 1
+    tokens = [seen.headers["authorization"] for seen in official.seen]
+    assert tokens == ["Bearer entra-token-1", "Bearer entra-token-2"]
+    assert all("x-api-key" not in seen.headers for seen in official.seen)
 
 
 async def test_claude_on_vertex_gets_project_region_and_endpoint_from_the_profile(
@@ -236,6 +286,7 @@ async def test_claude_on_vertex_gets_project_region_and_endpoint_from_the_profil
     profile = ProviderProfile(
         name="vertex-claude",
         kind=ProviderKind.ANTHROPIC,
+        origin=ProfileOrigin.CONFIGURATION,
         platform=AnthropicPlatform.VERTEX,
         project="acme-ml",
         location="us-east5",
@@ -250,7 +301,7 @@ async def test_claude_on_vertex_gets_project_region_and_endpoint_from_the_profil
 
 
 async def test_vertex_calls_the_profiles_project_and_location(
-    fake: FakeGateway, monkeypatch: pytest.MonkeyPatch
+    official: FakeGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def credentials(profile: ProviderProfile) -> Credentials:
         del profile
@@ -260,7 +311,7 @@ async def test_vertex_calls_the_profiles_project_and_location(
     profile = ProviderProfile(
         name="vertex",
         kind=ProviderKind.GOOGLE_VERTEX,
-        base_url=fake.url + "/",
+        origin=ProfileOrigin.CONFIGURATION,
         project="acme-ml",
         location="europe-west4",
         adc=True,
@@ -268,7 +319,7 @@ async def test_vertex_calls_the_profiles_project_and_location(
 
     await PydanticAiModels().check(profile, "gemini-2.5-flash", ModelRole.LLM)
 
-    (seen,) = fake.seen
+    (seen,) = official.seen
     assert "/projects/acme-ml/locations/europe-west4/" in seen.path
     assert seen.headers["authorization"] == "Bearer vertex-token"
     assert "x-goog-api-key" not in seen.headers
@@ -290,13 +341,13 @@ async def test_extra_headers_are_sent_and_their_values_never_reported(fake: Fake
         name="corp",
         kind=ProviderKind.OPENAI_COMPATIBLE,
         base_url=fake.url + "/broken/v1",  # answers 404: the check fails and says why
-        headers=(("X-Gateway-Token", "header-secret"),),
+        headers=(("X-Team", "header-secret"),),
     )
 
     check = await PydanticAiModels().check(profile, "m", ModelRole.LLM)
 
     assert not check.ok
-    assert fake.seen[0].headers["x-gateway-token"] == "header-secret"
+    assert fake.seen[0].headers["x-team"] == "header-secret"
     assert "header-secret" not in (check.error or "")
 
 
@@ -442,3 +493,128 @@ def _service_account(tmp_path: Path) -> Path:
         )
     )
     return path
+
+
+async def test_the_sdks_header_variables_never_replace_the_profiles_key(
+    fake: FakeGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("OPENAI_CUSTOM_HEADERS", "ANTHROPIC_CUSTOM_HEADERS"):  # set again: removed once
+        monkeypatch.setenv(name, POISON[name])
+    openai_profile = ProviderProfile(
+        name="corp",
+        kind=ProviderKind.OPENAI_COMPATIBLE,
+        base_url=fake.v1,
+        key=KeySource.ENVIRONMENT,
+    )
+    azure = ProviderProfile(
+        name="azure",
+        kind=ProviderKind.AZURE,
+        base_url=fake.url,
+        api_version="2024-10-21",
+        key=KeySource.ENVIRONMENT,
+    )
+    claude = ProviderProfile(
+        name="claude", kind=ProviderKind.ANTHROPIC, base_url=fake.url, key=KeySource.ENVIRONMENT
+    )
+    models = PydanticAiModels(keys={"corp": "corp-key", "azure": "azure-key", "claude": "c-key"})
+
+    for profile in (openai_profile, azure, claude):
+        check = await models.check(profile, "m", ModelRole.LLM)
+        assert check.ok, check.error
+
+    corp_seen, azure_seen, claude_seen = (seen.headers for seen in fake.seen)
+    assert corp_seen["authorization"] == "Bearer corp-key"
+    assert azure_seen["api-key"] == "azure-key"
+    assert {claude_seen.get("x-api-key"), claude_seen.get("authorization")} & {
+        "c-key",
+        "Bearer c-key",
+    }
+    assert "env-custom" not in json.dumps([seen.headers for seen in fake.seen])
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:9/v1/models",  # another scheme
+        "https://127.0.0.1:10/v1/models",  # another port
+        "https://env-openai.invalid/v1/models",  # another host
+    ],
+)
+async def test_the_guard_compares_scheme_host_and_port(url: str) -> None:
+    profile = ProviderProfile(
+        name="corp", kind=ProviderKind.OPENAI_COMPATIBLE, base_url="https://127.0.0.1:9/v1"
+    )
+    client = ai_sdk.http_client(profile, "https://127.0.0.1:9/v1")
+
+    with pytest.raises(ForeignHostError):
+        await client.get(url)
+    await client.aclose()
+
+
+async def test_a_released_profile_closes_its_client(fake: FakeGateway) -> None:
+    models = PydanticAiModels()
+    profile = ProviderProfile(name="corp", kind=ProviderKind.OPENAI_COMPATIBLE, base_url=fake.v1)
+    endpoint = await models.endpoint(profile)
+
+    await models.release("corp")
+
+    assert endpoint.client.is_closed
+    assert (await models.endpoint(profile)).client is not endpoint.client
+
+
+async def test_two_first_calls_build_one_client(fake: FakeGateway) -> None:
+    models = PydanticAiModels()
+    profile = ProviderProfile(name="corp", kind=ProviderKind.OPENAI_COMPATIBLE, base_url=fake.v1)
+
+    first, second = await asyncio.gather(models.endpoint(profile), models.endpoint(profile))
+
+    assert first.client is second.client
+
+
+@pytest.mark.parametrize(
+    ("fields", "official"),
+    [
+        (
+            {"kind": ProviderKind.GOOGLE_VERTEX, "project": "p", "location": "europe-west4"},
+            "https://europe-west4-aiplatform.googleapis.com/",
+        ),
+        (
+            {"kind": ProviderKind.GOOGLE_VERTEX, "project": "p", "location": "global"},
+            "https://aiplatform.googleapis.com/",
+        ),
+        (
+            {
+                "kind": ProviderKind.AZURE,
+                "resource": "acme",
+                "api_version": "v",
+                "auth": AzureAuth.ENTRA,
+            },
+            "https://acme.openai.azure.com",
+        ),
+        (
+            {
+                "kind": ProviderKind.ANTHROPIC,
+                "platform": AnthropicPlatform.FOUNDRY,
+                "resource": "acme",
+                "auth": AzureAuth.ENTRA,
+            },
+            "https://acme.services.ai.azure.com/anthropic/",
+        ),
+        (
+            {
+                "kind": ProviderKind.ANTHROPIC,
+                "platform": AnthropicPlatform.VERTEX,
+                "project": "p",
+                "location": "us-east5",
+            },
+            "https://us-east5-aiplatform.googleapis.com/v1",
+        ),
+    ],
+)
+def test_the_servers_cloud_identity_only_reaches_the_official_endpoint(
+    fields: dict, official: str
+) -> None:
+    ambient = {"adc": True} if "auth" not in fields else {}
+    profile = ProviderProfile(name="cloud", origin=ProfileOrigin.CONFIGURATION, **fields, **ambient)
+
+    assert ai_sdk.base_url(profile) == official

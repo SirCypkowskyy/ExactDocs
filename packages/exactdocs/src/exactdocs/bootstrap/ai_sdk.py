@@ -15,10 +15,11 @@ timeout, and a guard that refuses any host but the profile's endpoint.
 
 import asyncio
 import importlib
+import logging
+import os
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import google.auth
 import httpx2
@@ -75,15 +76,17 @@ from exactdocs.bootstrap.constants import (
     DEFAULT_BASE_URLS,
     GOOGLE_SCOPE,
     NO_KEY,
+    SDK_HEADER_VARIABLES,
 )
 from exactdocs.retrieval.errors import ProviderUnsupportedError
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
-    AzureAuth,
     KeySource,
     ProviderKind,
     ProviderProfile,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ForeignHostError(httpx2.TransportError):
@@ -92,15 +95,22 @@ class ForeignHostError(httpx2.TransportError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Guard:
-    """The request hook of a profile's client: its endpoint's host only, no ambient headers."""
+    """The request hook of a profile's client: its endpoint only, its own headers only.
 
-    host: str
-    """The only host the profile's calls may reach."""
+    It refuses another scheme, host or port (also on every redirect hop: httpx runs request hooks
+    for each), drops ``OpenAI-Organization`` / ``OpenAI-Project`` that the SDK filled from the
+    environment, and, for Claude on Foundry with Entra ID, signs each request with a fresh token.
+    """
+
+    origin: tuple[str, str, int | None]
+    """The only scheme, host and port the profile's calls may reach."""
     own_headers: frozenset[str]
     """Header names the profile sets itself (lower case): kept even when ambient."""
+    bearer: Callable[[], str] | None = field(default=None, repr=False)
+    """Gives an Entra ID token for each request (the sync provider caches and refreshes it)."""
 
     async def __call__(self, request: httpx2.Request) -> None:
-        """Refuse another host; drop headers an SDK filled from the environment.
+        """Refuse another endpoint; drop headers an SDK filled from the environment.
 
         Args:
             request: The outgoing request.
@@ -108,13 +118,32 @@ class _Guard:
         Raises:
             ForeignHostError: The request is not for the profile's endpoint.
         """
-        if request.url.host != self.host:
-            message = (
-                f"refused a call to {request.url.host}: this profile may only reach {self.host}"
-            )
+        url = request.url
+        if (url.scheme, url.host, url.port) != self.origin:
+            scheme, host, _ = self.origin
+            message = f"refused a call to {url.scheme}://{url.host}: this profile may only reach {scheme}://{host}"
             raise ForeignHostError(message, request=request)
         for name in AMBIENT_HEADERS - self.own_headers:
             request.headers.pop(name, None)
+        if self.bearer is not None:
+            token = await asyncio.to_thread(self.bearer)
+            request.headers.pop("x-api-key", None)
+            request.headers["authorization"] = f"Bearer {token}"
+
+
+def without_sdk_header_variables() -> None:
+    """Drop ``OPENAI_CUSTOM_HEADERS`` and ``ANTHROPIC_CUSTOM_HEADERS`` from this process.
+
+    The OpenAI and Anthropic SDKs merge them into every client's headers *after* the key, in
+    their constructors (also in ``copy``/``with_options``, which call the constructor again), so
+    a credential there would replace each profile's own key, on every profile of that family.
+    ExactDocs has no use for them, so they are removed before any SDK client is built.
+    """
+    for variable in SDK_HEADER_VARIABLES:
+        if os.environ.pop(variable, None) is not None:
+            logger.warning(
+                "%s is set: ignored, so it cannot replace an AI provider's own key", variable
+            )
 
 
 def base_url(profile: ProviderProfile) -> str:
@@ -136,6 +165,8 @@ def base_url(profile: ProviderProfile) -> str:
         return profile.base_url or _vertex_base_url(
             profile.location, express=profile.key is not KeySource.NONE
         )
+    if kind is ProviderKind.AZURE and profile.resource:
+        return f"https://{profile.resource}.openai.azure.com"
     if profile.base_url:
         return profile.base_url
     if kind.value in DEFAULT_BASE_URLS:
@@ -220,21 +251,26 @@ def read_key(
             return open_sealed(profile.sealed_key)
 
 
-def http_client(profile: ProviderProfile, url: str) -> httpx2.AsyncClient:
+def http_client(
+    profile: ProviderProfile, url: str, *, bearer: Callable[[], str] | None = None
+) -> httpx2.AsyncClient:
     """Build the profile's one HTTP client.
 
     Args:
         profile: The profile.
         url: Its endpoint; the client reaches nothing else.
+        bearer: Signs every request with an Entra ID token (Claude on Foundry with Entra ID).
 
     Returns:
         A client with the proxy on its transport, the extra headers, no retries of its own (the
         SDK's are the one retry layer), an overall timeout and the host guard.
     """
     transport = httpx2.AsyncHTTPTransport(proxy=profile.proxy, retries=0, trust_env=False)
+    parts = httpx2.URL(url)
     guard = _Guard(
-        host=urlsplit(url).hostname or "",
+        origin=(parts.scheme, parts.host, parts.port),
         own_headers=frozenset(name.lower() for name in profile.header_names),
+        bearer=bearer,
     )
     return httpx2.AsyncClient(
         transport=transport,
@@ -254,6 +290,7 @@ def _openai_client(endpoint: Endpoint) -> AsyncOpenAI:
     Returns:
         The client.
     """
+    without_sdk_header_variables()
     profile = endpoint.profile
     return AsyncOpenAI(
         base_url=endpoint.base_url,
@@ -264,16 +301,24 @@ def _openai_client(endpoint: Endpoint) -> AsyncOpenAI:
     )
 
 
-def _entra_token_provider() -> Callable[[], str]:
+def entra_token_provider(profile: ProviderProfile) -> Callable[[], str]:
     """Entra ID tokens through the sync credential (``azure.identity.aio`` would need aiohttp).
 
-    Managed identity, workload identity or a client secret from the environment: the Entra ID
-    variables are the identity the operator chose with ``auth = "entra"``. The developer tools
-    (Azure CLI, PowerShell, VS Code) are left out: a server never signs in as a person.
+    Built once per profile (``ai_models`` keeps it on the endpoint), so its token cache lives
+    as long as the profile: the credential asks Entra ID or the managed-identity endpoint again
+    only when the token is about to expire, about once an hour. Managed identity, workload
+    identity or a client secret from the environment: the Entra ID variables are the identity
+    the operator chose with ``auth = "entra"``. The developer tools (Azure CLI, PowerShell,
+    VS Code) are left out: a server never signs in as a person. The profile's proxy carries the
+    token requests too.
+
+    Args:
+        profile: The profile.
 
     Returns:
-        A callable returning a bearer token, refreshed about once an hour.
+        A callable returning a bearer token.
     """
+    proxies = {"http": profile.proxy, "https": profile.proxy} if profile.proxy else None
     credential = DefaultAzureCredential(
         exclude_cli_credential=True,
         exclude_developer_cli_credential=True,
@@ -282,6 +327,7 @@ def _entra_token_provider() -> Callable[[], str]:
         exclude_shared_token_cache_credential=True,
         exclude_interactive_browser_credential=True,
         exclude_broker_credential=True,
+        proxies=proxies,
     )
     return get_bearer_token_provider(credential, AZURE_SCOPE)
 
@@ -295,12 +341,13 @@ def _azure_client(endpoint: Endpoint) -> AsyncAzureOpenAI:
     Returns:
         The client.
     """
+    without_sdk_header_variables()
     profile = endpoint.profile
-    if profile.auth is AzureAuth.ENTRA:
+    if endpoint.token_provider is not None:
         return AsyncAzureOpenAI(
             azure_endpoint=endpoint.base_url,
             api_version=profile.api_version,
-            azure_ad_token_provider=_entra_token_provider(),
+            azure_ad_token_provider=endpoint.token_provider,
             http_client=endpoint.client,
             max_retries=profile.max_retries,
             timeout=profile.request_timeout,
@@ -423,8 +470,10 @@ async def _anthropic_client(
         endpoint: The profile's endpoint.
 
     Returns:
-        The client of the Anthropic API, Vertex AI or Azure AI Foundry.
+        The client of the Anthropic API (or a key-signed Foundry endpoint, which takes the
+        Anthropic API's `x-api-key`), Vertex AI or Azure AI Foundry with Entra ID.
     """
+    without_sdk_header_variables()
     profile = endpoint.profile
     match profile.anthropic_platform:
         case AnthropicPlatform.VERTEX:
@@ -437,21 +486,13 @@ async def _anthropic_client(
                 max_retries=profile.max_retries,
                 timeout=profile.request_timeout,
             )
-        case AnthropicPlatform.FOUNDRY:
+        case AnthropicPlatform.FOUNDRY if endpoint.token_provider is not None:
             # Not AsyncAnthropicFoundry: it reads ANTHROPIC_FOUNDRY_RESOURCE and _BASE_URL even
-            # when given the other, and then fails or goes elsewhere. The Foundry endpoint takes
-            # the Anthropic API's own `x-api-key`, or an Entra ID bearer token.
-            if profile.auth is AzureAuth.ENTRA:
-                token = await asyncio.to_thread(_entra_token_provider())
-                return AsyncAnthropic(
-                    auth_token=token,
-                    base_url=endpoint.base_url,
-                    http_client=endpoint.client,
-                    max_retries=profile.max_retries,
-                    timeout=profile.request_timeout,
-                )
+            # when given the other, and then fails or goes elsewhere. The profile's client signs
+            # every request with a fresh Entra ID token (`http_client(bearer=...)`); this
+            # placeholder only keeps the SDK from looking for a key of its own.
             return AsyncAnthropic(
-                api_key=endpoint.key or NO_KEY,
+                auth_token=NO_KEY,
                 base_url=endpoint.base_url,
                 http_client=endpoint.client,
                 max_retries=profile.max_retries,

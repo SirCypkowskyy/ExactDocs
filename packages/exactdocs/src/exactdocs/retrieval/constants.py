@@ -290,7 +290,7 @@ _OPTIONAL_KIND_FIELDS: Final[tuple[str, ...]] = (
 )  # fmt: skip
 """Profile fields that apply to some kinds only."""
 _KIND_FIELDS: Final[dict[str, frozenset[str]]] = {
-    "azure": frozenset({"api_version", "auth"}),
+    "azure": frozenset({"api_version", "auth", "resource"}),
     "google-vertex": frozenset({"project", "location", "credentials_file", "adc"}),
     "anthropic/api": frozenset({"platform"}),
     "anthropic/vertex": frozenset({"platform", "project", "location", "credentials_file", "adc"}),
@@ -310,6 +310,12 @@ MAX_KEY: Final[int] = 16384
 """Longest provider key the REST API stores."""
 HEADER_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}")
 """An HTTP header name (an RFC 9110 token) of a profile's extra headers."""
+CREDENTIAL_HEADERS: Final[frozenset[str]] = frozenset({
+    "authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey",
+})  # fmt: skip
+"""Extra header names refused (lower case): they carry a credential, which belongs in the key."""
+CREDENTIAL_HEADER_SUFFIXES: Final[tuple[str, ...]] = ("-key", "-token", "-secret", "-password")
+"""Extra header name endings refused for the same reason (``X-Portkey-Api-Key``, ...)."""
 MAX_HEADERS: Final[int] = 20
 """Most extra headers a profile may send."""
 MAX_HEADER_VALUE: Final[int] = 4096

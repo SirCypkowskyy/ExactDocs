@@ -20,6 +20,8 @@ from exactdocs.retrieval.constants import (
     _OPTIONAL_KIND_FIELDS,
     _SELF_HOSTED_KINDS,
     _WORD,
+    CREDENTIAL_HEADER_SUFFIXES,
+    CREDENTIAL_HEADERS,
     DEFAULT_MODE_ORDER,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
@@ -1070,7 +1072,7 @@ class ProviderProfile:
     auth: AzureAuth | None = None
     """How an Azure profile signs its calls; ``key`` when unset."""
     resource: str | None = None
-    """The Azure AI Foundry resource name (instead of ``base_url``)."""
+    """The Azure resource name (Azure OpenAI, Claude on Foundry), instead of ``base_url``."""
 
     def __post_init__(self) -> None:
         """Check the fields against the kind.
@@ -1084,6 +1086,7 @@ class ProviderProfile:
             )
         self._check_common()
         self._check_kind_fields()
+        self._check_ambient_identity()  # first: its reason is the one that matters
         match self.kind:
             case ProviderKind.AZURE:
                 self._check_azure()
@@ -1096,7 +1099,7 @@ class ProviderProfile:
                     self._fail("a local profile has no endpoint, key, headers or proxy")
             case _:
                 pass
-        if self.kind.needs_base_url and not self.base_url:
+        if self.kind.needs_base_url and not self.base_url and not self._derived_endpoint:
             self._fail(f"kind {self.kind.value} needs base_url")
         if self.kind.needs_key and self.key is KeySource.NONE:
             self._fail(f"kind {self.kind.value} needs a key")
@@ -1129,12 +1132,22 @@ class ProviderProfile:
         self._check_headers()
 
     def _check_headers(self) -> None:
-        """At most ``MAX_HEADERS`` extra headers, with token names and one-line values."""
+        """At most ``MAX_HEADERS`` extra headers, token names, one-line values, no credentials.
+
+        A header that carries a credential would sit unsealed in the database and the file:
+        the key belongs in the key field, which is sealed (or read from a file).
+        """
         if len(self.headers) > MAX_HEADERS:
             self._fail(f"at most {MAX_HEADERS} headers")
         for header, value in self.headers:
             if not HEADER_NAME.fullmatch(header):
                 self._fail("a header name must be an HTTP token")
+            lowered = header.lower()
+            if lowered in CREDENTIAL_HEADERS or lowered.endswith(CREDENTIAL_HEADER_SUFFIXES):
+                self._fail(
+                    f"header {header} carries a credential: use the key field (api_key, "
+                    "api_key_file), which is sealed"
+                )
             if len(value) > MAX_HEADER_VALUE or any(c in value for c in "\r\n\0"):
                 self._fail(f"the value of header {header} is too long or holds a line break")
 
@@ -1153,10 +1166,52 @@ class ProviderProfile:
                 self._fail(f"{name} does not apply to {where}")
 
     def _check_azure(self) -> None:
-        """Azure OpenAI: an API version, and a key or Entra ID (not both)."""
+        """Azure OpenAI: ``base_url`` or ``resource`` (one), an API version, a key or Entra ID."""
         if not self.api_version:
             self._fail("Azure OpenAI needs api_version")
+        if self.base_url and self.resource:
+            self._fail("Azure OpenAI needs base_url or resource, not both")
         self._check_azure_auth()
+
+    def _check_ambient_identity(self) -> None:
+        """The server's own cloud identity only from configuration, only to official endpoints.
+
+        ADC, a service-account file and Entra ID are the identity of the machine ExactDocs runs
+        on, not a secret the profile holds. A profile using one is configured by the operator
+        (the environment or the TOML file), never over the REST API, and takes no ``base_url``:
+        its endpoint is derived from ``location`` or ``resource`` and is always Google's or
+        Azure's, so the token never reaches another host.
+        """
+        if not self.uses_ambient_identity:
+            return
+        if self.origin is ProfileOrigin.API:
+            self._fail(
+                'credentials = "adc", credentials_file and auth = "entra" use the server\'s own '
+                "cloud identity: configure them in the environment or the configuration file"
+            )
+        if self.base_url:
+            self._fail(
+                "a profile using the server's cloud identity takes no base_url: its endpoint is "
+                "derived from location or resource"
+            )
+
+    @property
+    def uses_ambient_identity(self) -> bool:
+        """Say whether calls are signed with the server's own cloud identity.
+
+        Returns:
+            True with ``credentials = "adc"``, a ``credentials_file`` or ``auth = "entra"``.
+        """
+        return self.adc or bool(self.credentials_file) or self.auth is AzureAuth.ENTRA
+
+    @property
+    def _derived_endpoint(self) -> bool:
+        """Say whether the endpoint comes from ``resource`` instead of ``base_url``.
+
+        Returns:
+            True for Azure OpenAI with a ``resource``.
+        """
+        return self.kind is ProviderKind.AZURE and bool(self.resource)
 
     def _check_azure_auth(self) -> None:
         """A key with ``auth = "key"`` (the default), none with ``auth = "entra"``."""

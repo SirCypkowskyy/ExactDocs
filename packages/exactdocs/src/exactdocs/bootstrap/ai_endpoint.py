@@ -1,5 +1,6 @@
 """A provider profile ready to be called: shared by ``ai_models`` and ``ai_sdk``."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx2
@@ -19,3 +20,7 @@ class Endpoint:
     """The key, unsealed or read; ``None`` for a profile without one."""
     client: httpx2.AsyncClient = field(repr=False)
     """The profile's HTTP client."""
+    token_provider: Callable[[], str] | None = field(default=None, repr=False)
+    """Entra ID tokens for a profile with ``auth = "entra"``, one per profile (its cache lives
+    with it); ``None`` otherwise.
+    """

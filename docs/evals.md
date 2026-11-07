@@ -116,15 +116,15 @@ just eval --write-baseline
 |---|---|---|
 | every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25, gating)*; no model |
 | local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | a CI job with the `[local]` extra and cached ONNX models, no secret, compared with the baseline on `develop`; added with the local models (#245) |
-| provider | `hybrid_hyde`, `agentic` | in tests with pydantic-ai's `TestModel` / `FunctionModel`; with a real provider only by hand (`just eval --allow-providers`, or a manual `workflow_dispatch` that has the key) |
+| provider | `hybrid_hyde`, `agentic` | in tests with pydantic-ai's `TestModel` / `FunctionModel`; with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
 
 A mode whose model role is not configured is reported as `unavailable`, with the role it lacks.
 Whether a configured mode may run is decided **per model role**, not per tier: every role its
 search calls (its own, and the reranker when one is configured) must be listed in `--local-roles`,
 the roles whose model runs on this machine, or the mode is `skipped` unless `--allow-providers` is
 given. So a `hybrid` run on a hosted embedding model is skipped like `agentic` is. No CI run in a
-pull request calls a hosted model, and none needs a secret to pass. (Once provider profiles exist,
-#241, a role's profile kind replaces `--local-roles`.)
+pull request calls a hosted model, and none needs a secret to pass. (Provider profiles exist now
+(#241); deriving `--local-roles` from a role's profile kind is a follow-up.)
 
 ## Adding a mode
 

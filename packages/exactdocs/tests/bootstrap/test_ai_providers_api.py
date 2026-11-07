@@ -89,7 +89,7 @@ async def test_a_key_sent_over_rest_is_never_returned_nor_logged(
                 "kind": "openai-compatible",
                 "base_url": fake.v1,
                 "api_key": SECRET,
-                "headers": {"X-Gateway-Token": "header-secret"},
+                "headers": {"X-Team": "header-secret"},
             },
         )
         listed = await client.get(PROVIDERS)
@@ -103,7 +103,7 @@ async def test_a_key_sent_over_rest_is_never_returned_nor_logged(
         assert SECRET not in response.text
         assert "header-secret" not in response.text
     assert shown.json()["key"] == "sealed"
-    assert shown.json()["header_names"] == ["X-Gateway-Token"]
+    assert shown.json()["header_names"] == ["X-Team"]
     assert checked.json()["checks"][0]["status"] == "ok", checked.text
     assert checked.json()["checks"][0]["dimensions"] == 3
     assert fake.seen[0].headers["authorization"] == f"Bearer {SECRET}"
@@ -143,6 +143,74 @@ async def test_a_configured_profile_is_listed_read_only_and_cannot_be_changed(
         "llm": ("corp:gpt-4.1-mini", "instance"),
         "judge": ("corp:gpt-4.1-mini", "llm"),
     }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "google-vertex", "project": "p", "location": "l", "credentials": "adc"},
+        {
+            "kind": "google-vertex",
+            "project": "p",
+            "location": "l",
+            "credentials_file": "/etc/passwd",
+        },
+        {"kind": "azure", "resource": "acme", "api_version": "v", "auth": "entra"},
+        {"kind": "anthropic", "platform": "foundry", "resource": "acme", "auth": "entra"},
+        {
+            "kind": "anthropic",
+            "platform": "vertex",
+            "project": "p",
+            "location": "l",
+            "credentials": "adc",
+        },
+    ],
+    ids=["adc", "credentials file", "azure entra", "foundry entra", "claude on vertex"],
+)
+async def test_the_servers_cloud_identity_cannot_be_used_over_rest(
+    body: dict, fake: FakeGateway
+) -> None:
+    async with _client(Container.build(Settings())) as client:
+        created = await client.post(PROVIDERS, json={"name": "cloud", **body})
+        with_url = await client.post(
+            PROVIDERS, json={"name": "cloud", **body, "base_url": fake.url}
+        )
+        listed = await client.get(PROVIDERS)
+
+    for response in (created, with_url):
+        assert response.status_code == 422, response.text
+        assert response.json()["error"] == "invalid_provider"
+        assert "environment or the configuration file" in response.json()["detail"]
+    assert listed.json()["providers"] == []
+    assert fake.seen == []  # no token, nor any call, reached a host of the caller's choosing
+
+
+async def test_a_credential_header_is_refused_over_rest_and_in_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with _client(Container.build(Settings())) as client:
+        response = await client.post(
+            PROVIDERS,
+            json={
+                "name": "gw",
+                "kind": "openai-compatible",
+                "base_url": "https://gw.example.com/v1",
+                "headers": {"X-Portkey-Api-Key": "sk-in-a-header"},
+            },
+        )
+    assert response.status_code == 422
+    assert "use the key field" in response.json()["detail"]
+    assert "sk-in-a-header" not in response.text
+
+    config = tmp_path / "exactdocs.toml"
+    config.write_text(
+        '[ai.providers.gw]\nkind = "openai-compatible"\nbase_url = "https://gw.example.com/v1"\n'
+        'headers = { "Authorization" = "Bearer sk-in-the-file" }\n'
+    )
+    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(config))
+    with pytest.raises(StartupError, match="use the key field") as error:
+        Container.build(Settings())
+    assert "sk-in-the-file" not in str(error.value)
 
 
 async def test_an_invalid_profile_is_refused_with_its_reason() -> None:

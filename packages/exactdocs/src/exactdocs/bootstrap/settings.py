@@ -45,7 +45,9 @@ class ProviderSettings(BaseModel):
     api_key_file: Path | None = None
     """A file holding the key (Docker and Kubernetes secrets), read at every call."""
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
-    """Extra headers of every call; their values are masked in logs and never shown."""
+    """Extra headers of every call (masked in logs, never shown). No credentials: `Authorization`,
+    `Cookie`, `*-key`, `*-token` and the like are refused; use `api_key` or `api_key_file`.
+    """
     proxy: str | None = None
     """An HTTP(S) proxy for this profile only; the environment's proxy variables are not read."""
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT
@@ -59,7 +61,7 @@ class ProviderSettings(BaseModel):
     location: str | None = None
     """Google Cloud location, or the AWS region of Claude on Bedrock."""
     credentials_file: Path | None = None
-    """A Google service-account file."""
+    """A Google service-account file (configuration only; the endpoint is then Google's own)."""
     credentials: Literal["adc"] | None = None
     """`adc`: Google Application Default Credentials, used only when set here."""
     platform: AnthropicPlatform | None = None
@@ -67,7 +69,7 @@ class ProviderSettings(BaseModel):
     auth: AzureAuth | None = None
     """`azure`, and `anthropic` on `foundry`: `key` (default) or `entra` (Entra ID)."""
     resource: str | None = None
-    """Claude on Azure AI Foundry: the resource name, instead of `base_url`."""
+    """Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."""
 
     @field_validator(
         "api_key",

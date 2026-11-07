@@ -499,6 +499,14 @@ class ModelFactory(Protocol):
         """
         ...
 
+    async def release(self, name: str) -> None:
+        """Let go of what was built for a profile that was deleted (its HTTP client).
+
+        Args:
+            name: The profile's name.
+        """
+        ...
+
     async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
         """Make one minimal call to the model as ``role`` uses it and time it.
 

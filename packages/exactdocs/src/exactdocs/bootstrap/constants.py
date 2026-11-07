@@ -348,6 +348,10 @@ AMBIENT_HEADERS: Final[frozenset[str]] = frozenset({"openai-organization", "open
 """Headers the OpenAI SDK fills from ``OPENAI_ORG_ID`` / ``OPENAI_PROJECT_ID``: dropped from every
 call unless the profile's own headers set them.
 """
+SDK_HEADER_VARIABLES: Final[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS", "ANTHROPIC_CUSTOM_HEADERS")
+"""Variables the OpenAI and Anthropic SDKs merge into every request after the key: removed from
+the process before any SDK client is built.
+"""
 CHECK_PROMPT: Final[str] = "Reply with the single word OK."
 """What ``exactdocs ai check`` asks a chat model."""
 CHECK_MAX_TOKENS: Final[int] = 16

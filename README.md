@@ -507,7 +507,7 @@ anywhere, while no profile is configured.
 kind = "openai-compatible"
 base_url = "https://llm.example.com/v1"
 api_key_file = "/run/secrets/corp_llm_key"   # never api_key in the file
-headers = { "X-Team" = "docs" }
+headers = { "X-Team" = "docs" }     # no credentials here: Authorization, *-key, *-token are refused
 proxy = "http://proxy.example.com:3128"
 request_timeout = 30
 
@@ -523,8 +523,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 
 - **Kinds:** `openai-compatible` (any gateway: a base URL, an optional key), `openai`,
   `openrouter`, `anthropic` (`platform = "api"`, `"vertex"`, `"foundry"`, or `"bedrock"` with
-  boto3, not in the images), `azure` (Azure OpenAI: `base_url`, `api_version`, a key or
-  `auth = "entra"`), `google-vertex` (`project`, `location` and `credentials_file`, or
+  boto3, not in the images), `azure` (Azure OpenAI: `base_url` or `resource`, `api_version`, a
+  key or `auth = "entra"`), `google-vertex` (`project`, `location` and `credentials_file`, or
   `credentials = "adc"`, or an Express-mode key), `google` (Gemini API), `ollama`, `vllm`,
   `litellm`, pydantic-ai's OpenAI-API providers (`deepseek`, `together`, `fireworks`, `cerebras`,
   `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`), and
@@ -534,8 +534,19 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 - **Explicit values only.** Every SDK client gets its endpoint, key (`unused` for a profile
   without one), project, region and API version from the profile; `OPENAI_API_KEY`,
   `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `AZURE_OPENAI_*`, `GOOGLE_*` and the like are never read,
-  and each profile's HTTP client refuses any host but its endpoint. Google ADC is used only with
-  `credentials = "adc"`, Entra ID only with `auth = "entra"`.
+  and each profile's HTTP client refuses any scheme, host or port but its endpoint's.
+  `OPENAI_CUSTOM_HEADERS` and `ANTHROPIC_CUSTOM_HEADERS` are removed from the process before any
+  SDK client is built (the SDKs would let them replace a profile's key).
+- **The server's own cloud identity** (`credentials = "adc"`, `credentials_file`,
+  `auth = "entra"`) is used only by profiles of the environment or the TOML file, never by ones
+  created over REST, and such a profile takes no `base_url`: its endpoint is derived from
+  `location` or `resource` (Google's or Azure's own), so the token never reaches another host. An
+  Entra ID credential is built once per profile (its token cache lives with it) and goes through
+  the profile's `proxy`; Google's token refresh uses the environment's proxy variables, as
+  google-auth reads them itself.
+- **Extra headers carry no credentials:** `Authorization`, `Cookie`, `x-api-key`, `api-key`
+  and names ending in `-key`, `-token`, `-secret` or `-password` are refused ("use the key
+  field"), so no credential sits unsealed in the database or the file.
 - **Over REST** (`/api/v1/ai/providers`, admins): profiles can be created, changed, deleted and
   checked; their keys are sealed with the secret key (`EXACTDOCS_SECRET_KEY` or `secret.key`,
   under their own key derivation) and never returned. Profiles of the environment or the file are

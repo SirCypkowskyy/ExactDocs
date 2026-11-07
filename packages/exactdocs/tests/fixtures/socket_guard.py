@@ -32,6 +32,8 @@ SDK_VARIABLES = [
     "GOOGLE_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_APPLICATION_CREDENTIALS",
+    "OPENAI_CUSTOM_HEADERS",
+    "ANTHROPIC_CUSTOM_HEADERS",
 ]
 
 GUARD = """
@@ -67,6 +69,10 @@ trap = trap_context.__enter__()
 for variable in {variables!r}:
     if variable.endswith(("_BASE_URL", "_ENDPOINT")):
         os.environ[variable] = trap.v1
+    elif variable.endswith("_CUSTOM_HEADERS"):
+        os.environ[variable] = (
+            "Authorization: Bearer from-the-environment\\nx-api-key: from-the-environment"
+        )
     else:
         os.environ[variable] = "from-the-environment"
 """

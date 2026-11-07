@@ -280,6 +280,11 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   Retrieval declares its own small `SecretBox` port. The Fernet adapter itself **moves from
   ingestion to `bootstrap`** first (#248): retrieval (#241) and identity (#105) would otherwise
   depend on another domain's adapter module. The kernel cannot hold it (it needs `cryptography`).
+- **The server's cloud identity is configuration only** (#241 review): a profile signed with
+  ADC, a service-account file or Entra ID is configured in the environment or the file, never
+  over REST, and takes no `base_url` (its endpoint is derived from `location` or `resource`), so
+  a token of the machine's identity reaches only Google's or Azure's endpoints. Extra headers may
+  not carry credentials (`Authorization`, `*-key`, `*-token`, ...): keys go in the key field.
 - **Per-library overrides** (stored by retrieval, #102; edited by admins until library roles
   exist, E12-05/06, then by the library's owner and admins): AI on or
   off (off: nothing of the library is ever sent to a provider), retrieval mode, the `llm`, `judge`

@@ -8,12 +8,13 @@ rotated secret counts), an environment key is held here and nowhere else. Each p
 ``httpx2`` client, rebuilt (and the old one closed) when the profile changes.
 """
 
+import asyncio
 import importlib
 import importlib.util
 import logging
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import ModuleType
 
 from exactdocs.bootstrap.ai_endpoint import Endpoint
@@ -93,6 +94,8 @@ class PydanticAiModels:
     """Opens keys stored over the REST API; ``None`` when this process has no secret key."""
     _endpoints: dict[str, Endpoint] = field(default_factory=dict, init=False, repr=False)
     """The current endpoint of each profile called so far, by name."""
+    _locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    """One build of an endpoint at a time, per profile name."""
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         """Say why this installation cannot call the profile, from the installed packages.
@@ -126,6 +129,8 @@ class PydanticAiModels:
     async def endpoint(self, profile: ProviderProfile) -> Endpoint:
         """The profile's endpoint: its key, now, and its one client, rebuilt when it changed.
 
+        One build at a time per profile, so two first calls never make two clients.
+
         Args:
             profile: The profile, as it is now.
 
@@ -136,23 +141,54 @@ class PydanticAiModels:
         key = sdk.read_key(
             profile, self.keys.get(profile.name), None if self.box is None else self.box.open
         )
-        current = self._endpoints.get(profile.name)
-        if current is not None and current.profile == profile:
-            if current.key == key:
-                return current
-            endpoint = Endpoint(
-                profile=profile, base_url=current.base_url, key=key, client=current.client
-            )
-        else:
-            url = sdk.base_url(profile)
-            endpoint = Endpoint(
-                profile=profile, base_url=url, key=key, client=sdk.http_client(profile, url)
-            )
-            if current is not None:
-                await current.client.aclose()
-                logger.info("AI provider %s changed: its HTTP client was rebuilt", profile.name)
-        self._endpoints[profile.name] = endpoint
-        return endpoint
+        async with self._locks.setdefault(profile.name, asyncio.Lock()):
+            current = self._endpoints.get(profile.name)
+            if current is not None and current.profile == profile:
+                if current.key == key:
+                    return current
+                endpoint = replace(current, key=key)
+            else:
+                endpoint = self._build(sdk, profile, key)
+                if current is not None:
+                    await current.client.aclose()
+                    logger.info("AI provider %s changed: its HTTP client was rebuilt", profile.name)
+            self._endpoints[profile.name] = endpoint
+            return endpoint
+
+    def _build(self, sdk: ModuleType, profile: ProviderProfile, key: str | None) -> Endpoint:
+        """Build a profile's endpoint: its URL, its Entra ID token provider, its client.
+
+        Args:
+            sdk: ``exactdocs.bootstrap.ai_sdk``.
+            profile: The profile.
+            key: Its key, or ``None``.
+
+        Returns:
+            The endpoint.
+        """
+        url = sdk.base_url(profile)
+        tokens = sdk.entra_token_provider(profile) if profile.auth is AzureAuth.ENTRA else None
+        # Claude on Foundry with Entra ID: the client signs each request with a fresh token.
+        bearer = tokens if profile.kind is ProviderKind.ANTHROPIC else None
+        return Endpoint(
+            profile=profile,
+            base_url=url,
+            key=key,
+            client=sdk.http_client(profile, url, bearer=bearer),
+            token_provider=tokens,
+        )
+
+    async def release(self, name: str) -> None:
+        """Close the client of a profile that was deleted (or will be rebuilt).
+
+        Args:
+            name: The profile's name.
+        """
+        async with self._locks.setdefault(name, asyncio.Lock()):
+            endpoint = self._endpoints.pop(name, None)
+            if endpoint is not None:
+                await endpoint.client.aclose()
+        self._locks.pop(name, None)
 
     async def chat_model(self, profile: ProviderProfile, model: str) -> object:
         """Build a pydantic-ai chat model.
