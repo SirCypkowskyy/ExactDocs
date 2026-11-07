@@ -116,6 +116,7 @@ from exactdocs.retrieval.dtos import (
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
+    ForgetLibraryCommand,
     GetChunkSetsQuery,
     IndexManifestCommand,
     RemoveChunksCommand,
@@ -131,6 +132,7 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
+    ForgetLibrary,
     GetChunkSets,
     IndexManifest,
     RemoveChunks,
@@ -201,6 +203,22 @@ class CatalogLibraries:
     """Implements ``retrieval.ports.driven.Libraries`` using the catalog."""
 
     list_libraries: ListLibraries
+    get_library: GetLibrary
+    """Spells a library ID as the catalog stores it."""
+
+    async def canonical_id(self, library: str) -> str | None:
+        """Ask the catalog for the library.
+
+        Args:
+            library: The ID in any letter case.
+
+        Returns:
+            The ID as the catalog spells it, or ``None`` when it has no such library.
+        """
+        try:
+            return (await self.get_library(GetLibraryQuery(id=library))).id
+        except NotFoundError, ValidationError:
+            return None
 
     async def all(self) -> Sequence[CatalogLibrary]:
         """Read every page of the catalog's list, skipping libraries with no default version."""
@@ -678,18 +696,32 @@ class CatalogStoredArticles:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogRemovals:
-    """Implements ``ingestion.ports.driven.Removals`` using the catalog."""
+    """Implements ``ingestion.ports.driven.Removals`` using the catalog (and retrieval)."""
 
     version_remover: RemoveVersion
     library_remover: RemoveLibrary
+    forget_library: ForgetLibrary
+    """Drops retrieval's per-library settings once the catalog has removed the library."""
 
     async def remove_version(self, library: str, ref: str) -> Removed:
         """Remove the version from the catalog."""
         return _removed(await self.version_remover(RemoveVersionCommand(library=library, ref=ref)))
 
     async def remove_library(self, library: str) -> Removed:
-        """Remove the library from the catalog."""
-        return _removed(await self.library_remover(RemoveLibraryCommand(library=library)))
+        """Remove the library from the catalog, then retrieval's settings of it (its mode).
+
+        Retrieval goes second: if it failed, the library would be gone and its leftover row
+        harmless until the same ID is added again, never the other way round.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            What the catalog removed.
+        """
+        removed = await self.library_remover(RemoveLibraryCommand(library=library))
+        await self.forget_library(ForgetLibraryCommand(library=removed.library))
+        return _removed(removed)
 
 
 def _removed(result: CatalogRemoval) -> Removed:

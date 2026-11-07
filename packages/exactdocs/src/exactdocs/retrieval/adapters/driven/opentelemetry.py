@@ -20,6 +20,26 @@ from exactdocs.retrieval.constants import (
     TRACER_NAME,
     WHOLE_SEARCH,
 )
+from exactdocs.retrieval.ports.driven import SearchSpan
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _OpenSpan:
+    """Implements ``ports.driven.SearchSpan`` over an OpenTelemetry span and its metric labels."""
+
+    span: trace.Span
+    """The span the block runs in."""
+    labels: dict[str, str]
+    """The labels the duration is recorded with when the block ends."""
+
+    def answered_by(self, mode: str) -> None:
+        """Replace the mode on the span and on the duration measurement.
+
+        Args:
+            mode: The mode that answered.
+        """
+        self.span.set_attribute(MODE_ATTRIBUTE, mode)
+        self.labels[MODE_ATTRIBUTE] = mode
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -55,7 +75,7 @@ class OpenTelemetrySearchTracer:
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
-    ) -> AbstractContextManager[object]:
+    ) -> AbstractContextManager[SearchSpan]:
         """Start ``retrieval.<name>`` as the current span, and time it.
 
         Args:
@@ -85,8 +105,8 @@ class OpenTelemetrySearchTracer:
 
     @contextmanager
     def _timed(
-        self, span: AbstractContextManager[object], *, name: str, mode: str
-    ) -> Generator[object]:
+        self, span: AbstractContextManager[trace.Span], *, name: str, mode: str
+    ) -> Generator[SearchSpan]:
         """Run the block inside ``span`` and record how long it took, failed or not.
 
         Args:
@@ -95,7 +115,7 @@ class OpenTelemetrySearchTracer:
             mode: The retrieval mode.
 
         Yields:
-            The span.
+            The span, which can still be told the mode that answered.
         """
         search, _, stage = name.partition(".")
         labels = {
@@ -106,7 +126,7 @@ class OpenTelemetrySearchTracer:
         started = perf_counter()
         try:
             with span as current:
-                yield current
+                yield _OpenSpan(span=current, labels=labels)
         except BaseException as error:
             labels[ERROR_TYPE_ATTRIBUTE] = type(error).__qualname__
             raise

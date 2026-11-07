@@ -213,12 +213,36 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
         stored_articles=InMemoryStoredArticles(repository=written),
     )
 
-    found = await CatalogLibraries(list_libraries=catalog.list_libraries).all()
+    found = await CatalogLibraries(
+        list_libraries=catalog.list_libraries, get_library=catalog.get_library
+    ).all()
 
     assert len(found) == MAX_LIMIT + 4  # lib-000 has no version
     assert found[0].id == "/acme/lib-001"
     assert (found[0].title, found[0].default_version) == ("Lib 1", "v1.4.0")
     assert found[0].version_count == len(PAYMENTS.versions)
+
+
+@pytest.mark.parametrize(
+    ("asked", "found"),
+    [("/acme/payments", "/acme/payments"), ("/ACME/Payments", "/acme/payments"), ("/acme/x", None)],
+)
+async def test_the_library_bridge_spells_an_id_as_the_catalog_does(
+    asked: str, found: str | None
+) -> None:
+    repository = InMemoryLibraryRepository.of([PAYMENTS])
+    catalog = CatalogModule.build(
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
+    )
+    libraries = CatalogLibraries(
+        list_libraries=catalog.list_libraries, get_library=catalog.get_library
+    )
+
+    assert await libraries.canonical_id(asked) == found
 
 
 async def test_default_versions_come_in_one_call_with_active_manifests_only() -> None:

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.constants import MAX_SEARCHED_LIBRARIES
@@ -110,6 +111,7 @@ def world() -> Fixture:
         chunks=chunks,
         search=index,
         maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
     return Fixture(module, versions)
 

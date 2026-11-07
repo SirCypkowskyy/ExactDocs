@@ -1,7 +1,7 @@
 """On PostgreSQL, chunks are searchable through PostgreSQL full-text search.
 
 Revision ID: 0c4e8a2f6b19
-Revises: b2c5e8a1d7f4
+Revises: a7c3e9b1d5f2
 
 SQLite keeps FTS5 (`retrieval_search`, 3b8f0d6e2a71); those revisions skip their FTS5 steps on
 PostgreSQL, and this one creates PostgreSQL's index instead (a no-op on SQLite). One row per stored
@@ -20,7 +20,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import TSVECTOR
 
 revision = "0c4e8a2f6b19"
-down_revision = "b2c5e8a1d7f4"
+down_revision = "a7c3e9b1d5f2"
 branch_labels = None
 depends_on = None
 

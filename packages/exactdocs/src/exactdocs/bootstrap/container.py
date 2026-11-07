@@ -3,7 +3,7 @@ import logging
 import os
 import signal
 import threading
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,17 +96,33 @@ from exactdocs.ingestion.ports.driven import (
 )
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
-from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, SqliteLibraryModes
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.models import RetrievalMode
+from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
 
 
 def _build_read_side(
-    engine: AsyncEngine, settings: Settings
+    engine: AsyncEngine,
+    settings: Settings,
+    *,
+    model_roles: ModelRoles | None = None,
+    pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
 ) -> tuple[CatalogModule, RetrievalModule]:
-    """Build the catalog and retrieval modules: everything the read-only MCP tools use."""
+    """Build the catalog and retrieval modules: everything the read-only MCP tools use.
+
+    Args:
+        engine: The database.
+        settings: The runtime configuration.
+        model_roles: The configured model roles (tests; none until #241 reads them).
+        pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
+
+    Returns:
+        The two modules.
+    """
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -123,7 +139,9 @@ def _build_read_side(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
         ),
-        libraries=CatalogLibraries(list_libraries=catalog.list_libraries),
+        libraries=CatalogLibraries(
+            list_libraries=catalog.list_libraries, get_library=catalog.get_library
+        ),
         defaults=CatalogDefaultVersions(list_default_manifests=catalog.list_default_manifests),
         manifests=CatalogActiveManifests(
             get_active_manifest=catalog.get_active_manifest,
@@ -133,6 +151,10 @@ def _build_read_side(
         search=search,
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
+        library_modes=SqliteLibraryModes(engine=engine),
+        roles=model_roles,
+        instance_mode=settings.ai.mode,
+        pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
@@ -331,6 +353,8 @@ class Container:
         renames: RenameSource | None = None,
         tree: RepositoryTree | None = None,
         chunker: Chunker | None = None,
+        model_roles: ModelRoles | None = None,
+        pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -338,7 +362,9 @@ class Container:
         connection; ``running()`` migrates the schema and releases the engine afterwards.
         ``remote``, ``gateway`` and ``renames`` replace the system ``git`` for listing refs, for
         fetching and for detecting renames (tests; a given ``gateway`` detects none unless
-        ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests). A missing
+        ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
+        ``model_roles`` and ``pipelines`` stand in for configured models and the AI retrieval
+        modes (tests, until #241 configures them). A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
         """
@@ -352,7 +378,9 @@ class Container:
             gateway = gateway or git
             tree = tree or git
         vault = SqliteCredentialVault(engine=engine, box=_secret_box(settings))
-        catalog, retrieval = _build_read_side(engine, settings)
+        catalog, retrieval = _build_read_side(
+            engine, settings, model_roles=model_roles, pipelines=pipelines
+        )
         index = RetrievalChunkIndex(
             index_manifest=retrieval.index_manifest,
             get_chunk_sets=retrieval.get_chunk_sets,
@@ -405,7 +433,9 @@ class Container:
                 get_library=catalog.get_library, list_renames=catalog.list_renames
             ),
             removals=CatalogRemovals(
-                version_remover=catalog.remove_version, library_remover=catalog.remove_library
+                version_remover=catalog.remove_version,
+                library_remover=catalog.remove_library,
+                forget_library=retrieval.forget_library,
             ),
             index=index,
             vault=vault,

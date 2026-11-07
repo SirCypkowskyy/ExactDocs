@@ -20,6 +20,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
@@ -161,6 +162,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             chunks=chunks,
             search=search,
             maintenance=search,
+            library_modes=InMemoryLibraryModes(),
             clock=clock,
         )
 

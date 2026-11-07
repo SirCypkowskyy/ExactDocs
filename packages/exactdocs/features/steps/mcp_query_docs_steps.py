@@ -80,7 +80,7 @@ def step_has_text(context: Context, ref: str) -> None:
     assert any(line in _payload(context) for line in only), _payload(context)
 
 
-@then('the call fails with "{code}"')
+@then('the call fails with "{code:w}"')
 def step_fails(context: Context, code: str) -> None:
     assert context.mcp_result.is_error
     assert context.mcp_result.content[0].text.startswith(f"{code}:"), context.mcp_result.content

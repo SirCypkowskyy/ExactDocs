@@ -3,12 +3,42 @@ from typing import Annotated, Literal
 
 from croniter import croniter
 from platformdirs import user_data_path
-from pydantic import Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 
 from exactdocs.bootstrap.constants import LOCAL_HOSTS, POSTGRES_DRIVER, POSTGRES_DRIVERS
+from exactdocs.retrieval.models import RetrievalMode
+
+
+class AiSettings(BaseModel):
+    """The ``ai`` section: AI retrieval, read from ``EXACTDOCS_AI__<FIELD>`` variables."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True)
+
+    mode: RetrievalMode | None = None
+    """`EXACTDOCS_AI__MODE`: the retrieval mode of every search that names none, for libraries
+    without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`. Unset (or `auto`): the best
+    mode the configured models allow (BM25 with none). A mode whose model is not configured falls
+    back to the best one, and the results say so (`fallback_reason` `mode_unavailable`).
+    """
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _mode_any_case(cls, value: object) -> object:
+        """Read the mode in any letter case; blank and ``auto`` count as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The mode name in lower case, or ``None``.
+        """
+        if isinstance(value, str):
+            name = value.strip().lower()
+            return None if name in {"", "auto"} else name
+        return value
 
 
 def _default_data_dir() -> Path:
@@ -21,6 +51,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         use_attribute_docstrings=True,
         env_prefix="EXACTDOCS_",
+        # `EXACTDOCS_AI__MODE` is `ai.mode`, as the `ai` section of the decision record wants.
+        env_nested_delimiter="__",
         env_file=".env",
         extra="ignore",
         hide_input_in_errors=True,
@@ -71,6 +103,10 @@ class Settings(BaseSettings):
     # One whole `query-docs` payload, notice included, in tokens counted as characters / 4. That
     # undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
     query_docs_token_budget: int = Field(default=10_000, ge=500)
+    ai: AiSettings = Field(default_factory=AiSettings)
+    """AI retrieval (`EXACTDOCS_AI__...`, docs/decisions/ai-retrieval.md). #241 adds the provider
+    profiles and roles here.
+    """
     # `otlp`: traces and metrics over OTLP/HTTP to the collector the standard
     # `OTEL_EXPORTER_OTLP_ENDPOINT` names. Off: no telemetry SDK is set up, nothing is exported.
     telemetry: Literal["off", "otlp"] = "off"

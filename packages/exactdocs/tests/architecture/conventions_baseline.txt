@@ -61,8 +61,6 @@ packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogNewLibraries.create
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogNewLibraries.discard docstring-missing-args
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogNewLibraries.discard_library field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.library_remover field-without-docstring
-packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_library docstring-missing-args
-packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_library docstring-missing-returns
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_version docstring-missing-args
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_version docstring-missing-returns
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.version_remover field-without-docstring
@@ -265,8 +263,6 @@ packages/exactdocs/src/exactdocs/bootstrap/container.py ReadOnlyContainer.catalo
 packages/exactdocs/src/exactdocs/bootstrap/container.py ReadOnlyContainer.engine field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/container.py ReadOnlyContainer.retrieval field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/container.py ReadOnlyContainer.running docstring-missing-returns
-packages/exactdocs/src/exactdocs/bootstrap/container.py _build_read_side docstring-missing-args
-packages/exactdocs/src/exactdocs/bootstrap/container.py _build_read_side docstring-missing-returns
 packages/exactdocs/src/exactdocs/bootstrap/database.py _begin function-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/database.py _check_sqlite function-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/database.py _configure_connection function-without-docstring
@@ -1779,7 +1775,6 @@ packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJ
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._ended docstring-missing-returns
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._forget docstring-missing-args
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._forgetting field-without-docstring
-packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._recover function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._run docstring-missing-args
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._running field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._stop function-without-docstring
@@ -2943,7 +2938,6 @@ packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router
 packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router.context_search docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router.get_chunk docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router.get_chunk docstring-missing-returns
-packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router.search function-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router.search_all docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/adapters/driving/http.py build_router.search_all docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/adapters/driving/mcp.py _line docstring-missing-args
@@ -3065,7 +3059,6 @@ packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchDocsResult.coverage fie
 packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchDocsResult.library field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchDocsResult.reranked field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchDocsResult.results field-without-docstring
-packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchDocsResult.retrieval_mode field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchDocsResult.version field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchIndexStateOut.current_format field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/dtos.py SearchIndexStateOut.from_model docstring-missing-args
@@ -3308,7 +3301,6 @@ packages/exactdocs/src/exactdocs/retrieval/use_cases.py IndexManifestUseCase.sea
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.__call__ docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.chunks field-without-docstring
-packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.search field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.token_budget field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.versions field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py ReadChunkUseCase.__call__ docstring-missing-args
@@ -3345,7 +3337,6 @@ packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchAllLibrariesUseCas
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.__call__ docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.chunks field-without-docstring
-packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.search field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.versions field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py _confirmed_removals docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py _confirmed_removals docstring-missing-returns
