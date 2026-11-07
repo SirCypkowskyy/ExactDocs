@@ -584,25 +584,30 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   to start takes the lowest free slot, often the same, waits `claim_grace` (15 s, logged) if that
   executor left pending workflows, and DBOS resumes them.
   - **Watchdog.** A connection can die while its process lives (a failover, a NAT timeout,
-    `idle_session_timeout`), which frees the slot. Every 5 s (`slot_check_interval`) the worker
-    checks in `pg_locks` that its own backend still holds it, each round trip bounded by 4 s
-    (the slot connection also has `tcp_user_timeout`), so a host that stopped answering cannot
-    hold the check past the adoption grace. If the slot is free it takes it again, and goes on
+    `idle_session_timeout`), which frees the slot. Every 2 s (`slot_check_interval`) the worker
+    checks in `pg_locks` that its own backend still holds it, the whole check bounded by 1.5 s
+    (`slot_check_timeout`; the slot connection also has `tcp_user_timeout`), so a host that
+    stopped answering cannot hold the check. If the slot is free it takes it again, and goes on
     only if every job it runs is still its own pending workflow. A database that cannot be
-    reached is `unknown`: the worker adopts nothing and waits, and gives up once the slot stayed
-    unconfirmed for `adopt_grace` less two check intervals, before another process can adopt
-    its jobs. When another process holds the slot (or after that wait) the slot is lost: the
-    worker first stops taking jobs (a job DBOS still hands over is refused), cancels the running
-    ones, stops DBOS (and gives the event loop a new thread pool, as its normal teardown does),
-    then queues the refused jobs again through a `DBOSClient`, and stops the process with
-    `SIGTERM`; `serve` bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and
-    a restart policy brings it back.
+    reached is `unknown`: the worker adopts nothing and waits, and gives up 15 s
+    (`slot_give_up`) after the slot was **last confirmed held**, so outages up to about 15 s are
+    waited out and longer ones restart the process. When another process holds the slot (or
+    after that wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands
+    over is refused), cancels the running ones, stops DBOS (and gives the event loop a new thread
+    pool, as its normal teardown does), then queues the refused jobs again through a
+    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`; `serve`
+    bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and a restart policy brings it back.
   - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
     watchdog round the worker lists the pending job workflows of other executors and takes the
     locks of the free slots (so no process holds them, and no other can adopt them meanwhile). A
-    slot must have stayed free for `adopt_grace` (15 s) first, which gives a live process whose
-    connection dropped time to take it back. It then lists their workflows again and re-queues
-    them (`resume_workflows`).
+    slot must have stayed free for `adopt_grace` (30 s) first. It then lists their workflows
+    again and re-queues them (`resume_workflows`).
+  - **Timing invariants**, checked when the worker is built (a `ValueError` otherwise):
+    `slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout < adopt_grace`
+    (15 + 2 + 1.5 + 5 = 23.5 < 30: a process whose slot went unconfirmed has stopped its jobs
+    before anyone adopts them), and `claim_grace > slot_check_interval + slot_check_timeout +
+    halt_timeout` (15 > 8.5: a process that lost its slot to a newly started one stops before the
+    newcomer's DBOS resumes the slot's jobs).
   - **Start.** Recovery (`sort_workflows`) deletes or recovers only the workflows of this process's
     executor and of free slots: a live process's workflows, of any `STEPS_VERSION`, are never
     touched, and `RecoverJobs` leaves their jobs alone. A release that changes `STEPS_VERSION`

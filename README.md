@@ -508,13 +508,14 @@ instead of the SQLite file, and
 then run several server processes on it: in one container (`WEB_CONCURRENCY`), in several, or on
 several hosts behind a load balancer. Every process serves the web UI, the API and MCP, and runs
 jobs; a job runs once, in whichever process takes it first, and at most one per library at a time.
-A process that dies with running jobs leaves them to the next one that starts, or after about 15 s
-to any running process, which resumes them at their last completed step. A short database outage
-or failover is waited out. But a process that could not confirm its executor slot for 5 s, or whose
-slot another process has taken meanwhile, stops taking jobs and stops itself (as `SIGTERM` does), so
-that no job runs twice: run it with a restart policy (`restart: unless-stopped` in the example
-below, a Deployment in Kubernetes). A process that starts after a crash waits 15 s before it
-resumes the jobs the crashed one left (it logs why).
+A process that dies with running jobs leaves them to the next one that starts, or after about 30 s
+to any running process, which resumes them at their last completed step. A database outage or
+failover of up to about 15 s is waited out. A longer one, or another process taking over a
+process's executor slot meanwhile, makes that process stop taking jobs and stop itself (as
+`SIGTERM` does) within a few seconds, before anyone else can take its jobs over, so that no job runs
+twice: run it with a restart policy (`restart: unless-stopped` in the example below, a Deployment
+in Kubernetes). A process that starts after a crash waits 15 s before it resumes the jobs the
+crashed one left (it logs why).
 
 - `EXACTDOCS_DATABASE_URL=postgresql://user:password@host:5432/exactdocs` (`postgresql+psycopg://`
   means the same). The role needs to own the database, or at least to create tables and a schema
