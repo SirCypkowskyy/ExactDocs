@@ -744,7 +744,7 @@ class LibraryRetrievalOut(_Dto):
     mode: RetrievalMode | None
     """The library's own setting; null: the instance's mode applies."""
     instance_mode: RetrievalMode | None
-    """The instance's setting (`EXACTDOCS_RETRIEVAL_MODE`); null: the best mode configured."""
+    """The instance's setting (`EXACTDOCS_AI__MODE`); null: the best mode configured."""
     effective_mode: RetrievalMode
     """The mode a search without `mode` runs in now."""
     fallback_reason: FallbackReason | None = Field(default=None)
@@ -753,3 +753,10 @@ class LibraryRetrievalOut(_Dto):
     """The modes a call or a setting may name now."""
     configured_roles: list[ModelRole]
     """The model roles configured on this instance (`embedding`, `reranker`, `llm`)."""
+
+
+class ForgetLibraryCommand(_Dto):
+    """A library was removed: drop what retrieval stores for it (its retrieval mode)."""
+
+    library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`, any letter case."""

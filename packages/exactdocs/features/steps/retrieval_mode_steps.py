@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
+from exactdocs.bootstrap.settings import AiSettings
 from exactdocs.retrieval.adapters.driven.memory import StaticModelRoles
 from exactdocs.retrieval.models import ModelRole, PipelineAnswer, PipelineRequest, RetrievalMode
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE
@@ -35,7 +36,7 @@ def _restart(context: Context, instance: str | None, roles: frozenset[ModelRole]
     stack = ExitStack()
     context.add_cleanup(stack.close)
     settings = context.settings.model_copy(
-        update={"retrieval_mode": RetrievalMode(instance) if instance else None}
+        update={"ai": AiSettings(mode=RetrievalMode(instance) if instance else None)}
     )
     container = Container.build(
         settings,

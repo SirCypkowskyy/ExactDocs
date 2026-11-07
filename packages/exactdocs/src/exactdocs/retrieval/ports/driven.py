@@ -259,6 +259,18 @@ class SearchIndexMaintenance(Protocol):
         ...
 
 
+class SearchSpan(Protocol):
+    """An open search span: it can still learn which mode really answered."""
+
+    def answered_by(self, mode: str) -> None:
+        """Record the mode that answered, when a pipeline fell back to a cheaper one.
+
+        Args:
+            mode: The mode in the result (``retrieval_mode``).
+        """
+        ...
+
+
 class SearchTracer(Protocol):
     """Marks a search and its stages for whoever observes them (traces and metrics, OPS-01).
 
@@ -268,12 +280,13 @@ class SearchTracer(Protocol):
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
-    ) -> AbstractContextManager[object]:
+    ) -> AbstractContextManager[SearchSpan]:
         """Open the span ``name`` (``search_docs``, ``search_docs.rank``...) until the block ends.
 
         Args:
             name: The search, or the search and its stage after a dot.
-            mode: The retrieval mode the search runs in (``bm25``).
+            mode: The retrieval mode the search was chosen to run in (``bm25``); the block may
+                replace it with the mode that answered (``SearchSpan.answered_by``).
             query: The query text, recorded only when the adapter was told to.
             attributes: Further labels (library, ref); ``None`` ones are left out.
 
@@ -284,16 +297,26 @@ class SearchTracer(Protocol):
 
 
 class ModelRoles(Protocol):
-    """Which model roles the operator configured (#241 reads them from the configuration).
+    """Which model roles a library's searches may use: the availability view of role resolution.
 
-    Asked at every search, so a role set or removed while the server runs counts at the next one.
+    In the decision record's terms (docs/decisions/ai-retrieval.md, *Where the code lives*),
+    retrieval resolves the profile and model of each role from ``ProviderProfiles`` (instance
+    roles from the environment, the TOML file or the UI, #241) plus the library's overrides
+    (AI on or off, its own ``llm``/``judge``/``reranker``, #102); ``ModelFactory`` then turns a
+    resolved profile into something callable. This port only says which roles resolve for a
+    library, so #241 implements it inside retrieval over ``ProviderProfiles``, not as a second
+    source of truth in bootstrap. A library with AI off has no role at all: nothing of it is
+    sent to a provider. Asked at every search, so a change counts at the next one.
     """
 
-    async def configured(self) -> frozenset[ModelRole]:
-        """Say which roles are set.
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        """Say which roles a search of ``library`` may use.
+
+        Args:
+            library: The library ID, any letter case.
 
         Returns:
-            The roles; empty when nothing is configured (BM25 only).
+            The roles; empty when nothing is configured or the library has AI off (BM25 only).
         """
         ...
 
@@ -312,6 +335,14 @@ class LibraryModes(Protocol):
 
         Returns:
             The mode, or ``None`` when it has none (the instance's applies).
+        """
+        ...
+
+    async def forget(self, library: str) -> None:
+        """Drop everything stored for a library that was removed (a no-op when nothing is).
+
+        Args:
+            library: The library ID, any letter case.
         """
         ...
 

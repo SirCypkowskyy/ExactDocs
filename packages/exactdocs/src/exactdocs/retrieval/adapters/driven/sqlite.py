@@ -479,6 +479,17 @@ class SqliteLibraryModes:
             )
         return RetrievalMode(stored) if stored in RetrievalMode else None
 
+    async def forget(self, library: str) -> None:
+        """Delete the library's row.
+
+        Args:
+            library: The library ID, any letter case.
+        """
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(library_settings).where(library_settings.c.library == library.casefold())
+            )
+
     async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
         """Replace the library's row.
 

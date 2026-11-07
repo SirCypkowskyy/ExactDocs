@@ -378,7 +378,7 @@ def build_library_retrieval_router(
     async def set_retrieval(owner: str, repo: str, body: LibraryRetrievalIn) -> LibraryRetrievalOut:
         """Set the mode the library's searches use when a call names none (RET-06).
 
-        A call's `mode` still wins; the instance's mode (`EXACTDOCS_RETRIEVAL_MODE`) applies to
+        A call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to
         libraries without one. A mode set here that later cannot run (a model role was removed)
         does not fail searches: they fall back with `fallback_reason` `mode_unavailable`.
 

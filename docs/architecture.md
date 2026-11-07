@@ -702,16 +702,17 @@ room for its 9 MB.)
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
-*Next: AI retrieval* milestone. Built (#89): **mode selection**. Each mode is a
-`RetrievalPipeline` driven port (`run(PipelineRequest) -> PipelineAnswer`: one exact version in,
-hits and the mode that really answered out, with a `fallback_reason` when a cheaper one did).
-`RetrievalModule.build` registers `Bm25Pipeline` and any further pipelines it is given;
-`RetrievalModes` (in `use_cases`) asks the `ModelRoles` port which roles are configured (none
-until #241), builds a `ModeRegistry` (a mode can run when it has a pipeline and its roles), and
-picks the mode: the call's, else the library's (`LibraryModes` port,
-`retrieval_library_settings`), else the instance's (`EXACTDOCS_RETRIEVAL_MODE`), else the best.
-Later modes plug in as pipelines; their models come through the ports below. The `[ai]` extra is
-declared and installed for development; the model-free test proves none of it is imported.
+*Next: AI retrieval* milestone. Built (#89): **mode selection**. Each mode is a `RetrievalPipeline`
+driven port (`run(PipelineRequest) -> PipelineAnswer`: one exact version in, hits and the mode that
+really answered out, with a `fallback_reason` when a cheaper one did). `RetrievalModule.build`
+registers `Bm25Pipeline` and any further pipelines it is given; `RetrievalModes` (in `use_cases`)
+asks the `ModelRoles` port which roles the searched library may use (none until #241; per library,
+so #102's "AI off" can leave a library with none), builds a `ModeRegistry` (a mode can run when it
+has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
+port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best.
+Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
+catalog). Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
+extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 
 - **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, a spend store

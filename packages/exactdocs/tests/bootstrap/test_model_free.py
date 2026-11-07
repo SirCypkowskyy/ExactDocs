@@ -56,6 +56,8 @@ AI_MODULES = {
     "google.genai",
     "tiktoken",
     "logfire",
+    "logfire_api",
+    "genai_prices",
 }
 
 SEARCH_WITHOUT_MODELS = """

@@ -457,7 +457,7 @@ export interface paths {
          * Set Library Retrieval
          * @description Set the mode the library's searches use when a call names none (RET-06).
          *
-         *     A call's `mode` still wins; the instance's mode (`EXACTDOCS_RETRIEVAL_MODE`) applies to
+         *     A call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to
          *     libraries without one. A mode set here that later cannot run (a model role was removed)
          *     does not fail searches: they fall back with `fallback_reason` `mode_unavailable`.
          */
@@ -1824,7 +1824,7 @@ export interface components {
             readonly library: string;
             /** @description The library's own setting; null: the instance's mode applies. */
             readonly mode: components["schemas"]["RetrievalMode"] | null;
-            /** @description The instance's setting (`EXACTDOCS_RETRIEVAL_MODE`); null: the best mode configured. */
+            /** @description The instance's setting (`EXACTDOCS_AI__MODE`); null: the best mode configured. */
             readonly instance_mode: components["schemas"]["RetrievalMode"] | null;
             /** @description The mode a search without `mode` runs in now. */
             readonly effective_mode: components["schemas"]["RetrievalMode"];
@@ -2038,6 +2038,9 @@ export interface components {
         /**
          * ModelRole
          * @description A model an operator can configure; which ones are set decides the modes on offer.
+         *
+         *     The decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),
+         *     is not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank.
          * @enum {string}
          */
         readonly ModelRole: "embedding" | "reranker" | "llm";

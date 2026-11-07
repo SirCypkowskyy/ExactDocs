@@ -3769,7 +3769,7 @@
           "retrieval"
         ],
         "summary": "Set Library Retrieval",
-        "description": "Set the mode the library's searches use when a call names none (RET-06).\n\nA call's `mode` still wins; the instance's mode (`EXACTDOCS_RETRIEVAL_MODE`) applies to\nlibraries without one. A mode set here that later cannot run (a model role was removed)\ndoes not fail searches: they fall back with `fallback_reason` `mode_unavailable`.",
+        "description": "Set the mode the library's searches use when a call names none (RET-06).\n\nA call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to\nlibraries without one. A mode set here that later cannot run (a model role was removed)\ndoes not fail searches: they fall back with `fallback_reason` `mode_unavailable`.",
         "operationId": "retrieval-set_library_retrieval",
         "security": [
           {
@@ -7755,7 +7755,7 @@
                 "type": "null"
               }
             ],
-            "description": "The instance's setting (`EXACTDOCS_RETRIEVAL_MODE`); null: the best mode configured."
+            "description": "The instance's setting (`EXACTDOCS_AI__MODE`); null: the best mode configured."
           },
           "effective_mode": {
             "$ref": "#/components/schemas/RetrievalMode",
@@ -8233,7 +8233,7 @@
           "llm"
         ],
         "title": "ModelRole",
-        "description": "A model an operator can configure; which ones are set decides the modes on offer."
+        "description": "A model an operator can configure; which ones are set decides the modes on offer.\n\nThe decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),\nis not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank."
       },
       "OutlineSectionOut": {
         "properties": {

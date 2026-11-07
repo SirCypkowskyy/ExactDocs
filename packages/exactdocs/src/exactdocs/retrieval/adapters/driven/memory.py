@@ -277,12 +277,16 @@ class StaticModelRoles:
     roles: frozenset[ModelRole] = frozenset()
     """The roles that count as configured."""
 
-    async def configured(self) -> frozenset[ModelRole]:
-        """Say which roles are set.
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        """Say which roles are set; the same for every library.
+
+        Args:
+            library: The library searched.
 
         Returns:
             The fixed set.
         """
+        del library
         return self.roles
 
 
@@ -303,6 +307,14 @@ class InMemoryLibraryModes:
             Its mode, or ``None`` when it has none.
         """
         return self.modes.get(library.casefold())
+
+    async def forget(self, library: str) -> None:
+        """Drop the library's mode.
+
+        Args:
+            library: The library ID, any letter case.
+        """
+        self.modes.pop(library.casefold(), None)
 
     async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
         """Store or remove the library's mode.

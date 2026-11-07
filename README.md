@@ -372,13 +372,15 @@ the mode is chosen.
 
 Which mode answers a search: the call's `mode`, else the **library's** mode
 (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`), else the **instance's**
-(`EXACTDOCS_RETRIEVAL_MODE`), else the best mode the configured models allow. The modes are
+(`EXACTDOCS_AI__MODE`), else the best mode the configured models allow. The modes are
 `bm25`, `hybrid` (needs an embedding model), `hybrid_hyde` (embedding model and LLM) and
 `agentic` (LLM, never a default); reranking is a flag on top of any mode when a reranker is
 configured. A call that asks for a mode that cannot run fails with `mode_unavailable`, naming the
 missing model role; a library or instance mode that cannot run (its model was removed) never fails
 a search: the next one answers, with `fallback_reason: mode_unavailable`. Setting a library's mode
-is refused the same way when its model is not configured.
+is refused the same way when its model is not configured. Searching across libraries
+(`search_all_docs`, `GET /api/v1/search`) and `resolve-library-id` stay BM25 whatever the library
+and instance modes are: their scores must compare across libraries.
 
 | Configured | Retrieval | Status |
 |---|---|---|
@@ -413,7 +415,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
-| `EXACTDOCS_RETRIEVAL_MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best mode the configured models allow (BM25 while none is). An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
+| `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best mode the configured models allow (BM25 while none is). An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |

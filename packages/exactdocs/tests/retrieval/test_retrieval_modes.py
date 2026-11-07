@@ -21,6 +21,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import SqliteLibraryModes
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
+    ForgetLibraryCommand,
     GetLibraryRetrievalQuery,
     IndexManifestCommand,
     QueryDocsQuery,
@@ -109,18 +110,24 @@ class FakePipeline:
 
 @dataclass(slots=True)
 class MutableRoles:
-    """Roles the test changes while the module runs, as #241's configuration will."""
+    """Roles the test changes while the module runs, as #241's configuration will.
+
+    A library in ``ai_off`` gets no role at all, as #102's per-library "AI off" will.
+    """
 
     roles: set[ModelRole]
+    ai_off: set[str] = field(default_factory=set)
 
-    async def configured(self) -> frozenset[ModelRole]:
-        return frozenset(self.roles)
+    async def configured(self, library: str) -> frozenset[ModelRole]:
+        return frozenset() if library.casefold() in self.ai_off else frozenset(self.roles)
 
 
 @dataclass(slots=True)
 class World:
     module: RetrievalModule
     roles: set[ModelRole]
+    ai_off: set[str]
+    """Case-folded IDs of libraries with AI off."""
     pipelines: dict[RetrievalMode, FakePipeline]
 
 
@@ -146,6 +153,7 @@ async def _build(
     }
     versions = FakeVersions({"v1": _version("v1", "m1"), "v2": _version("v2", "m2")})
     configured = set(roles)
+    ai_off: set[str] = set()
     module = RetrievalModule.build(
         defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(
@@ -167,7 +175,7 @@ async def _build(
         search=index,
         maintenance=index,
         library_modes=library_modes or InMemoryLibraryModes(),
-        roles=MutableRoles(configured),
+        roles=MutableRoles(configured, ai_off),
         instance_mode=instance,
         pipelines=fakes,
     )
@@ -185,7 +193,7 @@ async def _build(
                 ],
             )
         )
-    return World(module=module, roles=configured, pipelines=fakes)
+    return World(module=module, roles=configured, ai_off=ai_off, pipelines=fakes)
 
 
 async def _mode_of(world: World, mode: str | None = None, ref: str | None = None) -> object:
@@ -458,4 +466,52 @@ async def test_a_stored_mode_is_replaced_and_removed(library_modes: LibraryModes
 
 
 async def test_the_static_roles_are_what_the_test_set() -> None:
-    assert await StaticModelRoles(roles=frozenset({LLM})).configured() == {LLM}
+    assert await StaticModelRoles(roles=frozenset({LLM})).configured(LIB) == {LLM}
+
+
+async def test_a_forgotten_library_has_no_mode(library_modes: LibraryModes) -> None:
+    await library_modes.set_mode("/Acme/Payments", HYBRID)
+    await library_modes.set_mode("/acme/other", AGENTIC)
+
+    await library_modes.forget("/acme/PAYMENTS")
+    await library_modes.forget("/acme/never-set")  # nothing stored: nothing happens
+
+    assert await library_modes.mode_of(LIB) is None
+    assert await library_modes.mode_of("/acme/other") is AGENTIC
+
+
+async def test_forgetting_a_removed_library_drops_its_mode() -> None:
+    world = await _build(EMBEDDING)
+    await world.module.set_library_retrieval(SetLibraryRetrievalCommand(library=LIB, mode="bm25"))
+
+    await world.module.forget_library(ForgetLibraryCommand(library=LIB))
+
+    shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
+    assert (shown.mode, shown.effective_mode) == (None, HYBRID)
+
+
+# ---------------------------------------------------------------- roles per library
+
+
+async def test_a_library_with_ai_off_searches_with_bm25_and_no_reranker() -> None:
+    world = await _build(EMBEDDING, LLM, RERANKER)
+    world.ai_off.add(LIB)
+
+    result = await world.module.search_docs(SearchDocsQuery(library=LIB, query="token"))
+
+    assert (result.retrieval_mode, result.reranked) == (BM25, False)
+    assert not world.pipelines[HYDE].requests
+
+
+async def test_a_library_with_ai_off_cannot_be_given_an_ai_mode_or_ask_for_one() -> None:
+    world = await _build(EMBEDDING)
+    world.ai_off.add(LIB)
+
+    with pytest.raises(UnavailableModeError, match="needs the embedding role"):
+        await world.module.set_library_retrieval(
+            SetLibraryRetrievalCommand(library=LIB, mode="hybrid")
+        )
+    with pytest.raises(UnavailableModeError, match="needs the embedding role"):
+        await _mode_of(world, "hybrid")
+    shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
+    assert (shown.available_modes, shown.configured_roles) == ([BM25], [])

@@ -437,7 +437,11 @@ class TagFilter:
 
 
 class ModelRole(StrEnum):
-    """A model an operator can configure; which ones are set decides the modes on offer."""
+    """A model an operator can configure; which ones are set decides the modes on offer.
+
+    The decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),
+    is not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank.
+    """
 
     EMBEDDING = "embedding"
     """Turns chunks and queries into vectors (hybrid search)."""

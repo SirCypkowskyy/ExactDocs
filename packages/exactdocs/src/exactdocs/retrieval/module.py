@@ -23,6 +23,7 @@ from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
     CollectChunks,
     DiscardPendingChunks,
+    ForgetLibrary,
     GetChunkSets,
     GetLibraryRetrieval,
     GetSearchIndexState,
@@ -42,6 +43,7 @@ from exactdocs.retrieval.use_cases import (
     Bm25Pipeline,
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
+    ForgetLibraryUseCase,
     GetChunkSetsUseCase,
     GetLibraryRetrievalUseCase,
     GetSearchIndexStateUseCase,
@@ -85,6 +87,8 @@ class RetrievalModule:
     """A library's retrieval mode and the one its searches use now."""
     set_library_retrieval: SetLibraryRetrieval
     """Sets or clears a library's retrieval mode."""
+    forget_library: ForgetLibrary
+    """Drops what retrieval keeps for a removed library."""
 
     @classmethod
     def build(
@@ -161,4 +165,5 @@ class RetrievalModule:
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
             get_library_retrieval=GetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
             set_library_retrieval=SetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
+            forget_library=ForgetLibraryUseCase(library_modes=library_modes),
         )

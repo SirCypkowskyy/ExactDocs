@@ -140,7 +140,7 @@ def _build_read_side(
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
         library_modes=SqliteLibraryModes(engine=engine),
         roles=model_roles,
-        instance_mode=settings.retrieval_mode,
+        instance_mode=settings.ai.mode,
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
@@ -316,7 +316,9 @@ class Container:
                 get_library=catalog.get_library, list_renames=catalog.list_renames
             ),
             removals=CatalogRemovals(
-                version_remover=catalog.remove_version, library_remover=catalog.remove_library
+                version_remover=catalog.remove_version,
+                library_remover=catalog.remove_library,
+                forget_library=retrieval.forget_library,
             ),
             index=index,
             vault=vault,

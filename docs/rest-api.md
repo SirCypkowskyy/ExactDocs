@@ -296,7 +296,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **Retrieval mode** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with `{"mode": "hybrid"}`
   sets the mode the library's searches use when a call names none (`null` clears it: the
-  instance's `EXACTDOCS_RETRIEVAL_MODE` applies, else the best mode configured). The mode must be
+  instance's `EXACTDOCS_AI__MODE` applies, else the best mode configured). The mode must be
   available now: 422 `mode_unavailable` names the model role it needs that is not configured.
   `GET .../retrieval` returns the setting with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the

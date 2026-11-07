@@ -59,16 +59,28 @@ class Opened:
 
 
 @dataclass(slots=True)
+class RecordedSpan:
+    """A test double of ``SearchSpan``: records which span was told which mode answered."""
+
+    name: str
+    answered: dict[str, str]
+
+    def answered_by(self, mode: str) -> None:
+        self.answered[self.name] = mode
+
+
+@dataclass(slots=True)
 class RecordingTracer:
     """A test double of ``SearchTracer``: what was opened, in order."""
 
     opened: list[Opened] = field(default_factory=list)
+    answered: dict[str, str] = field(default_factory=dict)
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
-    ) -> AbstractContextManager[object]:
+    ) -> AbstractContextManager[RecordedSpan]:
         self.opened.append(Opened(name=name, mode=mode, query=query, attributes=attributes))
-        return nullcontext()
+        return nullcontext(RecordedSpan(name=name, answered=self.answered))
 
     @property
     def names(self) -> list[str]:
@@ -240,7 +252,13 @@ def test_the_adapter_records_the_query_text_only_when_told_to() -> None:
 # ----------------------------------------------------------------- metrics
 
 
-def search_metrics(*, record_query_text: bool, fail: bool = False) -> list[dict[str, object]]:
+def search_metrics(
+    *,
+    record_query_text: bool,
+    fail: bool = False,
+    chosen: str = "bm25",
+    answered: str | None = None,
+) -> list[dict[str, object]]:
     """Time a search and its rank stage (failing, if asked) and return the recorded points."""
     reader = InMemoryMetricReader()
     tracer = OpenTelemetrySearchTracer(
@@ -250,11 +268,14 @@ def search_metrics(*, record_query_text: bool, fail: bool = False) -> list[dict[
     )
     with (
         contextlib.suppress(VersionNotIndexedError),
-        tracer.span("search_docs", mode="bm25", query=QUERY, library=LIB, ref="v1.4.0"),
-        tracer.span("search_docs.rank", mode="bm25"),
+        tracer.span("search_docs", mode=chosen, query=QUERY, library=LIB, ref="v1.4.0") as whole,
+        tracer.span("search_docs.rank", mode=chosen) as rank,
     ):
         if fail:
             raise VersionNotIndexedError(LIB, "v1.4.0")
+        if answered is not None:
+            rank.answered_by(answered)
+            whole.answered_by(answered)
     data = reader.get_metrics_data()
     assert data is not None
     return [
@@ -295,3 +316,31 @@ def test_a_failed_search_is_timed_with_its_error_type() -> None:
     points = search_metrics(record_query_text=False, fail=True)
 
     assert {p["error.type"] for p in points} == {"VersionNotIndexedError"}
+
+
+def test_a_search_that_fell_back_is_timed_in_the_mode_that_answered() -> None:
+    points = search_metrics(record_query_text=False, chosen="hybrid", answered="bm25")
+
+    assert {p["exactdocs.retrieval.mode"] for p in points} == {"bm25"}
+
+
+async def test_the_spans_are_told_the_mode_that_answered() -> None:
+    tracer = RecordingTracer()
+    module = await build(tracer)
+
+    await module.search_docs(SearchDocsQuery(library=LIB, query=QUERY))
+
+    assert tracer.answered == {"search_docs": "bm25", "search_docs.rank": "bm25"}
+
+
+def test_a_span_that_fell_back_carries_the_mode_that_answered() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = OpenTelemetrySearchTracer(provider=provider)
+
+    with tracer.span("search_docs", mode="hybrid", query=QUERY) as whole:
+        whole.answered_by("bm25")
+
+    (span,) = exporter.get_finished_spans()
+    assert (span.attributes or {})["exactdocs.retrieval.mode"] == "bm25"

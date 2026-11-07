@@ -11,7 +11,7 @@ from pydantic import ValidationError as SettingsError
 from app_lifespan import serving
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.models import HostKind, Library, LibraryId, VersionRef
 from exactdocs.identity.dtos import CreateFirstAdminCommand
@@ -32,21 +32,25 @@ class NothingFound:
         )
 
 
+async def _add_payments(container: Container) -> None:
+    await SqliteLibraryRepository(engine=container.engine).save(
+        Library(
+            id=LibraryId("/acme/payments"),
+            title="Payments",
+            source_url="https://github.com/acme/payments",
+            host=HostKind.GITHUB,
+            default_branch=VersionRef("main"),
+        )
+    )
+
+
 @asynccontextmanager
 async def _client(container: Container) -> AsyncGenerator[httpx.AsyncClient]:
     async with serving(create_app(container)) as app:
         await container.identity.create_first_admin(
             CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
         )
-        await SqliteLibraryRepository(engine=container.engine).save(
-            Library(
-                id=LibraryId("/acme/payments"),
-                title="Payments",
-                source_url="https://github.com/acme/payments",
-                host=HostKind.GITHUB,
-                default_branch=VersionRef("main"),
-            )
-        )
+        await _add_payments(container)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://localhost"
         ) as client:
@@ -62,9 +66,18 @@ async def plain() -> AsyncIterator[httpx.AsyncClient]:
 
 
 @pytest.fixture
+def embedding_container() -> Container:
+    return Container.build(
+        Settings(ai=AiSettings(mode=RetrievalMode.BM25)),
+        model_roles=StaticModelRoles(roles=frozenset({ModelRole.EMBEDDING})),
+        pipelines={RetrievalMode.HYBRID: NothingFound()},
+    )
+
+
+@pytest.fixture
 async def with_embeddings() -> AsyncIterator[httpx.AsyncClient]:
     container = Container.build(
-        Settings(retrieval_mode=RetrievalMode.BM25),
+        Settings(ai=AiSettings(mode=RetrievalMode.BM25)),
         model_roles=StaticModelRoles(roles=frozenset({ModelRole.EMBEDDING})),
         pipelines={RetrievalMode.HYBRID: NothingFound()},
     )
@@ -142,13 +155,28 @@ async def test_a_stored_mode_is_kept_and_shown_with_the_instance_mode(
 def test_the_instance_mode_is_read_from_the_environment(
     monkeypatch: pytest.MonkeyPatch, raw: str, mode: str | None
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_RETRIEVAL_MODE", raw)
+    monkeypatch.setenv("EXACTDOCS_AI__MODE", raw)
 
-    assert Settings().retrieval_mode == mode
+    assert Settings().ai.mode == mode
 
 
 def test_an_unknown_instance_mode_is_refused_at_start(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EXACTDOCS_RETRIEVAL_MODE", "semantic")
+    monkeypatch.setenv("EXACTDOCS_AI__MODE", "semantic")
 
-    with pytest.raises(SettingsError, match="retrieval_mode"):
+    with pytest.raises(SettingsError, match=r"ai\.mode"):
         Settings()
+
+
+async def test_a_removed_library_added_again_starts_without_its_old_mode(
+    embedding_container: Container,
+) -> None:
+    async with _client(embedding_container) as client:
+        assert (await client.put(SETTING, json={"mode": "hybrid"})).status_code == 200
+
+        removed = await client.delete("/api/v1/libraries/acme/payments")
+        assert removed.status_code == 200, removed.text
+        assert (await client.get(SETTING)).status_code == 404
+        await _add_payments(embedding_container)
+
+        shown = (await client.get(SETTING)).json()
+        assert (shown["mode"], shown["effective_mode"]) == (None, "bm25")

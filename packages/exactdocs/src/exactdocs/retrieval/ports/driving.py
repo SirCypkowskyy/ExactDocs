@@ -9,6 +9,7 @@ from exactdocs.retrieval.dtos import (
     ChunkSetsOut,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
+    ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
     IndexedManifestOut,
@@ -236,5 +237,17 @@ class SetLibraryRetrieval(Protocol):
 
         Returns:
             The stored setting, the mode its searches use now, and the modes available.
+        """
+        ...
+
+
+class ForgetLibrary(Protocol):
+    """Drop what retrieval keeps for a removed library (its mode); a no-op for an unknown one."""
+
+    async def __call__(self, command: ForgetLibraryCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The removed library.
         """
         ...

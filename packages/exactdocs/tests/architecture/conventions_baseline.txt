@@ -61,8 +61,6 @@ packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogNewLibraries.create
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogNewLibraries.discard docstring-missing-args
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogNewLibraries.discard_library field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.library_remover field-without-docstring
-packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_library docstring-missing-args
-packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_library docstring-missing-returns
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_version docstring-missing-args
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.remove_version docstring-missing-returns
 packages/exactdocs/src/exactdocs/bootstrap/bridges.py CatalogRemovals.version_remover field-without-docstring
