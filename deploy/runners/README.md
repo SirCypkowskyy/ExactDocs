@@ -9,7 +9,7 @@ runs other production containers and a job with Docker access on the host could 
 | VMs | `exactdocs-runner-1`, `exactdocs-runner-2` (LXD profile `exactdocs-runner`: 4 vCPU, 8 GiB, 50 GiB sparse disk) |
 | Labels | `self-hosted`, `linux`, `ARM64`, `exactdocs`; workflows use `runs-on: [self-hosted, linux, ARM64, exactdocs]` |
 | Scope | this repository only |
-| Tooling | Docker + buildx + QEMU (amd64 images are emulated), git, gh, jq; uv, Node and pnpm come from setup actions |
+| Tooling | Docker + buildx + compose + QEMU (amd64 images are emulated), git, gh, jq; uv, Node and pnpm come from setup actions |
 
 ## Setup
 
