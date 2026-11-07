@@ -583,8 +583,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   by the new model its searches answer BM25 with `fallback_reason: embedding_in_progress` (two
   models' vectors are never mixed). The old space is dropped once the new one covers every
   version. The tokens each call used (from the provider's answer) are recorded per UTC day and
-  month, for the instance and for the library, in the `retrieval_ai_spend` table, which budgets
-  will read (#95). Saving the embedding role's profile over REST re-queues what it changes; a
+  month, for the instance, the library and embedding runs, in the `retrieval_ai_spend` table,
+  which the budgets below read. Saving the embedding role's profile over REST re-queues what it changes; a
   batch the provider does not answer for now (a timeout, a 429) is tried again a few times.
   On PostgreSQL there is no vector store yet (pgvector, #243): nothing is embedded or queued, and
   the estimate answers `vector_store_unavailable`.
@@ -592,6 +592,41 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   embed, an estimate of their tokens (4 characters per token, never a tokenizer) and of the US
   dollars from the bundled price list, without calling any model;
   `GET /api/v1/ai/embedding/estimate` is the same over REST.
+- **Budgets and rate limits:** `[ai.budgets]` (or `EXACTDOCS_AI__BUDGETS__...`) caps spend in
+  US dollars and tokens per UTC day and month, for the instance (`daily_usd`, `monthly_usd`,
+  `daily_tokens`, `monthly_tokens`), for each library (`per_library_...`), for each account
+  (`per_user_...`: the API token's or the session's; stdio MCP counts to instance and library
+  only) and for embedding runs (`daily_embedding_...`, `monthly_embedding_...`).
+  `llm_searches_per_minute` limits each caller's LLM searches, over REST, HTTP MCP and stdio
+  alike (counted per server process). Every model call is counted from the provider's reported
+  usage, in one `retrieval_ai_spend` table shared by every process; LLM agents are held by the
+  harness `SpendLimits`, embedding and rerank calls by retrieval's own check before each batch or
+  call, so a burst can overshoot by the calls already in flight. Reaching a limit degrades search,
+  never breaks it: the LLM step is skipped and the result names the cheaper mode with
+  `fallback_reason: llm_budget_reached` (or `llm_rate_limited`); a paid rerank is skipped
+  (`reranked: false`); an `embed` job stops before its next batch with `ai_budget_reached` and is
+  queued again after the window resets (each UTC midnight), while BM25 keeps answering.
+- **Prices:** from the `genai-prices` data bundled with pydantic-ai (never fetched); a model it
+  does not know gets `[ai.prices."<profile>:<model>"]` `input_usd_per_mtok` and
+  `output_usd_per_mtok`. `local` models cost nothing (their tokens still count). A US dollar
+  budget with a configured model that has no price is refused at start.
+- **Usage:** `GET /api/v1/ai/usage` (admins) shows what the instance, embedding runs, each
+  library and each account spent today and this month, and what is left of each budget;
+  `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and `operation.cost` and
+  `exactdocs_ai_fallbacks_total` by mode and reason (never a library, user or query).
+
+```toml
+[ai.budgets]
+daily_usd = 10
+monthly_embedding_usd = 50
+per_library_daily_usd = 2
+per_user_daily_usd = 1
+llm_searches_per_minute = 30
+
+[ai.prices."corp:gpt-4.1-mini"]   # only for models genai-prices does not know
+input_usd_per_mtok = 0.40
+output_usd_per_mtok = 1.60
+```
 
 The hybrid, HyDE and agentic pipelines arrive with #92 onwards.
 

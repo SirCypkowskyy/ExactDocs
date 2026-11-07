@@ -1,10 +1,10 @@
 """REST adapter for retrieval."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
@@ -31,6 +31,7 @@ from exactdocs.retrieval.constants import (
 from exactdocs.retrieval.dtos import (
     MAX_NAME,
     MAX_PATH,
+    AiUsageOut,
     ArticleOutlineOut,
     ArticleOutlineQuery,
     CheckProviderCommand,
@@ -61,6 +62,7 @@ from exactdocs.retrieval.ports.driving import (
     CheckProvider,
     DeleteProvider,
     EstimateEmbedding,
+    GetAiUsage,
     GetLibraryRetrieval,
     GetProvider,
     ListProviders,
@@ -268,9 +270,15 @@ def build_router(
     article_outline: ArticleOutline,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
+    caller: Callable[..., Awaitable[str | None]],
 ) -> APIRouter:
-    """Expose retrieval: search beside the catalog's ``/libraries`` routes, ``/chunks``, ``/c7``."""
+    """Expose retrieval: search beside the catalog's ``/libraries`` routes, ``/chunks``, ``/c7``.
+
+    ``caller`` is a FastAPI dependency naming the account of the request: its LLM searches are
+    rate limited and its spend counted to it.
+    """
     router = APIRouter(tags=["retrieval"])
+    account = Annotated[str | None, Depends(caller)]
     router.include_router(_outline_router(article_outline))
 
     # The ref is `?ref=` (it may contain `/`); no ref means the default version.
@@ -278,6 +286,7 @@ def build_router(
     async def search(
         owner: str,
         repo: str,
+        searcher: account,
         q: Annotated[
             str,
             Query(min_length=1, max_length=MAX_QUERY, description="Identifier, error or question."),
@@ -314,6 +323,7 @@ def build_router(
             tags_match: `any` or `all` of the tags.
             limit: How many results at most.
             mode: The retrieval mode; the default without one.
+            searcher: The account searching.
 
         Returns:
             The results of that version.
@@ -330,7 +340,7 @@ def build_router(
             )
         except ValidationError as error:  # what the Query() bounds above cannot see
             raise RequestValidationError(error.errors()) from error
-        return await search_docs(query)
+        return await search_docs(query, caller=searcher)
 
     @router.get("/search")
     async def search_all(
@@ -411,6 +421,7 @@ def build_router(
         },
     )
     async def context_docs(
+        asker: account,
         library_id: Annotated[
             str,
             Query(
@@ -436,7 +447,7 @@ def build_router(
             )
         except ValidationError as error:
             raise RequestValidationError(error.errors()) from error
-        found = await query_docs(request)
+        found = await query_docs(request, caller=asker)
         if fmt == "json":
             return C7ContextResponse.from_result(found)
         # The notice leads the body, as it leads the MCP result, and repeats in a header.
@@ -565,6 +576,7 @@ def build_ai_router(
     check_provider: CheckProvider,
     list_roles: ListRoles,
     estimate_embedding: EstimateEmbedding,
+    get_ai_usage: GetAiUsage,
 ) -> APIRouter:
     """Build the routes of the AI provider profiles and roles (RET-01..03), admins only.
 
@@ -576,6 +588,7 @@ def build_ai_router(
         check_provider: Makes one minimal call per role that uses one.
         list_roles: Shows the instance's roles.
         estimate_embedding: Estimates what embedding the versions not embedded yet costs.
+        get_ai_usage: Shows spend and budget left per scope.
 
     Returns:
         The router.
@@ -696,5 +709,19 @@ def build_ai_router(
             The estimate; `model` is null when no embedding model is configured.
         """
         return await estimate_embedding()
+
+    @router.get("/usage", name="get_ai_usage")
+    async def usage() -> AiUsageOut:
+        """Show what AI calls spent today and this month, and the budget left, per scope.
+
+        Scopes: the instance, embedding runs (instance-wide), then every library and account
+        that spent something this month. Windows are UTC days and months. Tokens and requests
+        are what the providers reported; `unpriced_requests` were calls to a model without a
+        known price.
+
+        Returns:
+            The usage.
+        """
+        return await get_ai_usage()
 
     return router

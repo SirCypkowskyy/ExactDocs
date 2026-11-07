@@ -3,12 +3,13 @@ import logging
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from itertools import batched
 from typing import Any
 
 from sqlalchemy import (
     Column,
+    Delete,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -29,11 +30,18 @@ from sqlalchemy import (
     tuple_,
     update,
 )
+from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import Insert as SqliteInsert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from exactdocs.retrieval.constants import STORED_PROFILE_FIELDS, VECTOR_BATCH
+from exactdocs.retrieval.constants import (
+    REPLAY_RETAIN_DAYS,
+    SPEND_COUNTERS,
+    STORED_PROFILE_FIELDS,
+    VECTOR_BATCH,
+)
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     InvalidModelRefError,
@@ -61,6 +69,8 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SectionRef,
     SpendEntry,
+    SpendKey,
+    SpendWindow,
     StoredChunk,
     VersionCounts,
 )
@@ -174,6 +184,17 @@ ai_spend = Table(
     Column("requests", Integer, nullable=False, server_default="0"),
     Column("usd_micros", Integer, nullable=False, server_default="0"),
     Column("unpriced", Integer, nullable=False, server_default="0"),  # requests without a price
+)
+# The replay tokens each row has taken (the harness's ``SpendEntry.token``): a response replayed
+# after a crash adds to a row once. Dropped once their window is over.
+ai_spend_replays = Table(
+    "retrieval_ai_spend_replays",
+    metadata,
+    Column("token", Text, primary_key=True),
+    Column("scope_kind", Text, primary_key=True),
+    Column("scope_id", Text, primary_key=True),
+    Column("window_kind", Text, primary_key=True),
+    Column("window_start", Text, primary_key=True),
 )
 
 
@@ -837,47 +858,181 @@ class SqliteSpendLedger:
     engine: AsyncEngine
     """The database."""
 
+    def _insert(self, table: Table) -> PostgresInsert | SqliteInsert:
+        """Start an ``INSERT`` of the database's dialect (both have ``ON CONFLICT``).
+
+        Args:
+            table: The table.
+
+        Returns:
+            The statement.
+        """
+        if self.engine.dialect.name == "postgresql":
+            return postgres_insert(table)
+        return sqlite_insert(table)
+
     async def add(self, entries: Sequence[SpendEntry]) -> None:
         """Add each entry to its row in one transaction; a missing row is created.
+
+        An entry whose replay token its row has taken is skipped: the token is claimed in the
+        same transaction as the addition, so a failed addition leaves it unclaimed.
 
         Args:
             entries: The usage, one entry per row.
         """
         if not entries:
             return
-        # The same upsert on both databases: SQLite's and PostgreSQL's ON CONFLICT DO UPDATE.
-        statement = (
-            postgres_insert(ai_spend)
-            if self.engine.dialect.name == "postgresql"
-            else sqlite_insert(ai_spend)
-        )
-        statement = statement.on_conflict_do_update(
+        upsert = self._insert(ai_spend)
+        upsert = upsert.on_conflict_do_update(
             index_elements=[
                 ai_spend.c.scope_kind,
                 ai_spend.c.scope_id,
                 ai_spend.c.window_kind,
                 ai_spend.c.window_start,
             ],
-            set_={
-                name: ai_spend.c[name] + statement.excluded[name]
-                for name in ("input_tokens", "output_tokens", "requests", "usd_micros", "unpriced")
-            },
+            set_={name: ai_spend.c[name] + upsert.excluded[name] for name in SPEND_COUNTERS},
         )
+        claim = self._insert(ai_spend_replays).on_conflict_do_nothing()
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
-            await connection.execute(
-                statement,
-                [
-                    {
-                        "scope_kind": e.scope_kind,
-                        "scope_id": e.scope_id,
-                        "window_kind": e.window.value,
-                        "window_start": e.window_start.isoformat(),
-                        "input_tokens": e.input_tokens,
-                        "output_tokens": e.output_tokens,
-                        "requests": e.requests,
-                        "usd_micros": e.usd_micros,
-                        "unpriced": e.unpriced,
-                    }
-                    for e in entries
-                ],
+            applied: list[SpendEntry] = []
+            for entry in entries:
+                if entry.token is not None:
+                    claimed = await connection.execute(
+                        claim, {"token": entry.token, **_spend_key(entry.key)}
+                    )
+                    if claimed.rowcount == 0:
+                        continue
+                applied.append(entry)
+            if (
+                latest := max((e.window_start for e in entries if e.token), default=None)
+            ) is not None:
+                await connection.execute(_old_replays(latest))
+            if applied:
+                await connection.execute(
+                    upsert,
+                    [
+                        {
+                            **_spend_key(e.key),
+                            **{name: getattr(e, name) for name in SPEND_COUNTERS},
+                        }
+                        for e in applied
+                    ],
+                )
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        """Read the rows that exist.
+
+        Args:
+            keys: The rows.
+
+        Returns:
+            Each one found.
+        """
+        if not keys:
+            return {}
+        wanted = [tuple(_spend_key(key).values()) for key in keys]
+        found: dict[SpendKey, SpendEntry] = {}
+        async with self.engine.connect() as connection:
+            for part in batched(wanted, VECTOR_BATCH, strict=False):
+                rows = await connection.execute(
+                    select(ai_spend).where(
+                        tuple_(
+                            ai_spend.c.scope_kind,
+                            ai_spend.c.scope_id,
+                            ai_spend.c.window_kind,
+                            ai_spend.c.window_start,
+                        ).in_(part)
+                    )
+                )
+                for row in rows:
+                    entry = _spend_row(row)
+                    found[entry.key] = entry
+        return found
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        """Read the rows of windows starting on or after a day.
+
+        Args:
+            first: The earliest window start.
+
+        Returns:
+            The rows, by scope kind, scope ID, window and start.
+        """
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(
+                select(ai_spend)
+                .where(ai_spend.c.window_start >= first.isoformat())
+                .order_by(
+                    ai_spend.c.scope_kind,
+                    ai_spend.c.scope_id,
+                    ai_spend.c.window_kind,
+                    ai_spend.c.window_start,
+                )
             )
+            return [_spend_row(row) for row in rows]
+
+
+def _spend_key(key: SpendKey) -> dict[str, str]:
+    """Write a ledger key as the columns of its row.
+
+    Args:
+        key: The key.
+
+    Returns:
+        The column values.
+    """
+    return {
+        "scope_kind": key.scope_kind,
+        "scope_id": key.scope_id,
+        "window_kind": key.window.value,
+        "window_start": key.window_start.isoformat(),
+    }
+
+
+def _spend_row(row: Row[Any]) -> SpendEntry:
+    """Read a ledger row.
+
+    Args:
+        row: The row.
+
+    Returns:
+        Its totals.
+    """
+    return SpendEntry(
+        scope_kind=row.scope_kind,
+        scope_id=row.scope_id,
+        window=SpendWindow(row.window_kind),
+        window_start=date.fromisoformat(row.window_start),
+        input_tokens=row.input_tokens,
+        output_tokens=row.output_tokens,
+        requests=row.requests,
+        usd_micros=row.usd_micros,
+        unpriced=row.unpriced,
+    )
+
+
+def _old_replays(today: date) -> Delete:
+    """Build the deletion of replay tokens whose window is over.
+
+    A day's tokens are kept ``REPLAY_RETAIN_DAYS`` days, a month's until the next month ends:
+    a response is replayed within the hour, never into a window that long gone.
+
+    Args:
+        today: The latest window start of the entries being added (no wall clock: a replay of
+            an old response never deletes the token that guards it).
+
+    Returns:
+        The statement.
+    """
+    day_cutoff = (today - timedelta(days=REPLAY_RETAIN_DAYS)).isoformat()
+    month_cutoff = (today.replace(day=1) - timedelta(days=1)).replace(day=1).isoformat()
+    return delete(ai_spend_replays).where(
+        (
+            (ai_spend_replays.c.window_kind == SpendWindow.DAY.value)
+            & (ai_spend_replays.c.window_start < day_cutoff)
+        )
+        | (
+            (ai_spend_replays.c.window_kind == SpendWindow.MONTH.value)
+            & (ai_spend_replays.c.window_start < month_cutoff)
+        )
+    )

@@ -19,20 +19,32 @@ from types import ModuleType
 
 from exactdocs.bootstrap.ai_endpoint import Endpoint
 from exactdocs.bootstrap.constants import CHECK_TEXT
-from exactdocs.bootstrap.settings import AiSettings
-from exactdocs.retrieval.constants import MASK, MAX_CHECK_ERROR
+from exactdocs.bootstrap.settings import AiSettings, BudgetSettings
+from exactdocs.retrieval.constants import (
+    MASK,
+    MAX_CHECK_ERROR,
+    MICROS_PER_USD,
+    SPEND_SCOPE_EMBEDDING,
+    SPEND_SCOPE_INSTANCE,
+    SPEND_SCOPE_LIBRARY,
+    SPEND_SCOPE_USER,
+)
 from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
+    BudgetLimit,
+    Budgets,
     InstanceRoles,
     KeySource,
     ModelCheck,
+    ModelPrice,
     ModelRef,
     ModelRole,
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
+    SpendWindow,
 )
 from exactdocs.retrieval.ports.driven import SecretBox
 
@@ -338,6 +350,10 @@ class ConfiguredAi:
     """The keys given in the environment, by profile name: they never leave bootstrap."""
     roles: InstanceRoles = field(default_factory=InstanceRoles)
     """The instance's roles."""
+    budgets: Budgets = field(default_factory=Budgets)
+    """The spend limits and the LLM search rate limit."""
+    prices: Mapping[str, ModelPrice] = field(default_factory=dict)
+    """The operator's prices, by ``<profile>:<model>``."""
 
 
 def configured_ai(ai: AiSettings) -> ConfiguredAi:
@@ -399,7 +415,49 @@ def configured_ai(ai: AiSettings) -> ConfiguredAi:
             llm=_role(ai.llm.model),
             judge=_role(ai.judge.model),
         ),
+        budgets=budgets(ai.budgets),
+        prices={
+            str(ModelRef.parse(ref)): ModelPrice(
+                input_usd_per_million=price.input_usd_per_mtok,
+                output_usd_per_million=price.output_usd_per_mtok,
+            )
+            for ref, price in ai.prices.items()
+        },
     )
+
+
+def budgets(settings: BudgetSettings) -> Budgets:
+    """Turn the ``[ai.budgets]`` settings into retrieval's limits.
+
+    Args:
+        settings: The settings.
+
+    Returns:
+        One limit per scope kind and window that has a ceiling.
+    """
+    fields = {
+        SPEND_SCOPE_INSTANCE: "",
+        SPEND_SCOPE_LIBRARY: "per_library_",
+        SPEND_SCOPE_USER: "per_user_",
+        SPEND_SCOPE_EMBEDDING: "",
+    }
+    limits: list[BudgetLimit] = []
+    for kind, prefix in fields.items():
+        suffix = "_embedding" if kind == SPEND_SCOPE_EMBEDDING else ""
+        for window, name in ((SpendWindow.DAY, "daily"), (SpendWindow.MONTH, "monthly")):
+            usd = getattr(settings, f"{prefix}{name}{suffix}_usd")
+            tokens = getattr(settings, f"{prefix}{name}{suffix}_tokens")
+            if usd is None and tokens is None:
+                continue
+            limits.append(
+                BudgetLimit(
+                    scope_kind=kind,
+                    window=window,
+                    usd_micros=None if usd is None else max(1, round(usd * MICROS_PER_USD)),
+                    tokens=tokens,
+                )
+            )
+    return Budgets(limits=tuple(limits), llm_searches_per_minute=settings.llm_searches_per_minute)
 
 
 def _role(text: str | None) -> ModelRef | None:

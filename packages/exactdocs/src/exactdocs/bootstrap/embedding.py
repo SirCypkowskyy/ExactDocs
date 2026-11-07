@@ -6,11 +6,13 @@ the embedding when something retrieval owns changes the embedding space.
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 
+from exactdocs.bootstrap.constants import WINDOW_RESET_GRACE_SECONDS
 from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.ingestion.ports.driving import QueueEmbedding
 from exactdocs.retrieval.dtos import ProviderOut, SaveProviderCommand
-from exactdocs.retrieval.models import ModelRole
+from exactdocs.retrieval.models import ModelRole, SpendWindow
 from exactdocs.retrieval.ports.driving import SaveProvider
 
 logger = logging.getLogger(__name__)
@@ -54,3 +56,16 @@ class SaveProviderThenEmbed:
                         queued.queued,
                     )
         return saved
+
+
+def seconds_to_next_window(now: datetime) -> float:
+    """Count the seconds until just after the next UTC midnight, when spend windows reset.
+
+    Args:
+        now: An aware time.
+
+    Returns:
+        The wait, a little past midnight so the new window is surely the current one.
+    """
+    reset = SpendWindow.DAY.resets_at(now)
+    return (reset - now).total_seconds() + WINDOW_RESET_GRACE_SECONDS

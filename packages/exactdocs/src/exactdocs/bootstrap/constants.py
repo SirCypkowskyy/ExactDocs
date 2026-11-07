@@ -426,3 +426,5 @@ CHECK_MAX_TOKENS: Final[int] = 16
 """Output cap of a chat model check."""
 CHECK_TEXT: Final[str] = "ExactDocs connectivity check"
 """What a check embeds, and reranks against itself."""
+WINDOW_RESET_GRACE_SECONDS: Final[float] = 5.0
+"""Embedding is queued again this long after each UTC midnight, once the spend windows reset."""

@@ -335,8 +335,13 @@ async def test_usage_is_recorded_in_the_spend_ledger_per_day_and_month(stores: S
     await _embed(module, LIB, "v1")
 
     tokens = sum(-(-len(t) // 4) for t in stores.models.sent)
-    # The rows LLM spend uses too: the instance's and the library's, per UTC day and month.
-    assert set(stores.ledger.rows) == {
+    # The rows LLM spend uses too (the instance's and the library's) and the embedding budget's,
+    # per UTC day and month.
+    assert {
+        (k.scope_kind, k.scope_id, k.window, k.window_start.isoformat()) for k in stores.ledger.rows
+    } == {
+        ("embedding", "", SpendWindow.DAY, "2026-11-07"),
+        ("embedding", "", SpendWindow.MONTH, "2026-11-01"),
         ("instance", "", SpendWindow.DAY, "2026-11-07"),
         ("instance", "", SpendWindow.MONTH, "2026-11-01"),
         ("library", LIB, SpendWindow.DAY, "2026-11-07"),
@@ -351,6 +356,8 @@ def test_spend_without_a_price_counts_tokens_and_marks_the_requests_unpriced() -
     entries = embedding_spend(T0, library=LIB, input_tokens=10, requests=2, usd_per_million=None)
 
     assert [(e.scope_kind, e.scope_id, e.window_start) for e in entries] == [
+        ("embedding", "", date(2026, 11, 7)),
+        ("embedding", "", date(2026, 11, 1)),
         ("instance", "", date(2026, 11, 7)),
         ("instance", "", date(2026, 11, 1)),
         ("library", LIB, date(2026, 11, 7)),

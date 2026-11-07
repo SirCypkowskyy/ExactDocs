@@ -595,6 +595,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/ai/usage": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Ai Usage
+         * @description Show what AI calls spent today and this month, and the budget left, per scope.
+         *
+         *     Scopes: the instance, embedding runs (instance-wide), then every library and account
+         *     that spent something this month. Windows are UTC days and months. Tokens and requests
+         *     are what the providers reported; `unpriced_requests` were calls to a model without a
+         *     known price.
+         */
+        readonly get: operations["ai-get_ai_usage"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/settings": {
         readonly parameters: {
             readonly query?: never;
@@ -1054,6 +1079,29 @@ export interface components {
             readonly job_id: string;
         };
         /**
+         * AiUsageOut
+         * @description Spend and budget left per scope: the instance, embedding runs, each library and user.
+         */
+        readonly AiUsageOut: {
+            /**
+             * At
+             * Format: date-time
+             * @description When the totals were read.
+             */
+            readonly at: string;
+            /**
+             * Llm Searches Per Minute
+             * @description LLM searches each caller may make per minute; null when not limited.
+             */
+            readonly llm_searches_per_minute: number | null;
+            /**
+             * Scopes
+             * @description The instance and the embedding budget first, then each library and user that spent
+             *     something this month.
+             */
+            readonly scopes: readonly components["schemas"]["ScopeUsageOut"][];
+        };
+        /**
          * AnthropicPlatform
          * @description Where an ``anthropic`` profile reaches Claude.
          * @enum {string}
@@ -1291,6 +1339,51 @@ export interface components {
          * @enum {string}
          */
         readonly AzureAuth: "key" | "entra";
+        /**
+         * BudgetOut
+         * @description One limit on a scope, and what is left of it in the current window.
+         */
+        readonly BudgetOut: {
+            /** @description `day` or `month` (UTC). */
+            readonly window: components["schemas"]["SpendWindow"];
+            /**
+             * Window Start
+             * Format: date
+             * @description The current window's first day.
+             */
+            readonly window_start: string;
+            /**
+             * Resets At
+             * Format: date-time
+             * @description When the next window starts.
+             */
+            readonly resets_at: string;
+            /**
+             * Usd Limit
+             * @description The ceiling in US dollars; null when dollars are not limited.
+             */
+            readonly usd_limit: number | null;
+            /**
+             * Usd Left
+             * @description Dollars left (never below 0); null when dollars are not limited.
+             */
+            readonly usd_left: number | null;
+            /**
+             * Tokens Limit
+             * @description The ceiling in tokens; null when tokens are not limited.
+             */
+            readonly tokens_limit: number | null;
+            /**
+             * Tokens Left
+             * @description Tokens left (never below 0); null when tokens are not limited.
+             */
+            readonly tokens_left: number | null;
+            /**
+             * Reached
+             * @description The limit is used up: the scope's calls are skipped until `resets_at`.
+             */
+            readonly reached: boolean;
+        };
         /**
          * C7ContextResponse
          * @description context7's ``/v2/context`` JSON response, plus the untrusted-content notice.
@@ -2987,6 +3080,31 @@ export interface components {
          */
         readonly RoleSource: "instance" | "library" | "llm";
         /**
+         * ScopeUsageOut
+         * @description What one scope spent today and this month, and its budgets.
+         */
+        readonly ScopeUsageOut: {
+            /**
+             * Scope
+             * @description `instance`, `embedding` (embedding runs, instance-wide), `library` or `user`.
+             */
+            readonly scope: string;
+            /**
+             * Id
+             * @description The library ID or the account ID; empty for `instance` and `embedding`.
+             */
+            readonly id: string;
+            /** @description Spent today (UTC). */
+            readonly day: components["schemas"]["SpentOut"];
+            /** @description Spent this month (UTC). */
+            readonly month: components["schemas"]["SpentOut"];
+            /**
+             * Budgets
+             * @description The limits on this scope; empty when none is set.
+             */
+            readonly budgets: readonly components["schemas"]["BudgetOut"][];
+        };
+        /**
          * SearchAllResult
          * @description Results across libraries, best first, with the libraries that answer and their counts.
          */
@@ -3127,6 +3245,48 @@ export interface components {
             readonly start: number;
             /** End */
             readonly end: number;
+        };
+        /**
+         * SpendWindow
+         * @description A budget window of the spend ledger, in UTC.
+         * @enum {string}
+         */
+        readonly SpendWindow: "day" | "month";
+        /**
+         * SpentOut
+         * @description What one scope spent in one window, as the providers reported it.
+         */
+        readonly SpentOut: {
+            /**
+             * Input Tokens
+             * @description Tokens sent (an LLM step's total, which the harness does not split, is counted here).
+             */
+            readonly input_tokens: number;
+            /**
+             * Output Tokens
+             * @description Tokens received.
+             */
+            readonly output_tokens: number;
+            /**
+             * Tokens
+             * @description Both: what token budgets limit.
+             */
+            readonly tokens: number;
+            /**
+             * Requests
+             * @description Calls made.
+             */
+            readonly requests: number;
+            /**
+             * Usd
+             * @description Their price in US dollars (whole millionths); unpriced calls add nothing.
+             */
+            readonly usd: number;
+            /**
+             * Unpriced Requests
+             * @description Calls whose model had no known price.
+             */
+            readonly unpriced_requests: number;
         };
         /**
          * SyncStatus
@@ -6539,6 +6699,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EmbeddingEstimateOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-get_ai_usage": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AiUsageOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import NoReturn
 
 from exactdocs.retrieval.constants import (
@@ -10,6 +10,7 @@ from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     FOOTER_CHARS,
+    FREE_PROFILE_KINDS,
     MAX_RESOLVED,
     MAX_SEARCHED_LIBRARIES,
     NO_VECTOR_STORE,
@@ -20,11 +21,16 @@ from exactdocs.retrieval.constants import (
     RULES_FRAMING_CHARS,
     RULES_SHARE,
     SECTION_FRAMING_CHARS,
+    SPEND_INSTANCE_ID,
+    SPEND_SCOPE_EMBEDDING,
+    SPEND_SCOPE_INSTANCE,
     UNKNOWN_MANIFEST_GRACE,
 )
 from exactdocs.retrieval.dtos import (
+    AiUsageOut,
     ArticleOutlineOut,
     ArticleOutlineQuery,
+    BudgetOut,
     CheckProviderCommand,
     ChunkHeadingOut,
     ChunkOut,
@@ -69,6 +75,7 @@ from exactdocs.retrieval.dtos import (
     RoleListOut,
     RoleOut,
     SaveProviderCommand,
+    ScopeUsageOut,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
@@ -77,11 +84,13 @@ from exactdocs.retrieval.dtos import (
     SearchResultOut,
     SetChunkOut,
     SetLibraryRetrievalCommand,
+    SpentOut,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
     VersionRefOut,
 )
 from exactdocs.retrieval.errors import (
+    AiBudgetReachedError,
     ArticleNotFoundError,
     ChunkNotFoundError,
     InvalidProviderError,
@@ -101,6 +110,8 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
+    AiCaller,
+    Budgets,
     Candidate,
     CatalogLibrary,
     Chunk,
@@ -124,6 +135,7 @@ from exactdocs.retrieval.models import (
     ManifestStatus,
     ModeChoice,
     ModelCheck,
+    ModelPrice,
     ModelRef,
     ModelRole,
     ModeRegistry,
@@ -134,12 +146,16 @@ from exactdocs.retrieval.models import (
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
+    ReachedBudget,
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
     SearchText,
     SectionRef,
     SpaceState,
+    SpendEntry,
+    SpendKey,
+    SpendWindow,
     TagFilter,
     TagMatch,
     article_chunk_rows,
@@ -152,11 +168,13 @@ from exactdocs.retrieval.models import (
     name_match,
     outline,
     rank_matches,
+    spend_entries,
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ArticleSuggestions,
     ArticleTitles,
+    CallRates,
     ChunkRepository,
     DefaultVersions,
     EmbeddingModels,
@@ -244,6 +262,15 @@ class UntracedSearches:
         del name, mode, query, attributes
         return nullcontext(_UntracedSpan())
 
+    def fallback(self, *, mode: str, reason: str) -> None:
+        """Count nothing.
+
+        Args:
+            mode: The mode that answered.
+            reason: Why it did.
+        """
+        del mode, reason
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NoModelRoles:
@@ -293,6 +320,285 @@ class Bm25Pipeline:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class NoSpendLedger:
+    """Implements ``ports.driven.SpendLedger`` for a build that records nothing (tests)."""
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        """Record nothing.
+
+        Args:
+            entries: The usage.
+        """
+        del entries
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        """Read nothing.
+
+        Args:
+            keys: The rows.
+
+        Returns:
+            No rows: nothing was spent.
+        """
+        del keys
+        return {}
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        """Read nothing.
+
+        Args:
+            first: The earliest window start.
+
+        Returns:
+            No rows.
+        """
+        del first
+        return []
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PriceBook:
+    """Prices models: the operator's price for a ``<profile>:<model>``, else the bundled list.
+
+    In-process models (``local``) cost nothing; their tokens are still counted. Never fetched
+    over the network.
+    """
+
+    listed: Prices | None = None
+    """The bundled price list; without it only overrides and free kinds are priced."""
+    overrides: Mapping[str, ModelPrice] = field(default_factory=dict)
+    """The operator's prices (``[ai.prices."<profile>:<model>"]``)."""
+
+    def price(self, ref: ModelRef, profile_kind: str) -> ModelPrice | None:
+        """Find a model's price.
+
+        Args:
+            ref: The model, ``<profile>:<model>``.
+            profile_kind: Its profile's kind.
+
+        Returns:
+            The price, or ``None`` when nobody knows it.
+        """
+        if (override := self.overrides.get(str(ref))) is not None:
+            return override
+        if profile_kind in FREE_PROFILE_KINDS:
+            return ModelPrice(input_usd_per_million=0.0)
+        if self.listed is None:
+            return None
+        listed_input = self.listed.input_usd_per_million(profile_kind, ref.model)
+        if listed_input is None:
+            return None
+        listed_output = self.listed.output_usd_per_million(profile_kind, ref.model)
+        return ModelPrice(
+            input_usd_per_million=listed_input, output_usd_per_million=listed_output or 0.0
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AiSpend:
+    """Records what AI calls spend and enforces the budgets and the LLM search rate limit.
+
+    One ledger for everything (docs/decisions/ai-retrieval.md, *Cost and budgets*): LLM agents
+    write to it through the harness ``SpendLimits`` (its ``BatchSpendStore`` adapter), the
+    embedding job and rerank calls through ``record``. Every check runs before the call or batch,
+    so a burst can overshoot by the calls already in flight. A limit never fails a search: it
+    skips the step, and the result says why.
+    """
+
+    ledger: SpendLedger
+    """The ``retrieval_ai_spend`` rows."""
+    budgets: Budgets = field(default_factory=Budgets)
+    """The limits; none by default."""
+    rates: CallRates | None = None
+    """Counts LLM searches per caller; without it they are not rate limited."""
+    prices: PriceBook = field(default_factory=PriceBook)
+    """Prices what is recorded."""
+    clock: Clock = field(default_factory=SystemClock)
+    """Decides the UTC windows."""
+
+    async def reached(self, scopes: Sequence[tuple[str, str]]) -> ReachedBudget | None:
+        """Find a limit one of these scopes has used up now.
+
+        Args:
+            scopes: (kind, ID) of each scope a call would count to.
+
+        Returns:
+            The limit, or ``None`` when the call may be made.
+        """
+        now = self.clock.now()
+        keys = self.budgets.keys(scopes, now)
+        if not keys:
+            return None
+        return self.budgets.reached(scopes, await self.ledger.get(keys), now)
+
+    async def llm_step(self, caller: AiCaller) -> FallbackReason | None:
+        """Decide whether a search may run its LLM step now (and count it if so).
+
+        Args:
+            caller: The library and the account searching.
+
+        Returns:
+            ``llm_budget_reached`` or ``llm_rate_limited`` when the step must be skipped, else
+            ``None``. A search refused for its budget is not counted against the rate limit.
+        """
+        if await self.reached(caller.scopes()) is not None:
+            return FallbackReason.LLM_BUDGET_REACHED
+        limit = self.budgets.llm_searches_per_minute
+        if (
+            limit is not None
+            and self.rates is not None
+            and not await self.rates.allow(caller.rate_key, limit, self.clock.now())
+        ):
+            return FallbackReason.LLM_RATE_LIMITED
+        return None
+
+    async def paid_call(self, caller: AiCaller) -> FallbackReason | None:
+        """Decide whether a paid call that is not an LLM search (a rerank) may be made now.
+
+        Args:
+            caller: The library and the account searching.
+
+        Returns:
+            ``llm_budget_reached`` when a limit is used up, else ``None``.
+        """
+        if await self.reached(caller.scopes()) is not None:
+            return FallbackReason.LLM_BUDGET_REACHED
+        return None
+
+    async def embedding_batch(self, library: str) -> None:
+        """Refuse the next embedding batch of a library if a budget it counts to is used up.
+
+        Args:
+            library: The library being embedded.
+
+        Raises:
+            AiBudgetReachedError: The embedding, instance or library budget is used up; the job
+                stops and is queued again when the window resets.
+        """
+        reached = await self.reached(AiCaller(library=library).embedding_scopes())
+        if reached is not None:
+            limit = reached.limit
+            period = "daily" if limit.window is SpendWindow.DAY else "monthly"
+            what = f"the {period} {limit.scope_kind} budget"
+            raise AiBudgetReachedError(what, reached.resets_at)
+
+    async def record(
+        self,
+        scopes: Sequence[tuple[str, str]],
+        *,
+        ref: ModelRef,
+        profile_kind: str,
+        input_tokens: int,
+        output_tokens: int = 0,
+        requests: int = 1,
+    ) -> None:
+        """Record a call that ran outside an agent (a rerank, a query embedding).
+
+        Args:
+            scopes: (kind, ID) of each scope it counts to.
+            ref: The model called.
+            profile_kind: Its profile's kind.
+            input_tokens: Tokens the provider reported sending.
+            output_tokens: Tokens it reported receiving.
+            requests: Calls made.
+        """
+        await self.ledger.add(
+            spend_entries(
+                self.clock.now(),
+                scopes,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                requests=requests,
+                price=self.prices.price(ref, profile_kind),
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetAiUsageUseCase:
+    """Implements ``ports.driving.GetAiUsage``."""
+
+    spend: AiSpend
+    """The ledger and the budgets."""
+
+    async def __call__(self) -> AiUsageOut:
+        """Read this month's rows and set each scope's budgets against them.
+
+        Returns:
+            The instance and the embedding budget, then every library and user, by ID.
+        """
+        now = self.spend.clock.now()
+        month = SpendWindow.MONTH.start(now)
+        today = SpendWindow.DAY.start(now)
+        rows = {row.key: row for row in await self.spend.ledger.since(month)}
+        scopes: dict[tuple[str, str], None] = {
+            (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID): None,
+            (SPEND_SCOPE_EMBEDDING, SPEND_INSTANCE_ID): None,
+        }
+        for key in sorted(rows, key=lambda k: (k.scope_kind, k.scope_id)):
+            scopes.setdefault((key.scope_kind, key.scope_id), None)
+        return AiUsageOut(
+            at=now,
+            llm_searches_per_minute=self.spend.budgets.llm_searches_per_minute,
+            scopes=[
+                self._scope(kind, scope_id, rows, today, month, now) for kind, scope_id in scopes
+            ],
+        )
+
+    def _scope(
+        self,
+        kind: str,
+        scope_id: str,
+        rows: Mapping[SpendKey, SpendEntry],
+        today: date,
+        month: date,
+        now: datetime,
+    ) -> ScopeUsageOut:
+        """Show one scope.
+
+        Args:
+            kind: The scope kind.
+            scope_id: The scope ID.
+            rows: This month's rows.
+            today: Today's window start.
+            month: This month's window start.
+            now: When the rows were read.
+
+        Returns:
+            Its spend today and this month, and its budgets.
+        """
+
+        def row(window: SpendWindow, start: date) -> SpendEntry:
+            """Find a window's row.
+
+            Args:
+                window: Day or month.
+                start: The window's first day.
+
+            Returns:
+                Its totals; zero when it has none.
+            """
+            key = SpendKey(scope_kind=kind, scope_id=scope_id, window=window, window_start=start)
+            return rows.get(key) or SpendEntry.empty(key)
+
+        spent = {
+            SpendWindow.DAY: row(SpendWindow.DAY, today),
+            SpendWindow.MONTH: row(SpendWindow.MONTH, month),
+        }
+        return ScopeUsageOut(
+            scope=kind,
+            id=scope_id,
+            day=SpentOut.from_model(spent[SpendWindow.DAY]),
+            month=SpentOut.from_model(spent[SpendWindow.MONTH]),
+            budgets=[
+                BudgetOut.from_model(limit, spent[limit.window], now)
+                for limit in self.spend.budgets.limits
+                if limit.scope_kind == kind
+            ],
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RetrievalModes:
     """Picks the mode of a search and runs its pipeline (RET-06, MCP-05).
 
@@ -315,6 +621,10 @@ class RetrievalModes:
     embedded: EmbeddingRuns | None = None
     """Which versions the configured embedding model has embedded: a mode that searches vectors
     answers BM25 (``embedding_in_progress``) for a version its space does not cover yet."""
+    spend: AiSpend | None = None
+    """The budgets and the LLM search rate limit; without it no step is ever skipped for them."""
+    providers: AiProviders | None = None
+    """Resolves the reranker's profile: a ``local`` one costs nothing and is never skipped."""
 
     async def registry(self, library: str, ai: LibraryAi | None = None) -> ModeRegistry:
         """Say which modes can run now for a library's searches.
@@ -362,6 +672,8 @@ class RetrievalModes:
         query: str,
         tag_filter: TagFilter,
         limit: int,
+        *,
+        caller: str | None = None,
     ) -> PipelineAnswer:
         """Run the chosen mode's pipeline on one version.
 
@@ -371,13 +683,17 @@ class RetrievalModes:
             query: The query text.
             tag_filter: Which chunks may be returned.
             limit: How many hits to return at most.
+            caller: The account searching; ``None`` for a stdio MCP process.
 
         Returns:
             The pipeline's answer; the choice's fallback reason unless the pipeline gave one.
-            A mode that searches vectors answers BM25 with ``embedding_in_progress`` while the
-            configured model has not embedded every chunk of the version (never two models'
-            vectors in one search).
+            A mode with an LLM step answers in the cheaper mode with ``llm_budget_reached`` or
+            ``llm_rate_limited`` when a budget or the rate limit skips the step; a paid rerank
+            over budget is skipped with ``llm_budget_reached``. A mode that searches vectors
+            answers BM25 with ``embedding_in_progress`` while the configured model has not
+            embedded every chunk of the version (never two models' vectors in one search).
         """
+        choice = await self._within_budget(choice, AiCaller(library=version.library, user=caller))
         request = PipelineRequest(
             version=version,
             query=query,
@@ -396,6 +712,44 @@ class RetrievalModes:
             return replace(answer, fallback_reason=choice.fallback_reason)
         return answer
 
+    async def _within_budget(self, choice: ModeChoice, caller: AiCaller) -> ModeChoice:
+        """Skip the LLM step or the paid rerank a budget or the rate limit does not allow now.
+
+        Args:
+            choice: The mode picked by ``choose``.
+            caller: The library and the account searching.
+
+        Returns:
+            The choice, or the cheaper one without the LLM step, or the same without reranking,
+            with the reason.
+        """
+        if self.spend is None:
+            return choice
+        if choice.mode.needs_llm and (reason := await self.spend.llm_step(caller)) is not None:
+            choice = choice.without_llm(reason)
+        if (
+            choice.rerank
+            and self.spend.budgets.limits  # no limit: no need to read the reranker's profile
+            and await self._paid_rerank(caller.library)
+            and (reason := await self.spend.paid_call(caller)) is not None
+        ):
+            choice = replace(choice, rerank=False, fallback_reason=choice.fallback_reason or reason)
+        return choice
+
+    async def _paid_rerank(self, library: str) -> bool:
+        """Say whether the library's reranker costs money (any but an in-process one).
+
+        Args:
+            library: The library searched.
+
+        Returns:
+            False only for a reranker whose profile is ``local``.
+        """
+        if self.providers is None:
+            return True
+        kind = await self.providers.profile_kind_for(ModelRole.RERANKER, library)
+        return kind is None or kind not in FREE_PROFILE_KINDS
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SearchDocsUseCase:
@@ -408,8 +762,18 @@ class SearchDocsUseCase:
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
 
-    async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
-        """Search the active manifest of one exact version; never fall back to another version."""
+    async def __call__(
+        self, query: SearchDocsQuery, *, caller: str | None = None
+    ) -> SearchDocsResult:
+        """Search the active manifest of one exact version; never fall back to another version.
+
+        Args:
+            query: The search.
+            caller: The account searching; ``None`` for a stdio MCP process.
+
+        Returns:
+            The results of the one version searched.
+        """
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
         choice = await self.modes.choose(asked=query.mode, library=query.library)
@@ -420,10 +784,15 @@ class SearchDocsUseCase:
             library=query.library,
             ref=query.ref,
         ) as whole:
-            return await self._search(query, text, choice, whole)
+            return await self._search(query, text, choice, whole, caller)
 
     async def _search(
-        self, query: SearchDocsQuery, text: SearchText, choice: ModeChoice, whole: SearchSpan
+        self,
+        query: SearchDocsQuery,
+        text: SearchText,
+        choice: ModeChoice,
+        whole: SearchSpan,
+        caller: str | None,
     ) -> SearchDocsResult:
         """Resolve the version, rank its chunks and load the shown ones, one span per stage.
 
@@ -432,6 +801,7 @@ class SearchDocsUseCase:
             text: Its validated query text.
             choice: The retrieval mode it runs in.
             whole: The search's span, told which mode answered.
+            caller: The account searching.
 
         Returns:
             The results of the one version searched.
@@ -443,9 +813,13 @@ class SearchDocsUseCase:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span("search_docs.rank", mode=mode) as rank:
-            answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
+            answer = await self.modes.run(
+                choice, version, text.value, tag_filter, query.limit, caller=caller
+            )
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
+        if answer.fallback_reason is not None:
+            self.tracer.fallback(mode=answer.mode.value, reason=answer.fallback_reason.value)
         with self.tracer.span("search_docs.chunks", mode=answer.mode.value):
             stored = await self.chunks.get_many(
                 version.manifest_id, [h.chunk_id for h in answer.hits]
@@ -1065,7 +1439,9 @@ class QueryDocsUseCase:
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
 
-    async def __call__(self, query: QueryDocsQuery) -> QueryDocsResult:
+    async def __call__(
+        self, query: QueryDocsQuery, *, caller: str | None = None
+    ) -> QueryDocsResult:
         """Answer from exactly one version, with whole chunks that fit the budget, best first.
 
         The budget covers the whole payload: the notice, the sections and the closing line. A
@@ -1073,6 +1449,13 @@ class QueryDocsUseCase:
         can fetch it; one that merely found no room left is counted in ``omitted``. The
         library's rules (from its ``context7.json``) come first and are counted too; they take
         at most a ``RULES_SHARE``-th of the room: whole rules, a prefix of the list.
+
+        Args:
+            query: The library ID and the question.
+            caller: The account asking; ``None`` for a stdio MCP process.
+
+        Returns:
+            The packed sections of the one version.
         """
         text = SearchText(value=query.query)
         # `/owner/repo` or `/owner/repo/<ref>`; a ref may itself contain slashes.
@@ -1084,7 +1467,7 @@ class QueryDocsUseCase:
         with self.tracer.span(
             "query_docs", mode=choice.mode.value, query=text.value, library=library, ref=ref
         ) as whole:
-            return await self._answer(query, text, library, ref, choice, whole)
+            return await self._answer(query, text, library, ref, choice, whole, caller)
 
     async def _answer(
         self,
@@ -1094,6 +1477,7 @@ class QueryDocsUseCase:
         ref: str | None,
         choice: ModeChoice,
         whole: SearchSpan,
+        caller: str | None,
     ) -> QueryDocsResult:
         """Resolve the version, rank, load the chunks and pack them, one span per stage.
 
@@ -1104,6 +1488,7 @@ class QueryDocsUseCase:
             ref: The version it names; ``None`` for the default version.
             choice: The retrieval mode it runs in.
             whole: The search's span, told which mode answered.
+            caller: The account asking.
 
         Returns:
             The packed sections of the one version searched.
@@ -1120,9 +1505,12 @@ class QueryDocsUseCase:
                 text.value,
                 TagFilter(tags=(), match=TagMatch.ANY),
                 QUERY_DOCS_CANDIDATES,
+                caller=caller,
             )
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
+        if answer.fallback_reason is not None:
+            self.tracer.fallback(mode=answer.mode.value, reason=answer.fallback_reason.value)
         with self.tracer.span("query_docs.chunks", mode=answer.mode.value):
             stored = await self.chunks.get_many(
                 version.manifest_id, [h.chunk_id for h in answer.hits]
@@ -1525,6 +1913,22 @@ class AiProviders:
             if binding is not None and await self.profile(binding.ref.profile) is not None:
                 found.add(role)
         return frozenset(found)
+
+    async def profile_kind_for(self, role: ModelRole, library: str) -> str | None:
+        """Find the kind of the profile a role uses for a library.
+
+        Args:
+            role: The role.
+            library: The library ID, any letter case.
+
+        Returns:
+            The kind, or ``None`` when the role does not resolve.
+        """
+        binding = bind_role(role, self.roles, await self.library_modes.ai_of(library))
+        if binding is None:
+            return None
+        profile = await self.profile(binding.ref.profile)
+        return None if profile is None else profile.kind.value
 
     async def model_for(self, role: ModelRole, library: str) -> object | None:
         """Build the model a role uses for a library, from the profile as it is now.
@@ -1960,10 +2364,10 @@ class EmbeddingRuns:
     """Wraps the embedder the factory builds; without it nothing can be embedded."""
     titles: ArticleTitles | None = None
     """Article titles, part of what is embedded; without it they are left out."""
-    spend: SpendLedger | None = None
-    """Where usage is recorded; without it nothing is."""
-    prices: Prices | None = None
-    """The bundled price list; without it nothing is priced."""
+    spend: AiSpend | None = None
+    """Where usage is recorded and the embedding budget checked; without it neither is."""
+    prices: PriceBook = field(default_factory=PriceBook)
+    """Prices the embedding model; without a list only overrides and free kinds are priced."""
     clock: Clock = field(default_factory=SystemClock)
     """Stamps spaces and usage."""
     dimensions: int | None = None
@@ -2098,11 +2502,8 @@ class EmbeddingRuns:
         Returns:
             US dollars per million input tokens, or ``None`` when unknown.
         """
-        if self.prices is None:
-            return None
-        return self.prices.input_usd_per_million(
-            configured.target.profile_kind, configured.ref.model
-        )
+        price = self.prices.price(configured.ref, configured.target.profile_kind)
+        return None if price is None else price.input_usd_per_million
 
     def store(self) -> VectorIndex:
         """Return the vector store.
@@ -2213,6 +2614,8 @@ class EmbedBatchUseCase:
         space = await runs.space(configured.target)
         if space is None or space.id != command.space_id:
             return _done()  # the model changed: its own jobs embed the version
+        if runs.spend is not None:  # before the batch: a used-up budget stops the job here
+            await runs.spend.embedding_batch(command.library)
         vectors = runs.store()
         keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
         sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
@@ -2230,7 +2633,7 @@ class EmbedBatchUseCase:
         ]
         embedded = await (await runs.model(configured)).embed_documents(texts)
         if runs.spend is not None:
-            await runs.spend.add(
+            await runs.spend.ledger.add(
                 embedding_spend(
                     runs.clock.now(),
                     input_tokens=embedded.input_tokens,
@@ -2327,18 +2730,40 @@ class ListUnembeddedVersionsUseCase:
             query: Every library, or one.
 
         Returns:
-            The versions; none when no embedding model or no vector store is configured.
+            The versions; none when no embedding model or no vector store is configured, and
+            none of a library while a budget its embedding counts to is used up.
         """
         configured = await self.runs.configured()
         if configured is None or self.runs.vectors is None:
             return UnembeddedVersionsOut(versions=[])
         space = await self.runs.space(configured.target)
-        versions = [
-            VersionRefOut(library=v.library, ref=v.ref)
-            for v in await self.runs.active_versions(query.library)
-            if space is None or not await self.runs.covers(space, v.manifest_id)
-        ]
+        spent: dict[str, bool] = {}
+        versions: list[VersionRefOut] = []
+        for v in await self.runs.active_versions(query.library):
+            if space is not None and await self.runs.covers(space, v.manifest_id):
+                continue
+            if v.library not in spent:
+                spent[v.library] = await self._spent(v.library)
+            if not spent[v.library]:
+                versions.append(VersionRefOut(library=v.library, ref=v.ref))
         return UnembeddedVersionsOut(versions=versions)
+
+    async def _spent(self, library: str) -> bool:
+        """Say whether a budget keeps the library from being embedded now.
+
+        Its versions are queued again when the window resets, not now: a job would only stop
+        before its first batch.
+
+        Args:
+            library: The library.
+
+        Returns:
+            True when a budget its embedding counts to is used up.
+        """
+        if self.runs.spend is None:
+            return False
+        scopes = AiCaller(library=library).embedding_scopes()
+        return await self.runs.spend.reached(scopes) is not None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

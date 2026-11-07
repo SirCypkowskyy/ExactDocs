@@ -317,7 +317,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
   `available_modes` and the `configured_roles` of the library. 404 for an unknown library. A
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
-  one is a 422 `mode_unavailable` as well.
+  one is a 422 `mode_unavailable` as well. A budget or the LLM search rate limit never fails a
+  search: one that would run an LLM step answers in the best mode without one, with
+  `fallback_reason` `llm_budget_reached` or `llm_rate_limited`, and a paid rerank over budget is
+  skipped (`reranked: false`, `fallback_reason: llm_budget_reached`).
 
 ### AI providers
 
@@ -365,6 +368,15 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   list's (`null` for a model it does not know): an estimate, as `note` says. No model or
   tokenizer is called. `model` is `null` and the counts 0 when no embedding model is configured;
   400 `vector_store_unavailable` on a database without a vector store (PostgreSQL until #243).
+- `GET /ai/usage`: what AI calls spent and what is left of each budget (`[ai.budgets]`):
+  `{"at", "llm_searches_per_minute", "scopes": [{"scope", "id", "day", "month", "budgets"}]}`.
+  `scope` is `instance`, `embedding` (embedding runs, instance-wide), `library` (`id` the library
+  ID) or `user` (`id` the account ID); the instance and embedding come first, then every library
+  and account that spent something this month. `day` and `month` are the current UTC windows:
+  `{"input_tokens", "output_tokens", "tokens", "requests", "usd", "unpriced_requests"}`, as the
+  providers reported (an LLM step's tokens, which the harness does not split, are input tokens).
+  Each budget: `{"window", "window_start", "resets_at", "usd_limit", "usd_left", "tokens_limit",
+  "tokens_left", "reached"}` (`null` for a ceiling that is not set).
 
 ## Jobs, access and health
 
@@ -373,7 +385,9 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   `running`, `succeeded` or `failed`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems).
   An `embed` job embeds one version with the instance's embedding model; a failed one has
   `error_code` `embedding_failed` (its error names the model and the HTTP status, never a key) and
-  is queued again at the next start.
+  is queued again at the next start, or `ai_budget_reached` when a budget its embedding counts to
+  (embedding, instance or library) was used up before its next batch: it is queued again just
+  after the UTC midnight that resets the window.
   A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its
   `finished_at`. The code of an upstream problem is one of `repo_unreachable`, `auth_failed`,
   `ref_deleted` and `tag_moved`, the same for a sync and for an import that meets it; any other

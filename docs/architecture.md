@@ -317,13 +317,35 @@ only holds each process's git work folders and `known_hosts`. What changes:
   queues the embedding too (`bootstrap/embedding.py`), and the start queues what is missing in
   the background. `retrieval_ai_spend` is one row per (scope kind, scope ID, UTC window, window
   start) with an atomic upsert on SQLite and PostgreSQL: each batch adds to the instance's row
-  (`instance`, `""`) and its library's (`library`, the library ID) for the day and the month,
-  the rows the LLM spend and the budgets of #95 use; `unpriced` counts the requests whose model
-  has no known price. `exactdocs ai estimate` counts the distinct chunks without a vector
+  (`instance`, `""`), its library's (`library`, the library ID) and the embedding budget's
+  (`embedding`, `""`) for the day and the month; `unpriced` counts the requests whose model has
+  no known price. Before each batch `AiSpend.embedding_batch` checks the embedding, instance and
+  library budgets and raises `AiBudgetReachedError` (`ai_budget_reached`), which fails the job;
+  `ListUnembeddedVersions` leaves such a library out, and bootstrap queues the missing embedding
+  again just after each UTC midnight, when the windows reset. `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
   `genai-prices` data (a model the instance runs itself, `ollama`, `vllm` or `local`, is never
   priced from another provider's list). On a database without a vector store (PostgreSQL until
   #243) nothing is planned, queued or estimated.
+- **Budgets (RET-07, #95):** `AiSpend` (retrieval's use-case layer) reads and adds the ledger
+  rows through the `SpendLedger` port and holds the instance's `Budgets` (a `BudgetLimit` per
+  scope kind and window, in millionths of a US dollar and in tokens) and a `CallRates` port (an
+  in-memory sliding minute per caller, per process). The ledger owns its key format,
+  `SpendKey` (scope kind, scope ID, window, window start); scopes are `instance`, `library`,
+  `user` (an account ID) and `embedding`. `RetrievalModes.run` takes the caller (REST passes the
+  session's or token's account through a FastAPI dependency, HTTP MCP the token's `client_id`,
+  stdio `None`) and, before the pipeline runs, skips an LLM step (`llm_budget_reached`,
+  `llm_rate_limited`, answering in `ModeChoice.cheaper`, the best mode without an LLM) or a paid
+  rerank (any reranker profile but `local`). LLM agents get `agent_limits(...)`
+  (`adapters/driven/harness_spend.py`): the harness `SpendLimits` with one budget per caller
+  scope and window (a ceiling, or a plain counter) over `LedgerSpendStore`, which implements the
+  harness `BatchSpendStore` structurally and parses each harness key
+  (`<name>|<window>|<scope>|<bucket>`, pinned by a contract test) into a `SpendKey`; plus
+  pydantic-ai `UsageLimits` per step. Replay tokens of the harness are kept in
+  `retrieval_ai_spend_replays`, claimed in the same transaction as the addition. A read-only
+  stdio process reads the shared rows and keeps its own spend in memory (`ReadOnlySpendLedger`).
+  Prices: `PriceBook` (the operator's `[ai.prices]`, then free kinds, then the bundled list);
+  bootstrap refuses a US dollar budget at start when a configured role's model has no price.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
@@ -865,8 +887,11 @@ room for its 9 MB.)
   set, makes it require that bearer token (`hmac.compare_digest`, 401 otherwise). The reader
   sends nothing. Scrapes, like the probes, get no request span or metric
   (`UNTRACED_PATHS`). Off, the route does not exist and `prometheus_client` is not imported. Any
-  library that records through OpenTelemetry's global meter (pydantic-ai's
-  `gen_ai.client.token.usage`, once the AI modes exist) shows up without more wiring.
+  library that records through OpenTelemetry's global meter shows up without more wiring:
+  pydantic-ai's `gen_ai.client.token.usage` and `operation.cost`, recorded by every chat model and
+  embedder the `ModelFactory` builds (instrumented with `include_content=False`, labelled by
+  provider, model, operation and token type). `OpenTelemetrySearchTracer.fallback` counts
+  `exactdocs.ai.fallbacks` (by mode and reason) for each search a cheaper mode answered.
 
 ## AI retrieval (planned)
 
@@ -928,8 +953,8 @@ back to BM25 with `fallback_reason: vector_store_unavailable`. Later modes plug 
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 
-- **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, a spend store
-  shaped like the harness `SpendStore` protocol, and ports for the HyDE writer, the judge and the
+- **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, the
+  `SpendLedger` (whose adapter also implements the harness `BatchSpendStore`), and ports for the HyDE writer, the judge and the
   agent explorer. Their adapters (pydantic-ai, fastembed, sqlite-vec, pgvector) live in
   `retrieval/adapters/driven/`, and the architecture test lists those libraries among the ones
   the core may not import. No new domain: every consumer is retrieval.
