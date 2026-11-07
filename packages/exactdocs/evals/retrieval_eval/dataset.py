@@ -1,5 +1,7 @@
 """The dataset: questions pinned to a version, and the section that answers each."""
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Final, Literal
 
@@ -78,3 +80,34 @@ def load_dataset(path: Path = DATASET_FILE) -> RetrievalDataset:
         The cases, without evaluators (the suite adds them).
     """
     return Dataset[Question, Answer, CaseInfo].from_file(path)
+
+
+def fingerprint(dataset: RetrievalDataset) -> str:
+    """Hash what the dataset states, so a baseline knows which dataset it measured.
+
+    Only each question (its inputs, defaults left out) and the sections it expects (version,
+    article, heading path) count: renaming, reordering or commenting cases keeps the fingerprint,
+    and so does a field added to the models with a default. Adding, removing or changing a
+    question or an expected section changes it (and resets the baseline, docs/evals.md).
+
+    Args:
+        dataset: The cases.
+
+    Returns:
+        ``sha256:`` and the first 16 hex digits of the hash.
+    """
+    cases = sorted(
+        json.dumps(
+            [
+                case.inputs.model_dump(mode="json", exclude_defaults=True),
+                [
+                    [hit.version, hit.article, hit.heading_path]
+                    for hit in (case.expected_output.hits if case.expected_output else [])
+                ],
+            ],
+            sort_keys=True,
+        )
+        for case in dataset.cases
+    )
+    digest = hashlib.sha256("\n".join(cases).encode()).hexdigest()
+    return f"sha256:{digest[:16]}"

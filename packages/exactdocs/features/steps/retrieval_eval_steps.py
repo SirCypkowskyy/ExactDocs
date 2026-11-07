@@ -5,19 +5,23 @@ The suite is development tooling, not an endpoint: these scenarios call it direc
 """
 
 import asyncio
+import json
 import tempfile
 from pathlib import Path
 
 from behave import given, then, when
 from behave.runner import Context
 
-from retrieval_eval.dataset import Answer, Question, load_dataset
+from retrieval_eval.dataset import Answer, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import run_on_fixture
 from retrieval_eval.suite import (
     BASELINE_FILE,
     MODES,
+    Comparison,
+    compare,
     evaluate_mode,
     judge,
+    markdown,
     read_baseline,
     with_evaluators,
 )
@@ -28,7 +32,14 @@ def step_run_with_bm25(context: Context) -> None:
     with tempfile.TemporaryDirectory(prefix="exactdocs-eval-") as tmp:
         context.eval_report = asyncio.run(
             run_on_fixture(
-                context.fixture_repo, Path(tmp) / "data", baseline=read_baseline(BASELINE_FILE)
+                context.fixture_repo,
+                Path(tmp) / "data",
+                comparison=compare(
+                    fingerprint(load_dataset()),
+                    read_baseline(BASELINE_FILE),
+                    read_baseline(BASELINE_FILE),
+                    ratchet=False,
+                ),
             )
         )
 
@@ -86,7 +97,10 @@ def step_run(context: Context) -> None:
     dataset = with_evaluators(load_dataset())
     outcome = asyncio.run(evaluate_mode(dataset, MODES[0], context.eval_retriever))
     context.eval_report = judge(
-        dataset.name, len(dataset.cases), [outcome], read_baseline(BASELINE_FILE)
+        dataset.name,
+        len(dataset.cases),
+        [outcome],
+        Comparison(baseline=read_baseline(BASELINE_FILE).recall_at_5),
     )
 
 
@@ -99,3 +113,94 @@ def step_fails(context: Context) -> None:
     assert len(outcome.wrong_version_cases) == 1
     assert "v2.0.0" in outcome.wrong_version_cases[0]
     assert any("another version" in p for p in report.problems), report.problems
+
+
+# ---------------------------------------------------------------- the baseline and the dataset
+
+_DEVELOP_RECALL = 0.92
+"""What develop's baseline stores for BM25 in these scenarios."""
+
+
+class _AnswersNothing:
+    """A mode that finds nothing: recall@5 0 on any dataset, and never a wrong version."""
+
+    async def answer(self, question: Question) -> Answer:
+        del question
+        return Answer(hits=[])
+
+
+def _fingerprint_of(context: Context, label: str) -> str:
+    """The branch's dataset label stands for the real dataset; any other label for another one."""
+    if label == context.eval_branch_dataset:
+        return fingerprint(load_dataset())
+    return f"sha256:{label}"
+
+
+@given('develop\'s baseline was recorded for dataset fingerprint "{label}"')
+def step_develop_baseline(context: Context, label: str) -> None:
+    context.eval_develop_dataset = label
+
+
+@given(
+    'the branch changes the dataset to fingerprint "{label}" and stores a new baseline for '
+    '"{stored}"'
+)
+def step_branch_changes_dataset(context: Context, label: str, stored: str) -> None:
+    context.eval_branch_dataset = label
+    context.eval_branch_stored = (stored, 0.0)  # the harder questions measure lower
+
+
+@given("develop's baseline and the branch use the same dataset fingerprint")
+def step_same_dataset(context: Context) -> None:
+    context.eval_develop_dataset = context.eval_branch_dataset = "B"
+
+
+@when("the branch stores a lower recall@5")
+def step_branch_lowers(context: Context) -> None:
+    context.eval_branch_stored = ("B", _DEVELOP_RECALL - 0.1)
+    step_runs_in_ci(context)
+
+
+@when("the eval runs in CI")
+def step_runs_in_ci(context: Context) -> None:
+    stored_label, stored_recall = context.eval_branch_stored
+    with tempfile.TemporaryDirectory(prefix="exactdocs-eval-") as tmp:
+        develop, branch = Path(tmp) / "develop.json", Path(tmp) / "baseline.json"
+        for path, label, recall in (
+            (develop, context.eval_develop_dataset, _DEVELOP_RECALL),
+            (branch, stored_label, stored_recall),
+        ):
+            data = {
+                "dataset": _fingerprint_of(context, label),
+                "modes": {"bm25": {"recall_at_5": recall}},
+            }
+            path.write_text(json.dumps(data), encoding="utf-8")
+        dataset = with_evaluators(load_dataset())
+        comparison = compare(
+            fingerprint(dataset), read_baseline(develop), read_baseline(branch), ratchet=True
+        )
+        outcome = asyncio.run(evaluate_mode(dataset, MODES[0], _AnswersNothing()))
+        context.eval_report = judge(dataset.name, len(dataset.cases), [outcome], comparison)
+        context.eval_branch_file = str(branch)
+
+
+@then('the drop gate and the ratchet compare against the branch\'s baseline for "{label}"')
+def step_compared_with_branch(context: Context, label: str) -> None:
+    report = context.eval_report
+    assert report.passed, report.problems
+    assert report.baseline == context.eval_branch_file
+    assert report.modes[0].baseline_recall_at_5 == context.eval_branch_stored[1]
+    assert context.eval_branch_stored[0] == label
+
+
+@then("the summary says the baseline was reset because the dataset changed")
+def step_summary_says_reset(context: Context) -> None:
+    summary = markdown(context.eval_report)
+    assert "**Baseline reset:** the dataset changed" in summary, summary
+
+
+@then('CI fails with "{text}"')
+def step_ci_fails_with(context: Context, text: str) -> None:
+    report = context.eval_report
+    assert not report.passed
+    assert any(text in p for p in report.problems), report.problems
