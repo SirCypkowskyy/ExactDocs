@@ -196,3 +196,26 @@ DOCSTRING_SECTIONS: Final[frozenset[str]] = frozenset(
     {"Args:", "Arguments:", "Returns:", "Return:", "Yields:", "Raises:"}
 )
 """Google docstring sections that end an operation's OpenAPI description."""
+
+# ---------------------------------------------------------------- telemetry, otlp
+SERVICE_NAME: Final[str] = "exactdocs"
+"""``service.name`` of the exported telemetry, unless ``OTEL_SERVICE_NAME`` names another."""
+OTLP_ENDPOINT_VARIABLES: Final[tuple[str, ...]] = (
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+)
+"""Where traces go. With neither set, nothing is exported (there is no default collector)."""
+UNTRACED_PATHS: Final[frozenset[str]] = frozenset({"/api/health", "/healthz", "/readyz"})
+"""Health checks: polled every few seconds by orchestrators, so they get no request span."""
+QUERY_TEXT_PARAMETERS: Final[frozenset[str]] = frozenset({"q", "query", "url"})
+"""URL query parameters whose value is query text (or a repository URL that may carry a token):
+redacted from request spans unless the operator opted in to query text.
+"""
+REDACTED: Final[str] = "REDACTED"
+"""What a redacted URL query value is replaced with."""
+URL_QUERY_ATTRIBUTE: Final[str] = "url.query"
+"""The request span attribute with the URL's query string (OpenTelemetry semantic conventions)."""
+OTLP_MODULE: Final[str] = "exactdocs.bootstrap.otlp"
+"""The module that sets up the OpenTelemetry SDK, loaded only when telemetry is on."""
+JOB_TRACER_NAME: Final[str] = "exactdocs.ingestion"
+"""OpenTelemetry instrumentation scope of the job spans."""

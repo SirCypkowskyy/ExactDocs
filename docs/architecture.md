@@ -623,6 +623,27 @@ that last step, which is one transaction in the catalog.
   (`CopyManifest`) and `RetrievalChunkIndex` (`IndexManifest`, `GetChunkSets`,
   `DiscardPendingChunks`).
 
+## Telemetry
+
+Off by default, and then nothing is set up: only the OpenTelemetry *API* is imported (FastAPI,
+FastMCP and DBOS use it too), which records nothing without an SDK. With `EXACTDOCS_TELEMETRY=otlp`,
+`bootstrap/telemetry.py:start_telemetry` (called by `create_app` and `serve --stdio`) loads
+`bootstrap/otlp.py`, which calls `logfire.configure(send_to_logfire=False, console=False, ...)`:
+Logfire is only the SDK, exporting over OTLP/HTTP to the collector the `OTEL_EXPORTER_OTLP_*`
+variables name. The providers are process-wide, so the tests that turn telemetry on run in a
+process of their own.
+
+- **Requests:** FastAPI's built-in OpenTelemetry (`FastAPI(telemetry=...)`, not
+  `instrument_fastapi`, which records request arguments), with the health checks excluded and
+  `auto_configure` off. A span processor (`QueryTextRedaction`) replaces the values of the
+  query-text parameters in `url.query` unless the operator opted in.
+- **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
+  for the search and one per stage (`version`, `rank`, `chunks`), in its mode. The query text is a
+  separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without
+  a tracer the use cases get `UntracedSearches`, which records nothing.
+- **Jobs:** bootstrap wraps every job handler in `TracedJobHandler` (`ingestion.<kind>` spans);
+  ingestion's code is unchanged. MCP tool calls get FastMCP's own spans.
+
 ## Python conventions
 
 - **`Protocol`, not ABC.** Ports are structural. Adapters and use cases never inherit from them;

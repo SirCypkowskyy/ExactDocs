@@ -62,7 +62,13 @@ class Settings(BaseSettings):
     # One whole `query-docs` payload, notice included, in tokens counted as characters / 4. That
     # undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
     query_docs_token_budget: int = Field(default=10_000, ge=500)
+    # `otlp`: traces (and metrics and logs) over OTLP/HTTP to the collector the standard
+    # `OTEL_EXPORTER_OTLP_ENDPOINT` names. Off: no telemetry SDK is set up, nothing is exported.
     telemetry: Literal["off", "otlp"] = "off"
+    telemetry_query_text: bool = False
+    """Keep the text of search queries in the traces (span attributes and request URLs). Off by
+    default: queries can hold code, names or secrets, and traces are read by more people.
+    """
     metrics: bool = False
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,
     # `*.example.com`) and browser origins (e.g. `https://docs.example.com`), comma-separated.

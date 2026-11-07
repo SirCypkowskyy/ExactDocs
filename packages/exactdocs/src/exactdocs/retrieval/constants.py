@@ -232,3 +232,15 @@ TAG_CONDITIONS: Final[dict[str | None, str]] = {
 """The SQL condition of each tag match (``TagMatch`` value; None: no filter). It sits in WHERE, so
 it is applied before ORDER BY ... LIMIT.
 """
+
+# ---------------------------------------------------------------- adapters/driven/opentelemetry
+TRACER_NAME: Final[str] = "exactdocs.retrieval"
+"""OpenTelemetry instrumentation scope of the search spans."""
+SPAN_PREFIX: Final[str] = "retrieval."
+"""Put before every search span's name: ``retrieval.search_docs.rank``."""
+ATTRIBUTE_PREFIX: Final[str] = "exactdocs."
+"""Put before every label of a search span: ``exactdocs.library``."""
+MODE_ATTRIBUTE: Final[str] = "exactdocs.retrieval.mode"
+"""The span attribute naming the retrieval mode (``bm25``)."""
+QUERY_ATTRIBUTE: Final[str] = "exactdocs.query"
+"""The span attribute holding the query text, set only when the operator opted in."""
