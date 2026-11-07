@@ -338,8 +338,16 @@ DEFAULT_BASE_URLS: Final[dict[str, str]] = {
 """The endpoint of each hosted kind, passed explicitly (pydantic-ai's own defaults, 2.60.0) so no
 SDK ever falls back to a ``*_BASE_URL`` environment variable.
 """
-DERIVED_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9.-]+")
-"""What a host derived from ``resource`` or ``location`` may hold once built."""
+AZURE_OPENAI_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9-]+\.openai\.azure\.com")
+"""An Azure OpenAI endpoint derived from ``resource``."""
+FOUNDRY_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9-]+\.services\.ai\.azure\.com")
+"""An Azure AI Foundry endpoint derived from ``resource``."""
+BEDROCK_HOST: Final[re.Pattern[str]] = re.compile(r"bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com")
+"""An Amazon Bedrock runtime endpoint derived from ``location`` (the AWS region)."""
+VERTEX_HOST: Final[re.Pattern[str]] = re.compile(
+    r"(aiplatform|[a-z0-9-]+-aiplatform|aiplatform\.(us|eu)\.rep)\.googleapis\.com"
+)
+"""A Vertex AI endpoint: global, regional (``<location>-aiplatform``) or multi-region."""
 NO_KEY: Final[str] = "unused"
 """The key sent by a profile without one, instead of letting an SDK read ``*_API_KEY``."""
 AZURE_SCOPE: Final[str] = "https://cognitiveservices.azure.com/.default"

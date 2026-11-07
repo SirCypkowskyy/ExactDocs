@@ -543,10 +543,15 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   profile takes no `base_url`: its endpoint is derived from `location` or `resource` (Google's,
   Azure's or AWS's own), so the token never reaches another host. `resource`, `location` and
   `project` must each be a single DNS label (letters, digits, inner hyphens), and a derived
-  endpoint is built with a URL constructor and checked to end in the provider's domain. An Entra
-  ID credential chain (client secret or certificate, workload identity, managed identity) is
-  built once per profile; the profile's `proxy` carries the calls to `login.microsoftonline.com`,
-  never managed identity's local endpoint. Google's token refresh uses the environment's proxy
+  endpoint is built with a URL constructor and checked against the provider's exact host form
+  (`<resource>.openai.azure.com`, `<resource>.services.ai.azure.com`,
+  `bedrock-runtime.<region>.amazonaws.com`, Vertex AI's `aiplatform` hosts). GCP's legacy
+  domain-scoped project IDs (`example.com:project`) are therefore refused. An Entra ID credential
+  chain (client secret or certificate, workload identity, managed identity, user-assigned through
+  `AZURE_CLIENT_ID`) is built once per profile; the profile's `proxy` carries the calls to
+  `login.microsoftonline.com`, never managed identity's local endpoint. Entra ID never uses the
+  Azure CLI, PowerShell, VS Code or any developer sign-in: for local development, use a client
+  secret (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`). Google's token refresh uses the environment's proxy
   variables, as google-auth reads them itself.
 - **Extra headers carry no credentials:** `Authorization`, `Cookie`, `x-api-key`, `api-key`
   and names ending in `-key`, `-token`, `-secret` or `-password` are refused ("use the key

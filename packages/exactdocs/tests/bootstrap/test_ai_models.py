@@ -7,6 +7,7 @@ records what each request carried.
 
 import asyncio
 import json
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,12 @@ from exactdocs.bootstrap.ai_sdk import (
     _anthropic_client,
     _official_url,
     _openai_provider,
+)
+from exactdocs.bootstrap.constants import (
+    AZURE_OPENAI_HOST,
+    BEDROCK_HOST,
+    FOUNDRY_HOST,
+    VERTEX_HOST,
 )
 from exactdocs.bootstrap.settings import AiSettings
 from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
@@ -635,20 +642,26 @@ def test_the_servers_cloud_identity_only_reaches_the_official_endpoint(
 
 
 @pytest.mark.parametrize(
-    ("host", "domain"),
+    ("host", "official"),
     [
-        ("evil.example/x?.openai.azure.com", "azure.com"),
-        ("x@evil.services.ai.azure.com", "azure.com"),
-        ("a.evil.com", "azure.com"),
-        ("evil.example#.googleapis.com", "googleapis.com"),
-        ("bedrock-runtime.x%2Fevil.amazonaws.com", "amazonaws.com"),
+        ("evil.example/x?.openai.azure.com", AZURE_OPENAI_HOST),
+        ("x@evil.services.ai.azure.com", FOUNDRY_HOST),
+        ("a.evil.com", AZURE_OPENAI_HOST),
+        ("evil.cloudapp.azure.com", AZURE_OPENAI_HOST),  # under azure.com, a customer's name
+        ("evil.openai.azure.com", FOUNDRY_HOST),
+        ("evil.example#.googleapis.com", VERTEX_HOST),
+        ("storage.googleapis.com", VERTEX_HOST),
+        ("bedrock-runtime.x%2Fevil.amazonaws.com", BEDROCK_HOST),
+        ("evil.s3.amazonaws.com", BEDROCK_HOST),
     ],
 )
-def test_a_derived_host_outside_the_providers_domain_is_refused(host: str, domain: str) -> None:
+def test_a_derived_host_that_is_not_the_providers_endpoint_is_refused(
+    host: str, official: re.Pattern[str]
+) -> None:
     profile = ProviderProfile(name="p", kind=ProviderKind.OPENAI_COMPATIBLE, base_url="https://x")
 
-    with pytest.raises(ProviderUnsupportedError, match=f"under {domain}"):
-        _official_url(profile, host, "/", domain)
+    with pytest.raises(ProviderUnsupportedError, match="would not be the provider's own"):
+        _official_url(profile, host, "/", official)
 
 
 def test_the_profiles_proxy_goes_only_to_the_credentials_that_call_entra_id() -> None:
@@ -665,6 +678,7 @@ def test_the_profiles_proxy_goes_only_to_the_credentials_that_call_entra_id() ->
 
     plain = ai_sdk.entra_chain(profile, {})
     federated = ai_sdk.entra_chain(profile, {"AZURE_FEDERATED_TOKEN_FILE": "/var/run/token"})
+    user_assigned = ai_sdk.entra_chain(profile, {"AZURE_CLIENT_ID": "1111-2222"})
 
     assert plain == [(EnvironmentCredential, proxies), (ManagedIdentityCredential, {})]
     assert federated == [
@@ -672,3 +686,5 @@ def test_the_profiles_proxy_goes_only_to_the_credentials_that_call_entra_id() ->
         (WorkloadIdentityCredential, proxies),
         (ManagedIdentityCredential, {}),  # IMDS / IDENTITY_ENDPOINT: never through the proxy
     ]
+    # A user-assigned managed identity is chosen by AZURE_CLIENT_ID, as DefaultAzureCredential did.
+    assert user_assigned[-1] == (ManagedIdentityCredential, {"client_id": "1111-2222"})

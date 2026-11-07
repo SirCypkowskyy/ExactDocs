@@ -742,8 +742,8 @@ profile's proxy goes to the first two only). Profiles signed with the server's o
 (ADC, a service-account file, Entra ID, Claude on Bedrock) come from configuration only and take
 no `base_url`: `ProviderProfile` refuses both, so their endpoint is always derived. `resource`,
 `location` and `project` are single DNS labels, and `ai_sdk._official_url` builds a derived
-endpoint with `httpx2.URL(scheme=..., host=...)` and refuses a host outside the provider's domain
-(`googleapis.com`, `azure.com`, `amazonaws.com`). `AiProviders.
+endpoint with `httpx2.URL(scheme=..., host=...)` and refuses a host that is not the provider's
+exact endpoint form (`AZURE_OPENAI_HOST`, `FOUNDRY_HOST`, `BEDROCK_HOST`, `VERTEX_HOST`). `AiProviders.
 model_for(role, library)` is the path every AI pipeline takes, so a profile edited over REST counts
 at the next call. `exactdocs ai check` and `POST /api/v1/ai/providers/{name}/check` make one minimal
 call per role. The socket-guard test (`tests/bootstrap/test_ai_no_outbound.py`) runs with the SDKs'

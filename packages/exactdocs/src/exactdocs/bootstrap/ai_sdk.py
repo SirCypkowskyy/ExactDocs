@@ -17,6 +17,7 @@ import asyncio
 import importlib
 import logging
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,14 +79,17 @@ from pydantic_ai.settings import ModelSettings
 from exactdocs.bootstrap.ai_endpoint import Endpoint
 from exactdocs.bootstrap.constants import (
     AMBIENT_HEADERS,
+    AZURE_OPENAI_HOST,
     AZURE_SCOPE,
+    BEDROCK_HOST,
     CHECK_MAX_TOKENS,
     CHECK_PROMPT,
     DEFAULT_BASE_URLS,
-    DERIVED_HOST,
+    FOUNDRY_HOST,
     GOOGLE_SCOPE,
     NO_KEY,
     SDK_HEADER_VARIABLES,
+    VERTEX_HOST,
 )
 from exactdocs.retrieval.errors import ProviderUnsupportedError
 from exactdocs.retrieval.models import (
@@ -175,7 +179,7 @@ def base_url(profile: ProviderProfile) -> str:
             profile, express=profile.key is not KeySource.NONE
         )
     if kind is ProviderKind.AZURE and profile.resource:
-        return _official_url(profile, f"{profile.resource}.openai.azure.com", "", "azure.com")
+        return _official_url(profile, f"{profile.resource}.openai.azure.com", "", AZURE_OPENAI_HOST)
     if profile.base_url:
         return profile.base_url
     if kind.value in DEFAULT_BASE_URLS:
@@ -201,10 +205,10 @@ def _anthropic_base_url(profile: ProviderProfile) -> str:
             if profile.base_url:
                 return profile.base_url
             host = f"{profile.resource}.services.ai.azure.com"
-            return _official_url(profile, host, "/anthropic/", "azure.com")
+            return _official_url(profile, host, "/anthropic/", FOUNDRY_HOST)
         case AnthropicPlatform.BEDROCK:
             host = f"bedrock-runtime.{profile.location}.amazonaws.com"
-            return _official_url(profile, host, "", "amazonaws.com")
+            return _official_url(profile, host, "", BEDROCK_HOST)
 
 
 def _vertex_base_url(profile: ProviderProfile, *, express: bool) -> str:
@@ -224,31 +228,34 @@ def _vertex_base_url(profile: ProviderProfile, *, express: bool) -> str:
         host = f"aiplatform.{location}.rep.googleapis.com"
     else:
         host = f"{location}-aiplatform.googleapis.com"
-    return _official_url(profile, host, "/", "googleapis.com")
+    return _official_url(profile, host, "/", VERTEX_HOST)
 
 
-def _official_url(profile: ProviderProfile, host: str, path: str, domain: str) -> str:
+def _official_url(profile: ProviderProfile, host: str, path: str, official: re.Pattern[str]) -> str:
     """Build a derived endpoint with a URL constructor, then check it is the provider's own.
 
     ``resource`` and ``location`` are single DNS labels already (``ProviderProfile``); this is
     the second guard: the constructor percent-encodes anything that could end the host, and the
-    host must then end in the provider's domain.
+    whole host must then match the provider's endpoint form exactly
+    (``<resource>.openai.azure.com``, ``<resource>.services.ai.azure.com``,
+    ``bedrock-runtime.<region>.amazonaws.com``, Vertex AI's ``aiplatform`` hosts), not just its
+    domain, where customers own names too.
 
     Args:
         profile: The profile.
         host: The host, built from the profile's fields.
         path: The path (``/`` or ``""``).
-        domain: The provider's domain (``googleapis.com``, ``azure.com``, ``amazonaws.com``).
+        official: The provider's host form (``AZURE_OPENAI_HOST``, ``FOUNDRY_HOST``, ...).
 
     Returns:
         The URL.
 
     Raises:
-        ProviderUnsupportedError: The host is not under the provider's domain.
+        ProviderUnsupportedError: The host is not the provider's endpoint.
     """
     url = httpx2.URL(scheme="https", host=host, path=path or "/")
-    if not (url.host.endswith(f".{domain}") and DERIVED_HOST.fullmatch(url.host)):
-        reason = f"its endpoint would not be under {domain}"
+    if not official.fullmatch(url.host):
+        reason = f"its endpoint {url.host} would not be the provider's own"
         raise ProviderUnsupportedError(profile.name, reason)
     text = str(url)
     return text if path else text.rstrip("/")
@@ -363,7 +370,10 @@ def entra_chain(
     chain: list[tuple[type[TokenCredential], dict[str, Any]]] = [(EnvironmentCredential, via_proxy)]
     if environ.get("AZURE_FEDERATED_TOKEN_FILE"):
         chain.append((WorkloadIdentityCredential, via_proxy))
-    chain.append((ManagedIdentityCredential, {}))
+    # A user-assigned identity is chosen by AZURE_CLIENT_ID, as DefaultAzureCredential does;
+    # a bare ManagedIdentityCredential would ask IMDS for the system-assigned one instead.
+    client_id = environ.get("AZURE_CLIENT_ID")
+    chain.append((ManagedIdentityCredential, {"client_id": client_id} if client_id else {}))
     return chain
 
 
