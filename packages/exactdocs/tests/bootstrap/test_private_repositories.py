@@ -10,6 +10,7 @@ import httpx
 import pytest
 from sqlalchemy import text
 
+from exactdocs.bootstrap.constants import CREDENTIALS_KEY_PURPOSE as CREDENTIALS
 from exactdocs.bootstrap.constants import KEY_FILE, KNOWN_HOSTS_FILE
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
@@ -285,7 +286,7 @@ async def test_a_credential_row_of_another_host_makes_the_import_fail_closed(
     # a row from before the library moved: sealed for another host
     vault = SqliteCredentialVault(
         engine=container.engine,
-        box=FernetSecretBox.from_file(container.settings.data_dir / KEY_FILE),
+        box=FernetSecretBox.from_file(container.settings.data_dir / KEY_FILE, purpose=CREDENTIALS),
     )
     await vault.save(
         "/fixture/docs-repo", "https://elsewhere.example.com", AccessToken(token="t0ken")

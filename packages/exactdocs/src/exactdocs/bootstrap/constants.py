@@ -200,9 +200,12 @@ KEY_FILE: Final[str] = "secret.key"
 """File in the data directory that holds the generated secret key."""
 MIN_SECRET_KEY_LENGTH: Final[int] = 32
 """Shortest ``EXACTDOCS_SECRET_KEY`` accepted, in characters."""
-_HKDF_INFO: Final[bytes] = b"exactdocs credentials v1"
-"""HKDF context of the credential encryption key, so the key serves nothing else (never change it:
-every sealed secret is derived from it)."""
+CREDENTIALS_KEY_PURPOSE: Final[bytes] = b"exactdocs credentials v1"
+"""HKDF context (``purpose``) of the key that seals ingestion's repository credentials.
+
+Each use of the secret box has its own context, so its key serves nothing else; never change this
+one: every stored credential is sealed with the key derived from it.
+"""
 _OWNER_ONLY: Final[int] = 0o600
 """File mode of the secret key file: readable by its owner only."""
 

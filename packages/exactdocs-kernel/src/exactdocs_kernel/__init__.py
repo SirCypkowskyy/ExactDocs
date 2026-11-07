@@ -23,6 +23,7 @@ from exactdocs_kernel.errors import (
     DomainError,
     NotFoundError,
     RateLimitedError,
+    SealedTextUnreadableError,
     UnauthenticatedError,
     ValidationError,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "NotFoundError",
     "Page",
     "RateLimitedError",
+    "SealedTextUnreadableError",
     "SystemClock",
     "UnauthenticatedError",
     "ValidationError",

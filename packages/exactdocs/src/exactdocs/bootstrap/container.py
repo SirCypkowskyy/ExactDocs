@@ -29,7 +29,13 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
-from exactdocs.bootstrap.constants import JOBS_FILE, KEY_FILE, KNOWN_HOSTS_FILE, WORK_DIR
+from exactdocs.bootstrap.constants import (
+    CREDENTIALS_KEY_PURPOSE,
+    JOBS_FILE,
+    KEY_FILE,
+    KNOWN_HOSTS_FILE,
+    WORK_DIR,
+)
 from exactdocs.bootstrap.database import (
     StartupError,
     check_schema_is_current,
@@ -217,9 +223,12 @@ class Container:
                         if settings.secret_key_previous
                         else []
                     ),
+                    purpose=CREDENTIALS_KEY_PURPOSE,
                 )
                 if settings.secret_key
-                else FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
+                else FernetSecretBox.from_file(
+                    settings.data_dir / KEY_FILE, purpose=CREDENTIALS_KEY_PURPOSE
+                )
             )
         except ValueError as error:  # fixed texts: they never repeat a key
             raise StartupError(str(error)) from None

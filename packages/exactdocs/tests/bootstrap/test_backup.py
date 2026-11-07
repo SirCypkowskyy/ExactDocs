@@ -24,6 +24,7 @@ from sqlalchemy import Connection
 
 from exactdocs.bootstrap import backup, cli
 from exactdocs.bootstrap.backup import BackupError, create_backup, restore_backup
+from exactdocs.bootstrap.constants import CREDENTIALS_KEY_PURPOSE as CREDENTIALS
 from exactdocs.bootstrap.constants import (
     DATABASE_MEMBER,
     JOBS_FILE,
@@ -92,7 +93,8 @@ async def started(source: Settings) -> Settings:
     container = Container.build(source)
     async with container.running(jobs=False):
         vault = SqliteCredentialVault(
-            engine=container.engine, box=FernetSecretBox.from_file(source.data_dir / KEY_FILE)
+            engine=container.engine,
+            box=FernetSecretBox.from_file(source.data_dir / KEY_FILE, purpose=CREDENTIALS),
         )
         await vault.save(LIBRARY, SCOPE, AccessToken(token=TOKEN))
     return source
@@ -110,7 +112,8 @@ async def _load_credential(settings: Settings) -> AccessToken | None:
     engine = open_database(settings)
     try:
         vault = SqliteCredentialVault(
-            engine=engine, box=FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
+            engine=engine,
+            box=FernetSecretBox.from_file(settings.data_dir / KEY_FILE, purpose=CREDENTIALS),
         )
         credential = await vault.load(LIBRARY, SCOPE)
     finally:

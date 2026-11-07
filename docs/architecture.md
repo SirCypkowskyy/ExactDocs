@@ -73,9 +73,20 @@ rotation through `EXACTDOCS_SECRET_KEY_PREVIOUS`, or a generated `secret.key` in
 directory) lives in the composition root, not in a domain and not in the kernel (it needs
 `cryptography`; the kernel uses the standard library only). A domain that stores a secret declares
 its own small `SecretBox` driven port (`ingestion.ports.driven.SecretBox` today) and a driven adapter
-takes it as a field (`SqliteCredentialVault(box=...)`); `bootstrap/container.py` builds the box once
-and passes that same instance to every domain that needs one. No domain imports `cryptography`
-(an architecture test checks it), so none depends on another's adapter to seal a secret.
+takes it as a field (`SqliteCredentialVault(box=...)`). No domain imports `cryptography` (an
+architecture test checks it), so none depends on another's adapter to seal a secret.
+
+- **One key, one context per use.** Every box is built from the same secret key with a `purpose`:
+  the HKDF `info` its Fernet key is derived for. `bootstrap/container.py` builds one box per use and
+  passes it to that domain's adapter, so a text sealed for one use (a table, a domain) never opens
+  in another. Ingestion's repository credentials use `CREDENTIALS_KEY_PURPOSE`
+  (`b"exactdocs credentials v1"`, in `bootstrap/constants.py`), the context they were always
+  sealed with: never change it, or every stored credential becomes unreadable. A new use takes a
+  new context (`b"exactdocs <use> v1"`), and rotating the secret key covers every use at once.
+- **A neutral error.** `open` raises `exactdocs_kernel.SealedTextUnreadableError` for a text of
+  another key or purpose, or one that was altered. It is not a `DomainError` and never reaches a
+  client: the adapter that opened the text translates it into its own domain's error (the
+  credential vault: `CredentialsRequiredError`). The box imports no domain.
 
 The kernel `NOTICE` constant (the untrusted-content notice every MCP result carries, see the
 *MCP-07* story) is a reviewed kernel addition: it is shared text, not business logic, so it lives

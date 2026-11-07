@@ -1,7 +1,9 @@
 """The instance's secret box: Fernet (AES-128-CBC with HMAC-SHA256) from ``cryptography``.
 
 It lives in the composition root, not in a domain: every domain that seals secrets declares its
-own small ``SecretBox`` driven port, and bootstrap passes this one instance to each of them.
+own small ``SecretBox`` driven port, and bootstrap gives each one a box built from the same secret
+key with that use's own HKDF context (``purpose``), so a text sealed for one use never opens in
+another. Ingestion's credentials use ``CREDENTIALS_KEY_PURPOSE``, the context they always had.
 
 The key comes from ``EXACTDOCS_SECRET_KEY`` when set; any text of 32 characters or more works,
 and the Fernet key is derived from it with HKDF-SHA256 (so a pasted ``openssl rand -base64 32``
@@ -22,8 +24,8 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from exactdocs.bootstrap.constants import _HKDF_INFO, _OWNER_ONLY, MIN_SECRET_KEY_LENGTH
-from exactdocs.ingestion.errors import CredentialsRequiredError
+from exactdocs.bootstrap.constants import _OWNER_ONLY, MIN_SECRET_KEY_LENGTH
+from exactdocs_kernel import SealedTextUnreadableError
 
 log = logging.getLogger(__name__)
 
@@ -34,22 +36,23 @@ class FernetSecretBox:
 
     Sealing uses the first key; opening tries all of them, so a key can be rotated by listing
     the new one first and the old one as a previous key until the credentials are sent again.
+    Every key is derived for one ``purpose`` (the HKDF context), which no other use shares.
     """
 
     fernet: MultiFernet = field(repr=False)
 
     @classmethod
-    def from_secrets(cls, secret: str, *previous: str) -> Self:
+    def from_secrets(cls, secret: str, *previous: str, purpose: bytes) -> Self:
         """Derive the keys from ``EXACTDOCS_SECRET_KEY`` (and ``_PREVIOUS``), 32+ characters."""
-        return cls(fernet=MultiFernet([_derive(text) for text in (secret, *previous)]))
+        return cls(fernet=MultiFernet([_derive(text, purpose) for text in (secret, *previous)]))
 
     @classmethod
-    def from_secret(cls, secret: str) -> Self:
+    def from_secret(cls, secret: str, *, purpose: bytes) -> Self:
         """Derive the key from one secret text (at least 32 characters)."""
-        return cls.from_secrets(secret)
+        return cls.from_secrets(secret, purpose=purpose)
 
     @classmethod
-    def from_file(cls, path: Path) -> Self:
+    def from_file(cls, path: Path, *, purpose: bytes) -> Self:
         """Read the key file; a missing one is created first (mode 0600, atomically).
 
         A symlink or a file of another user is refused. One that others could read is made
@@ -72,7 +75,7 @@ class FernetSecretBox:
             )
             path.chmod(_OWNER_ONLY)
         try:
-            return cls.from_secret(path.read_text("utf-8").strip())
+            return cls.from_secret(path.read_text("utf-8").strip(), purpose=purpose)
         except ValueError:
             message = f"the secret key file {path} is empty or too short: delete it to generate one"
             raise ValueError(message) from None
@@ -82,19 +85,26 @@ class FernetSecretBox:
         return self.fernet.encrypt(plaintext.encode()).decode()
 
     def open(self, sealed: str) -> str:
-        """Decrypt; a token made with another key (or tampered with) is ``credentials_required``."""
+        """Decrypt; a token of another key or purpose (or tampered with) raises.
+
+        Raises:
+            SealedTextUnreadableError: when ``sealed`` does not open with any of the keys.
+        """
         try:
             return self.fernet.decrypt(sealed.encode()).decode()
         except InvalidToken:
-            raise CredentialsRequiredError from None
+            raise SealedTextUnreadableError from None
 
 
-def _derive(secret: str) -> Fernet:
+def _derive(secret: str, purpose: bytes) -> Fernet:
     # The secret must be random (HKDF stretches nothing): `openssl rand -base64 32`.
     if len(secret) < MIN_SECRET_KEY_LENGTH:
         message = f"the secret key must have at least {MIN_SECRET_KEY_LENGTH} characters"
         raise ValueError(message)
-    raw = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=_HKDF_INFO).derive(
+    if not purpose:
+        message = "a secret box needs a purpose: the HKDF context its key is derived for"
+        raise ValueError(message)
+    raw = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=purpose).derive(
         secret.encode()
     )
     return Fernet(base64.urlsafe_b64encode(raw))

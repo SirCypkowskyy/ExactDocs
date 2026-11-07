@@ -12,6 +12,8 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import text
 
+from exactdocs.bootstrap import secret_box
+from exactdocs.bootstrap.constants import CREDENTIALS_KEY_PURPOSE as CREDENTIALS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, migrate, open_database
 from exactdocs.bootstrap.secret_box import FernetSecretBox
@@ -23,6 +25,7 @@ from exactdocs.ingestion.constants import PINNED
 from exactdocs.ingestion.errors import CredentialsRequiredError
 from exactdocs.ingestion.models import AccessToken, DeployKey
 from exactdocs.ingestion.ports import CredentialVault
+from exactdocs_kernel import SealedTextUnreadableError
 
 SECRET = "k" * 40
 SCOPE = "https://git.example.com"
@@ -35,28 +38,28 @@ SEALED_BEFORE_THE_MOVE = (
     "pkQK2D8Ofs4rTnpa890rpi0l3O3yunVN6DwEyaWnmcQVK3alH725Q6TDBuxzNuDsgG_FAthItDoq3BgrYMJfEFK11FnB"
     "l5JcWqaSFBy0DyFeXhSngO2D4ltGfLa_FRvBLAcztE6vH6oH2N71s8qwJJaBnqlOE15bVoQh-GCa2VVB9HJc"
 )
-SECRET_ONLY = FernetSecretBox.from_secret(SECRET)
-WITH_A_NEWER_KEY = FernetSecretBox.from_secrets("n" * 40, SECRET)
+SECRET_ONLY = FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS)
+WITH_A_NEWER_KEY = FernetSecretBox.from_secrets("n" * 40, SECRET, purpose=CREDENTIALS)
 
 
 def test_a_sealed_text_opens_with_the_same_key_only() -> None:
-    box = FernetSecretBox.from_secret(SECRET)
+    box = FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS)
 
     sealed = box.seal(TOKEN)
 
     assert TOKEN not in sealed
     assert box.open(sealed) == TOKEN
-    assert FernetSecretBox.from_secret(SECRET).open(sealed) == TOKEN
-    with pytest.raises(CredentialsRequiredError):
-        FernetSecretBox.from_secret("z" * 40).open(sealed)
-    with pytest.raises(CredentialsRequiredError):
+    assert FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS).open(sealed) == TOKEN
+    with pytest.raises(SealedTextUnreadableError):
+        FernetSecretBox.from_secret("z" * 40, purpose=CREDENTIALS).open(sealed)
+    with pytest.raises(SealedTextUnreadableError):
         box.open(sealed[:-4] + "AAAA")  # tampered
     assert TOKEN not in repr(box)
 
 
 def test_a_short_secret_key_is_refused_without_echoing_it() -> None:
     with pytest.raises(ValueError, match="at least 32") as raised:
-        FernetSecretBox.from_secret("short")
+        FernetSecretBox.from_secret("short", purpose=CREDENTIALS)
     assert "short" not in str(raised.value).replace("at least 32 characters", "")
     assert Settings(secret_key="short").secret_key is not None  # judged at startup, see below
     assert Settings(secret_key="  ").secret_key is None
@@ -66,19 +69,19 @@ def test_a_short_secret_key_is_refused_without_echoing_it() -> None:
 def test_a_missing_key_file_is_generated_with_mode_0600_and_reused(tmp_path: Path) -> None:
     path = tmp_path / "data" / "secret.key"
 
-    first = FernetSecretBox.from_file(path)
+    first = FernetSecretBox.from_file(path, purpose=CREDENTIALS)
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert not list(path.parent.glob("*.tmp"))
-    assert FernetSecretBox.from_file(path).open(first.seal(TOKEN)) == TOKEN
+    assert FernetSecretBox.from_file(path, purpose=CREDENTIALS).open(first.seal(TOKEN)) == TOKEN
 
 
 def test_a_key_file_that_others_could_read_is_restricted(tmp_path: Path) -> None:
     path = tmp_path / "secret.key"
-    FernetSecretBox.from_file(path)
+    FernetSecretBox.from_file(path, purpose=CREDENTIALS)
     path.chmod(0o644)
 
-    FernetSecretBox.from_file(path)
+    FernetSecretBox.from_file(path, purpose=CREDENTIALS)
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
@@ -90,7 +93,9 @@ async def vault(request: pytest.FixtureRequest) -> AsyncIterator[CredentialVault
         return
     engine = open_database(Settings())
     await migrate(engine)
-    yield SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
+    yield SqliteCredentialVault(
+        engine=engine, box=FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS)
+    )
     await engine.dispose()
 
 
@@ -116,7 +121,9 @@ async def test_the_vault_round_trips_and_forgets(vault: CredentialVault) -> None
 async def test_the_database_holds_no_plaintext_and_a_new_key_cannot_read_it() -> None:
     engine = open_database(Settings())
     await migrate(engine)
-    vault = SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
+    vault = SqliteCredentialVault(
+        engine=engine, box=FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS)
+    )
     await vault.save("/a/b", SCOPE, AccessToken(token=TOKEN))
     await vault.save("/c/d", SCOPE, DeployKey(private_key=KEY))
 
@@ -128,7 +135,9 @@ async def test_the_database_holds_no_plaintext_and_a_new_key_cannot_read_it() ->
         ).all()
     assert {r.library for r in rows} == {"/a/b", "/c/d"}
     assert all(TOKEN not in r.sealed and "QmFkZ2VyS2V5" not in r.sealed for r in rows)
-    other = SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret("z" * 40))
+    other = SqliteCredentialVault(
+        engine=engine, box=FernetSecretBox.from_secret("z" * 40, purpose=CREDENTIALS)
+    )
     with pytest.raises(CredentialsRequiredError):
         await other.load("/a/b", SCOPE)
     # a row copied to another library is not accepted either
@@ -199,7 +208,9 @@ def test_seeding_is_idempotent_and_keeps_entries_ssh_added(tmp_path: Path) -> No
 async def test_a_credential_is_only_opened_for_the_host_it_was_stored_for() -> None:
     engine = open_database(Settings())
     await migrate(engine)
-    vault = SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
+    vault = SqliteCredentialVault(
+        engine=engine, box=FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS)
+    )
     await vault.save("/a/b", "https://github.com", AccessToken(token=TOKEN))
 
     assert await vault.load("/a/b", "https://github.com") == AccessToken(token=TOKEN)
@@ -209,14 +220,39 @@ async def test_a_credential_is_only_opened_for_the_host_it_was_stored_for() -> N
 
 
 def test_the_previous_key_still_opens_what_it_sealed() -> None:
-    old = FernetSecretBox.from_secret("o" * 40)
-    new = FernetSecretBox.from_secrets("n" * 40, "o" * 40)
+    old = FernetSecretBox.from_secret("o" * 40, purpose=CREDENTIALS)
+    new = FernetSecretBox.from_secrets("n" * 40, "o" * 40, purpose=CREDENTIALS)
 
     assert new.open(old.seal(TOKEN)) == TOKEN
-    with pytest.raises(CredentialsRequiredError):
+    with pytest.raises(SealedTextUnreadableError):
         old.open(new.seal(TOKEN))  # sealed with the new key now
-    with pytest.raises(CredentialsRequiredError):
-        FernetSecretBox.from_secrets("x" * 40, "y" * 40).open(old.seal(TOKEN))
+    with pytest.raises(SealedTextUnreadableError):
+        FernetSecretBox.from_secrets("x" * 40, "y" * 40, purpose=CREDENTIALS).open(old.seal(TOKEN))
+
+
+def test_a_text_sealed_for_one_purpose_does_not_open_for_another() -> None:
+    credentials = FernetSecretBox.from_secret(SECRET, purpose=CREDENTIALS)
+    other = FernetSecretBox.from_secret(SECRET, purpose=b"exactdocs another use v1")
+
+    assert other.open(other.seal(TOKEN)) == TOKEN
+    with pytest.raises(SealedTextUnreadableError):
+        other.open(credentials.seal(TOKEN))
+    with pytest.raises(SealedTextUnreadableError):
+        credentials.open(other.seal(TOKEN))
+    with pytest.raises(ValueError, match="purpose"):
+        FernetSecretBox.from_secret(SECRET, purpose=b"")
+
+
+def test_the_credentials_keep_the_context_they_were_always_sealed_with() -> None:
+    # Changing it would make every stored credential unreadable (see the fixture below).
+    assert CREDENTIALS == b"exactdocs credentials v1"
+
+
+def test_the_secret_box_imports_no_domain() -> None:
+    source = Path(secret_box.__file__).read_text("utf-8")
+    domains = ("catalog", "identity", "ingestion", "retrieval")
+
+    assert not [d for d in domains if f"exactdocs.{d}" in source]
 
 
 @pytest.mark.parametrize("box", [SECRET_ONLY, WITH_A_NEWER_KEY], ids=["same key", "as previous"])
@@ -264,28 +300,28 @@ def test_a_key_file_that_is_a_symlink_is_refused(tmp_path: Path) -> None:
     link.symlink_to(real)
 
     with pytest.raises(ValueError, match="not a link"):
-        FernetSecretBox.from_file(link)
+        FernetSecretBox.from_file(link, purpose=CREDENTIALS)
 
 
 def test_a_key_file_of_another_user_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "secret.key"
-    FernetSecretBox.from_file(path)
+    FernetSecretBox.from_file(path, purpose=CREDENTIALS)
     monkeypatch.setattr(os, "getuid", lambda: path.stat().st_uid + 1)
 
     with pytest.raises(ValueError, match="another user"):
-        FernetSecretBox.from_file(path)
+        FernetSecretBox.from_file(path, purpose=CREDENTIALS)
 
 
 def test_a_loosened_key_file_is_logged_as_an_exposed_key(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     path = tmp_path / "secret.key"
-    FernetSecretBox.from_file(path)
+    FernetSecretBox.from_file(path, purpose=CREDENTIALS)
     path.chmod(0o640)
 
-    FernetSecretBox.from_file(path)
+    FernetSecretBox.from_file(path, purpose=CREDENTIALS)
 
     (record,) = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert "exposed" in record.message
@@ -303,11 +339,11 @@ def test_a_volume_without_hard_links_still_gets_its_key_file(
     monkeypatch.setattr(os, "link", no_links)
     path = tmp_path / "secret.key"
 
-    box = FernetSecretBox.from_file(path)
+    box = FernetSecretBox.from_file(path, purpose=CREDENTIALS)
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert not list(tmp_path.glob("*.tmp"))
-    assert FernetSecretBox.from_file(path).open(box.seal(TOKEN)) == TOKEN
+    assert FernetSecretBox.from_file(path, purpose=CREDENTIALS).open(box.seal(TOKEN)) == TOKEN
 
 
 def test_a_short_key_file_names_the_file(tmp_path: Path) -> None:
@@ -316,7 +352,7 @@ def test_a_short_key_file_names_the_file(tmp_path: Path) -> None:
     path.chmod(0o600)
 
     with pytest.raises(ValueError, match=r"secret\.key") as raised:
-        FernetSecretBox.from_file(path)
+        FernetSecretBox.from_file(path, purpose=CREDENTIALS)
 
     assert "short\n" not in str(raised.value).replace("too short", "")
 

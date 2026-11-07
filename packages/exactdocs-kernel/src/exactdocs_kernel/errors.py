@@ -56,3 +56,12 @@ class RateLimitedError(DomainError):
     def __init__(self, message: str, retry_after: int) -> None:
         super().__init__(message)
         self.retry_after = max(1, retry_after)
+
+
+class SealedTextUnreadableError(Exception):
+    """A sealed text does not open: another secret key or purpose sealed it, or it was altered.
+
+    Raised by the instance's secret box, which every domain reaches through its own ``SecretBox``
+    port. It is not a ``DomainError`` and never reaches a client: the adapter that opened the text
+    translates it into its own domain's error (ingestion's vault: ``CredentialsRequiredError``).
+    """
