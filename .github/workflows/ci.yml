@@ -189,6 +189,29 @@ jobs:
           docker run --rm -i --network none --read-only --tmpfs /tmp --cap-drop ALL \
             -v "$RUNNER_TEMP/sqlite-vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
             --entrypoint python exactdocs:ci - < deploy/check_sqlite_vec.py
+      # TEMPORARY (#242 review round 1): try the amd64 check under QEMU once, to record whether
+      # Python 3.14 runs there. Only the runtime-tools stage exists for amd64 (no app), so this
+      # loads sqlite-vec with plain sqlite3.
+      - name: "TEMPORARY: sqlite-vec under QEMU (amd64)"
+        continue-on-error: true
+        run: |
+          uv pip install --target "$RUNNER_TEMP/sqlite-vec-amd64" --no-deps --python-version 3.14 \
+            --python-platform x86_64-unknown-linux-gnu "$(uv export --frozen --no-hashes --no-header \
+            --no-annotate --no-emit-workspace --no-dev --package exactdocs --extra ai | grep '^sqlite-vec==')"
+          docker run --rm --platform linux/amd64 --network none \
+            -v "$RUNNER_TEMP/sqlite-vec-amd64:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
+            --entrypoint python3 exactdocs:ci-amd64 -c "import sqlite3, sqlite_vec; \
+          c = sqlite3.connect(':memory:'); c.enable_load_extension(True); sqlite_vec.load(c); \
+          print(c.execute('select vec_version(), sqlite_version()').fetchone())" 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # TEMPORARY (#242 review round 1): the vector benchmark (50,000 x 1,024, one manifest) in the
+      # built image, on this runner; p50/p95 go to the job summary.
+      - name: "TEMPORARY: vector search benchmark in the image"
+        run: |
+          docker run --rm -i --network none --read-only --tmpfs /tmp:size=2g --cap-drop ALL \
+            -v "$RUNNER_TEMP/sqlite-vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
+            -e TMPDIR=/tmp --entrypoint python exactdocs:ci - \
+            < packages/exactdocs/tests/retrieval/bench_vector_index.py | tee -a "$GITHUB_STEP_SUMMARY"
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then

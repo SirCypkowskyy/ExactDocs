@@ -23,9 +23,12 @@ from sqlalchemy import (
     tuple_,
     update,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.constants import (
+    _DIMENSIONS,
+    _LOADED,
     _VECTOR_COVERAGE,
     _VECTOR_CREATE,
     _VECTOR_DELETE,
@@ -36,6 +39,7 @@ from exactdocs.retrieval.constants import (
     SQLITE_VEC_MODULE,
     TAG_CONDITIONS,
     VECTOR_BATCH,
+    VECTOR_MMAP_BYTES,
     VECTOR_TABLE_PREFIX,
 )
 from exactdocs.retrieval.errors import (
@@ -89,7 +93,6 @@ chunk_rows = Table(
     Column("config_hash", Text, nullable=False),
     Column("position", Integer, nullable=False),
 )
-_loaded = text("SELECT count(*) FROM pragma_function_list WHERE name = 'vec_distance_cosine'")
 
 
 def _table(space_id: EmbeddingSpaceId) -> str:
@@ -167,7 +170,9 @@ class SqliteVectorIndex:
 
     Search is exact: ``vec_distance_cosine`` over the BLOBs of one manifest's chunks, ordered in
     SQL. sqlite-vec is loaded into a connection the first time that connection searches (or
-    ``available`` is asked), never before: an instance without embeddings never loads it.
+    ``available`` is asked), never before: an instance without embeddings never loads it. That
+    connection also gets ``mmap_size`` (``VECTOR_MMAP_BYTES``), and remembers in its ``info`` that
+    it is loaded and the dimensions of the spaces it searched, so a search costs one query.
     """
 
     engine: AsyncEngine
@@ -342,16 +347,21 @@ class SqliteVectorIndex:
         tags = TAG_CONDITIONS[tag_filter.match if tag_filter.tags else None]
         statement = text(_VECTOR_NEAREST.format(table=_table(space_id), tags=tags))
         async with self.engine.connect() as connection:
-            space = await self._live(connection, space_id)
+            dimensions = await self._dimensions(connection, space_id)
             params: dict[str, object] = {
-                "query": _pack(checked_vector(query, space.spec.dimensions)),
+                "query": _pack(checked_vector(query, dimensions)),
                 "manifest": manifest_id,
                 "limit": limit,
             }
             if tag_filter.tags:
                 params["tags"] = json.dumps(list(tag_filter.tags))
             await self._load(connection)
-            rows = (await connection.execute(statement, params)).all()
+            try:
+                rows = (await connection.execute(statement, params)).all()
+            except OperationalError:  # the table is gone: the space was retired meanwhile
+                connection.info.get(_DIMENSIONS, {}).pop(space_id, None)
+                await self._live(connection, space_id)
+                raise
         return [VectorHit(chunk_id=ChunkId(r.chunk_id), distance=r.distance) for r in rows]
 
     async def coverage(self, space_id: EmbeddingSpaceId, manifest_id: str) -> VectorCoverage:
@@ -477,7 +487,7 @@ class SqliteVectorIndex:
             VectorStoreUnavailableError: The package is missing, this Python cannot load
                 extensions, or the extension does not load.
         """
-        if await connection.scalar(_loaded):
+        if connection.info.get(_LOADED):
             return
         try:
             path = self.extension()
@@ -485,6 +495,25 @@ class SqliteVectorIndex:
             raise VectorStoreUnavailableError from exc
         raw = await connection.get_raw_connection()
         await _load_extension(raw.driver_connection, path)
+        # Searches read every vector of a manifest: map the file instead of copying its pages.
+        # Per connection, and only on connections that search.
+        await connection.exec_driver_sql(f"PRAGMA mmap_size={VECTOR_MMAP_BYTES:d}")
+        connection.info[_LOADED] = True
+
+    async def _dimensions(self, connection: AsyncConnection, space_id: EmbeddingSpaceId) -> int:
+        """Return a space's dimensions, read once per pooled connection (a spec never changes).
+
+        Args:
+            connection: The connection that is about to search.
+            space_id: The space.
+
+        Returns:
+            Its dimensions.
+        """
+        known: dict[EmbeddingSpaceId, int] = connection.info.setdefault(_DIMENSIONS, {})
+        if space_id not in known:
+            known[space_id] = (await self._live(connection, space_id)).spec.dimensions
+        return known[space_id]
 
 
 async def _load_extension(driver: aiosqlite.Connection | None, path: str) -> None:

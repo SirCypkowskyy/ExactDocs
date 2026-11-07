@@ -291,6 +291,14 @@ SQLITE_VEC_MODULE: Final[str] = "sqlite_vec"
 """The Python package of sqlite-vec (``[ai]`` extra), imported only to find its extension."""
 VECTOR_TABLE_PREFIX: Final[str] = "retrieval_vec_"
 """Each embedding space keeps its vectors in ``retrieval_vec_<space ID>``."""
+VECTOR_MMAP_BYTES: Final[int] = 1 << 30
+"""``PRAGMA mmap_size`` of a connection that searches vectors: reading 4 KB BLOBs through a map
+instead of copying overflow pages cut the p95 of a 50,000-vector search by about a fifth (#242).
+Address space, not memory: the pages are the OS page cache's."""
+_LOADED: Final[str] = "exactdocs.sqlite_vec"
+"""Key in a pooled connection's ``info``: sqlite-vec is loaded into it."""
+_DIMENSIONS: Final[str] = "exactdocs.vector_dimensions"
+"""Key in a pooled connection's ``info``: the dimensions of each space it searched."""
 VECTOR_BATCH: Final[int] = 500
 """Vectors written, or chunk keys looked up, per statement (SQLite's bound-variable limit)."""
 _VECTOR_JOIN: Final[str] = """

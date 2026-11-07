@@ -9,7 +9,7 @@ runner; above it, an ANN index per space is the follow-up.
 """
 
 import asyncio
-import math
+import random
 import statistics
 import sys
 import tempfile
@@ -38,8 +38,9 @@ WRITE_BATCH = 2_000
 
 
 def _vector(seed: int, dimensions: int) -> list[float]:
-    """A deterministic vector that differs per seed (its values do not matter, only its size)."""
-    return [math.sin(seed * 0.618 + d * 1.37) for d in range(dimensions)]
+    """A Gaussian vector, the same for the same seed (rankings can be compared between runs)."""
+    rng = random.Random(seed)
+    return [rng.gauss(0, 1) for _ in range(dimensions)]
 
 
 async def main(chunks: int, dimensions: int) -> None:

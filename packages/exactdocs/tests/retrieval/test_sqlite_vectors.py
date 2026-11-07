@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from exactdocs.bootstrap.backup import create_backup, restore_backup
 from exactdocs.bootstrap.container import Container
@@ -14,7 +14,8 @@ from exactdocs.bootstrap.database import open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
-from exactdocs.retrieval.errors import VectorStoreUnavailableError
+from exactdocs.retrieval.constants import VECTOR_MMAP_BYTES
+from exactdocs.retrieval.errors import RetiredEmbeddingSpaceError, VectorStoreUnavailableError
 from exactdocs.retrieval.models import (
     Chunk,
     ChunkId,
@@ -158,3 +159,37 @@ async def test_a_backup_round_trips_the_spaces_and_their_vectors(tmp_path: Path)
         assert (hit.chunk_id, round(hit.distance, 6)) == ("c1", 0)
     finally:
         await restored.dispose()
+
+
+async def test_a_connection_that_searches_maps_the_file(engine: AsyncEngine) -> None:
+    one = create_async_engine(engine.url, pool_size=1, max_overflow=0)  # one pooled connection
+    try:
+        vectors = SqliteVectorIndex(engine=one)
+        await _store_manifest(engine)
+        space = await vectors.create_space(SPEC, T0)
+        await vectors.upsert(space.id, {("b1", "cfg", 0): [1, 0, 0]})
+        mmap = text("PRAGMA mmap_size")
+        async with one.connect() as connection:
+            before = await connection.scalar(mmap)
+
+        await vectors.nearest(space.id, "m1", [1, 0, 0], TagFilter(), 5)
+        await vectors.nearest(space.id, "m1", [1, 0, 0], TagFilter(), 5)  # loaded already
+
+        async with one.connect() as connection:
+            after = await connection.scalar(mmap)
+    finally:
+        await one.dispose()
+    assert (before, after) == (0, VECTOR_MMAP_BYTES)
+
+
+async def test_a_space_retired_after_a_search_is_reported_retired(engine: AsyncEngine) -> None:
+    vectors = SqliteVectorIndex(engine=engine)
+    await _store_manifest(engine)
+    space = await vectors.create_space(SPEC, T0)
+    await vectors.upsert(space.id, {("b1", "cfg", 0): [1, 0, 0]})
+    await vectors.nearest(space.id, "m1", [1, 0, 0], TagFilter(), 5)  # caches its dimensions
+
+    await vectors.retire_space(space.id)
+
+    with pytest.raises(RetiredEmbeddingSpaceError):
+        await vectors.nearest(space.id, "m1", [1, 0, 0], TagFilter(), 5)

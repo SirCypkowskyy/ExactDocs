@@ -7,14 +7,14 @@ tables of `exactdocs reindex`), so no revision lists them. Their rows reference
 keep its IDs, or rebuild those tables too.
 
 Revision ID: 2a34523e0d8e
-Revises: a7c3e9b1d5f2
+Revises: 8f2856445b87
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "2a34523e0d8e"
-down_revision = "a7c3e9b1d5f2"
+down_revision = "8f2856445b87"
 branch_labels = None
 depends_on = None
 

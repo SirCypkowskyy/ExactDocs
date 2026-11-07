@@ -238,7 +238,10 @@ durable state of running jobs in `jobs.sqlite` (its own schema and migrations; s
   `vec_distance_cosine` over one manifest's chunks, joined from `retrieval_manifest_chunks`,
   ordered and limited in SQL. sqlite-vec (`[ai]` extra) is imported and loaded into a pooled
   connection only when that connection first searches, or when `available()` is asked, which
-  happens only once an embedding role is configured. A revision that rebuilds `retrieval_chunks`
+  happens only once an embedding role is configured. That connection also gets
+  `PRAGMA mmap_size` (`VECTOR_MMAP_BYTES`, 1 GiB; the setting is per connection) and remembers
+  in its `info` that it is loaded and the dimensions of the spaces it searched, so a search is
+  one query. A revision that rebuilds `retrieval_chunks`
   must keep its `id`s (or rebuild the vector tables too).
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
