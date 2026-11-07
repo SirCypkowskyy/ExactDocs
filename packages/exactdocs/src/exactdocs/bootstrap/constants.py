@@ -23,7 +23,7 @@ from exactdocs_kernel import (
 DEFAULT_TOKEN_DAYS: Final[int] = 90
 """Lifetime of an API token created on the command line when ``--days`` is not given."""
 LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"serve", "reindex", "admin create", "admin reset-password"}
+    {"serve", "reindex", "backup", "restore", "admin create", "admin reset-password"}
 )
 """CLI commands that work on the local data directory instead of calling a server."""
 
@@ -96,6 +96,26 @@ JOBS_FILE: Final[str] = (
     "jobs.sqlite"  # under the data dir: DBOS's workflows, the durable steps of jobs
 )
 """Under the data dir: DBOS's workflows, the durable steps of jobs."""
+
+# ---------------------------------------------------------------- backup
+BACKUP_FORMAT: Final[int] = 1
+"""Layout of a backup archive; a restore refuses any other (a newer ExactDocs made it)."""
+MANIFEST_MEMBER: Final[str] = "manifest.json"
+"""Archive member describing the backup: format, version, schema revision, file checksums."""
+DATABASE_MEMBER: Final[str] = "exactdocs.db"
+"""Archive member holding the database snapshot, wherever the database file lives."""
+PRIVATE_FILE_MODE: Final[int] = 0o600
+"""Mode of an archive and of every restored file: they hold account hashes and tokens' hashes."""
+COPY_CHUNK_BYTES: Final[int] = 1024 * 1024
+"""How much of a file is hashed or copied at a time."""
+MAX_MANIFEST_BYTES: Final[int] = 64 * 1024
+"""A manifest is a few hundred bytes; a larger one is not read (it would be loaded whole)."""
+RESTORE_FREE_MARGIN_BYTES: Final[int] = 64 * 1024 * 1024
+"""Room a restore leaves free on each filesystem it writes to, beyond the files themselves."""
+STALE_STAGING_SECONDS: Final[float] = 24 * 3600
+"""A backup's staging folder this old was left by a backup that was killed: it is removed."""
+STAGING_PREFIX: Final[str] = ".exactdocs-backup-"
+"""Name prefix of a backup's staging folder (next to the archive, or in the data dir for `-`)."""
 
 # ---------------------------------------------------------------- database
 MIGRATIONS: Final[Path] = Path(__file__).parent / "migrations"

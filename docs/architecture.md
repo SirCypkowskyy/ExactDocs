@@ -184,6 +184,17 @@ durable state of running jobs in `jobs.sqlite` (its own schema and migrations; s
   hostile repository), git's rename limit (400: above 400 x 400 added x deleted files the scoring
   is skipped and only exact renames are kept; it bounds CPU, not downloads), a 16 MiB cap on git's
   list and 10,000 renames kept.
+- **Backup and restore (E10-06):** `bootstrap/backup.py`, behind the local `exactdocs backup` /
+  `restore` commands. A backup is a gzipped tar: `manifest.json` (format, version, schema revision,
+  a SHA-256 and size per member), the database copied with SQLite's online backup API in one step
+  (one read transaction's view; WAL writers carry on), `jobs.sqlite` copied the same way *before* it
+  (a resumed import may redo a step the database recorded, never skip one), `known_hosts`, and
+  `secret.key` only on request. A restore reads only those member names, refuses a revision this
+  build's Alembic history does not know, a data directory that holds any trace of an instance
+  (database, `-wal`, `-shm`, `jobs.sqlite`), a member whose size differs from its manifest or does
+  not fit in the free space, and any checksum mismatch, all before moving files into place; then
+  `migrate()` brings an older schema to head. No domain is involved: it works on the files the
+  bootstrap owns.
 - **Search index format and `exactdocs reindex` (E10-04):** `retrieval_search_format` holds the
   format the FTS5 table was built in (`FORMAT` in `retrieval.adapters.driven.sqlite_fts`), read
   through the `SearchIndexMaintenance` port (`GetSearchIndexState`, `RebuildSearchIndex`). A

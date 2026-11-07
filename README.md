@@ -75,7 +75,8 @@ Resolution order: flags, then `EXACTDOCS_URL` / `EXACTDOCS_TOKEN`, then that fil
 only used for the server it came from. Plain `http://` is accepted for loopback (`localhost`,
 `127.0.0.1`, `::1`) only; anything else needs `https://`. Proxy variables (`HTTPS_PROXY`, ...) are
 honoured for remote servers (the proxy sees where you connect, not your https traffic) and ignored
-for loopback. `serve`, `reindex` and `admin ...` stay local: they open the database directly.
+for loopback. `serve`, `reindex`, `backup`, `restore` and `admin ...` stay local: they open the
+database directly.
 
 Manage libraries and tokens from the same login (every command takes `--url`/`--token` and, for
 scripts, `--json`; progress of `--wait` goes to stderr):
@@ -428,6 +429,51 @@ docker exec exactdocs exactdocs reindex     # or: uvx exactdocs reindex
 It rebuilds the index from the stored chunks beside the one that answers, then swaps them in one
 step: the server keeps serving throughout. Running it when nothing changed is harmless.
 
+### Backup and restore
+
+`exactdocs backup` writes one archive of the instance while the server keeps serving: a
+consistent snapshot of the database (SQLite's online backup API, so writers are not stopped) with
+the libraries, versions, articles, images, settings, accounts and API tokens; DBOS's durable job
+steps (`jobs.sqlite`, so an import that was running resumes after a restore); and `known_hosts`.
+Run it where the server runs:
+
+```bash
+docker exec exactdocs exactdocs backup - > exactdocs-$(date +%F).tar.gz   # or a path in the volume
+uvx exactdocs backup ~/exactdocs-backup.tar.gz
+```
+
+`exactdocs restore` puts an archive into a data directory that holds no instance yet (it refuses
+to overwrite one), with the server stopped, checks every file against the archive's checksums,
+then migrates the schema: a backup from an older release is brought up to this version, one from
+a newer release is refused before anything is written. Then start the server as usual:
+
+```bash
+docker run --rm -v exactdocs-data:/data -v "$PWD:/backup:ro" \
+  ghcr.io/sircypkowskyy/exactdocs:latest restore /backup/exactdocs-2026-11-07.tar.gz
+uvx exactdocs restore ~/exactdocs-backup.tar.gz      # into EXACTDOCS_DATA_DIR
+```
+
+**The secret key is not in the archive** unless you pass `--include-secret-key`. Without it, the
+encrypted repository credentials in the archive cannot be read by whoever holds the archive, and
+the restored instance needs the original key to read them: set the same `EXACTDOCS_SECRET_KEY`,
+or copy the old `secret.key` into the new data directory (before or after the restore, before
+`serve`). Without the key every library keeps serving its docs, and adding a version asks for its
+credential again (`credentials_required`). With `--include-secret-key` the archive opens those
+credentials by itself: store it like the key. Archives and restored files are created with mode
+`0600`; they also hold the password and token hashes. (The files a running server creates itself,
+such as `exactdocs.db`, are `0644` inside the `0700` data directory; a restored instance's are
+`0600`. Both keep other users out.)
+
+A backup stages its copies next to the archive (for `-`, in the data directory) before writing it,
+so that filesystem needs room for about two copies of the database while it runs. A backup that was
+killed leaves a `.exactdocs-backup-*` folder there; the next backup removes those older than a
+day. A restore checks each file's size against its manifest and the free space (keeping 64 MiB to
+spare) before it writes anything.
+
+PostgreSQL (planned with TEAM-01) is backed up with its own tools: `pg_dump -Fc` of the database,
+plus `jobs.sqlite`, `known_hosts` and the key from the data directory; `exactdocs backup` refuses a
+non-SQLite `EXACTDOCS_DATABASE_URL`.
+
 **Planned, not read by this version:** `EXACTDOCS_EMBEDDING_*`, `EXACTDOCS_RERANKER_*` and
 `EXACTDOCS_LLM_*` (optional model endpoints), `EXACTDOCS_RETRIEVAL_MODE` (`auto`, `bm25`, `hybrid`,
 `hybrid_hyde`, `agentic`) and `EXACTDOCS_METRICS` (Prometheus at `/metrics`).
@@ -459,8 +505,9 @@ or `POST /api/v1/libraries/{owner}/{repo}/versions`:
   deletes it. Sending a `credential` needs a signed-in session; an API token (for example an MCP
   client's) is refused with 401 for those requests.
 - The generated key file and the database live in the same data volume, so a backup of the volume
-  holds both and defeats the encryption: back up the database without `secret.key`, or keep
-  `EXACTDOCS_SECRET_KEY` outside the volume. A key file that was readable by others is made
+  holds both and defeats the encryption: use `exactdocs backup`, which leaves `secret.key` out
+  unless asked (see [Backup and restore](#backup-and-restore)), or keep `EXACTDOCS_SECRET_KEY`
+  outside the volume. A key file that was readable by others is made
   private again but logged as exposed: rotate it. A symlink or a file of another user is refused.
 - If the secret key is lost or changed, the library's docs stay available and adding a version
   answers `credentials_required`; send the credential again with the new version request.
