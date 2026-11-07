@@ -35,6 +35,7 @@ import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import NotRequired, TypedDict
 
 import pytest
 
@@ -85,6 +86,17 @@ class Violation:
             The violation on one line, the way compilers and linters print them.
         """
         return f"{self.path}:{self.line}: {self.rule}: {self.message}"
+
+
+class _Where(TypedDict):
+    """Where a violation is, as keyword arguments of ``Violation``."""
+
+    path: str
+    """File, as given to the checker."""
+    line: int
+    """1-based line."""
+    subject: NotRequired[str]
+    """Qualified name of the offending definition."""
 
 
 def _is_constants_module(path: PurePosixPath) -> bool:
@@ -190,7 +202,7 @@ def _check_constants(path: PurePosixPath, tree: ast.Module) -> Iterator[Violatio
     for node, documented, name, final, typed in _assignments(tree):
         if name == "__all__" or not (final or in_constants or CONSTANT_NAME.match(name)):
             continue
-        where = {"path": str(path), "line": node.lineno}
+        where: _Where = {"path": str(path), "line": node.lineno}
         if not in_constants:
             yield Violation(
                 **where,
@@ -360,7 +372,7 @@ def _check_function(
     decorators = _decorators(function)
     if "overload" in decorators:
         return
-    where = {"path": str(path), "line": function.lineno, "subject": qualname}
+    where: _Where = {"path": str(path), "line": function.lineno, "subject": qualname}
     docstring = ast.get_docstring(function)
     if docstring is None:
         yield Violation(
@@ -450,7 +462,7 @@ def _check_dataclass(
         for keyword in (decorator.keywords if isinstance(decorator, ast.Call) else [])
     }
     markers = _markers(lines, decorator)
-    where = {"path": str(path), "line": decorator.lineno}
+    where: _Where = {"path": str(path), "line": decorator.lineno}
     for name, reason in markers.items():
         if not reason:
             yield Violation(

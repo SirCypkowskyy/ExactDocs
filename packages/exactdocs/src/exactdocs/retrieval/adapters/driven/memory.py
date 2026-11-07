@@ -163,7 +163,8 @@ class InMemorySearchIndex:
 
     chunks: InMemoryChunkRepository
     indexed: set[ChunkSetKey] = field(default_factory=set)
-    stored_format: int = MEMORY_FORMAT  # set it lower to stand for an index from an older build
+    stored_format: int = MEMORY_FORMAT
+    """Set it lower to stand for an index from an older build."""
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Remember the set; the text itself is read from the repository."""

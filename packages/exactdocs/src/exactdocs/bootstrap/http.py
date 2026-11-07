@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -33,13 +33,10 @@ class Health(BaseModel):
     status: str
     version: str
     schema_revision: str | None
-    search_index_format: int | None = Field(
-        description="Format the stored search index was built in; null when none is recorded."
-    )
-    reindex_required: bool = Field(
-        description="The index is in an older or unrecorded format: run `exactdocs reindex` "
-        "(it keeps serving)."
-    )
+    search_index_format: int | None
+    """Format the stored search index was built in; null when none is recorded."""
+    reindex_required: bool
+    """The index is in an older or unrecorded format: run `exactdocs reindex` (it keeps serving)."""
 
 
 def create_app(container: Container) -> FastAPI:

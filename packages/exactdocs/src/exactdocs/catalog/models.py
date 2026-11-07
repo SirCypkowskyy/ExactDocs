@@ -335,13 +335,15 @@ class ManifestEntry:
     """
 
     path: str
-    blob_sha: str  # git blob SHA
+    blob_sha: str
+    """Git blob SHA."""
     content_version: int
     title: str
     tags: tuple[str, ...] = ()
     """Imported: from front matter and the library's path rules."""
     front_matter: dict[str, Any] = field(default_factory=dict)
-    size: int = 0  # bytes of the content
+    size: int = 0
+    """Bytes of the content."""
     manual_tags: tuple[ManualTag, ...] = ()
     """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
 
@@ -433,7 +435,8 @@ class ManifestRename:
     from_ref: VersionRef
     old_path: str
     new_path: str
-    similarity: int  # percent of the content kept; 1..100
+    similarity: int
+    """Percent of the content kept; 1..100."""
 
     def __post_init__(self) -> None:
         _check_path(self.old_path)
@@ -447,7 +450,8 @@ class ManifestImage:
     """One image of a manifest: the repository path articles reference, and the blob it holds."""
 
     path: str
-    blob_sha: str  # git blob SHA: images with the same blob share one stored copy
+    blob_sha: str
+    """Git blob SHA: images with the same blob share one stored copy."""
     content_type: str
     size: int = 0
 

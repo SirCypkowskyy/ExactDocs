@@ -58,31 +58,18 @@ def _normalize_tags(value: object) -> object:
 class SearchDocsQuery(_Dto):
     """Search within exactly one library version; no ``ref`` means the default version."""
 
-    library: str = Field(
-        pattern=LIBRARY_ID_PATTERN,
-        max_length=MAX_NAME,
-        description="`/owner/repo`, any letter case; the version goes in `ref`.",
-    )
-    ref: str | None = Field(
-        default=None,
-        max_length=MAX_NAME,
-        description="Exact imported ref; default version if empty.",
-    )
+    library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`, any letter case; the version goes in `ref`."""
+    ref: str | None = Field(default=None, max_length=MAX_NAME)
+    """Exact imported ref; default version if empty."""
     query: str = Field(min_length=1, max_length=MAX_QUERY)
-    tags: list[Tag] = Field(
-        default_factory=list,
-        max_length=MAX_TAGS,
-        description="Only chunks of articles so tagged. Case-insensitive; a comma separates tags.",
-    )
-    tags_match: TagMatch = Field(
-        default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
-    )
+    tags: list[Tag] = Field(default_factory=list, max_length=MAX_TAGS)
+    """Only chunks of articles so tagged. Case-insensitive; a comma separates tags."""
+    tags_match: TagMatch = Field(default=TagMatch.ANY)
+    """`any`: at least one of `tags`; `all`: every one."""
     limit: int = Field(default=5, ge=1, le=50)
-    mode: str | None = Field(
-        default=None,
-        max_length=MAX_NAME,
-        description="Retrieval mode; default is the best one configured. Only `bm25` for now.",
-    )
+    mode: str | None = Field(default=None, max_length=MAX_NAME)
+    """Retrieval mode; default is the best one configured. Only `bm25` for now."""
 
     @field_validator("ref", "mode", mode="before")
     @classmethod
@@ -99,20 +86,12 @@ class SearchAllQuery(_Dto):
     """Search the default version of every library at once, or of one when ``library`` is set."""
 
     query: str = Field(min_length=1, max_length=MAX_QUERY)
-    library: str | None = Field(
-        default=None,
-        pattern=LIBRARY_ID_PATTERN,
-        max_length=MAX_NAME,
-        description="`/owner/repo`: only its results (its default version); counts stay global.",
-    )
-    tags: list[Tag] = Field(
-        default_factory=list,
-        max_length=MAX_TAGS,
-        description="Only chunks of articles so tagged. Case-insensitive; a comma separates tags.",
-    )
-    tags_match: TagMatch = Field(
-        default=TagMatch.ANY, description="`any`: at least one of `tags`; `all`: every one."
-    )
+    library: str | None = Field(default=None, pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`: only its results (its default version); counts stay global."""
+    tags: list[Tag] = Field(default_factory=list, max_length=MAX_TAGS)
+    """Only chunks of articles so tagged. Case-insensitive; a comma separates tags."""
+    tags_match: TagMatch = Field(default=TagMatch.ANY)
+    """`any`: at least one of `tags`; `all`: every one."""
     limit: int = Field(default=10, ge=1, le=50)
 
     @field_validator("tags", mode="before")
@@ -140,18 +119,22 @@ class SearchResultOut(_Dto):
     article_path: str
     heading_path: list[str]
     anchor: str
-    position: int = Field(description="0-based index of the chunk in its article.")
-    total: int = Field(description="Number of chunks of the article.")
+    position: int
+    """0-based index of the chunk in its article."""
+    total: int
+    """Number of chunks of the article."""
     prev_chunk_id: str | None
     next_chunk_id: str | None
     commit_sha: str
-    source_url: str | None = Field(
-        description="Link to the section at the commit; null when the host is unknown."
-    )
+    source_url: str | None
+    """Link to the section at the commit; null when the host is unknown."""
     tags: list[str]
-    score: float = Field(description="Higher is better; only comparable within one search.")
-    snippet: str = Field(description="Verbatim text of the chunk, possibly cut at either end.")
-    highlights: list[Span] = Field(description="Offsets into `snippet` of the words that matched.")
+    score: float
+    """Higher is better; only comparable within one search."""
+    snippet: str
+    """Verbatim text of the chunk, possibly cut at either end."""
+    highlights: list[Span]
+    """Offsets into `snippet` of the words that matched."""
 
     @classmethod
     def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
@@ -178,12 +161,13 @@ class SearchResultOut(_Dto):
 class CoverageOut(_Dto):
     """How much of the index the answer stands on."""
 
-    candidates: int = Field(
-        description="Lower bound: matching chunks the search looked at, at most `limit` + 1."
-    )
+    candidates: int
+    """Lower bound: matching chunks the search looked at, at most `limit` + 1."""
     # Constant (0) while BM25 is the only mode; the shape is mode-agnostic on purpose.
-    reranked: int = Field(description="Of those, how many a reranker reordered.")
-    complete: bool = Field(description="False when more matches exist than `limit` allowed.")
+    reranked: int
+    """Of those, how many a reranker reordered."""
+    complete: bool
+    """False when more matches exist than `limit` allowed."""
 
 
 class SearchDocsResult(_Dto):
@@ -191,9 +175,8 @@ class SearchDocsResult(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the results."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the results."""
     library: str
     version: str
     commit_sha: str
@@ -201,9 +184,8 @@ class SearchDocsResult(_Dto):
     reranked: bool
     coverage: CoverageOut
     # Always null until a mode that can fall back exists.
-    fallback_reason: str | None = Field(
-        default=None, description="Why a better mode was not used, when one was asked for."
-    )
+    fallback_reason: str | None = Field(default=None)
+    """Why a better mode was not used, when one was asked for."""
     results: list[SearchResultOut]
 
 
@@ -226,7 +208,8 @@ class LibraryFacetOut(_Dto):
     library: str
     version: str
     commit_sha: str
-    matches: int = Field(description="All matching chunks, not capped by `limit`.")
+    matches: int
+    """All matching chunks, not capped by `limit`."""
 
 
 class SearchAllResult(_Dto):
@@ -234,19 +217,17 @@ class SearchAllResult(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the results."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the results."""
     retrieval_mode: RetrievalMode
     reranked: bool
     coverage: CoverageOut
-    libraries_searched: int = Field(description="Libraries whose default version was searched.")
-    libraries_omitted: int = Field(
-        description="Libraries with a default version left out because there are too many."
-    )
-    libraries: list[LibraryFacetOut] = Field(
-        description="Libraries with at least one match, most matches first. Never narrowed."
-    )
+    libraries_searched: int
+    """Libraries whose default version was searched."""
+    libraries_omitted: int
+    """Libraries with a default version left out because there are too many."""
+    libraries: list[LibraryFacetOut]
+    """Libraries with at least one match, most matches first. Never narrowed."""
     results: list[LibrarySearchResultOut]
 
 
@@ -265,20 +246,23 @@ class ArticleChunksIn(_Dto):
     """The chunks of one article of the manifest, in reading order."""
 
     path: str = Field(min_length=1)
-    blob_sha: str = Field(min_length=1, description="Git blob SHA of the article.")
-    tags: list[str] = Field(default_factory=list, description="Copied onto every chunk row.")
+    blob_sha: str = Field(min_length=1)
+    """Git blob SHA of the article."""
+    tags: list[str] = Field(default_factory=list)
+    """Copied onto every chunk row."""
     chunks: list[ChunkIn]
 
 
 class IndexManifestCommand(_Dto):
     """Index the chunks of a catalog manifest; invisible until the catalog activates it."""
 
-    manifest_id: str = Field(min_length=1, description="The catalog's manifest ID.")
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    manifest_id: str = Field(min_length=1)
+    """The catalog's manifest ID."""
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
-    config_hash: str = Field(
-        min_length=1, description="Chunking-config hash the chunks were made with."
-    )
+    config_hash: str = Field(min_length=1)
+    """Chunking-config hash the chunks were made with."""
     articles: list[ArticleChunksIn]
 
 
@@ -286,11 +270,12 @@ class IndexedManifestOut(_Dto):
     """The chunk IDs of every article, and how many chunk sets were new."""
 
     manifest_id: str
-    chunk_ids: dict[str, list[str]] = Field(description="Chunk IDs by article path, in order.")
-    chunk_sets_stored: int = Field(description="Chunk sets that were not stored yet.")
-    already_indexed: bool = Field(
-        default=False, description="True when this manifest ID was indexed before; nothing changed."
-    )
+    chunk_ids: dict[str, list[str]]
+    """Chunk IDs by article path, in order."""
+    chunk_sets_stored: int
+    """Chunk sets that were not stored yet."""
+    already_indexed: bool = Field(default=False)
+    """True when this manifest ID was indexed before; nothing changed."""
 
 
 class GetChunkSetsQuery(_Dto):
@@ -327,7 +312,8 @@ class DiscardPendingChunksCommand(_Dto):
     """
 
     manifest_id: str | None = None
-    library: str | None = Field(default=None, description="`/owner/repo`, any letter case.")
+    library: str | None = Field(default=None)
+    """`/owner/repo`, any letter case."""
     older_than_seconds: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -422,16 +408,14 @@ class ChunkOut(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the fields below."""
     chunk_id: str
     library: str
     version: str
     commit_sha: str
-    source_url: str | None = Field(
-        description="Link to the section at the commit; null when the host is unknown."
-    )
+    source_url: str | None
+    """Link to the section at the commit; null when the host is unknown."""
     article_path: str
     heading_path: list[str]
     anchor: str
@@ -469,16 +453,10 @@ class ChunkOut(_Dto):
 class ResolveLibraryIdQuery(_Dto):
     """A library name as an agent writes it, and what the agent is trying to do."""
 
-    library_name: str = Field(
-        min_length=1,
-        max_length=MAX_NAME,
-        description="Library name, e.g. 'Next.js'; matched against IDs, titles and descriptions.",
-    )
-    query: str = Field(
-        min_length=1,
-        max_length=MAX_QUERY,
-        description="What the agent wants to look up; libraries documenting it rank higher.",
-    )
+    library_name: str = Field(min_length=1, max_length=MAX_NAME)
+    """Library name, e.g. 'Next.js'; matched against IDs, titles and descriptions."""
+    query: str = Field(min_length=1, max_length=MAX_QUERY)
+    """What the agent wants to look up; libraries documenting it rank higher."""
 
 
 class LibraryMatchOut(_Dto):
@@ -489,16 +467,17 @@ class LibraryMatchOut(_Dto):
     description: str
     source_url: str
     default_version: str
-    versions: list[str] = Field(description="At most 50 refs; see `version_count`.")
+    versions: list[str]
+    """At most 50 refs; see `version_count`."""
     version_count: int
-    last_imported_at: datetime | None = Field(
-        default=None, description="When any version was last imported."
-    )
-    articles: int = Field(description="Articles of the default version.")
-    chunks: int = Field(description="Chunks of the default version.")
-    query_hits: int = Field(
-        description="Chunks of the default version matching the query (capped)."
-    )
+    last_imported_at: datetime | None = Field(default=None)
+    """When any version was last imported."""
+    articles: int
+    """Articles of the default version."""
+    chunks: int
+    """Chunks of the default version."""
+    query_hits: int
+    """Chunks of the default version matching the query (capped)."""
 
     @classmethod
     def from_candidate(cls, candidate: Candidate, articles: int, chunks: int) -> Self:
@@ -537,11 +516,8 @@ class QueryDocsQuery(_Dto):
         ),
     )
     query: str = Field(min_length=1, max_length=MAX_QUERY)
-    language: str | None = Field(
-        default=None,
-        max_length=MAX_NAME,
-        description="Programming language; chunks with code in it come first.",
-    )
+    language: str | None = Field(default=None, max_length=MAX_NAME)
+    """Programming language; chunks with code in it come first."""
 
     @field_validator("language", mode="before")
     @classmethod
@@ -555,14 +531,13 @@ class DocSectionOut(_Dto):
     chunk_id: str
     article_path: str
     heading_path: list[str]
-    source_url: str | None = Field(
-        description="Link to the section at the commit; null when the host is unknown."
-    )
+    source_url: str | None
+    """Link to the section at the commit; null when the host is unknown."""
     code_languages: list[str]
-    content: str = Field(description="Empty for a pointer (`too_large`).")
-    too_large: bool = Field(
-        default=False, description="The chunk alone exceeds the budget: read it with `read_chunk`."
-    )
+    content: str
+    """Empty for a pointer (`too_large`)."""
+    too_large: bool = Field(default=False)
+    """The chunk alone exceeds the budget: read it with `read_chunk`."""
 
     @property
     def title(self) -> str:
@@ -600,12 +575,10 @@ class QueryDocsResult(_Dto):
     commit_sha: str
     retrieval_mode: RetrievalMode
     sections: list[DocSectionOut]
-    omitted: int = Field(
-        description="Matching chunks neither shown nor pointed to: the budget was used up."
-    )
+    omitted: int
+    """Matching chunks neither shown nor pointed to: the budget was used up."""
     budget_chars: int
-    rules: list[str] = Field(
-        default_factory=list,
-        description="The library's `context7.json` rules that fit the budget, shown before the "
-        "sections. Untrusted repository text.",
-    )
+    rules: list[str] = Field(default_factory=list)
+    """The library's `context7.json` rules that fit the budget, shown before the sections. Untrusted
+    repository text.
+    """

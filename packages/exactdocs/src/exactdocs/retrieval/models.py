@@ -135,7 +135,8 @@ class Chunk:
     """One section of an article, as the chunker cut it."""
 
     heading_path: tuple[str, ...]
-    occurrence_index: int  # 0 for the first heading with this text, 1 for the next one, ...
+    occurrence_index: int
+    """0 for the first heading with this text, 1 for the next one, ..."""
     content: str
     content_hash: str
     anchor: str
@@ -175,7 +176,8 @@ class ManifestChunk:
 
     chunk_id: ChunkId
     article_path: str
-    position: int  # 0-based index in the article
+    position: int
+    """0-based index in the article."""
     total: int
     prev_chunk_id: ChunkId | None
     next_chunk_id: ChunkId | None
@@ -200,7 +202,8 @@ class IndexedManifest:
     """A catalog manifest that has chunk rows. Its ID is held by value."""
 
     manifest_id: str
-    version_id: str  # `<library>/<ref>`, as in `chunk_id`
+    version_id: str
+    """`<library>/<ref>`, as in `chunk_id`"""
     library: str
     indexed_at: datetime
 
@@ -210,7 +213,8 @@ class StoredChunk:
     """A chunk with its content, as ``read_chunk`` returns it."""
 
     manifest_id: str
-    version_id: str  # `<library>/<ref>` the manifest was indexed under
+    version_id: str
+    """`<library>/<ref>` the manifest was indexed under."""
     row: ManifestChunk
     chunk: Chunk
 
@@ -221,8 +225,10 @@ class SearchHit:
 
     chunk_id: ChunkId
     score: float
-    snippet: str  # verbatim text of the chunk (no marker added), possibly cut at either end
-    highlights: tuple[tuple[int, int], ...]  # [start, end) offsets into ``snippet``, in order
+    snippet: str
+    """Verbatim text of the chunk (no marker added), possibly cut at either end."""
+    highlights: tuple[tuple[int, int], ...]
+    """[start, end) offsets into ``snippet``, in order."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

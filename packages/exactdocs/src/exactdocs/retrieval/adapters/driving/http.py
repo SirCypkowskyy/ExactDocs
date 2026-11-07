@@ -61,13 +61,14 @@ class C7Library(_Camel):
     id: str
     title: str
     description: str
-    branch: str = Field(description="The default version (context7: the tracked branch).")
+    branch: str
+    """The default version (context7: the tracked branch)."""
     state: Literal["finalized"] = "finalized"
-    total_snippets: int = Field(description="Chunks of the default version.")
+    total_snippets: int
+    """Chunks of the default version."""
     versions: list[str]
-    last_update_date: datetime | None = Field(
-        default=None, description="When any version was last imported."
-    )
+    last_update_date: datetime | None = Field(default=None)
+    """When any version was last imported."""
     source_url: str
     default_version: str
     articles: int
@@ -92,9 +93,8 @@ class C7Library(_Camel):
 class C7SearchResponse(_Camel):
     """context7's ``/v2/libs/search`` response, plus the untrusted-content notice."""
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the results."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the results."""
     results: list[C7Library]
     search_filter_applied: bool = False
 
@@ -113,14 +113,13 @@ class C7InfoSnippet(_Camel):
 class C7ContextResponse(_Camel):
     """context7's ``/v2/context`` JSON response, plus the untrusted-content notice."""
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the results."
-    )
-    code_snippets: list[dict[str, Any]] = Field(
-        default=[], description="Always empty: chunks are not split into code and prose."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the results."""
+    code_snippets: list[dict[str, Any]] = Field(default=[])
+    """Always empty: chunks are not split into code and prose."""
     info_snippets: list[C7InfoSnippet]
-    omitted: int = Field(description="Matching chunks that did not fit the size budget.")
+    omitted: int
+    """Matching chunks that did not fit the size budget."""
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:

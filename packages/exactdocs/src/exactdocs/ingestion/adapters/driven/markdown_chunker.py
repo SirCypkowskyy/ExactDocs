@@ -27,12 +27,16 @@ class _Section:
     """The lines from one top-level heading to the next (``level`` 0: before the first)."""
 
     level: int
-    path: tuple[str, ...]  # every heading above it, whatever the split level
+    path: tuple[str, ...]
+    """Every heading above it, whatever the split level."""
     anchor: str
-    start: int  # first line
-    end: int  # one past the last line
+    start: int
+    """First line."""
+    end: int
+    """One past the last line."""
     languages: list[str] = field(default_factory=list)
-    size: int = 0  # characters
+    size: int = 0
+    """Characters."""
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- grows as lines come
@@ -40,7 +44,8 @@ class _Piece:
     """Consecutive sections that become one chunk; named after the first."""
 
     sections: list[_Section]
-    size: int  # characters
+    size: int
+    """Characters."""
 
     @property
     def first(self) -> _Section:

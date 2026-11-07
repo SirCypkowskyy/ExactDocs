@@ -956,12 +956,16 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
 class ArticleChunk:
     """One section of an article. The contents of all chunks, joined, are the article body."""
 
-    heading_path: tuple[str, ...]  # empty for the text before the first heading
-    occurrence_index: int  # among chunks with the same heading path: 0, 1, ...
-    position: int  # 0-based index in the article
+    heading_path: tuple[str, ...]
+    """Empty for the text before the first heading."""
+    occurrence_index: int
+    """Among chunks with the same heading path: 0, 1, ..."""
+    position: int
+    """0-based index in the article."""
     content: str
     content_hash: str
-    anchor: str  # GitHub-style, unique in the article; empty before the first heading
+    anchor: str
+    """GitHub-style, unique in the article; empty before the first heading."""
     code_languages: tuple[str, ...] = ()
 
 
@@ -1052,7 +1056,8 @@ type _Segment = tuple[_Token, ...] | None  # None: `**`, any number of folders
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Glob:
     segments: tuple[_Segment, ...]
-    folder: bool  # a plain name also selects everything below it
+    folder: bool
+    """A plain name also selects everything below it."""
 
 
 def _segment(text: str) -> _Segment:
@@ -1581,7 +1586,8 @@ class TaggedPath:
     library: str
     path: str
     tags: tuple[str, ...]
-    retagged: Mapping[str, ArticleTags]  # manifest ID -> its touched articles
+    retagged: Mapping[str, ArticleTags]
+    """Manifest ID -> its touched articles."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

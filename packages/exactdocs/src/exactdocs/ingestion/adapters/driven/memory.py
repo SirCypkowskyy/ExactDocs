@@ -185,7 +185,8 @@ class InMemoryCredentialVault:
     """Implements ``ports.driven.CredentialVault``. For tests; nothing is encrypted."""
 
     credentials: dict[str, Credential] = field(default_factory=dict)
-    scopes: dict[str, str] = field(default_factory=dict)  # of the credentials saved through here
+    scopes: dict[str, str] = field(default_factory=dict)
+    """Of the credentials saved through here."""
 
     async def save(self, library: str, scope: str, credential: Credential) -> None:
         """Store the library's credential."""

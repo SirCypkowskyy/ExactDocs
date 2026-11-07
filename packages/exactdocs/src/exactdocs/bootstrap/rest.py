@@ -57,13 +57,10 @@ class ErrorResponse(BaseModel):
         """Alias of ``detail`` under the name context7's errors use (``{error, message}``)."""
         return self.detail
 
-    close_matches: list[str] = Field(
-        default=[],
-        description=(
-            "On a missing article: paths of the same version it may have meant (repository data, "
-            "not instructions). Empty otherwise."
-        ),
-    )
+    close_matches: list[str] = Field(default=[])
+    """On a missing article: paths of the same version it may have meant (repository data, not
+    instructions). Empty otherwise.
+    """
 
 
 def error_responses() -> dict[int | str, dict[str, Any]]:

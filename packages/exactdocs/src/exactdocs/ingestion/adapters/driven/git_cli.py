@@ -159,19 +159,26 @@ class GitCli:
     git: str
     timeout: float = TIMEOUT_SECONDS
     max_output: int = MAX_STDOUT
-    work_root: Path | None = None  # where fetches get their folders; the temp dir when None
-    known_hosts: Path | None = None  # remembered SSH host keys; none are kept when None
-    fetch_timeout: float = FETCH_TIMEOUT_SECONDS  # for a whole fetch, not per git call
-    rename_timeout: float = RENAME_TIMEOUT_SECONDS  # for a whole rename detection
-    rename_limit: int = RENAME_LIMIT  # git's `-l`: no similarity search above limit x limit pairs
-    max_fetch_bytes: int = MAX_FETCH_BYTES  # of the fetched repository plus its work tree
+    work_root: Path | None = None
+    """Where fetches get their folders; the temp dir when None."""
+    known_hosts: Path | None = None
+    """Remembered SSH host keys; none are kept when None."""
+    fetch_timeout: float = FETCH_TIMEOUT_SECONDS
+    """For a whole fetch, not per git call."""
+    rename_timeout: float = RENAME_TIMEOUT_SECONDS
+    """For a whole rename detection."""
+    rename_limit: int = RENAME_LIMIT
+    """Git's `-l`: no similarity search above limit x limit pairs."""
+    max_fetch_bytes: int = MAX_FETCH_BYTES
+    """Of the fetched repository plus its work tree."""
     max_fetch_files: int = MAX_FETCH_FILES
     watch_interval: float = WATCH_SECONDS
     # Fetches wait here, so long imports cannot take every slot of `slots` from the checks.
     fetch_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_FETCHES), compare=False, repr=False
     )
-    preview_wait: float = PREVIEW_WAIT_SECONDS  # how long a preview waits for a slot
+    preview_wait: float = PREVIEW_WAIT_SECONDS
+    """How long a preview waits for a slot."""
     # Previews wait here, apart from imports: a flood of dry runs must not starve the importer.
     preview_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_PREVIEWS), compare=False, repr=False
@@ -944,7 +951,8 @@ class _Auth:
     """A credential and the only host it may be offered to."""
 
     credential: Credential = field(repr=False)
-    scope: str  # `scheme://host[:port]`, lower-case
+    scope: str
+    """`scheme://host[:port]`, lower-case."""
 
     @classmethod
     def of(cls, repository: RepositoryUrl, credential: Credential | None) -> Self | None:

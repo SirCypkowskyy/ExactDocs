@@ -47,7 +47,8 @@ class CreateFirstAdminCommand(_Dto):
 class AuthenticateQuery(_Dto):
     """A username and password to check."""
 
-    username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)  # cap the input before normalising
+    username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)
+    """Cap the input before normalising."""
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
 
 
@@ -72,7 +73,8 @@ class SessionGrant(_Dto):
 
     token: SecretStr
     account: AccountSummary
-    max_age: int  # seconds until the session cannot be used any more, even if never idle
+    max_age: int
+    """Seconds until the session cannot be used any more, even if never idle."""
 
 
 class SessionState(_Dto):
@@ -85,7 +87,8 @@ class SessionState(_Dto):
 class CreateTokenCommand(_Dto):
     """A new API token for the caller. ``expires_at`` (timezone-aware) is optional."""
 
-    name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)  # cap the input before validating
+    name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)
+    """Cap the input before validating."""
     expires_at: AwareDatetime | None = None
 
 

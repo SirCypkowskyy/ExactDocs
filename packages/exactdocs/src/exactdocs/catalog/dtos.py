@@ -104,14 +104,12 @@ class VersionOut(_Dto):
     kind: RefKind
     commit_sha: str
     imported_at: datetime
-    is_default: bool = Field(description="True for the version `/owner/repo` resolves to.")
-    origin: VersionOrigin = Field(
-        default=VersionOrigin.MANUAL,
-        description=(
-            "`auto` when the library's scheduled check imported it (retention may remove it), "
-            "`manual` when someone added it."
-        ),
-    )
+    is_default: bool
+    """True for the version `/owner/repo` resolves to."""
+    origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
+    """`auto` when the library's scheduled check imported it (retention may remove it), `manual`
+    when someone added it.
+    """
 
     @classmethod
     def from_model(cls, version: Version, *, is_default: bool) -> Self:
@@ -154,11 +152,12 @@ class LibrarySummary(_Dto):
             "Pass any ref as `ref` to `list_articles` or `search_docs`."
         )
     )
-    version_count: int = Field(description="How many versions are imported; `refs` may hold fewer.")
-    tags: list[str] = Field(description="The tags the library's tag rules give its articles.")
-    last_imported_at: datetime | None = Field(
-        description="When any version was last imported; null while none is."
-    )
+    version_count: int
+    """How many versions are imported; `refs` may hold fewer."""
+    tags: list[str]
+    """The tags the library's tag rules give its articles."""
+    last_imported_at: datetime | None
+    """When any version was last imported; null while none is."""
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -196,11 +195,10 @@ class LibraryDetail(_Dto):
     versions: list[VersionOut]
     default_version: str | None
     default_pinned: bool = Field(description=_PINNED)
-    rules: list[str] = Field(
-        default_factory=list,
-        description="The rules of the default version's `context7.json`, shown to agents with "
-        "every `query-docs` answer. Untrusted repository text.",
-    )
+    rules: list[str] = Field(default_factory=list)
+    """The rules of the default version's `context7.json`, shown to agents with every `query-docs`
+    answer. Untrusted repository text.
+    """
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -239,14 +237,12 @@ class LibraryList(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the fields below."""
 
     libraries: list[LibrarySummary]
-    next_cursor: str | None = Field(
-        description="Pass as `cursor` to get the next page; null on the last page."
-    )
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
 
     @classmethod
     def from_page(cls, page: Page[Library]) -> Self:
@@ -272,15 +268,14 @@ class ResolveVersionQuery(_Dto):
 class ArticleIn(_Dto):
     """One article to store: where it lives, its git blob SHA, its metadata and its Markdown."""
 
-    path: str = Field(min_length=1, description="Repository-relative, `/`-separated.")
-    blob_sha: str = Field(description="Git blob SHA of the file.")
-    content_version: int = Field(
-        ge=0,
-        description=(
-            "Opaque version of the text derived from the blob (the importer's parser version). "
-            "Articles with the same blob SHA and content version share one stored text."
-        ),
-    )
+    path: str = Field(min_length=1)
+    """Repository-relative, `/`-separated."""
+    blob_sha: str
+    """Git blob SHA of the file."""
+    content_version: int = Field(ge=0)
+    """Opaque version of the text derived from the blob (the importer's parser version). Articles
+    with the same blob SHA and content version share one stored text.
+    """
     title: str
     tags: list[str] = []
     front_matter: dict[str, Any] = {}
@@ -293,14 +288,17 @@ class RenameIn(_Dto):
     from_ref: str = Field(min_length=1)
     old_path: str = Field(min_length=1, max_length=MAX_PATH)
     new_path: str = Field(min_length=1, max_length=MAX_PATH)
-    similarity: int = Field(ge=1, le=100, description="Percent of the content kept.")
+    similarity: int = Field(ge=1, le=100)
+    """Percent of the content kept."""
 
 
 class ImageIn(_Dto):
     """One image to store: the repository path articles reference, and its bytes."""
 
-    path: str = Field(min_length=1, max_length=MAX_PATH, description="Repository-relative.")
-    blob_sha: str = Field(description="Git blob SHA of the file; equal SHAs share one copy.")
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    """Repository-relative."""
+    blob_sha: str
+    """Git blob SHA of the file; equal SHAs share one copy."""
     content_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
     data: bytes = Field(repr=False)
 
@@ -308,24 +306,19 @@ class ImageIn(_Dto):
 class StoreManifestCommand(_Dto):
     """Store the articles of `ref` at `commit_sha` as a new, pending manifest."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
     kind: RefKind
     commit_sha: str
     articles: list[ArticleIn]
     images: list[ImageIn] = []
-    must_exist: bool = Field(
-        default=False,
-        description="Refuse (VersionNotFoundError) unless the library already has this version.",
-    )
-    renames: list[RenameIn] = Field(
-        default=[],
-        description="Files moved since an earlier version; kept and replaced with the manifest.",
-    )
-    origin: VersionOrigin = Field(
-        default=VersionOrigin.MANUAL,
-        description="Given to the version if this manifest's activation creates it.",
-    )
+    must_exist: bool = Field(default=False)
+    """Refuse (VersionNotFoundError) unless the library already has this version."""
+    renames: list[RenameIn] = Field(default=[])
+    """Files moved since an earlier version; kept and replaced with the manifest."""
+    origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
+    """Given to the version if this manifest's activation creates it."""
 
 
 class StoredManifest(_Dto):
@@ -372,7 +365,8 @@ class DiscardPendingManifestsCommand(_Dto):
     """
 
     manifest_id: str | None = None
-    library: str | None = Field(default=None, description="`/owner/repo`, any letter case.")
+    library: str | None = Field(default=None)
+    """`/owner/repo`, any letter case."""
     older_than_seconds: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -429,17 +423,15 @@ class ListArticlesQuery(_Dto):
 
     library: str = Field(min_length=1)
     ref: str | None = None
-    path_prefix: str = Field(
-        default="",
-        max_length=MAX_NAME,
-        description=(
-            "Only paths inside this directory: `guide` matches `guide/install.md`, "
-            "not `guide-old/x.md`. Matched literally against stored paths; empty lists everything."
-        ),
-    )
-    tag_filter: TagFilter = Field(default_factory=TagFilter, description="Applied before paging.")
+    path_prefix: str = Field(default="", max_length=MAX_NAME)
+    """Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`.
+    Matched literally against stored paths; empty lists everything.
+    """
+    tag_filter: TagFilter = Field(default_factory=TagFilter)
+    """Applied before paging."""
     limit: Limit = DEFAULT_LIMIT
-    cursor: str | None = Field(default=None, description="Opaque: only ever a `next_cursor`.")
+    cursor: str | None = Field(default=None)
+    """Opaque: only ever a `next_cursor`."""
 
     @field_validator("ref", mode="before")
     @classmethod
@@ -476,18 +468,16 @@ class ArticleList(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the fields below."""
 
     library: str
     ref: str
     commit_sha: str
     manifest_id: str
     articles: list[ArticleSummary]
-    next_cursor: str | None = Field(
-        description="Pass as `cursor` to get the next page; null on the last page."
-    )
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
 
 
 class ListTagsQuery(_Dto):
@@ -514,15 +504,16 @@ class TagList(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the fields below."""
 
     library: str
     ref: str
     commit_sha: str
-    tags: list[TagCount] = Field(description="Most used first, then by name; at most 100.")
-    truncated: bool = Field(description="True when the version has more tags than are listed.")
+    tags: list[TagCount]
+    """Most used first, then by name; at most 100."""
+    truncated: bool
+    """True when the version has more tags than are listed."""
 
 
 class GetArticleQuery(_Dto):
@@ -564,7 +555,8 @@ class RenamedPath(_Dto):
     from_ref: str
     old_path: str
     new_path: str
-    similarity: int = Field(description="Percent of the content kept; 100 is a move unchanged.")
+    similarity: int
+    """Percent of the content kept; 100 is a move unchanged."""
 
     @classmethod
     def from_model(cls, library: str, ref: str, rename: ManifestRename) -> Self:
@@ -607,12 +599,10 @@ class ManualTagInfo(_Dto):
     """A tag set by hand, and the article path it was set on."""
 
     tag: str
-    path: str = Field(
-        description=(
-            "Where the tag was set: this article's path, or an older one it was renamed from. "
-            "Change or remove the tag on this path."
-        )
-    )
+    path: str
+    """Where the tag was set: this article's path, or an older one it was renamed from. Change or
+    remove the tag on this path.
+    """
 
 
 class ArticleInfo(_Dto):
@@ -620,27 +610,24 @@ class ArticleInfo(_Dto):
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the fields below."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the fields below."""
     library: str
     ref: str
     commit_sha: str
     manifest_id: str
     path: str
     title: str
-    tags: list[str] = Field(description="Every tag: from front matter, path rules and by hand.")
-    manual_tags: list[ManualTagInfo] = Field(
-        description=(
-            "The tags among `tags` set by hand, each with the path it was set on: this one or "
-            "one it was renamed from. A tag set on both is listed for each."
-        )
-    )
+    tags: list[str]
+    """Every tag: from front matter, path rules and by hand."""
+    manual_tags: list[ManualTagInfo]
+    """The tags among `tags` set by hand, each with the path it was set on: this one or one it was
+    renamed from. A tag set on both is listed for each.
+    """
     size: int
     front_matter: dict[str, Any]
-    source_url: str | None = Field(
-        description="Link to the file at the commit; null when the host is unknown."
-    )
+    source_url: str | None
+    """Link to the file at the commit; null when the host is unknown."""
 
     @classmethod
     def from_stored(
@@ -678,9 +665,9 @@ class ManualTagsIn(_Dto):
     """The tags to set by hand on an article path; they replace its earlier manual tags."""
 
     tags: list[Annotated[str, StringConstraints(max_length=MAX_TAG_INPUT)]] = Field(
-        max_length=MAX_TAGS,
-        description="Normalized like every tag (lower-case, trimmed, deduplicated). Empty: none.",
+        max_length=MAX_TAGS
     )
+    """Normalized like every tag (lower-case, trimmed, deduplicated). Empty: none."""
 
 
 class SetManualTagsCommand(ManualTagsIn):
@@ -721,9 +708,8 @@ class ManualTagsOut(_Dto):
     library: str
     path: str
     tags: list[str]
-    retagged: list[RetaggedManifest] = Field(
-        description="The pending and active manifests whose articles' tags are touched."
-    )
+    retagged: list[RetaggedManifest]
+    """The pending and active manifests whose articles' tags are touched."""
 
 
 class ApplyManualTagsCommand(_Dto):
@@ -740,7 +726,8 @@ class ReplaceRenamesCommand(_Dto):
     left out.
     """
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
     renames: list[RenameIn]
 
@@ -749,9 +736,8 @@ class RenamesReplaced(_Dto):
     """The manifest whose renames were replaced, and every manifest whose tags that touched."""
 
     manifest_id: str
-    retagged: list[RetaggedManifest] = Field(
-        description="The pending and active manifests whose articles carry or carried manual tags."
-    )
+    retagged: list[RetaggedManifest]
+    """The pending and active manifests whose articles carry or carried manual tags."""
 
 
 class GetAssetQuery(_Dto):
@@ -760,9 +746,8 @@ class GetAssetQuery(_Dto):
     library: str = Field(min_length=1)
     ref: str | None = None
     path: str = Field(min_length=1, max_length=MAX_PATH)
-    known_blob_shas: list[str] = Field(
-        default=[], description="Blob SHAs the caller holds; a match answers `unchanged`."
-    )
+    known_blob_shas: list[str] = Field(default=[])
+    """Blob SHAs the caller holds; a match answers `unchanged`."""
 
     @field_validator("ref", mode="before")
     @classmethod
@@ -776,9 +761,8 @@ class Asset(_Dto):
     blob_sha: str
     content_type: str
     data: bytes = Field(repr=False)
-    unchanged: bool = Field(
-        default=False, description="The blob is one of `known_blob_shas`; `data` is empty."
-    )
+    unchanged: bool = Field(default=False)
+    """The blob is one of `known_blob_shas`; `data` is empty."""
 
 
 class GetManifestStatesQuery(_Dto):
@@ -799,7 +783,8 @@ class ActiveManifest(_Dto):
 
     library: str
     ref: str
-    commit_sha: str = Field(description="The commit of the manifest, else of the version.")
+    commit_sha: str
+    """The commit of the manifest, else of the version."""
     manifest_id: str | None
 
 
@@ -808,7 +793,8 @@ class DefaultManifest(_Dto):
 
     library: str
     ref: str
-    commit_sha: str = Field(description="The commit of the manifest.")
+    commit_sha: str
+    """The commit of the manifest."""
     manifest_id: str
     source_url: str
     host: HostKind
@@ -862,12 +848,13 @@ class LibraryPatch(_Dto):
     """The fields a user may change; at least one must be given."""
 
     title: Annotated[str, StringConstraints(min_length=1, max_length=MAX_TITLE)] | None = Field(
-        default=None, description="A single line of text. Null or absent: unchanged."
+        default=None
     )
+    """A single line of text. Null or absent: unchanged."""
     description: Annotated[str, StringConstraints(max_length=MAX_DESCRIPTION)] | None = Field(
-        default=None,
-        description="Empty is allowed: no description. Null or absent: unchanged.",
+        default=None
     )
+    """Empty is allowed: no description. Null or absent: unchanged."""
 
     @field_validator("title")
     @classmethod
@@ -905,17 +892,15 @@ class UpdateLibraryCommand(LibraryPatch):
 class DefaultVersionPin(_Dto):
     """The version to pin as a library's default."""
 
-    ref: str = Field(
-        min_length=1,
-        max_length=MAX_NAME,
-        description="An imported ref, exactly as listed (case-sensitive), or a unique short SHA.",
-    )
+    ref: str = Field(min_length=1, max_length=MAX_NAME)
+    """An imported ref, exactly as listed (case-sensitive), or a unique short SHA."""
 
 
 class PinDefaultVersionCommand(_Dto):
     """Pin the version `ref` names as the library's default; no `ref` unpins it."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     ref: str | None = Field(default=None, min_length=1, max_length=MAX_NAME)
 
 
@@ -943,14 +928,16 @@ class DiscardLibraryCommand(_Dto):
 class RemoveVersionCommand(_Dto):
     """Remove one version of a library, with every manifest it ever had."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
 
 
 class RemoveLibraryCommand(_Dto):
     """Remove a library, all its versions and every manifest."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
 
 
 class Removal(_Dto):
@@ -1031,10 +1018,10 @@ class FindStoredArticlesQuery(_Dto):
     """Ask what the catalog stored for these files, so an import need not parse them again."""
 
     library: str = Field(min_length=1)
-    ref: str | None = Field(
-        default=None, description="The version being imported: its active manifest is read first."
-    )
-    content_version: int = Field(description="The importer's parser version: part of the key.")
+    ref: str | None = Field(default=None)
+    """The version being imported: its active manifest is read first."""
+    content_version: int
+    """The importer's parser version: part of the key."""
     files: list[StoredFileIn] = Field(max_length=MAX_STORED_ARTICLE_FILES)
 
 
@@ -1059,9 +1046,8 @@ class CopyManifestCommand(_Dto):
 
     library: str = Field(min_length=1)
     ref: str = Field(min_length=1)
-    content_version: int = Field(
-        description="The parser version the articles must be stored by, else nothing is copied."
-    )
+    content_version: int
+    """The parser version the articles must be stored by, else nothing is copied."""
 
 
 class CopiedArticle(_Dto):
