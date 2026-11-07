@@ -214,7 +214,7 @@ What MVP-1 turned out differently from the issues as first written (source: the 
 | **MVP-2** | Convenience and polish on top of the loop. | Every MVP-2 issue is closed and its scenarios pass: the CLI client with `login`, tokens, `add`, `libraries`, `version add`, `sync` and `remove` (E6-02, E6-03), distinct sync error codes and moved-tag detection (E9-02), settings edits that re-process every version (E9-04, E8-10a), import preview (E3-08, E8-11), `context7.json` (E3-09), imported images and relative links (E3-10, E8-12), resumable DBOS imports (E3-11), renames (E3-12, E8-13), custom chunking (E4-05), manual tags (E4-06, E8-14), cross-library search (E5-06, E8-15), ctx7-style CLI and REST (E6-04, E6-05), MCP resources (E7-08), stale chunks with their new location (E7-09), `exactdocs config --client` (E7-10), auto-import of tags (E9-05), moved-tag re-import (E9-06), pinned default version (E9-07), upgrades without re-import (E10-04). | E3-E10 |
 | **Next: AI retrieval** | Optional embedding, reranker and LLM endpoints upgrade retrieval, measured by an eval suite. | With an embedding endpoint search is hybrid; with an LLM, HyDE and agentic mode work within budgets and fall back to BM25 with a reason; the eval suite reports recall@k, wrong-version rate, cost and latency per mode in CI; LLM and embedding modes are tested in CI with pydantic-ai `TestModel`/`FunctionModel` or recorded fixtures (no live endpoints); a BM25-only install still imports nothing from `exactdocs[ai]`. | E11 |
 | **Next: Teams & integrations** | One shared instance for a team: PostgreSQL, OIDC, roles, declarative sources, webhooks, MCP Apps. | Ranking suite passes on ParadeDB; two server processes share one database; OIDC users see only libraries shared with them in UI, REST and MCP; `sources plan/apply` is idempotent; a signed webhook syncs within 30 s; MCP Apps render in a supporting host, verified with a manual checklist there. | E12 |
-| **Next: Operations** | The instance can be monitored and backed up like any other service. | `/healthz`, `/readyz`, backup/restore round-trip, OTLP traces and Prometheus metrics demonstrated, with query text excluded by default and nothing sent to Logfire's cloud. | E10 |
+| **Next: Operations** | The instance can be monitored and backed up like any other service. | `/healthz`, `/readyz`, backup/restore round-trip, OTLP traces and Prometheus metrics demonstrated, with query text excluded by default and nothing sent anywhere but the operator's collector. | E10 |
 | **Later** | Other sources and extras. | Not planned yet; see [Later](#later). | - |
 
 Next milestones are independent and may run in parallel; RET-07's metrics need E10-08,
@@ -2315,9 +2315,9 @@ Scenario: Traces go only to the configured collector, without query text
   And no span contains "retry_policy"
 ```
 
-- [ ] `logfire.configure(send_to_logfire=False, console=False)` only when `EXACTDOCS_TELEMETRY=otlp`; FastAPI built-in OpenTelemetry; health checks excluded
+- [ ] the OpenTelemetry SDK set up only when `EXACTDOCS_TELEMETRY=otlp`, no console output (was `logfire.configure(send_to_logfire=False, console=False)`; Logfire dropped in #87); FastAPI built-in OpenTelemetry; health checks excluded
 - [ ] spans for import, sync, search (per mode and stage); query text only with an explicit opt-in
-- [ ] pydantic-ai instrumentation with `include_content=False`; one span per tool call (nested in `run_code` once E11-10 exists)
+- [ ] one span per MCP tool call (FastMCP); pydantic-ai instrumentation with `include_content=False`, nested in `run_code`, moved to E11-10
 - [ ] RUN-03 test extended: only the collector is contacted
 
 ### E10-08 · feat: operators scrape ExactDocs metrics with Prometheus

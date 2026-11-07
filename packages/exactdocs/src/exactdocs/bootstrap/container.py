@@ -37,6 +37,7 @@ from exactdocs.bootstrap.database import (
     open_database,
 )
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteImportedTags,
@@ -113,6 +114,7 @@ def _build_read_side(
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
         query_docs_token_budget=settings.query_docs_token_budget,
+        tracer=search_tracer(settings),
     )
     return catalog, retrieval
 
@@ -280,15 +282,18 @@ class Container:
             index=index,
             vault=vault,
             # The catalog first: retrieval keeps every manifest the catalog still knows.
-            handlers={
-                **handlers,
-                **collect_job(
-                    collectors=[
-                        CatalogCollector(collect_garbage=catalog.collect_garbage),
-                        RetrievalCollector(collect_chunks=retrieval.collect_chunks),
-                    ]
-                ),
-            },
+            handlers=traced_jobs(
+                settings,
+                {
+                    **handlers,
+                    **collect_job(
+                        collectors=[
+                            CatalogCollector(collect_garbage=catalog.collect_garbage),
+                            RetrievalCollector(collect_chunks=retrieval.collect_chunks),
+                        ]
+                    ),
+                },
+            ),
             recovery_hooks=recovery_hooks,
             manual_tags=CatalogManualTags(set_manual_tags=catalog.set_manual_tags),
             tag_locks=tag_locks,

@@ -11,6 +11,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
+    SearchTracer,
 )
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
@@ -41,6 +42,7 @@ from exactdocs.retrieval.use_cases import (
     RetagArticlesUseCase,
     SearchAllLibrariesUseCase,
     SearchDocsUseCase,
+    UntracedSearches,
 )
 from exactdocs_kernel import Clock, SystemClock
 
@@ -77,13 +79,20 @@ class RetrievalModule:
         renames: RenamedPaths | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+        tracer: SearchTracer | None = None,
     ) -> Self:
-        """Assemble the use cases around the given driven adapters."""
+        """Assemble the use cases around the given driven adapters.
+
+        ``tracer`` observes every search and its stages; without it nothing is recorded.
+        """
         clock = clock or SystemClock()
+        tracer = tracer or UntracedSearches()
         return cls(
-            search_docs=SearchDocsUseCase(versions=searchable, search=search, chunks=chunks),
+            search_docs=SearchDocsUseCase(
+                versions=searchable, search=search, chunks=chunks, tracer=tracer
+            ),
             search_all_libraries=SearchAllLibrariesUseCase(
-                defaults=defaults, versions=searchable, search=search, chunks=chunks
+                defaults=defaults, versions=searchable, search=search, chunks=chunks, tracer=tracer
             ),
             index_manifest=IndexManifestUseCase(chunks=chunks, search=search, clock=clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),
@@ -91,13 +100,18 @@ class RetrievalModule:
                 versions=searchable, manifests=manifests, chunks=chunks, renames=renames
             ),
             resolve_library_id=ResolveLibraryIdUseCase(
-                libraries=libraries, versions=searchable, search=search, chunks=chunks
+                libraries=libraries,
+                versions=searchable,
+                search=search,
+                chunks=chunks,
+                tracer=tracer,
             ),
             query_docs=QueryDocsUseCase(
                 versions=searchable,
                 search=search,
                 chunks=chunks,
                 token_budget=query_docs_token_budget,
+                tracer=tracer,
             ),
             discard_pending_chunks=DiscardPendingChunksUseCase(
                 manifests=manifests, chunks=chunks, clock=clock

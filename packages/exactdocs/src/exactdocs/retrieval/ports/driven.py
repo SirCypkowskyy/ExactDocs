@@ -1,6 +1,7 @@
 """Driven (secondary) ports of retrieval."""
 
 from collections.abc import Collection, Mapping, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Protocol
 
@@ -223,4 +224,28 @@ class SearchIndexMaintenance(Protocol):
 
     async def rebuild(self) -> RebuiltIndex:
         """Build a new index of every stored chunk in the current format, then swap it in."""
+        ...
+
+
+class SearchTracer(Protocol):
+    """Marks a search and its stages for whoever observes them (traces, OPS-01).
+
+    The use cases open a span per search and one per stage inside it. The query text is handed
+    over separately: an adapter records it only when the operator explicitly opted in.
+    """
+
+    def span(
+        self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
+    ) -> AbstractContextManager[object]:
+        """Open the span ``name`` (``search_docs``, ``search_docs.rank``...) until the block ends.
+
+        Args:
+            name: The search, or the search and its stage after a dot.
+            mode: The retrieval mode the search runs in (``bm25``).
+            query: The query text, recorded only when the adapter was told to.
+            attributes: Further labels (library, ref); ``None`` ones are left out.
+
+        Returns:
+            A context manager: the span lasts as long as its block.
+        """
         ...

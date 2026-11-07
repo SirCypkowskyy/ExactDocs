@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Sequence
-from dataclasses import dataclass
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from exactdocs.retrieval.constants import (
@@ -88,6 +89,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
+    SearchTracer,
 )
 from exactdocs_kernel import NOTICE, Clock
 
@@ -122,12 +124,36 @@ async def _confirmed_removals(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class UntracedSearches:
+    """Implements ``ports.driven.SearchTracer`` by recording nothing (telemetry is off)."""
+
+    def span(
+        self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
+    ) -> AbstractContextManager[object]:
+        """Open nothing.
+
+        Args:
+            name: The search, or the search and its stage after a dot.
+            mode: The retrieval mode the search runs in.
+            query: The query text.
+            attributes: Further labels.
+
+        Returns:
+            A context manager that does nothing.
+        """
+        del name, mode, query, attributes
+        return nullcontext()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SearchDocsUseCase:
     """Implements ``ports.driving.SearchDocs``."""
 
     versions: SearchableVersions
     search: SearchIndex
     chunks: ChunkRepository
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Observes the search and its stages (traces); records nothing by default."""
 
     async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
         """Search the active manifest of one exact version; never fall back to another version."""
@@ -137,16 +163,38 @@ class SearchDocsUseCase:
         available = [m.value for m in RetrievalMode]
         if query.mode is not None and query.mode.strip().lower() not in available:
             raise UnavailableModeError(query.mode, available)
-        version = await self.versions.find(query.library, query.ref)
+        mode = RetrievalMode.BM25.value
+        with self.tracer.span(
+            "search_docs", mode=mode, query=text.value, library=query.library, ref=query.ref
+        ):
+            return await self._search(query, text, mode)
+
+    async def _search(
+        self, query: SearchDocsQuery, text: SearchText, mode: str
+    ) -> SearchDocsResult:
+        """Resolve the version, rank its chunks and load the shown ones, one span per stage.
+
+        Args:
+            query: The search as asked.
+            text: Its validated query text.
+            mode: The retrieval mode it runs in.
+
+        Returns:
+            The results of the one version searched.
+        """
+        with self.tracer.span("search_docs.version", mode=mode):
+            version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         # One more than asked for tells whether the answer was cut short.
-        found = await self.search.search(
-            version.manifest_id, text.value, tag_filter, query.limit + 1
-        )
+        with self.tracer.span("search_docs.rank", mode=mode):
+            found = await self.search.search(
+                version.manifest_id, text.value, tag_filter, query.limit + 1
+            )
         shown = found[: query.limit]
-        stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in shown])
+        with self.tracer.span("search_docs.chunks", mode=mode):
+            stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in shown])
         # A chunk gone since the search (the manifest was collected) leaves no result, and is not
         # counted as a candidate either, so results and coverage stay consistent.
         results = [
@@ -176,6 +224,8 @@ class SearchAllLibrariesUseCase:
     versions: SearchableVersions
     search: SearchIndex
     chunks: ChunkRepository
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Observes the search and its stages (traces); records nothing by default."""
 
     async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
         """Rank the chunks of all default versions together; count the matches per library.
@@ -184,13 +234,32 @@ class SearchAllLibrariesUseCase:
         every library is still resolved: the counts stay global, which a facet needs.
         """
         text = SearchText(value=query.query)
+        mode = RetrievalMode.BM25.value
+        with self.tracer.span(
+            "search_all_libraries", mode=mode, query=text.value, library=query.library
+        ):
+            return await self._search(query, text, mode)
+
+    async def _search(self, query: SearchAllQuery, text: SearchText, mode: str) -> SearchAllResult:
+        """Resolve the default versions, rank and count, then load the shown chunks.
+
+        Args:
+            query: The search as asked.
+            text: Its validated query text.
+            mode: The retrieval mode it runs in.
+
+        Returns:
+            The results across the libraries, with a facet per library.
+        """
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
-        every = await self.defaults.all()
+        with self.tracer.span("search_all_libraries.versions", mode=mode):
+            every = await self.defaults.all()
         searched = {v.manifest_id: v for v in every[:MAX_SEARCHED_LIBRARIES]}
         omitted = len(every) - len(searched)
         scope = searched
         if query.library is not None:
-            only = await self.versions.find(query.library, None)
+            with self.tracer.span("search_all_libraries.versions", mode=mode):
+                only = await self.versions.find(query.library, None)
             if only is None:
                 raise VersionNotIndexedError(query.library, "(default version)")
             if only.manifest_id not in searched:  # beyond the cap: searched, so no longer omitted
@@ -198,15 +267,17 @@ class SearchAllLibrariesUseCase:
                 omitted -= 1
             scope = {only.manifest_id: only}
         # One more than asked for tells whether the answer was cut short.
-        found_hits, counts = await asyncio.gather(
-            self.search.search_many(list(scope), text.value, tag_filter, query.limit + 1),
-            self.search.count_many(list(searched), text.value, tag_filter),
-        )
+        with self.tracer.span("search_all_libraries.rank", mode=mode):
+            found_hits, counts = await asyncio.gather(
+                self.search.search_many(list(scope), text.value, tag_filter, query.limit + 1),
+                self.search.count_many(list(searched), text.value, tag_filter),
+            )
         shown = found_hits[: query.limit]
         wanted: dict[str, list[ChunkId]] = {}
         for found_hit in shown:
             wanted.setdefault(found_hit.manifest_id, []).append(found_hit.hit.chunk_id)
-        stored = await self.chunks.get_across(wanted)
+        with self.tracer.span("search_all_libraries.chunks", mode=mode):
+            stored = await self.chunks.get_across(wanted)
         # A chunk gone since the search (the manifest was collected) leaves no result.
         results = [
             LibrarySearchResultOut.of(
@@ -545,30 +616,51 @@ class ResolveLibraryIdUseCase:
     versions: SearchableVersions
     search: SearchIndex
     chunks: ChunkRepository
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Observes the search and its stages (traces); records nothing by default."""
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
         """Match the name, then let the default versions' hits for ``query`` re-rank the matches."""
         # Both refuse blank text the same way (EmptySearchTextError).
         text, name = SearchText(value=query.query), SearchText(value=query.library_name)
-        named = [
-            (lib, found)
-            for lib in await self.libraries.all()
-            if (found := name_match(name.value, lib)) is not None
-        ]
-        # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
-        named.sort(key=lambda m: (m[1], m[0].id))
-        readable = await self._readable(named)
-        hits = await asyncio.gather(
-            *(
-                self.search.search(
-                    version.manifest_id,
-                    text.value,
-                    TagFilter(tags=(), match=TagMatch.ANY),
-                    QUERY_HITS_CAP,
+        mode = RetrievalMode.BM25.value
+        with self.tracer.span("resolve_library_id", mode=mode, query=text.value):
+            return await self._resolve(text, name, mode)
+
+    async def _resolve(
+        self, text: SearchText, name: SearchText, mode: str
+    ) -> ResolveLibraryIdResult:
+        """Match the names, then rank them by their hits, one span per stage.
+
+        Args:
+            text: The validated query text.
+            name: The validated library name.
+            mode: The retrieval mode the hits are found in.
+
+        Returns:
+            The matching libraries, best first.
+        """
+        with self.tracer.span("resolve_library_id.versions", mode=mode):
+            named = [
+                (lib, found)
+                for lib in await self.libraries.all()
+                if (found := name_match(name.value, lib)) is not None
+            ]
+            # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
+            named.sort(key=lambda m: (m[1], m[0].id))
+            readable = await self._readable(named)
+        with self.tracer.span("resolve_library_id.rank", mode=mode):
+            hits = await asyncio.gather(
+                *(
+                    self.search.search(
+                        version.manifest_id,
+                        text.value,
+                        TagFilter(tags=(), match=TagMatch.ANY),
+                        QUERY_HITS_CAP,
+                    )
+                    for _, _, version in readable
                 )
-                for _, _, version in readable
             )
-        )
         ranked = rank_matches(
             [
                 Candidate(library=lib, match=found, hits=len(h))
@@ -576,9 +668,10 @@ class ResolveLibraryIdUseCase:
             ]
         )
         manifests = {lib.id: version.manifest_id for lib, _, version in readable}
-        counts = await asyncio.gather(
-            *(self.chunks.counts(manifests[c.library.id]) for c in ranked)
-        )
+        with self.tracer.span("resolve_library_id.chunks", mode=mode):
+            counts = await asyncio.gather(
+                *(self.chunks.counts(manifests[c.library.id]) for c in ranked)
+            )
         return ResolveLibraryIdResult(
             matches=[
                 LibraryMatchOut.from_candidate(c, n.articles, n.chunks)
@@ -653,6 +746,8 @@ class QueryDocsUseCase:
     search: SearchIndex
     chunks: ChunkRepository
     token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Observes the search and its stages (traces); records nothing by default."""
 
     async def __call__(self, query: QueryDocsQuery) -> QueryDocsResult:
         """Answer from exactly one version, with whole chunks that fit the budget, best first.
@@ -668,16 +763,38 @@ class QueryDocsUseCase:
         _, owner, repo, *rest = query.library_id.split("/", 3)
         ref = rest[0] if rest else None
         library = f"/{owner}/{repo}"
-        version = await self.versions.find(library, ref)
+        mode = RetrievalMode.BM25.value
+        with self.tracer.span("query_docs", mode=mode, query=text.value, library=library, ref=ref):
+            return await self._answer(query, text, library, ref, mode)
+
+    async def _answer(
+        self, query: QueryDocsQuery, text: SearchText, library: str, ref: str | None, mode: str
+    ) -> QueryDocsResult:
+        """Resolve the version, rank, load the chunks and pack them, one span per stage.
+
+        Args:
+            query: The request as asked.
+            text: Its validated query text.
+            library: The library ID it names.
+            ref: The version it names; ``None`` for the default version.
+            mode: The retrieval mode it runs in.
+
+        Returns:
+            The packed sections of the one version searched.
+        """
+        with self.tracer.span("query_docs.version", mode=mode):
+            version = await self.versions.find(library, ref)
         if version is None:
             raise VersionNotIndexedError(library, ref or "(default version)")
-        found = await self.search.search(
-            version.manifest_id,
-            text.value,
-            TagFilter(tags=(), match=TagMatch.ANY),
-            QUERY_DOCS_CANDIDATES,
-        )
-        stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in found])
+        with self.tracer.span("query_docs.rank", mode=mode):
+            found = await self.search.search(
+                version.manifest_id,
+                text.value,
+                TagFilter(tags=(), match=TagMatch.ANY),
+                QUERY_DOCS_CANDIDATES,
+            )
+        with self.tracer.span("query_docs.chunks", mode=mode):
+            stored = await self.chunks.get_many(version.manifest_id, [h.chunk_id for h in found])
         sections = [
             DocSectionOut.from_stored(version, stored[hit.chunk_id])
             for hit in found

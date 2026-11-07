@@ -218,3 +218,33 @@ DOCSTRING_SECTIONS: Final[frozenset[str]] = frozenset(
     {"Args:", "Arguments:", "Returns:", "Return:", "Yields:", "Raises:"}
 )
 """Google docstring sections that end an operation's OpenAPI description."""
+
+# ---------------------------------------------------------------- telemetry, otlp
+SERVICE_NAME: Final[str] = "exactdocs"
+"""``service.name`` of the exported telemetry, unless ``OTEL_SERVICE_NAME`` names another."""
+OTLP_ENDPOINT_VARIABLE: Final[str] = "OTEL_EXPORTER_OTLP_ENDPOINT"
+"""The collector for every signal; ``OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`` names one per signal.
+With neither set, that signal is not exported (there is no default collector).
+"""
+EXPORTER_VARIABLE: Final[str] = "OTEL_{}_EXPORTER"
+"""``OTEL_TRACES_EXPORTER`` / ``OTEL_METRICS_EXPORTER``: ``none`` turns that signal off."""
+QUERY_TEXT_PARAMETERS: Final[frozenset[str]] = frozenset({"q", "query", "libraryName", "url"})
+"""URL query parameters whose value is search input (or a repository URL that may carry a token):
+redacted from request spans unless the operator opted in to query text.
+"""
+SCRUBBED_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset({"enduser.id", "enduser.scope"})
+"""Who called (FastMCP puts the token's client ID and scopes on every MCP span): left out unless
+the operator opted in, like the query text they would tie to a person.
+"""
+SCRUBBED_EXCEPTION_ATTRIBUTES: Final[frozenset[str]] = frozenset(
+    {"exception.message", "exception.stacktrace"}
+)
+"""Left out of exception events unless the operator opted in: they can quote the input."""
+REDACTED: Final[str] = "REDACTED"
+"""What a redacted URL query value is replaced with."""
+URL_QUERY_ATTRIBUTE: Final[str] = "url.query"
+"""The request span attribute with the URL's query string (OpenTelemetry semantic conventions)."""
+OTLP_MODULE: Final[str] = "exactdocs.bootstrap.otlp"
+"""The module that sets up the OpenTelemetry SDK, loaded only when telemetry is on."""
+JOB_TRACER_NAME: Final[str] = "exactdocs.ingestion"
+"""OpenTelemetry instrumentation scope of the job spans."""
