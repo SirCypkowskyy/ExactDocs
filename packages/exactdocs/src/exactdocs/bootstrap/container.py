@@ -2,9 +2,10 @@ import asyncio
 import logging
 import threading
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
-from typing import Self
+from pathlib import Path
+from typing import Any, Self
 
 from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -33,11 +34,14 @@ from exactdocs.bootstrap.constants import JOBS_FILE, KNOWN_HOSTS_FILE, WORK_DIR
 from exactdocs.bootstrap.database import (
     StartupError,
     check_schema_is_current,
+    is_postgres,
     migrate,
     open_database,
 )
+from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
+from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteImportedTags,
@@ -63,6 +67,7 @@ from exactdocs.ingestion.adapters.driven.dbos import (
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
+from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
 from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
@@ -76,10 +81,12 @@ from exactdocs.ingestion.ports.driven import (
     Chunker,
     GitGateway,
     GitRemote,
+    LibraryLocks,
     RenameSource,
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
@@ -98,7 +105,11 @@ def _build_read_side(
         stored_articles=SqliteStoredArticles(engine=engine),
         copier=SqliteManifestCopier(engine=engine),
     )
-    search = SqliteSearchIndex(engine=engine)
+    search = (
+        PostgresSearchIndex(engine=engine)
+        if is_postgres(engine)
+        else SqliteSearchIndex(engine=engine)
+    )
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
@@ -117,6 +128,120 @@ def _build_read_side(
         tracer=search_tracer(settings),
     )
     return catalog, retrieval
+
+
+def _system_git(settings: Settings, engine: AsyncEngine) -> tuple[GitCli | MissingGit, Path | None]:
+    """Return the system ``git`` (or ``MissingGit``, logged) and this process's work folder.
+
+    On SQLite fetches work in ``<data dir>/work``; on PostgreSQL, where processes may share the
+    data directory, in a folder of this process's own (``workdirs.py``).
+
+    Args:
+        settings: The instance's settings.
+        engine: The app's database.
+
+    Returns:
+        The git adapter, and on PostgreSQL the work folder ``running()`` holds (else ``None``).
+    """
+    work_root, owner = settings.data_dir / WORK_DIR, None
+    if is_postgres(engine):
+        work_root = owner = new_work_root(work_root)
+    try:
+        seed_known_hosts(settings.data_dir / KNOWN_HOSTS_FILE)
+        git: GitCli | MissingGit = GitCli.locate(
+            work_root=work_root, known_hosts=settings.data_dir / KNOWN_HOSTS_FILE
+        )
+    except GitNotInstalledError as exc:
+        logger.warning("%s", exc)
+        git = MissingGit()
+    return git, owner
+
+
+def _secret_box(settings: Settings) -> FernetSecretBox:
+    """Return the box that seals repository credentials, from the configured or generated key.
+
+    Args:
+        settings: The instance's settings.
+
+    Returns:
+        The secret box.
+
+    Raises:
+        StartupError: The key is unusable (fixed texts: they never repeat a key).
+    """
+    try:
+        if settings.secret_key:
+            previous = settings.secret_key_previous
+            return FernetSecretBox.from_secrets(
+                settings.secret_key.get_secret_value(),
+                *([previous.get_secret_value()] if previous else []),
+            )
+        return FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
+    except ValueError as error:
+        raise StartupError(str(error)) from None
+
+
+def _require_shared_key(settings: Settings, engine: AsyncEngine) -> None:
+    """Refuse PostgreSQL without ``EXACTDOCS_SECRET_KEY``.
+
+    Each process would otherwise generate its own ``secret.key``, and credentials one sealed
+    could not be opened by the others.
+
+    Args:
+        settings: The instance's settings.
+        engine: The app's database.
+
+    Raises:
+        StartupError: On PostgreSQL without a configured key.
+    """
+    if is_postgres(engine) and settings.secret_key is None:
+        message = (
+            "On PostgreSQL every ExactDocs process must seal private repositories' "
+            "credentials with the same key: set EXACTDOCS_SECRET_KEY (at least 32 random "
+            "characters, e.g. `openssl rand -base64 32`) for all of them."
+        )
+        raise StartupError(message)
+
+
+def _library_locks(engine: AsyncEngine, purpose: str) -> LibraryLocks:
+    """Return per-library locks for one purpose (``tags``, ``settings``).
+
+    On PostgreSQL they are advisory locks every process shares; on SQLite one process runs jobs
+    and serves the API, so ``asyncio`` locks are enough.
+
+    Args:
+        engine: The app's database.
+        purpose: What the locks order; each purpose has its own.
+
+    Returns:
+        The locks.
+    """
+    if is_postgres(engine):
+        return PostgresLibraryLocks(engine=engine, purpose=purpose)
+    return TagLocks()
+
+
+def _dbos_database(settings: Settings, engine: AsyncEngine) -> dict[str, Any]:
+    """Return where DBOS keeps its workflows: the app's PostgreSQL database, or its SQLite file.
+
+    On PostgreSQL DBOS uses the same database, in a schema of its own (it never creates a
+    database), and each process takes an executor slot. On SQLite it keeps ``jobs.sqlite``.
+
+    Args:
+        settings: The instance's settings.
+        engine: The app's database.
+
+    Returns:
+        The job worker's database arguments.
+    """
+    if is_postgres(engine):
+        return {
+            "system_database_url": engine.url.render_as_string(hide_password=False),
+            "system_schema": settings.dbos_system_schema,
+            "executors": PostgresExecutorSlots(engine=engine),
+        }
+    # NullPool: a connection one of DBOS's threads still holds when it stops is closed.
+    return {"database": settings.data_dir / JOBS_FILE, "engine_options": {"poolclass": NullPool}}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -168,6 +293,8 @@ class Container:
     ingestion: IngestionModule
     retrieval: RetrievalModule
     job_worker: DbosJobWorker
+    work_owner: Path | None = field(default=None, repr=False)
+    """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
     # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
     # event loop) is refused as well.
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -194,36 +321,15 @@ class Container:
         it, so the rest still runs.
         """
         engine = open_database(settings)  # creates the data dir first (or says why not)
+        _require_shared_key(settings, engine)
+        work_owner = None
         if remote is None or gateway is None or tree is None:
-            try:
-                seed_known_hosts(settings.data_dir / KNOWN_HOSTS_FILE)
-                git: GitCli | MissingGit = GitCli.locate(
-                    work_root=settings.data_dir / WORK_DIR,
-                    known_hosts=settings.data_dir / KNOWN_HOSTS_FILE,
-                )
-            except GitNotInstalledError as exc:
-                logger.warning("%s", exc)
-                git = MissingGit()
+            git, work_owner = _system_git(settings, engine)
             remote = remote or git
             renames = renames or (git if gateway is None else None)
             gateway = gateway or git
             tree = tree or git
-        try:
-            secret_box = (
-                FernetSecretBox.from_secrets(
-                    settings.secret_key.get_secret_value(),
-                    *(
-                        [settings.secret_key_previous.get_secret_value()]
-                        if settings.secret_key_previous
-                        else []
-                    ),
-                )
-                if settings.secret_key
-                else FernetSecretBox.from_file(settings.data_dir / KEY_FILE)
-            )
-        except ValueError as error:  # fixed texts: they never repeat a key
-            raise StartupError(str(error)) from None
-        vault = SqliteCredentialVault(engine=engine, box=secret_box)
+        vault = SqliteCredentialVault(engine=engine, box=_secret_box(settings))
         catalog, retrieval = _build_read_side(engine, settings)
         index = RetrievalChunkIndex(
             index_manifest=retrieval.index_manifest,
@@ -232,7 +338,7 @@ class Container:
             remove_chunks=retrieval.remove_chunks,
             retag_articles=retrieval.retag_articles,
         )
-        tag_locks = TagLocks()  # per library: tagging and an import's activation take turns
+        tag_locks = _library_locks(engine, "tags")  # tagging and activations take turns
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=chunker or MarkdownChunker(),
@@ -297,6 +403,7 @@ class Container:
             recovery_hooks=recovery_hooks,
             manual_tags=CatalogManualTags(set_manual_tags=catalog.set_manual_tags),
             tag_locks=tag_locks,
+            settings_locks=_library_locks(engine, "settings"),
             settings=CatalogLibrarySettings(set_library_settings=catalog.set_library_settings),
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine=engine),
@@ -305,6 +412,7 @@ class Container:
         return cls(
             settings=settings,
             engine=engine,
+            work_owner=work_owner,
             catalog=catalog,
             identity=IdentityModule.build(
                 repository=SqliteAccountRepository(engine=engine),
@@ -325,11 +433,10 @@ class Container:
                 schedule_name=SCHEDULE,
                 schedule=settings.auto_sync_schedule,
                 poll_interval=settings.job_poll_seconds,
-                database=settings.data_dir / JOBS_FILE,
                 queue=QUEUE,
                 workflow=WORKFLOW,
                 version=STEPS_VERSION,
-                engine_options={"poolclass": NullPool},
+                **_dbos_database(settings, engine),
             ),
         )
 
@@ -338,7 +445,7 @@ class Container:
         """Migrate the database, serve, then release the connections.
 
         ``jobs`` also runs the job worker (and the recovery before it). Only the HTTP server
-        does: one process runs jobs.
+        does: on SQLite one process runs jobs; on PostgreSQL every server process does.
 
         A container runs once at a time: a second run would share the engine, and whichever
         stopped first would dispose it under the other, stranding the connections the other had
@@ -363,13 +470,16 @@ class Container:
                     stored,
                     index.current_format,
                 )
-            if jobs:
-                # Fetch folders a crash left behind. A data dir has exactly one job runner.
-                await asyncio.to_thread(sweep_stale_fetches, self.settings.data_dir / WORK_DIR)
-                async with self.job_worker.running():
+            with held(self.work_owner) if self.work_owner else nullcontext():
+                if jobs:
+                    # Fetch folders a crash left behind: on SQLite this process is the data dir's
+                    # one job runner; on PostgreSQL only the folders of processes that are gone.
+                    sweep = sweep_abandoned_work if self.work_owner else sweep_stale_fetches
+                    await asyncio.to_thread(sweep, self.settings.data_dir / WORK_DIR)
+                    async with self.job_worker.running():
+                        yield
+                else:
                     yield
-            else:
-                yield
         finally:
             try:
                 await self.engine.dispose()

@@ -97,9 +97,11 @@ def serve(
         host=host or settings.host,
         port=port or settings.port,
         reload=reload,
-        # One process: it alone runs jobs and their recovery, and its tag lock orders re-tags.
-        # Without it uvicorn would start WEB_CONCURRENCY workers (docs/architecture.md).
-        workers=1,
+        # SQLite: one process, it alone runs jobs and their recovery and its tag lock orders
+        # re-tags; uvicorn would otherwise start WEB_CONCURRENCY workers. PostgreSQL: each worker
+        # is a process of its own, with its own DBOS executor and the database's advisory locks,
+        # so WEB_CONCURRENCY decides (docs/architecture.md).
+        workers=None if settings.uses_postgres else 1,
         proxy_headers=True,
         forwarded_allow_ips=settings.forwarded_allow_ips,
     )

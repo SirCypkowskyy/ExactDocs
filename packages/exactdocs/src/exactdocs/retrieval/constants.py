@@ -233,6 +233,126 @@ TAG_CONDITIONS: Final[dict[str | None, str]] = {
 it is applied before ORDER BY ... LIMIT.
 """
 
+# ---------------------------------------------------------------- adapters.driven.postgres_fts
+POSTGRES_FORMAT: Final[int] = 1
+"""The format the PostgreSQL index is built in, stored in `retrieval_search_format` (revision
+0c4e8a2f6b19 records 1). Bump it, as `FORMAT`, when what a row holds changes (`search_row`,
+`identifier_tokens`, the text search configuration).
+"""
+POSTGRES_WEIGHTS: Final[tuple[float, float, float, float]] = (
+    IDENTIFIERS_WEIGHT / HEADING_WEIGHT,
+    TEXT_WEIGHT / HEADING_WEIGHT,
+    PATH_WEIGHT / HEADING_WEIGHT,
+    1.0,
+)
+"""`ts_rank_cd` weights of the D, C, B and A labels (identifiers, text, path, heading): FTS5's
+column weights scaled to PostgreSQL's 0 to 1 range, so the columns count in the same proportions.
+"""
+_PG_DOCUMENT: Final[str] = (
+    "setweight(to_tsvector('simple'::regconfig, heading), 'A')"
+    " || setweight(to_tsvector('simple'::regconfig, path), 'B')"
+    " || setweight(to_tsvector('simple'::regconfig, body), 'C')"
+    " || setweight(to_tsvector('simple'::regconfig, identifiers), 'D')"
+)
+"""The computed `document` column: the `simple` configuration (no stemming or stop words, like
+FTS5's `unicode61`), heading A, path B, text C, identifiers D (as revision 0c4e8a2f6b19)."""
+_PG_CREATE_NEXT: Final[str] = f"""
+    CREATE TABLE retrieval_search_next (
+        chunk_id integer PRIMARY KEY REFERENCES retrieval_chunks (id) ON DELETE CASCADE,
+        heading text COLLATE "C" NOT NULL,
+        path text COLLATE "C" NOT NULL,
+        body text COLLATE "C" NOT NULL,
+        identifiers text COLLATE "C" NOT NULL,
+        document tsvector GENERATED ALWAYS AS ({_PG_DOCUMENT}) STORED
+    )
+"""
+"""`exactdocs reindex` fills `retrieval_search_next` beside `retrieval_search`, then renames it over
+it. The foreign key drops the row of a chunk deleted meanwhile, as FTS5's trigger does."""
+_PG_INDEX_NEXT: Final[str] = (
+    "CREATE INDEX retrieval_search_next_document ON retrieval_search_next USING gin (document)"
+)
+"""Built once the new table is full: faster than keeping it up to date row by row."""
+_PG_SWAP: Final[tuple[str, ...]] = (
+    "DROP TABLE retrieval_search",
+    "ALTER TABLE retrieval_search_next RENAME TO retrieval_search",
+    "ALTER INDEX retrieval_search_next_pkey RENAME TO retrieval_search_pkey",
+    (
+        "ALTER TABLE retrieval_search RENAME CONSTRAINT retrieval_search_next_chunk_id_fkey"
+        " TO retrieval_search_chunk_id_fkey"
+    ),
+    "ALTER INDEX retrieval_search_next_document RENAME TO ix_retrieval_search_document",
+)
+"""Replace the index with the rebuilt one, under the names revision 0c4e8a2f6b19 gave."""
+_PG_QUERY: Final[str] = """
+    SELECT to_tsquery('simple', string_agg('(' || plainto_tsquery('simple', term)::text || ')',
+                                           ' | '))
+    FROM unnest(CAST(:terms AS text[])) AS term
+    WHERE numnode(plainto_tsquery('simple', term)) > 0
+"""
+"""The search terms as one `tsquery`: each term parsed as the indexed text is (its parts must all
+be there), the terms OR-ed (see `identifier_tokens`). Bound values only: nothing a user typed
+reaches the query syntax. ``NULL`` when no term has a word, which matches nothing."""
+_PG_SEARCH: Final[str] = """
+    WITH q AS MATERIALIZED ({query}),
+    ranked AS MATERIALIZED (
+        SELECT s.chunk_id AS id, mc.manifest_id AS manifest_id, mc.chunk_id AS chunk_id,
+               ts_rank_cd(CAST(:weights AS real[]), s.document, q.to_tsquery, 1) AS score
+        FROM q CROSS JOIN retrieval_search s
+        JOIN retrieval_chunks c ON c.id = s.chunk_id
+        JOIN retrieval_manifest_chunks mc
+          ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
+         AND mc.position = c.position
+        WHERE s.document @@ q.to_tsquery AND mc.manifest_id IN :manifests {tags}
+        ORDER BY score DESC, mc.chunk_id
+        LIMIT :limit
+    )
+    SELECT r.manifest_id, r.chunk_id, r.score,
+           CASE WHEN cardinality(regexp_split_to_array(btrim(s.body), '\\s+')) <= :words
+                THEN s.body
+                ELSE ts_headline('simple', s.body, q.to_tsquery, :headline) END AS snippet
+    FROM ranked r
+    JOIN retrieval_search s ON s.chunk_id = r.id
+    CROSS JOIN q
+    ORDER BY r.score DESC, r.chunk_id
+"""
+"""Rank and cut to LIMIT first, then build snippets for the survivors only (`ts_headline` reads
+the whole text). Rank normalisation 1 divides by the log of a chunk's length, so a short chunk with
+the term beats a long one, as BM25's does. A text of ``:words`` words or fewer is its own snippet,
+as FTS5 returns it, punctuation included. ``{query}``: `_PG_QUERY`; ``{tags}``: the tag
+condition."""
+_PG_COUNT: Final[str] = """
+    WITH q AS MATERIALIZED ({query})
+    SELECT mc.manifest_id AS manifest_id, count(*) AS matches
+    FROM q CROSS JOIN retrieval_search s
+    JOIN retrieval_chunks c ON c.id = s.chunk_id
+    JOIN retrieval_manifest_chunks mc
+      ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
+     AND mc.position = c.position
+    WHERE s.document @@ q.to_tsquery AND mc.manifest_id IN :manifests {tags}
+    GROUP BY mc.manifest_id
+"""
+"""Counts the matches of a search per manifest (``{query}``, ``{tags}``: as `_PG_SEARCH`)."""
+POSTGRES_SNIPPET_WORDS: Final[int] = 24
+"""Words in a snippet, as FTS5's ``snippet(..., 24)``: a shorter text is returned whole."""
+POSTGRES_HEADLINE: Final[str] = (
+    'StartSel="", StopSel="", MaxWords=24, MinWords=12, ShortWord=0, MaxFragments=1,'
+    ' FragmentDelimiter=" "'
+)
+"""`ts_headline` options: a plain-text excerpt of about 24 words around the matches, as FTS5's
+``snippet(..., 24)``; the highlights are computed from it like every engine's."""
+POSTGRES_TAG_CONDITIONS: Final[dict[str | None, str]] = {
+    None: "",
+    "any": (
+        "AND EXISTS (SELECT 1 FROM json_array_elements_text(mc.tags::json) t"
+        " WHERE t IN (SELECT json_array_elements_text(CAST(:tags AS json))))"
+    ),
+    "all": (
+        "AND NOT EXISTS (SELECT 1 FROM json_array_elements_text(CAST(:tags AS json)) wanted"
+        " WHERE wanted NOT IN (SELECT json_array_elements_text(mc.tags::json)))"
+    ),
+}
+"""`TAG_CONDITIONS` for PostgreSQL's JSON functions."""
+
 # ---------------------------------------------------------------- adapters/driven/opentelemetry
 TRACER_NAME: Final[str] = "exactdocs.retrieval"
 """OpenTelemetry instrumentation scope of the search spans."""

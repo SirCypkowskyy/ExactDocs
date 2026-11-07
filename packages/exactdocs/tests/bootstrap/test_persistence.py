@@ -171,9 +171,29 @@ async def test_database_url_overrides_the_file_in_the_data_dir(
     assert not (isolated_data_dir / "exactdocs.db").exists()
 
 
-def test_only_sqlite_is_supported() -> None:
-    with pytest.raises(StartupError, match="only SQLite"):
-        Container.build(Settings(database_url="postgresql://user:secret@host/db"))
+def test_only_sqlite_and_postgresql_are_supported() -> None:
+    with pytest.raises(StartupError, match="use SQLite or PostgreSQL"):
+        Container.build(Settings(database_url="mysql://user:secret@host/db"))
+
+
+def test_postgresql_runs_on_psycopg_only() -> None:
+    with pytest.raises(StartupError, match="psycopg 3"):
+        Container.build(Settings(database_url="postgresql+asyncpg://user:secret@host/db"))
+
+
+@pytest.mark.parametrize("url", ["postgresql://u:p@db/x", "postgresql+psycopg://u:p@db/x"])
+def test_both_postgresql_spellings_mean_psycopg(url: str) -> None:
+    settings = Settings(database_url=url)
+
+    assert settings.effective_database_url == "postgresql+psycopg://u:p@db/x"
+    assert settings.uses_postgres
+    assert not Settings().uses_postgres
+
+
+def test_postgresql_needs_one_secret_key_for_every_process() -> None:
+    # Checked before any connection: the host does not have to exist.
+    with pytest.raises(StartupError, match="EXACTDOCS_SECRET_KEY"):
+        Container.build(Settings(database_url="postgresql://user:secret@nowhere.invalid/db"))
 
 
 async def test_connections_use_wal_foreign_keys_and_a_busy_timeout() -> None:

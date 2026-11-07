@@ -29,6 +29,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # A rebuild may have left `retrieval_search_next` and its trigger behind; they go too.
-    op.execute("DROP TRIGGER IF EXISTS retrieval_chunks_search_next_delete")
+    if op.get_bind().dialect.name == "sqlite":
+        op.execute("DROP TRIGGER IF EXISTS retrieval_chunks_search_next_delete")
     op.execute("DROP TABLE IF EXISTS retrieval_search_next")
     op.drop_table("retrieval_search_format")

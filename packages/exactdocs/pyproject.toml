@@ -52,6 +52,9 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.66b1,<1",
     "opentelemetry-sdk>=1.45.1,<2",
     "platformdirs>=4",
+    # PostgreSQL (EXACTDOCS_DATABASE_URL=postgresql://...): psycopg 3, async. DBOS needs it too,
+    # so it adds nothing to the image.
+    "psycopg[binary]>=3.2",
     "pydantic>=2.12",
     "pydantic-settings>=2.11",
     "pyyaml>=6",

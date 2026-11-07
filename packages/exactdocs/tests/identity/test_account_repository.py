@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.adapters.driven.memory import InMemoryAccountRepository
@@ -27,13 +28,15 @@ def account(name: str) -> Account:
     )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def repository(request: pytest.FixtureRequest) -> AsyncIterator[AccountRepository]:
     if request.param == "memory":
         yield InMemoryAccountRepository()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
-    async with container.running():
+    async with container.running(jobs=False):
         yield SqliteAccountRepository(engine=container.engine)
 
 

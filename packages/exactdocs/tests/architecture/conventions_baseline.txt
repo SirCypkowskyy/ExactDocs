@@ -347,7 +347,6 @@ packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.allowed_hosts fi
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.allowed_origins field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.auto_sync_schedule field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.data_dir field-without-docstring
-packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.database_url field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.forwarded_allow_ips field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.host field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.import_batch_files field-without-docstring
@@ -521,8 +520,6 @@ packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _rename funct
 packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _stored_version function-without-docstring
 packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _tag_columns docstring-missing-args
 packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _tag_columns docstring-missing-returns
-packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _tag_condition docstring-missing-args
-packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _tag_condition docstring-missing-returns
 packages/exactdocs/src/exactdocs/catalog/adapters/driven/sqlite.py _texts function-without-docstring
 packages/exactdocs/src/exactdocs/catalog/adapters/driving/http.py _asset_router docstring-missing-args
 packages/exactdocs/src/exactdocs/catalog/adapters/driving/http.py _asset_router docstring-missing-returns
@@ -1791,8 +1788,6 @@ packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJ
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.recover_jobs field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.run_job field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.running docstring-missing-returns
-packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.running.run function-without-docstring
-packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.running.tick function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.stop_grace field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.submit_queued_jobs field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.version field-without-docstring

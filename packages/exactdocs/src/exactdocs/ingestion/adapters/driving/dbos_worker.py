@@ -1,9 +1,14 @@
 """The job worker: DBOS runs every job as a durable workflow, started in the app's lifespan.
 
-A workflow's completed steps are stored in DBOS's own SQLite file, so a job that was running
-when the process died (a crash, a deploy, ``kill -9``) resumes at its first unfinished step on
-the next start instead of starting over. The queue runs at most ``concurrency`` jobs at once and
-one per library (the library is the queue's partition key).
+A workflow's completed steps are stored in DBOS's system database (its own SQLite file, or a
+schema of the app's PostgreSQL database), so a job that was running when the process died (a
+crash, a deploy, ``kill -9``) resumes at its first unfinished step on the next start instead of
+starting over. The queue runs at most ``concurrency`` jobs at once per process and one per
+library across every process (the library is the queue's partition key).
+
+On PostgreSQL several processes share the queue. Each runs DBOS under an executor ID of its own
+(``executors``), and a process adopts the pending workflows of executors no live process holds,
+at start and then every ``resubmit_interval``.
 
 A DBOS schedule (``schedule``, a cron expression with seconds) also runs ``RunScheduledChecks``
 on every tick: the scheduled check of the libraries that are due (SYNC-02).
@@ -14,14 +19,21 @@ import contextvars
 import logging
 import sqlite3
 import threading
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping
+from collections.abc import AsyncGenerator, Callable, Collection, Coroutine, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, closing, suppress
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    closing,
+    suppress,
+)
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 
-from dbos import DBOS, DBOSConfig
+from dbos import DBOS, DBOSConfig, WorkflowStatus
 
 from exactdocs.ingestion.constants import EVERY_MINUTE, SCHEDULE_WORKFLOW
 from exactdocs.ingestion.constants._jobs import (
@@ -48,6 +60,32 @@ log = logging.getLogger(__name__)
 _one_per_process = threading.Lock()
 
 
+class ExecutorSlots(Protocol):
+    """Gives each process sharing DBOS's database an executor ID no live process has."""
+
+    def claim(self) -> AbstractAsyncContextManager[str]:
+        """Return this process's executor ID, held until the context ends.
+
+        Returns:
+            A context manager that yields the ID; the lowest one free, so a restarted process
+            usually gets the ID its predecessor had and DBOS resumes that one's workflows.
+        """
+        ...
+
+    def orphaned(
+        self, executor_ids: Collection[str]
+    ) -> AbstractAsyncContextManager[Collection[str]]:
+        """Return those of the IDs no live process holds, held by this one while the context runs.
+
+        Args:
+            executor_ids: Executors that have pending workflows.
+
+        Returns:
+            A context manager that yields the IDs of dead executors.
+        """
+        ...
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DbosJobWorker:
     """Runs queued jobs through DBOS; ``RunJob`` is the workflow, so a job resumes after a crash.
@@ -59,8 +97,15 @@ class DbosJobWorker:
     run_job: RunJob
     recover_jobs: RecoverJobs
     submit_queued_jobs: SubmitQueuedJobs
-    database: Path
-    """DBOS's SQLite file (its workflows and their steps)."""
+    database: Path | None = None
+    """DBOS's SQLite file (its workflows and their steps), unless ``system_database_url`` is set."""
+    system_database_url: str | None = None
+    """A PostgreSQL database for DBOS's tables instead of the file: the app's own database."""
+    system_schema: str = "dbos"
+    """With ``system_database_url``: the schema DBOS keeps its tables in."""
+    executors: ExecutorSlots | None = None
+    """With ``system_database_url``: the executor IDs of the processes sharing the queue. Without,
+    the process is DBOS's one ``local`` executor."""
     queue: str
     workflow: str
     version: str
@@ -101,54 +146,144 @@ class DbosJobWorker:
             message = "a DBOS job worker is already running in this process"
             raise RuntimeError(message)
         try:
-            DBOS(
-                config=DBOSConfig(
-                    name="exactdocs",
-                    system_database_url=f"sqlite:///{self.database}",
-                    application_version=self.version,
-                    db_engine_kwargs=dict(self.engine_options),
-                    log_level="WARNING",
-                    notification_listener_polling_interval_sec=self.poll_interval,
-                    # DBOS makes its pool the loop's default executor (`asyncio.to_thread`); a
-                    # workflow holds one of its threads while it runs.
-                    max_executor_threads=_THREADS + self.concurrency,
-                )
-            )
-            try:
-
-                async def run(job_id: str) -> None:  # DBOS wraps functions, not bound methods
-                    await self._run(job_id)
-
-                async def tick(scheduled_at: datetime, context: object) -> None:
-                    del scheduled_at, context
-                    await self._tick()
-
-                DBOS.workflow(name=self.workflow)(run)
-                DBOS.workflow(name=SCHEDULE_WORKFLOW)(tick)
-                DBOS.launch()  # here, on the running loop: DBOS then runs workflows on it
-                await DBOS.register_queue_async(
-                    self.queue,
-                    worker_concurrency=self.concurrency,
-                    partition_concurrency=1,
-                    polling_interval_sec=self.poll_interval,
-                    on_conflict="always_update",
-                )
-                await self._recover()
-                await self._apply_schedule(tick)
-                resubmit = asyncio.create_task(self._resubmit(), context=contextvars.Context())
-                try:
+            async with AsyncExitStack() as stack:
+                executor_id = None
+                if self.executors is not None:
+                    executor_id = await stack.enter_async_context(self.executors.claim())
+                async with self._dbos(executor_id):
                     yield
-                finally:
-                    await self._cancel({resubmit})
-            finally:
-                await self._stop()
-                await self._cancel(self._forgetting)  # the next start deletes what they had left
-                await asyncio.to_thread(DBOS.destroy, destroy_registry=True)
-                await self._cancel(self._running | self._forgetting)
-                # DBOS shut its pool down; `asyncio.to_thread` needs one after the worker stops.
-                asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(_THREADS))
         finally:
             _one_per_process.release()
+
+    @asynccontextmanager
+    async def _dbos(self, executor_id: str | None) -> AsyncGenerator[None]:
+        """Configure and launch DBOS, recover, run, then stop and destroy it.
+
+        Args:
+            executor_id: This process's executor ID; ``None`` keeps DBOS's ``local``.
+
+        Yields:
+            Nothing, while jobs run.
+        """
+        DBOS(config=self._config(executor_id))
+        try:
+
+            async def run(job_id: str) -> None:
+                """Run one job: the workflow (DBOS wraps functions, not bound methods).
+
+                Args:
+                    job_id: The job's ID, also the workflow's.
+                """
+                await self._run(job_id)
+
+            async def tick(scheduled_at: datetime, context: object) -> None:
+                """Run one tick of the scheduled checks: the schedule's workflow.
+
+                Args:
+                    scheduled_at: When the tick was due (unused: the clock decides).
+                    context: DBOS's schedule context (unused).
+                """
+                del scheduled_at, context
+                await self._tick()
+
+            DBOS.workflow(name=self.workflow)(run)
+            DBOS.workflow(name=SCHEDULE_WORKFLOW)(tick)
+            DBOS.launch()  # here, on the running loop: DBOS then runs workflows on it
+            await DBOS.register_queue_async(
+                self.queue,
+                worker_concurrency=self.concurrency,
+                partition_concurrency=1,
+                polling_interval_sec=self.poll_interval,
+                on_conflict="always_update",
+            )
+            await self._adopt_orphans(executor_id)
+            await self._recover()
+            await self._apply_schedule(tick)
+            resubmit = asyncio.create_task(
+                self._resubmit(executor_id), context=contextvars.Context()
+            )
+            try:
+                yield
+            finally:
+                await self._cancel({resubmit})
+        finally:
+            await self._stop()
+            await self._cancel(self._forgetting)  # the next start deletes what they had left
+            await asyncio.to_thread(DBOS.destroy, destroy_registry=True)
+            await self._cancel(self._running | self._forgetting)
+            # DBOS shut its pool down; `asyncio.to_thread` needs one after the worker stops.
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(_THREADS))
+
+    def _config(self, executor_id: str | None) -> DBOSConfig:
+        """Return DBOS's configuration: its system database, executor and limits.
+
+        Args:
+            executor_id: This process's executor ID, or ``None``.
+
+        Returns:
+            The configuration.
+        """
+        config = DBOSConfig(
+            name="exactdocs",
+            system_database_url=self.system_database_url or f"sqlite:///{self.database}",
+            application_version=self.version,
+            db_engine_kwargs=dict(self.engine_options),
+            log_level="WARNING",
+            notification_listener_polling_interval_sec=self.poll_interval,
+            # DBOS makes its pool the loop's default executor (`asyncio.to_thread`); a
+            # workflow holds one of its threads while it runs.
+            max_executor_threads=_THREADS + self.concurrency,
+        )
+        if self.system_database_url is not None:
+            config["dbos_system_schema"] = self.system_schema
+        if executor_id is not None:
+            config["executor_id"] = executor_id
+        return config
+
+    async def _adopt_orphans(self, executor_id: str | None) -> None:
+        """Re-queue the pending workflows of executors no live process holds any more.
+
+        A process that died with running jobs leaves their workflows pending under its executor
+        ID. DBOS resumes them when a process starts under that ID; this covers the IDs no process
+        took again (fewer processes than before). Re-queuing a workflow is idempotent, and only
+        dead executors' are touched, so a live process's jobs never run twice.
+
+        Args:
+            executor_id: This process's executor ID; ``None`` (one process) adopts nothing.
+        """
+        if self.executors is None or executor_id is None:
+            return
+        pending = await self._pending()
+        others = {w.executor_id for w in pending if w.executor_id and w.executor_id != executor_id}
+        if not others:
+            return
+        async with self.executors.orphaned(others) as dead:
+            if not dead:
+                return
+            # Listed again under the dead executors' locks: no other process can adopt these now,
+            # so none of them has started anywhere else since.
+            stranded = [w.workflow_id for w in await self._pending(executor_ids=sorted(dead))]
+            if stranded:
+                log.warning("resuming %d job(s) of stopped executors", len(stranded))
+                await DBOS.resume_workflows_async(stranded, queue_name=self.queue)
+
+    async def _pending(self, *, executor_ids: list[str] | None = None) -> list[WorkflowStatus]:
+        """Return the pending job workflows of this version, of some executors or of all.
+
+        Args:
+            executor_ids: Only these executors' workflows; ``None`` for every executor's.
+
+        Returns:
+            Their statuses.
+        """
+        return await DBOS.list_workflows_async(
+            status="PENDING",
+            name=self.workflow,
+            app_version=self.version,
+            executor_id=executor_ids,
+            load_input=False,
+            load_output=False,
+        )
 
     async def _run(self, job_id: str) -> None:
         """Run the job (the workflow); a resumed workflow skips the steps it completed."""
@@ -254,17 +389,27 @@ class DbosJobWorker:
         await self._reclaim()
         await self.recover_jobs(resuming=live)
 
-    async def _resubmit(self) -> None:
-        """Hand the queued jobs to DBOS again now and then (queuing an ID twice is a no-op)."""
+    async def _resubmit(self, executor_id: str | None) -> None:
+        """Hand the queued jobs to DBOS again now and then (queuing an ID twice is a no-op).
+
+        Args:
+            executor_id: This process's executor ID: stopped executors' jobs are adopted too.
+        """
         while True:
             await asyncio.sleep(self.resubmit_interval)
             try:
+                await self._adopt_orphans(executor_id)
                 await self.submit_queued_jobs()
             except Exception:
                 log.exception("could not hand the queued jobs to DBOS again")
 
     async def _reclaim(self) -> None:
-        """Give the free pages of DBOS's file back (``VACUUM``) when no workflow is left in it."""
+        """Give the free pages of DBOS's file back (``VACUUM``) when no workflow is left in it.
+
+        PostgreSQL reclaims space itself (autovacuum): nothing to do there.
+        """
+        if self.database is None or self.system_database_url is not None:
+            return
         try:
             if await DBOS.list_workflows_async(load_input=False, load_output=False, limit=1):
                 return

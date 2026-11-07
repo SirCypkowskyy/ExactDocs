@@ -26,6 +26,8 @@ _Row = Callable[[int, list[str], str], dict[str, object]]
 
 def _rebuild(create: str, insert: str, row: _Row) -> None:
     """Recreate the full-text table (the chunk delete trigger stays) and refill it."""
+    if op.get_bind().dialect.name != "sqlite":
+        return  # FTS5 is SQLite's; PostgreSQL gets its own index in 0c4e8a2f6b19
     op.execute("DROP TABLE retrieval_search")
     op.execute(create)
     connection = op.get_bind()

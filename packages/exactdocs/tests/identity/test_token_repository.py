@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.adapters.driven.memory import InMemoryTokenRepository
@@ -29,13 +30,15 @@ def token(token_id: str, *, created: datetime = NOW, owner: AccountId = ADA) -> 
     )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def repository(request: pytest.FixtureRequest) -> AsyncIterator[TokenRepository]:
     if request.param == "memory":
         yield InMemoryTokenRepository()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
-    async with container.running():
+    async with container.running(jobs=False):
         ada = Account(
             id=ADA,
             username=Username("ada"),

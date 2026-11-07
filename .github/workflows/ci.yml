@@ -20,7 +20,23 @@ jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 20
+    timeout-minutes: 25
+    # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
+    # also has pg_search and pgvector. A service container on the runner VM's own Docker, on a
+    # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
+    # a role without CREATEDB for the scenario that needs one.
+    services:
+      postgres:
+        image: paradedb/paradedb:0.26.5-pg17@sha256:af82b608d85fccc315dcaa65fdeef63c94837906bb7984f378ab645c8d4e81b8
+        env:
+          POSTGRES_USER: exactdocs
+          POSTGRES_PASSWORD: exactdocs-ci
+          POSTGRES_DB: exactdocs
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U exactdocs -d exactdocs"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -34,9 +50,15 @@ jobs:
         run: uv run ruff check --output-format=github .
       - name: ty
         run: uv run ty check --output-format=github
-      - name: pytest (unit, integration, architecture)
+      - name: pytest (unit, integration, architecture; adapters on SQLite and PostgreSQL)
+        env:
+          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_POSTGRES: "1"
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
+        env:
+          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_POSTGRES: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
@@ -176,6 +198,28 @@ jobs:
           docker exec exactdocs-ci ssh -V
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
+      # #103: the README's PostgreSQL example as written (two server processes on ParadeDB), with
+      # this build's image and the fixture repository mounted; the smoke flow runs against it.
+      - name: PostgreSQL compose example (README) runs the smoke flow
+        env:
+          EXACTDOCS_IMAGE: exactdocs:ci
+          COMPOSE_PROJECT_NAME: exactdocs-ci-pg
+        run: |
+          export POSTGRES_PASSWORD=$(openssl rand -hex 16) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+          cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML
+          services:
+            exactdocs:
+              volumes: ["$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro"]
+          YAML
+          compose=(docker compose -f deploy/compose.postgres.yaml -f "$RUNNER_TEMP/compose.fixture.yaml")
+          trap '"${compose[@]}" logs; "${compose[@]}" down -v' EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 180
+          deploy/smoke.sh http://127.0.0.1:3000 file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
+          # Both server processes run DBOS, each under an executor slot of its own.
+          slots=$("${compose[@]}" exec -T db psql -U exactdocs -d exactdocs -Atc \
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1163412547 AND objsubid = 2")
+          test "$slots" = 2 || { echo "::error::expected 2 executor slots, got $slots"; exit 1; }
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then

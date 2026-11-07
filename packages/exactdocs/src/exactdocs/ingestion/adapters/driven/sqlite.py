@@ -20,9 +20,11 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, LEGACY_CODES, JobKind
 from exactdocs.ingestion.errors import (
@@ -83,8 +85,26 @@ jobs = Table(
         "version",
         unique=True,
         sqlite_where=text("state IN ('queued', 'running') AND kind IN ('import', 'refresh')"),
+        postgresql_where=text("state IN ('queued', 'running') AND kind IN ('import', 'refresh')"),
     ),
 )
+
+
+def _conflict_insert(
+    bind: AsyncConnection | AsyncEngine, table: Table
+) -> sqlite.Insert | postgresql.Insert:
+    """Return an ``INSERT`` that takes ``ON CONFLICT`` clauses, in the database's dialect.
+
+    Args:
+        bind: Where the statement runs (SQLite or PostgreSQL).
+        table: The table to insert into.
+
+    Returns:
+        The statement; both dialects spell ``on_conflict_do_update``/``_nothing`` alike.
+    """
+    if bind.dialect.name == "postgresql":
+        return postgres_insert(table)
+    return sqlite_insert(table)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -295,7 +315,9 @@ class SqliteCredentialVault:
     async def save(self, library: str, scope: str, credential: Credential) -> None:
         """Store the library's credential, replacing the one it had."""
         sealed = self.box.seal(dump_credential(library, scope, credential))
-        statement = sqlite_insert(credentials).values(library=library, sealed=sealed)
+        statement = _conflict_insert(self.engine, credentials).values(
+            library=library, sealed=sealed
+        )
         statement = statement.on_conflict_do_update(
             index_elements=[credentials.c.library], set_={"sealed": sealed}
         )
@@ -370,7 +392,9 @@ class SqliteAutoSyncStore:
             "last_error": auto_sync.last_error,
             "revision": auto_sync.revision,
         }
-        statement = sqlite_insert(auto_syncs).values(library=auto_sync.library, **values)
+        statement = _conflict_insert(self.engine, auto_syncs).values(
+            library=auto_sync.library, **values
+        )
         statement = statement.on_conflict_do_update(
             index_elements=[auto_syncs.c.library], set_=values
         )

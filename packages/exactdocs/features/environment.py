@@ -7,12 +7,14 @@ from contextlib import ExitStack
 from importlib import import_module
 from pathlib import Path
 
+from behave.model import Scenario
 from behave.runner import Context
 
 # The fixture builder is test support shared with pytest, not part of the package. behave has no
 # pythonpath option; import_module keeps ruff (E402) and ty from needing the path at lint time.
 sys.path.insert(0, str(Path(__file__).parents[1] / "tests" / "fixtures"))
 fixture_repo = import_module("fixture_repo")
+databases = import_module("databases")  # raises when CI requires PostgreSQL and has none
 
 
 def before_all(context: Context) -> None:
@@ -27,3 +29,11 @@ def before_all(context: Context) -> None:
 
 def after_all(context: Context) -> None:
     context.stack.close()
+
+
+def before_scenario(context: Context, scenario: Scenario) -> None:
+    # PostgreSQL scenarios need a server (EXACTDOCS_TEST_POSTGRES_URL); CI always has one and
+    # sets EXACTDOCS_REQUIRE_POSTGRES=1, so there they can never be skipped.
+    del context
+    if "postgres" in scenario.effective_tags and databases.ADMIN_URL is None:
+        scenario.skip("needs a PostgreSQL server: set EXACTDOCS_TEST_POSTGRES_URL")

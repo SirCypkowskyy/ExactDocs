@@ -12,6 +12,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import text
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
@@ -74,11 +75,13 @@ def test_a_key_file_that_others_could_read_is_restricted(tmp_path: Path) -> None
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def vault(request: pytest.FixtureRequest) -> AsyncIterator[CredentialVault]:
     if request.param == "memory":
         yield InMemoryCredentialVault()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     engine = open_database(Settings())
     await migrate(engine)
     yield SqliteCredentialVault(engine=engine, box=FernetSecretBox.from_secret(SECRET))
