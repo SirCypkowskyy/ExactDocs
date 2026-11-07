@@ -14,7 +14,9 @@ runs other production containers and a job with Docker access on the host could 
 ## Existing VMs
 
 `create-vms.sh` only provisions new VMs. When it gains a package, install it once on the running
-ones, e.g. for the compose plugin the PostgreSQL smoke step needs (#103):
+ones, e.g. for the compose plugin the PostgreSQL smoke step needs (#103). Until then that step
+warns and uses a pinned standalone compose binary in the job's temp directory (it never changes
+the host):
 
 ```bash
 for vm in exactdocs-runner-1 exactdocs-runner-2; do

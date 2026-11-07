@@ -233,18 +233,28 @@ jobs:
           EXACTDOCS_IMAGE: exactdocs:ci
           COMPOSE_PROJECT_NAME: exactdocs-ci-pg
         run: |
-          # The runner VMs declare their tools in deploy/runners/create-vms.sh; CI never installs any.
-          docker compose version >/dev/null 2>&1 || {
-            echo "::error::this runner lacks the docker compose plugin; re-provision it with deploy/runners/create-vms.sh (or apt-get install docker-compose-v2 on the VM, see deploy/runners/README.md)"
-            exit 1
-          }
+          # The runner VMs declare their tools in deploy/runners/create-vms.sh; CI changes nothing on
+          # the host. A VM provisioned before the compose plugin was added gets a standalone, pinned
+          # compose binary in this job's temp directory instead, with a warning.
+          compose=(docker compose)
+          if ! docker compose version >/dev/null 2>&1; then
+            echo "::warning::this runner lacks the docker compose plugin: install docker-compose-v2 on the VM (deploy/runners/README.md); using a pinned standalone compose for this job"
+            # docker/compose v2.32.4 (released 2025-01), linux-aarch64 (the runners are ARM64);
+            # sha256 from the release's docker-compose-linux-aarch64.sha256.
+            curl -fsSL -o "$RUNNER_TEMP/docker-compose" \
+              https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-aarch64
+            echo "0c4591cf3b1ed039adcd803dbbeddf757375fc08c11245b0154135f838495a2f  $RUNNER_TEMP/docker-compose" \
+              | sha256sum -c -
+            chmod +x "$RUNNER_TEMP/docker-compose"
+            compose=("$RUNNER_TEMP/docker-compose")
+          fi
           export POSTGRES_PASSWORD=$(openssl rand -hex 16) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
           cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML
           services:
             exactdocs:
               volumes: ["$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro"]
           YAML
-          compose=(docker compose -f deploy/compose.postgres.yaml -f "$RUNNER_TEMP/compose.fixture.yaml")
+          compose+=(-f deploy/compose.postgres.yaml -f "$RUNNER_TEMP/compose.fixture.yaml")
           trap '"${compose[@]}" logs; "${compose[@]}" down -v' EXIT
           "${compose[@]}" up -d --wait --wait-timeout 180
           deploy/smoke.sh http://127.0.0.1:3000 file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
