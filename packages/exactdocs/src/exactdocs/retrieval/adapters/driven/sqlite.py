@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -29,21 +30,36 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from exactdocs.retrieval.errors import ChunkSetMismatchError
+from exactdocs.retrieval.constants import STORED_PROFILE_FIELDS
+from exactdocs.retrieval.errors import (
+    ChunkSetMismatchError,
+    InvalidModelRefError,
+    InvalidProviderError,
+)
 from exactdocs.retrieval.models import (
+    AnthropicPlatform,
+    AzureAuth,
     Chunk,
     ChunkHeading,
     ChunkId,
     ChunkSet,
     ChunkSetKey,
     IndexedManifest,
+    KeySource,
+    LibraryAi,
     ManifestChunk,
+    ModelRef,
+    ProfileOrigin,
+    ProviderKind,
+    ProviderProfile,
     Removed,
     RetrievalMode,
     SectionRef,
     StoredChunk,
     VersionCounts,
 )
+
+logger = logging.getLogger(__name__)
 
 # Retrieval's tables, prefixed `retrieval_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it. There is no
@@ -121,6 +137,21 @@ library_settings = Table(
     # The library ID case-folded: IDs match in any letter case.
     Column("library", Text, primary_key=True),
     Column("mode", Text),  # RetrievalMode value; NULL: the instance's mode applies
+    # AI overrides (RET-06): off sends nothing of the library to any provider. `<profile>:<model>`.
+    Column("ai_enabled", Integer, nullable=False, server_default="1"),
+    Column("llm", Text),
+    Column("judge", Text),
+    Column("reranker", Text),
+)
+# Provider profiles managed over the REST API. The key is sealed by the secret box (its own HKDF
+# purpose); every other field is JSON in `settings`, as `ProviderProfile` names them.
+ai_providers = Table(
+    "retrieval_ai_providers",
+    metadata,
+    Column("name", Text, primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("settings", Text, nullable=False),
+    Column("sealed_key", Text),
 )
 
 
@@ -501,6 +532,21 @@ class SqliteLibraryModes:
     engine: AsyncEngine
     """The application database."""
 
+    async def _row(self, library: str) -> Row[Any] | None:
+        """Read the library's row.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            The row, or ``None``.
+        """
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                select(library_settings).where(library_settings.c.library == library.casefold())
+            )
+            return result.first()
+
     async def mode_of(self, library: str) -> RetrievalMode | None:
         """Read the stored mode; a value this build does not know counts as none.
 
@@ -510,13 +556,28 @@ class SqliteLibraryModes:
         Returns:
             Its mode, or ``None``.
         """
-        async with self.engine.connect() as connection:
-            stored = await connection.scalar(
-                select(library_settings.c.mode).where(
-                    library_settings.c.library == library.casefold()
-                )
-            )
+        row = await self._row(library)
+        stored = None if row is None else row.mode
         return RetrievalMode(stored) if stored in RetrievalMode else None
+
+    async def ai_of(self, library: str) -> LibraryAi:
+        """Read the stored overrides; one that no longer parses counts as unset.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its overrides, or the defaults.
+        """
+        row = await self._row(library)
+        if row is None:
+            return LibraryAi()
+        return LibraryAi(
+            enabled=bool(row.ai_enabled),
+            llm=_stored_ref(row.llm),
+            judge=_stored_ref(row.judge),
+            reranker=_stored_ref(row.reranker),
+        )
 
     async def forget(self, library: str) -> None:
         """Delete the library's row.
@@ -529,19 +590,166 @@ class SqliteLibraryModes:
                 delete(library_settings).where(library_settings.c.library == library.casefold())
             )
 
-    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
-        """Replace the library's row.
+    async def save(self, library: str, mode: RetrievalMode | None, ai: LibraryAi) -> None:
+        """Replace the library's row; the defaults delete it.
 
         Args:
             library: The library ID, any letter case.
-            mode: The mode; ``None`` deletes the row.
+            mode: The mode, or ``None``.
+            ai: The AI overrides.
         """
         key = library.casefold()
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
             await connection.execute(
                 delete(library_settings).where(library_settings.c.library == key)
             )
-            if mode is not None:
+            if mode is not None or not ai.is_default:
                 await connection.execute(
-                    insert(library_settings).values(library=key, mode=mode.value)
+                    insert(library_settings).values(
+                        library=key,
+                        mode=None if mode is None else mode.value,
+                        ai_enabled=int(ai.enabled),
+                        llm=_ref_text(ai.llm),
+                        judge=_ref_text(ai.judge),
+                        reranker=_ref_text(ai.reranker),
+                    )
                 )
+
+
+def _stored_ref(text: str | None) -> ModelRef | None:
+    """Read a stored ``<profile>:<model>``; one that no longer parses is dropped.
+
+    Args:
+        text: The stored text.
+
+    Returns:
+        The reference, or ``None``.
+    """
+    if text is None:
+        return None
+    try:
+        return ModelRef.parse(text)
+    except InvalidModelRefError:
+        return None
+
+
+def _ref_text(ref: ModelRef | None) -> str | None:
+    """Write a reference as stored.
+
+    Args:
+        ref: The reference.
+
+    Returns:
+        Its text, or ``None``.
+    """
+    return None if ref is None else str(ref)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteProviderProfiles:
+    """Implements ``ports.driven.ProviderProfiles`` in ``retrieval_ai_providers``.
+
+    A stored profile that no longer validates (a later release tightened a rule) is skipped and
+    logged by name; fix it over the REST API.
+    """
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def all(self) -> Sequence[ProviderProfile]:
+        """List the stored profiles.
+
+        Returns:
+            Them, by name.
+        """
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(select(ai_providers).order_by(ai_providers.c.name))
+            ).all()
+        return [p for row in rows if (p := _profile(row)) is not None]
+
+    async def get(self, name: str) -> ProviderProfile | None:
+        """Read one profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            The profile, or ``None``.
+        """
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(select(ai_providers).where(ai_providers.c.name == name))
+            ).first()
+        return None if row is None else _profile(row)
+
+    async def save(self, profile: ProviderProfile) -> None:
+        """Create or replace a profile.
+
+        Args:
+            profile: The profile.
+        """
+        values = {
+            "kind": profile.kind.value,
+            "settings": json.dumps(
+                {
+                    **{name: getattr(profile, name) for name in STORED_PROFILE_FIELDS},
+                    "headers": [list(pair) for pair in profile.headers],
+                },
+                sort_keys=True,
+            ),
+            "sealed_key": profile.sealed_key,
+        }
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(ai_providers).where(ai_providers.c.name == profile.name)
+            )
+            await connection.execute(insert(ai_providers).values(name=profile.name, **values))
+
+    async def delete(self, name: str) -> bool:
+        """Delete a profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            Whether there was one.
+        """
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            result = await connection.execute(
+                delete(ai_providers).where(ai_providers.c.name == name)
+            )
+        return result.rowcount > 0
+
+
+def _profile(row: Row[Any]) -> ProviderProfile | None:
+    """Rebuild a stored profile.
+
+    Args:
+        row: Its row.
+
+    Returns:
+        The profile, or ``None`` (logged) when it no longer validates.
+    """
+    settings = json.loads(row.settings)
+    try:
+        return ProviderProfile(
+            name=row.name,
+            kind=ProviderKind(row.kind),
+            origin=ProfileOrigin.API,
+            key=KeySource.NONE if row.sealed_key is None else KeySource.SEALED,
+            sealed_key=row.sealed_key,
+            headers=tuple((str(k), str(v)) for k, v in settings.pop("headers", [])),
+            **{
+                name: settings[name]
+                for name in STORED_PROFILE_FIELDS
+                if name in settings and name not in {"platform", "auth"}
+            },
+            platform=AnthropicPlatform(p) if (p := settings.get("platform")) else None,
+            auth=AzureAuth(a) if (a := settings.get("auth")) else None,
+        )
+    except InvalidProviderError, ValueError, TypeError:
+        logger.warning(
+            "stored AI provider %r is no longer valid; fix it over the REST API", row.name
+        )
+        return None

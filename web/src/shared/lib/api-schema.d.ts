@@ -455,13 +455,114 @@ export interface paths {
         readonly get: operations["retrieval-get_library_retrieval"];
         /**
          * Set Library Retrieval
-         * @description Set the mode the library's searches use when a call names none (RET-06).
+         * @description Set the library's retrieval mode and AI overrides (RET-06), replacing what it had.
          *
          *     A call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to
          *     libraries without one. A mode set here that later cannot run (a model role was removed)
-         *     does not fail searches: they fall back with `fallback_reason` `mode_unavailable`.
+         *     does not fail searches: they fall back with `fallback_reason` `mode_unavailable`. With
+         *     `ai_enabled` false, nothing of the library is sent to any AI provider. Admins only.
          */
         readonly put: operations["retrieval-set_library_retrieval"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/ai/providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Providers
+         * @description List every AI provider profile: configured ones (read-only), then stored ones.
+         *
+         *     Keys and header values are never shown; `key` says where a key comes from.
+         */
+        readonly get: operations["ai-list_providers"];
+        readonly put?: never;
+        /**
+         * Create Provider
+         * @description Create an AI provider profile; its key is sealed and never returned.
+         */
+        readonly post: operations["ai-create_provider"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/ai/providers/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Provider
+         * @description Read one AI provider profile.
+         */
+        readonly get: operations["ai-get_provider"];
+        /**
+         * Save Provider
+         * @description Create or replace an AI provider profile; the change counts at the next call.
+         *
+         *     A profile from the environment or the configuration file is read-only (409). Without
+         *     `api_key` the stored key is kept, unless the endpoint changed (then send it again).
+         */
+        readonly put: operations["ai-save_provider"];
+        readonly post?: never;
+        /**
+         * Delete Provider
+         * @description Delete a stored AI provider profile that no instance role uses.
+         */
+        readonly delete: operations["ai-delete_provider"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/ai/providers/{name}/check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Check Provider
+         * @description Make one minimal call per role that uses the profile (or to the model named).
+         *
+         *     Reports each call's latency, the model that answered and an embedding's dimensions.
+         *     A failed call is a check with `status` `error`, not a failed request.
+         */
+        readonly post: operations["ai-check_provider"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/ai/roles": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Roles
+         * @description Show the instance's model roles (set in the environment or the configuration file).
+         */
+        readonly get: operations["ai-list_roles"];
+        readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -928,6 +1029,12 @@ export interface components {
             readonly job_id: string;
         };
         /**
+         * AnthropicPlatform
+         * @description Where an ``anthropic`` profile reaches Claude.
+         * @enum {string}
+         */
+        readonly AnthropicPlatform: "api" | "vertex" | "foundry" | "bedrock";
+        /**
          * Article
          * @description One article with its Markdown, verbatim as imported.
          */
@@ -1153,6 +1260,12 @@ export interface components {
              */
             readonly last_error: string | null;
         };
+        /**
+         * AzureAuth
+         * @description How an Azure profile (Azure OpenAI, Claude on Foundry) signs its calls.
+         * @enum {string}
+         */
+        readonly AzureAuth: "key" | "entra";
         /**
          * C7ContextResponse
          * @description context7's ``/v2/context`` JSON response, plus the untrusted-content notice.
@@ -1661,6 +1774,12 @@ export interface components {
             readonly finished_at: string | null;
         };
         /**
+         * KeySource
+         * @description Where a profile's key comes from. The key itself never enters retrieval's models.
+         * @enum {string}
+         */
+        readonly KeySource: "none" | "sealed" | "file" | "environment";
+        /**
          * LatestJob
          * @description The newest job of one version of a library, light enough to list for every library.
          */
@@ -1808,10 +1927,32 @@ export interface components {
         readonly LibraryRetrievalIn: {
             /**
              * Mode
-             * @description `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now (422
-             *     `mode_unavailable` names the missing model role otherwise). Null: the instance's mode.
+             * @description `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the settings below
+             *     (422 `mode_unavailable` names the missing model role otherwise). Null: the instance's mode.
              */
             readonly mode?: string | null;
+            /**
+             * Ai Enabled
+             * @description False: nothing of the library is ever sent to an AI provider; its searches are BM25.
+             * @default true
+             */
+            readonly ai_enabled: boolean;
+            /**
+             * Llm
+             * @description The library's own LLM, `<profile>:<model>`; null: the instance's `llm` role.
+             */
+            readonly llm?: string | null;
+            /**
+             * Judge
+             * @description The library's own judge, `<profile>:<model>`; null: the instance's (else the LLM).
+             */
+            readonly judge?: string | null;
+            /**
+             * Reranker
+             * @description The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model
+             *     is instance-wide only and cannot be set here.
+             */
+            readonly reranker?: string | null;
         };
         /**
          * LibraryRetrievalOut
@@ -1841,9 +1982,30 @@ export interface components {
             readonly available_modes: readonly components["schemas"]["RetrievalMode"][];
             /**
              * Configured Roles
-             * @description The model roles configured on this instance (`embedding`, `reranker`, `llm`).
+             * @description The model roles this library's searches may use now (none with AI off).
              */
             readonly configured_roles: readonly components["schemas"]["ModelRole"][];
+            /**
+             * Ai Enabled
+             * @description False: nothing of the library is sent to an AI provider; its searches are BM25.
+             * @default true
+             */
+            readonly ai_enabled: boolean;
+            /**
+             * Llm
+             * @description The library's own LLM (`<profile>:<model>`); null: the instance's.
+             */
+            readonly llm: string | null;
+            /**
+             * Judge
+             * @description The library's own judge (`<profile>:<model>`); null: the instance's, else the LLM.
+             */
+            readonly judge: string | null;
+            /**
+             * Reranker
+             * @description The library's own reranker (`<profile>:<model>`); null: the instance's.
+             */
+            readonly reranker: string | null;
         };
         /**
          * LibrarySearchResultOut
@@ -2040,14 +2202,165 @@ export interface components {
             readonly tags: readonly string[];
         };
         /**
+         * ModelCheckOut
+         * @description One minimal call to a model: whether it answered, how fast, and what.
+         */
+        readonly ModelCheckOut: {
+            /** @description The role checked; null for a model named by hand. */
+            readonly role: components["schemas"]["ModelRole"] | null;
+            /**
+             * Profile
+             * @description The profile called.
+             */
+            readonly profile: string;
+            /**
+             * Model
+             * @description The model asked for.
+             */
+            readonly model: string;
+            /**
+             * Status
+             * @description `ok` when the call answered as expected.
+             * @enum {string}
+             */
+            readonly status: "ok" | "error";
+            /**
+             * Latency Ms
+             * @description How long the call took, in milliseconds.
+             */
+            readonly latency_ms: number;
+            /**
+             * Served Model
+             * @description The model the provider says answered.
+             */
+            readonly served_model: string | null;
+            /**
+             * Dimensions
+             * @description An embedding model's vector size.
+             */
+            readonly dimensions: number | null;
+            /**
+             * Error
+             * @description Why the call failed; never holds a key.
+             */
+            readonly error: string | null;
+        };
+        /**
+         * ModelChecksOut
+         * @description The checks of a profile, or of every role (`exactdocs ai check`).
+         */
+        readonly ModelChecksOut: {
+            /**
+             * Checks
+             * @description One per role (or the model named).
+             */
+            readonly checks: readonly components["schemas"]["ModelCheckOut"][];
+        };
+        /**
          * ModelRole
          * @description A model an operator can configure; which ones are set decides the modes on offer.
          *
-         *     The decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),
-         *     is not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank.
+         *     No mode needs ``judge`` to run; the LLM judge (#96) uses it to rerank. It defaults to the
+         *     ``llm`` role.
          * @enum {string}
          */
-        readonly ModelRole: "embedding" | "reranker" | "llm";
+        readonly ModelRole: "embedding" | "reranker" | "llm" | "judge";
+        /**
+         * NewProviderIn
+         * @description A new AI provider profile.
+         */
+        readonly NewProviderIn: {
+            /**
+             * Kind
+             * @description `openai-compatible`, `openai`, `openrouter`, `anthropic`, `azure`, `google-vertex`,
+             *     `google`, `ollama`, `vllm`, `litellm`, `local`, or one of pydantic-ai's OpenAI-API providers
+             *     (`deepseek`, `together`, `fireworks`, `cerebras`, `github`, `vercel`, `moonshotai`, `heroku`,
+             *     `nebius`, `ovhcloud`, `sambanova`, `alibaba`).
+             */
+            readonly kind: string;
+            /**
+             * Base Url
+             * @description The endpoint; required for `openai-compatible`, `ollama`, `vllm`, `litellm` and `azure`.
+             */
+            readonly base_url?: string | null;
+            /**
+             * Api Key
+             * @description Sealed with the instance's secret key and never returned (422 `secret_key_required`
+             *     without one). Omitted: the stored key is kept while the endpoint stays the same.
+             */
+            readonly api_key?: string | null;
+            /**
+             * Keep Key
+             * @description When `api_key` is omitted: keep the stored key (false removes it).
+             * @default true
+             */
+            readonly keep_key: boolean;
+            /**
+             * Headers
+             * @description Extra headers of every call (never returned or logged). No credentials: `Authorization`,
+             *     `Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`.
+             */
+            readonly headers?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Proxy
+             * @description An HTTP(S) proxy for this profile only.
+             */
+            readonly proxy?: string | null;
+            /**
+             * Request Timeout
+             * @description Overall timeout of one call, in seconds.
+             * @default 60
+             */
+            readonly request_timeout: number;
+            /**
+             * Max Retries
+             * @description Retries of one call.
+             * @default 2
+             */
+            readonly max_retries: number;
+            /**
+             * Api Version
+             * @description Azure OpenAI's API version.
+             */
+            readonly api_version?: string | null;
+            /**
+             * Project
+             * @description Google Cloud project (`google-vertex`, `anthropic` on `vertex`).
+             */
+            readonly project?: string | null;
+            /**
+             * Location
+             * @description Google Cloud location, or the AWS region of Claude on Bedrock.
+             */
+            readonly location?: string | null;
+            /**
+             * Credentials File
+             * @description Refused here (422 `invalid_provider`): the server's own cloud identity is configured in
+             *     the environment or the configuration file only.
+             */
+            readonly credentials_file?: string | null;
+            /**
+             * Credentials
+             * @description Refused here, as `credentials_file`: configuration only.
+             */
+            readonly credentials?: "adc" | null;
+            /** @description `anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock`. */
+            readonly platform?: components["schemas"]["AnthropicPlatform"] | null;
+            /** @description `key` (the default); `entra` (Entra ID) is refused here: configuration only. */
+            readonly auth?: components["schemas"]["AzureAuth"] | null;
+            /**
+             * Resource
+             * @description Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`.
+             */
+            readonly resource?: string | null;
+            /**
+             * Name
+             * @description Used in roles as `<name>:<model>`: lower case, digits, `_` and `-`.
+             */
+            readonly name: string;
+        };
         /**
          * OutlineSectionOut
          * @description One heading of the outline, with the chunk it starts and the headings under it.
@@ -2131,6 +2444,228 @@ export interface components {
          * @enum {string}
          */
         readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7";
+        /**
+         * ProfileOrigin
+         * @description Who manages a profile.
+         * @enum {string}
+         */
+        readonly ProfileOrigin: "configuration" | "api";
+        /**
+         * ProviderCheckIn
+         * @description What to check: a role and a model, or (empty) the roles that use the profile.
+         */
+        readonly ProviderCheckIn: {
+            /** @description How to call `model`: `llm`/`judge` (a chat turn), `embedding` or `reranker`. */
+            readonly role?: components["schemas"]["ModelRole"] | null;
+            /**
+             * Model
+             * @description The model to check (needs `role`).
+             */
+            readonly model?: string | null;
+        };
+        /**
+         * ProviderIn
+         * @description An AI provider profile managed over the REST API. Its key is write-only.
+         */
+        readonly ProviderIn: {
+            /**
+             * Kind
+             * @description `openai-compatible`, `openai`, `openrouter`, `anthropic`, `azure`, `google-vertex`,
+             *     `google`, `ollama`, `vllm`, `litellm`, `local`, or one of pydantic-ai's OpenAI-API providers
+             *     (`deepseek`, `together`, `fireworks`, `cerebras`, `github`, `vercel`, `moonshotai`, `heroku`,
+             *     `nebius`, `ovhcloud`, `sambanova`, `alibaba`).
+             */
+            readonly kind: string;
+            /**
+             * Base Url
+             * @description The endpoint; required for `openai-compatible`, `ollama`, `vllm`, `litellm` and `azure`.
+             */
+            readonly base_url?: string | null;
+            /**
+             * Api Key
+             * @description Sealed with the instance's secret key and never returned (422 `secret_key_required`
+             *     without one). Omitted: the stored key is kept while the endpoint stays the same.
+             */
+            readonly api_key?: string | null;
+            /**
+             * Keep Key
+             * @description When `api_key` is omitted: keep the stored key (false removes it).
+             * @default true
+             */
+            readonly keep_key: boolean;
+            /**
+             * Headers
+             * @description Extra headers of every call (never returned or logged). No credentials: `Authorization`,
+             *     `Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`.
+             */
+            readonly headers?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Proxy
+             * @description An HTTP(S) proxy for this profile only.
+             */
+            readonly proxy?: string | null;
+            /**
+             * Request Timeout
+             * @description Overall timeout of one call, in seconds.
+             * @default 60
+             */
+            readonly request_timeout: number;
+            /**
+             * Max Retries
+             * @description Retries of one call.
+             * @default 2
+             */
+            readonly max_retries: number;
+            /**
+             * Api Version
+             * @description Azure OpenAI's API version.
+             */
+            readonly api_version?: string | null;
+            /**
+             * Project
+             * @description Google Cloud project (`google-vertex`, `anthropic` on `vertex`).
+             */
+            readonly project?: string | null;
+            /**
+             * Location
+             * @description Google Cloud location, or the AWS region of Claude on Bedrock.
+             */
+            readonly location?: string | null;
+            /**
+             * Credentials File
+             * @description Refused here (422 `invalid_provider`): the server's own cloud identity is configured in
+             *     the environment or the configuration file only.
+             */
+            readonly credentials_file?: string | null;
+            /**
+             * Credentials
+             * @description Refused here, as `credentials_file`: configuration only.
+             */
+            readonly credentials?: "adc" | null;
+            /** @description `anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock`. */
+            readonly platform?: components["schemas"]["AnthropicPlatform"] | null;
+            /** @description `key` (the default); `entra` (Entra ID) is refused here: configuration only. */
+            readonly auth?: components["schemas"]["AzureAuth"] | null;
+            /**
+             * Resource
+             * @description Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`.
+             */
+            readonly resource?: string | null;
+        };
+        /**
+         * ProviderKind
+         * @description What a provider profile talks to; each maps to one pydantic-ai provider and model class.
+         *
+         *     See the table in docs/decisions/ai-retrieval.md (*Provider abstraction*). Kinds whose SDK is
+         *     not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached as
+         *     ``openai-compatible`` or through ``litellm``.
+         * @enum {string}
+         */
+        readonly ProviderKind: "openai-compatible" | "openai" | "openrouter" | "anthropic" | "azure" | "google-vertex" | "google" | "ollama" | "vllm" | "litellm" | "deepseek" | "together" | "fireworks" | "cerebras" | "github" | "vercel" | "moonshotai" | "heroku" | "nebius" | "ovhcloud" | "sambanova" | "alibaba" | "local";
+        /**
+         * ProviderListOut
+         * @description Every provider profile: the configured ones first, then those stored over the API.
+         */
+        readonly ProviderListOut: {
+            /**
+             * Providers
+             * @description The profiles.
+             */
+            readonly providers: readonly components["schemas"]["ProviderOut"][];
+        };
+        /**
+         * ProviderOut
+         * @description A provider profile as the REST API shows it: never its key or its header values.
+         */
+        readonly ProviderOut: {
+            /**
+             * Name
+             * @description Used in roles as `<name>:<model>`.
+             */
+            readonly name: string;
+            /** @description What it talks to. */
+            readonly kind: components["schemas"]["ProviderKind"];
+            /** @description `configuration` (the environment or the TOML file: read-only here) or `api`. */
+            readonly origin: components["schemas"]["ProfileOrigin"];
+            /**
+             * Read Only
+             * @description Changed only where it is configured.
+             */
+            readonly read_only: boolean;
+            /**
+             * Base Url
+             * @description The endpoint; null: the platform's own.
+             */
+            readonly base_url: string | null;
+            /** @description Where its key comes from (`none`, `sealed`, `file`, `environment`); never the key. */
+            readonly key: components["schemas"]["KeySource"];
+            /**
+             * Header Names
+             * @description The extra headers it sends; their values are never shown.
+             */
+            readonly header_names: readonly string[];
+            /**
+             * Proxy
+             * @description Its proxy, any password masked.
+             */
+            readonly proxy: string | null;
+            /**
+             * Request Timeout
+             * @description Overall timeout of one call, in seconds.
+             */
+            readonly request_timeout: number;
+            /**
+             * Max Retries
+             * @description Retries of one call.
+             */
+            readonly max_retries: number;
+            /**
+             * Api Version
+             * @description Azure OpenAI's API version.
+             */
+            readonly api_version: string | null;
+            /**
+             * Project
+             * @description Google Cloud project.
+             */
+            readonly project: string | null;
+            /**
+             * Location
+             * @description Google Cloud location or AWS region.
+             */
+            readonly location: string | null;
+            /**
+             * Credentials File
+             * @description Google service-account file.
+             */
+            readonly credentials_file: string | null;
+            /**
+             * Credentials
+             * @description `adc` when Application Default Credentials are used.
+             */
+            readonly credentials: "adc" | null;
+            /** @description Where an `anthropic` profile reaches Claude. */
+            readonly platform: components["schemas"]["AnthropicPlatform"] | null;
+            /** @description How an Azure profile signs its calls. */
+            readonly auth: components["schemas"]["AzureAuth"] | null;
+            /**
+             * Resource
+             * @description Azure AI Foundry resource.
+             */
+            readonly resource: string | null;
+            /**
+             * Roles
+             * @description The instance roles set to one of its models.
+             */
+            readonly roles: readonly components["schemas"]["ModelRole"][];
+            /**
+             * Unsupported
+             * @description Why this installation cannot call it (an extra or an SDK to install); null when it can.
+             */
+            readonly unsupported: string | null;
+        };
         /**
          * RefOut
          * @description A tag or branch and the commit it points at.
@@ -2334,6 +2869,43 @@ export interface components {
          * @enum {string}
          */
         readonly RetrievalMode: "bm25" | "hybrid" | "hybrid_hyde" | "agentic";
+        /**
+         * RoleListOut
+         * @description The instance's roles (set in the environment or the TOML file).
+         */
+        readonly RoleListOut: {
+            /**
+             * Roles
+             * @description One per role.
+             */
+            readonly roles: readonly components["schemas"]["RoleOut"][];
+        };
+        /**
+         * RoleOut
+         * @description One instance role and the model it uses.
+         */
+        readonly RoleOut: {
+            /** @description `embedding`, `reranker`, `llm` or `judge`. */
+            readonly role: components["schemas"]["ModelRole"];
+            /**
+             * Model
+             * @description `<profile>:<model>`; null when the role is not set.
+             */
+            readonly model: string | null;
+            /** @description `instance`, or `llm` for a judge that defaults to the LLM; null when not set. */
+            readonly source: components["schemas"]["RoleSource"] | null;
+            /**
+             * Profile Exists
+             * @description False when the role names a profile that does not exist (the role is then not usable).
+             */
+            readonly profile_exists: boolean;
+        };
+        /**
+         * RoleSource
+         * @description Where a role's model came from.
+         * @enum {string}
+         */
+        readonly RoleSource: "instance" | "library" | "llm";
         /**
          * SearchAllResult
          * @description Results across libraries, best first, with the libraries that answer and their counts.
@@ -5277,6 +5849,542 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LibraryRetrievalOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-list_providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProviderListOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-create_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["NewProviderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProviderOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-get_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProviderOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-save_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProviderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProviderOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-delete_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-check_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProviderCheckIn"] | null;
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ModelChecksOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-list_roles": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoleListOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

@@ -70,7 +70,7 @@ def test_the_token_appears_only_when_given(client: str) -> None:
 def test_the_command_defaults_to_a_placeholder(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "config.json"))
     monkeypatch.setenv("EXACTDOCS_TOKEN", SECRET)
     run(["config", "--client", "claude", "--url", "https://docs.example.com"])
     out = capsys.readouterr().out
@@ -82,7 +82,7 @@ def test_the_command_defaults_to_a_placeholder(
 def test_show_token_prints_the_resolved_token(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "config.json"))
     monkeypatch.setenv("EXACTDOCS_TOKEN", SECRET)
     run(["config", "--client", "cursor", "--url", "https://docs.example.com", "--show-token"])
     assert f"Bearer {SECRET}" in capsys.readouterr().out
@@ -91,7 +91,7 @@ def test_show_token_prints_the_resolved_token(
 def test_stdio_needs_no_server_and_refuses_show_token(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "config.json"))
     monkeypatch.delenv("EXACTDOCS_URL", raising=False)
     run(["config", "--client", "vscode", "--stdio"])
     assert "--stdio" in capsys.readouterr().out
@@ -104,7 +104,7 @@ def test_stdio_needs_no_server_and_refuses_show_token(
 def test_http_without_a_server_says_how_to_configure_one(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "config.json"))
     monkeypatch.delenv("EXACTDOCS_URL", raising=False)
     with pytest.raises(ClientError, match="exactdocs login"):
         resolve_url()
@@ -138,7 +138,7 @@ async def test_every_tool_the_skill_names_exists() -> None:
 def test_show_token_warns_on_stderr_and_never_prints_the_placeholder(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "config.json"))
     monkeypatch.setenv("EXACTDOCS_TOKEN", SECRET)
     run(
         [
@@ -182,7 +182,7 @@ def test_conflicting_flags_are_refused(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "config.json"))
     with pytest.raises(SystemExit) as exit_info:
         run(["config", "--client", "claude", "--url", "https://docs.example.com", *flags])
     assert exit_info.value.code == EXIT_USAGE

@@ -741,12 +741,48 @@ room for its 9 MB.)
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
-*Next: AI retrieval* milestone. Built (#89): **mode selection**. Each mode is a `RetrievalPipeline`
+*Next: AI retrieval* milestone. Built: **mode selection** (#89) and **provider profiles** (#241).
+
+**Profiles and roles (#241).** Retrieval's models hold a `ProviderProfile` (a named endpoint with a
+`kind`, validated per kind, never a plaintext key: a stored key is sealed, a file is named, an
+environment key stays in bootstrap), `InstanceRoles` and a library's `LibraryAi` overrides
+(AI on or off, its own `llm`/`judge`/`reranker`; never the embedding), and `bind_role` resolves
+which `<profile>:<model>` a role uses for a library (the library's, else the instance's; the judge
+else the LLM). `AiProviders` (in `use_cases`) puts the configured profiles (read-only, injected by
+bootstrap from `EXACTDOCS_AI__...` and the `EXACTDOCS_CONFIG_FILE` TOML) in front of the
+`ProviderProfiles` port (`retrieval_ai_providers`, managed over REST) and implements `ModelRoles`
+(`ProfileModelRoles`): a role counts when it resolves to an existing profile, and a library with
+AI off has none. Keys sent over REST go through retrieval's `SecretBox` port, which bootstrap
+fills with the Fernet box under its own HKDF purpose (`AI_KEYS_PURPOSE`). The `ModelFactory` port
+(`unsupported`, `chat_model`, `embedder`, `reranker`, `check`) is implemented in bootstrap by
+`ai_models.PydanticAiModels`, which imports no SDK itself: the first call loads `ai_sdk.py`
+(pydantic-ai, the OpenAI, Anthropic and Google SDKs, azure-identity) and builds every client with
+explicit values, after removing `OPENAI_CUSTOM_HEADERS` / `ANTHROPIC_CUSTOM_HEADERS` from the
+process (the SDKs merge them over the key, in the constructor, so `copy()` cannot undo them).
+Each profile has one `httpx2` client, built under a per-profile lock (proxy on the transport,
+`trust_env=False`, extra headers, no transport retries so the SDK's are the one layer, an overall
+timeout, and a request hook that refuses any scheme, host or port but the profile's endpoint,
+drops `OpenAI-Organization` / `OpenAI-Project` filled from the environment and, for Claude on
+Foundry with Entra ID, signs each request with a fresh token), rebuilt when the profile changes
+and closed when it is deleted (`ModelFactory.release`). An Entra ID token provider is built once
+per profile (a chain of client secret or certificate, workload identity and managed identity; the
+profile's proxy goes to the first two only). Profiles signed with the server's own cloud identity
+(ADC, a service-account file, Entra ID, Claude on Bedrock) come from configuration only and take
+no `base_url`: `ProviderProfile` refuses both, so their endpoint is always derived. `resource`,
+`location` and `project` are single DNS labels, and `ai_sdk._official_url` builds a derived
+endpoint with `httpx2.URL(scheme=..., host=...)` and refuses a host that is not the provider's
+exact endpoint form (`AZURE_OPENAI_HOST`, `FOUNDRY_HOST`, `BEDROCK_HOST`, `VERTEX_HOST`). `AiProviders.
+model_for(role, library)` is the path every AI pipeline takes, so a profile edited over REST counts
+at the next call. `exactdocs ai check` and `POST /api/v1/ai/providers/{name}/check` make one minimal
+call per role. The socket-guard test (`tests/bootstrap/test_ai_no_outbound.py`) runs with the SDKs'
+variables pointing at a trap.
+
+**Mode selection (#89).** Each mode is a `RetrievalPipeline`
 driven port (`run(PipelineRequest) -> PipelineAnswer`: one exact version in, hits and the mode that
 really answered out, with a `fallback_reason` when a cheaper one did). `RetrievalModule.build`
 registers `Bm25Pipeline` and any further pipelines it is given; `RetrievalModes` (in `use_cases`)
-asks the `ModelRoles` port which roles the searched library may use (none until #241; per library,
-so #102's "AI off" can leave a library with none), builds a `ModeRegistry` (a mode can run when it
+asks the `ModelRoles` port which roles the searched library may use (per library: one with AI off
+has none), builds a `ModeRegistry` (a mode can run when it
 has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
 port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best.
 Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the

@@ -3769,7 +3769,7 @@
           "retrieval"
         ],
         "summary": "Set Library Retrieval",
-        "description": "Set the mode the library's searches use when a call names none (RET-06).\n\nA call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to\nlibraries without one. A mode set here that later cannot run (a model role was removed)\ndoes not fail searches: they fall back with `fallback_reason` `mode_unavailable`.",
+        "description": "Set the library's retrieval mode and AI overrides (RET-06), replacing what it had.\n\nA call's `mode` still wins; the instance's mode (`EXACTDOCS_AI__MODE`) applies to\nlibraries without one. A mode set here that later cannot run (a model role was removed)\ndoes not fail searches: they fall back with `fallback_reason` `mode_unavailable`. With\n`ai_enabled` false, nothing of the library is sent to any AI provider. Admins only.",
         "operationId": "retrieval-set_library_retrieval",
         "security": [
           {
@@ -3881,6 +3881,708 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/ai/providers": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "List Providers",
+        "description": "List every AI provider profile: configured ones (read-only), then stored ones.\n\nKeys and header values are never shown; `key` says where a key comes from.",
+        "operationId": "ai-list_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderListOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Create Provider",
+        "description": "Create an AI provider profile; its key is sealed and never returned.",
+        "operationId": "ai-create_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewProviderIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/ai/providers/{name}": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Get Provider",
+        "description": "Read one AI provider profile.",
+        "operationId": "ai-get_provider",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Save Provider",
+        "description": "Create or replace an AI provider profile; the change counts at the next call.\n\nA profile from the environment or the configuration file is read-only (409). Without\n`api_key` the stored key is kept, unless the endpoint changed (then send it again).",
+        "operationId": "ai-save_provider",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Delete Provider",
+        "description": "Delete a stored AI provider profile that no instance role uses.",
+        "operationId": "ai-delete_provider",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/providers/{name}/check": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Check Provider",
+        "description": "Make one minimal call per role that uses the profile (or to the model named).\n\nReports each call's latency, the model that answered and an embedding's dimensions.\nA failed call is a check with `status` `error`, not a failed request.",
+        "operationId": "ai-check_provider",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ProviderCheckIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelChecksOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/roles": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "List Roles",
+        "description": "Show the instance's model roles (set in the environment or the configuration file).",
+        "operationId": "ai-list_roles",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleListOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
       }
     },
     "/api/v1/libraries/{owner}/{repo}/settings": {
@@ -5902,6 +6604,17 @@
         "title": "AddedVersion",
         "description": "The existing library, the commit the new version's ref was pinned to, and its import."
       },
+      "AnthropicPlatform": {
+        "type": "string",
+        "enum": [
+          "api",
+          "vertex",
+          "foundry",
+          "bedrock"
+        ],
+        "title": "AnthropicPlatform",
+        "description": "Where an ``anthropic`` profile reaches Claude."
+      },
       "Article": {
         "properties": {
           "notice": {
@@ -6331,6 +7044,15 @@
         ],
         "title": "AutoSyncOut",
         "description": "A library's scheduled check, and how the last one went."
+      },
+      "AzureAuth": {
+        "type": "string",
+        "enum": [
+          "key",
+          "entra"
+        ],
+        "title": "AzureAuth",
+        "description": "How an Azure profile (Azure OpenAI, Claude on Foundry) signs its calls."
       },
       "C7ContextResponse": {
         "properties": {
@@ -7373,6 +8095,17 @@
         "title": "JobSummary",
         "description": "A job and how far it got. ``total`` is 0 until the job knows its size."
       },
+      "KeySource": {
+        "type": "string",
+        "enum": [
+          "none",
+          "sealed",
+          "file",
+          "environment"
+        ],
+        "title": "KeySource",
+        "description": "Where a profile's key comes from. The key itself never enters retrieval's models."
+      },
       "LatestJob": {
         "properties": {
           "id": {
@@ -7721,7 +8454,52 @@
               }
             ],
             "title": "Mode",
-            "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now (422\n`mode_unavailable` names the missing model role otherwise). Null: the instance's mode."
+            "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the settings below\n(422 `mode_unavailable` names the missing model role otherwise). Null: the instance's mode."
+          },
+          "ai_enabled": {
+            "type": "boolean",
+            "title": "Ai Enabled",
+            "description": "False: nothing of the library is ever sent to an AI provider; its searches are BM25.",
+            "default": true
+          },
+          "llm": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 264
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm",
+            "description": "The library's own LLM, `<profile>:<model>`; null: the instance's `llm` role."
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 264
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge",
+            "description": "The library's own judge, `<profile>:<model>`; null: the instance's (else the LLM)."
+          },
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 264
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model\nis instance-wide only and cannot be set here."
           }
         },
         "additionalProperties": false,
@@ -7787,7 +8565,49 @@
             },
             "type": "array",
             "title": "Configured Roles",
-            "description": "The model roles configured on this instance (`embedding`, `reranker`, `llm`)."
+            "description": "The model roles this library's searches may use now (none with AI off)."
+          },
+          "ai_enabled": {
+            "type": "boolean",
+            "title": "Ai Enabled",
+            "description": "False: nothing of the library is sent to an AI provider; its searches are BM25.",
+            "default": true
+          },
+          "llm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm",
+            "description": "The library's own LLM (`<profile>:<model>`); null: the instance's."
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge",
+            "description": "The library's own judge (`<profile>:<model>`); null: the instance's, else the LLM."
+          },
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "The library's own reranker (`<profile>:<model>`); null: the instance's."
           }
         },
         "additionalProperties": false,
@@ -7799,7 +8619,11 @@
           "effective_mode",
           "fallback_reason",
           "available_modes",
-          "configured_roles"
+          "configured_roles",
+          "ai_enabled",
+          "llm",
+          "judge",
+          "reranker"
         ],
         "title": "LibraryRetrievalOut",
         "description": "A library's retrieval setting and the mode its searches use now when a call names none."
@@ -8226,15 +9050,315 @@
         "title": "ManualTagsIn",
         "description": "The tags to set by hand on an article path; they replace its earlier manual tags."
       },
+      "ModelCheckOut": {
+        "properties": {
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelRole"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The role checked; null for a model named by hand."
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile",
+            "description": "The profile called."
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "The model asked for."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "description": "`ok` when the call answered as expected."
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms",
+            "description": "How long the call took, in milliseconds."
+          },
+          "served_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Served Model",
+            "description": "The model the provider says answered."
+          },
+          "dimensions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimensions",
+            "description": "An embedding model's vector size."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Why the call failed; never holds a key."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role",
+          "profile",
+          "model",
+          "status",
+          "latency_ms",
+          "served_model",
+          "dimensions",
+          "error"
+        ],
+        "title": "ModelCheckOut",
+        "description": "One minimal call to a model: whether it answered, how fast, and what."
+      },
+      "ModelChecksOut": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCheckOut"
+            },
+            "type": "array",
+            "title": "Checks",
+            "description": "One per role (or the model named)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "checks"
+        ],
+        "title": "ModelChecksOut",
+        "description": "The checks of a profile, or of every role (`exactdocs ai check`)."
+      },
       "ModelRole": {
         "type": "string",
         "enum": [
           "embedding",
           "reranker",
-          "llm"
+          "llm",
+          "judge"
         ],
         "title": "ModelRole",
-        "description": "A model an operator can configure; which ones are set decides the modes on offer.\n\nThe decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),\nis not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank."
+        "description": "A model an operator can configure; which ones are set decides the modes on offer.\n\nNo mode needs ``judge`` to run; the LLM judge (#96) uses it to rerank. It defaults to the\n``llm`` role."
+      },
+      "NewProviderIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Kind",
+            "description": "`openai-compatible`, `openai`, `openrouter`, `anthropic`, `azure`, `google-vertex`,\n`google`, `ollama`, `vllm`, `litellm`, `local`, or one of pydantic-ai's OpenAI-API providers\n(`deepseek`, `together`, `fireworks`, `cerebras`, `github`, `vercel`, `moonshotai`, `heroku`,\n`nebius`, `ovhcloud`, `sambanova`, `alibaba`)."
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url",
+            "description": "The endpoint; required for `openai-compatible`, `ollama`, `vllm`, `litellm` and `azure`."
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16384,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "Sealed with the instance's secret key and never returned (422 `secret_key_required`\nwithout one). Omitted: the stored key is kept while the endpoint stays the same."
+          },
+          "keep_key": {
+            "type": "boolean",
+            "title": "Keep Key",
+            "description": "When `api_key` is omitted: keep the stored key (false removes it).",
+            "default": true
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers",
+            "description": "Extra headers of every call (never returned or logged). No credentials: `Authorization`,\n`Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`."
+          },
+          "proxy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy",
+            "description": "An HTTP(S) proxy for this profile only."
+          },
+          "request_timeout": {
+            "type": "number",
+            "title": "Request Timeout",
+            "description": "Overall timeout of one call, in seconds.",
+            "default": 60.0
+          },
+          "max_retries": {
+            "type": "integer",
+            "title": "Max Retries",
+            "description": "Retries of one call.",
+            "default": 2
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version",
+            "description": "Azure OpenAI's API version."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project",
+            "description": "Google Cloud project (`google-vertex`, `anthropic` on `vertex`)."
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location",
+            "description": "Google Cloud location, or the AWS region of Claude on Bedrock."
+          },
+          "credentials_file": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials File",
+            "description": "Refused here (422 `invalid_provider`): the server's own cloud identity is configured in\nthe environment or the configuration file only."
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "adc"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials",
+            "description": "Refused here, as `credentials_file`: configuration only."
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnthropicPlatform"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock`."
+          },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AzureAuth"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`key` (the default); `entra` (Entra ID) is refused here: configuration only."
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource",
+            "description": "Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+            "title": "Name",
+            "description": "Used in roles as `<name>:<model>`: lower case, digits, `_` and `-`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "name"
+        ],
+        "title": "NewProviderIn",
+        "description": "A new AI provider profile."
       },
       "OutlineSectionOut": {
         "properties": {
@@ -8413,6 +9537,489 @@
         ],
         "title": "ProblemCode",
         "description": "Why a file shows up in a job's problems; stable, clients may branch on it."
+      },
+      "ProfileOrigin": {
+        "type": "string",
+        "enum": [
+          "configuration",
+          "api"
+        ],
+        "title": "ProfileOrigin",
+        "description": "Who manages a profile."
+      },
+      "ProviderCheckIn": {
+        "properties": {
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelRole"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How to call `model`: `llm`/`judge` (a chat turn), `embedding` or `reranker`."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "The model to check (needs `role`)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProviderCheckIn",
+        "description": "What to check: a role and a model, or (empty) the roles that use the profile."
+      },
+      "ProviderIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Kind",
+            "description": "`openai-compatible`, `openai`, `openrouter`, `anthropic`, `azure`, `google-vertex`,\n`google`, `ollama`, `vllm`, `litellm`, `local`, or one of pydantic-ai's OpenAI-API providers\n(`deepseek`, `together`, `fireworks`, `cerebras`, `github`, `vercel`, `moonshotai`, `heroku`,\n`nebius`, `ovhcloud`, `sambanova`, `alibaba`)."
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url",
+            "description": "The endpoint; required for `openai-compatible`, `ollama`, `vllm`, `litellm` and `azure`."
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16384,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "Sealed with the instance's secret key and never returned (422 `secret_key_required`\nwithout one). Omitted: the stored key is kept while the endpoint stays the same."
+          },
+          "keep_key": {
+            "type": "boolean",
+            "title": "Keep Key",
+            "description": "When `api_key` is omitted: keep the stored key (false removes it).",
+            "default": true
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers",
+            "description": "Extra headers of every call (never returned or logged). No credentials: `Authorization`,\n`Cookie`, `*-key`, `*-token` and the like are refused; the key goes in `api_key`."
+          },
+          "proxy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy",
+            "description": "An HTTP(S) proxy for this profile only."
+          },
+          "request_timeout": {
+            "type": "number",
+            "title": "Request Timeout",
+            "description": "Overall timeout of one call, in seconds.",
+            "default": 60.0
+          },
+          "max_retries": {
+            "type": "integer",
+            "title": "Max Retries",
+            "description": "Retries of one call.",
+            "default": 2
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version",
+            "description": "Azure OpenAI's API version."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project",
+            "description": "Google Cloud project (`google-vertex`, `anthropic` on `vertex`)."
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location",
+            "description": "Google Cloud location, or the AWS region of Claude on Bedrock."
+          },
+          "credentials_file": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials File",
+            "description": "Refused here (422 `invalid_provider`): the server's own cloud identity is configured in\nthe environment or the configuration file only."
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "adc"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials",
+            "description": "Refused here, as `credentials_file`: configuration only."
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnthropicPlatform"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock`."
+          },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AzureAuth"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`key` (the default); `entra` (Entra ID) is refused here: configuration only."
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource",
+            "description": "Azure OpenAI or Claude on Azure AI Foundry: the resource name, instead of `base_url`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "ProviderIn",
+        "description": "An AI provider profile managed over the REST API. Its key is write-only."
+      },
+      "ProviderKind": {
+        "type": "string",
+        "enum": [
+          "openai-compatible",
+          "openai",
+          "openrouter",
+          "anthropic",
+          "azure",
+          "google-vertex",
+          "google",
+          "ollama",
+          "vllm",
+          "litellm",
+          "deepseek",
+          "together",
+          "fireworks",
+          "cerebras",
+          "github",
+          "vercel",
+          "moonshotai",
+          "heroku",
+          "nebius",
+          "ovhcloud",
+          "sambanova",
+          "alibaba",
+          "local"
+        ],
+        "title": "ProviderKind",
+        "description": "What a provider profile talks to; each maps to one pydantic-ai provider and model class.\n\nSee the table in docs/decisions/ai-retrieval.md (*Provider abstraction*). Kinds whose SDK is\nnot in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached as\n``openai-compatible`` or through ``litellm``."
+      },
+      "ProviderListOut": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderOut"
+            },
+            "type": "array",
+            "title": "Providers",
+            "description": "The profiles."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "title": "ProviderListOut",
+        "description": "Every provider profile: the configured ones first, then those stored over the API."
+      },
+      "ProviderOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Used in roles as `<name>:<model>`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProviderKind",
+            "description": "What it talks to."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ProfileOrigin",
+            "description": "`configuration` (the environment or the TOML file: read-only here) or `api`."
+          },
+          "read_only": {
+            "type": "boolean",
+            "title": "Read Only",
+            "description": "Changed only where it is configured."
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url",
+            "description": "The endpoint; null: the platform's own."
+          },
+          "key": {
+            "$ref": "#/components/schemas/KeySource",
+            "description": "Where its key comes from (`none`, `sealed`, `file`, `environment`); never the key."
+          },
+          "header_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Header Names",
+            "description": "The extra headers it sends; their values are never shown."
+          },
+          "proxy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy",
+            "description": "Its proxy, any password masked."
+          },
+          "request_timeout": {
+            "type": "number",
+            "title": "Request Timeout",
+            "description": "Overall timeout of one call, in seconds."
+          },
+          "max_retries": {
+            "type": "integer",
+            "title": "Max Retries",
+            "description": "Retries of one call."
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version",
+            "description": "Azure OpenAI's API version."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project",
+            "description": "Google Cloud project."
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location",
+            "description": "Google Cloud location or AWS region."
+          },
+          "credentials_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials File",
+            "description": "Google service-account file."
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "adc"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials",
+            "description": "`adc` when Application Default Credentials are used."
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnthropicPlatform"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where an `anthropic` profile reaches Claude."
+          },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AzureAuth"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How an Azure profile signs its calls."
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource",
+            "description": "Azure AI Foundry resource."
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRole"
+            },
+            "type": "array",
+            "title": "Roles",
+            "description": "The instance roles set to one of its models."
+          },
+          "unsupported": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unsupported",
+            "description": "Why this installation cannot call it (an extra or an SDK to install); null when it can."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "origin",
+          "read_only",
+          "base_url",
+          "key",
+          "header_names",
+          "proxy",
+          "request_timeout",
+          "max_retries",
+          "api_version",
+          "project",
+          "location",
+          "credentials_file",
+          "credentials",
+          "platform",
+          "auth",
+          "resource",
+          "roles",
+          "unsupported"
+        ],
+        "title": "ProviderOut",
+        "description": "A provider profile as the REST API shows it: never its key or its header values."
       },
       "RefOut": {
         "properties": {
@@ -8814,6 +10421,81 @@
         ],
         "title": "RetrievalMode",
         "description": "How a search found its results. One result shape serves every mode."
+      },
+      "RoleListOut": {
+        "properties": {
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/RoleOut"
+            },
+            "type": "array",
+            "title": "Roles",
+            "description": "One per role."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "roles"
+        ],
+        "title": "RoleListOut",
+        "description": "The instance's roles (set in the environment or the TOML file)."
+      },
+      "RoleOut": {
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/ModelRole",
+            "description": "`embedding`, `reranker`, `llm` or `judge`."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "`<profile>:<model>`; null when the role is not set."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoleSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`instance`, or `llm` for a judge that defaults to the LLM; null when not set."
+          },
+          "profile_exists": {
+            "type": "boolean",
+            "title": "Profile Exists",
+            "description": "False when the role names a profile that does not exist (the role is then not usable)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role",
+          "model",
+          "source",
+          "profile_exists"
+        ],
+        "title": "RoleOut",
+        "description": "One instance role and the model it uses."
+      },
+      "RoleSource": {
+        "type": "string",
+        "enum": [
+          "instance",
+          "library",
+          "llm"
+        ],
+        "title": "RoleSource",
+        "description": "Where a role's model came from."
       },
       "SearchAllResult": {
         "properties": {

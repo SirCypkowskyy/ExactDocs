@@ -9,6 +9,7 @@ from typing import Self
 from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from exactdocs.bootstrap.ai_models import ConfiguredAi, PydanticAiModels, configured_ai
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogArticleSuggestions,
@@ -31,6 +32,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalCollector,
 )
 from exactdocs.bootstrap.constants import (
+    AI_KEYS_PURPOSE,
     CREDENTIALS_KEY_PURPOSE,
     JOBS_FILE,
     KEY_FILE,
@@ -87,20 +89,91 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
-from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, SqliteLibraryModes
+from exactdocs.retrieval.adapters.driven.sqlite import (
+    SqliteChunkRepository,
+    SqliteLibraryModes,
+    SqliteProviderProfiles,
+)
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.models import RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
-from exactdocs_kernel import SystemClock
+from exactdocs_kernel import DomainError, SystemClock
 
 logger = logging.getLogger(__name__)
+
+
+def _ai_configuration(settings: Settings) -> ConfiguredAi:
+    """Read the AI profiles and roles of the environment and the TOML file, refusing bad ones.
+
+    Args:
+        settings: The runtime configuration.
+
+    Returns:
+        The configuration.
+
+    Raises:
+        StartupError: A profile or a role is invalid, or this installation cannot call a profile
+            (the ``[ai]`` extra is missing, ...).
+    """
+    try:
+        configured = configured_ai(settings.ai)
+    except DomainError as error:  # fixed texts and names: never a key
+        raise StartupError(str(error)) from None
+    probe = PydanticAiModels()
+    for profile in configured.profiles:
+        if (reason := probe.unsupported(profile)) is not None:
+            message = f"AI provider {profile.name!r}: {reason}"
+            raise StartupError(message)
+    return configured
+
+
+def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
+    """Build the secret box of one purpose from ``EXACTDOCS_SECRET_KEY`` or the key file.
+
+    Args:
+        settings: The runtime configuration.
+        purpose: The HKDF context of this use.
+
+    Returns:
+        The box; the key file is generated when there is none.
+
+    Raises:
+        StartupError: The key or the key file is unusable.
+    """
+    try:
+        if settings.secret_key:
+            previous = settings.secret_key_previous
+            return FernetSecretBox.from_secrets(
+                settings.secret_key.get_secret_value(),
+                *([previous.get_secret_value()] if previous else []),
+                purpose=purpose,
+            )
+        return FernetSecretBox.from_file(settings.data_dir / KEY_FILE, purpose=purpose)
+    except ValueError as error:  # fixed texts: they never repeat a key
+        raise StartupError(str(error)) from None
+
+
+def _existing_secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox | None:
+    """Build the secret box only when a key exists (read-only processes never create one).
+
+    Args:
+        settings: The runtime configuration.
+        purpose: The HKDF context of this use.
+
+    Returns:
+        The box, or ``None`` without ``EXACTDOCS_SECRET_KEY`` and without a key file.
+    """
+    if settings.secret_key or (settings.data_dir / KEY_FILE).is_file():
+        return _secret_box(settings, purpose)
+    return None
 
 
 def _build_read_side(
     engine: AsyncEngine,
     settings: Settings,
     *,
+    ai_box: FernetSecretBox | None,
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
@@ -110,13 +183,16 @@ def _build_read_side(
     Args:
         engine: The database.
         settings: The runtime configuration.
-        model_roles: The configured model roles (tests; none until #241 reads them).
+        ai_box: Seals and opens the provider keys stored over the REST API; ``None``: none can be
+            stored or opened.
+        model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
 
     Returns:
-        The two modules.
+        The two modules (``StartupError`` when the AI configuration is invalid).
     """
+    ai = _ai_configuration(settings)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -148,6 +224,11 @@ def _build_read_side(
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
         library_modes=SqliteLibraryModes(engine=engine),
         roles=model_roles,
+        configured_profiles=ai.profiles,
+        stored_profiles=SqliteProviderProfiles(engine=engine),
+        instance_roles=ai.roles,
+        models=PydanticAiModels(keys=ai.keys, box=ai_box),
+        secret_box=ai_box,
         instance_mode=settings.ai.mode,
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
@@ -174,7 +255,9 @@ class ReadOnlyContainer:
     def build(cls, settings: Settings) -> Self:
         """Open the database read-only; ``StartupError`` when it does not exist."""
         engine = open_database(settings, read_only=True)
-        catalog, retrieval = _build_read_side(engine, settings)
+        # Opens the provider keys stored over the REST API when a key exists; never creates one.
+        ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
+        catalog, retrieval = _build_read_side(engine, settings, ai_box=ai_box)
         return cls(engine=engine, catalog=catalog, retrieval=retrieval)
 
     @asynccontextmanager
@@ -232,9 +315,10 @@ class Container:
         ``remote``, ``gateway`` and ``renames`` replace the system ``git`` for listing refs, for
         fetching and for detecting renames (tests; a given ``gateway`` detects none unless
         ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
-        ``model_roles`` and ``pipelines`` stand in for configured models and the AI retrieval
-        modes (tests, until #241 configures them); ``vector_extension`` finds sqlite-vec's
-        extension (tests: one that cannot load). A missing
+        ``model_roles`` stands in for the role resolution over the configured AI profiles and
+        ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
+        extension (tests: one that cannot load). An invalid AI configuration (or one this
+        installation cannot call) is a ``StartupError``. A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
         """
@@ -253,28 +337,13 @@ class Container:
             renames = renames or (git if gateway is None else None)
             gateway = gateway or git
             tree = tree or git
-        try:
-            secret_box = (
-                FernetSecretBox.from_secrets(
-                    settings.secret_key.get_secret_value(),
-                    *(
-                        [settings.secret_key_previous.get_secret_value()]
-                        if settings.secret_key_previous
-                        else []
-                    ),
-                    purpose=CREDENTIALS_KEY_PURPOSE,
-                )
-                if settings.secret_key
-                else FernetSecretBox.from_file(
-                    settings.data_dir / KEY_FILE, purpose=CREDENTIALS_KEY_PURPOSE
-                )
-            )
-        except ValueError as error:  # fixed texts: they never repeat a key
-            raise StartupError(str(error)) from None
-        vault = SqliteCredentialVault(engine=engine, box=secret_box)
+        vault = SqliteCredentialVault(
+            engine=engine, box=_secret_box(settings, CREDENTIALS_KEY_PURPOSE)
+        )
         catalog, retrieval = _build_read_side(
             engine,
             settings,
+            ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
             model_roles=model_roles,
             pipelines=pipelines,
             vector_extension=vector_extension,

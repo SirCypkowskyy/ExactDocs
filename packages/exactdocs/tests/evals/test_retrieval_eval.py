@@ -13,6 +13,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
 from exactdocs.retrieval.models import (
     ChunkId,
+    LibraryAi,
     ModelRole,
     PipelineAnswer,
     PipelineRequest,
@@ -385,8 +386,8 @@ async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_res
 
 @dataclass(frozen=True)
 class AllRoles:
-    async def configured(self, library: str) -> frozenset[ModelRole]:
-        del library
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
+        del library, ai
         return frozenset(ModelRole)
 
 
@@ -454,8 +455,8 @@ async def test_a_local_tier_mode_on_a_hosted_model_is_skipped_without_permission
 
 @dataclass(frozen=True)
 class EmbeddingOnly:
-    async def configured(self, library: str) -> frozenset[ModelRole]:
-        del library
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
+        del library, ai
         return frozenset({ModelRole.EMBEDDING})
 
 

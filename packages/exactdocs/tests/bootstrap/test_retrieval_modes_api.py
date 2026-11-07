@@ -97,6 +97,10 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "fallback_reason": None,
         "available_modes": ["bm25"],
         "configured_roles": [],
+        "ai_enabled": True,
+        "llm": None,
+        "judge": None,
+        "reranker": None,
     }
 
 

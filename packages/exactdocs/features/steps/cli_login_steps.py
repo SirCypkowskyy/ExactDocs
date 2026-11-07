@@ -56,7 +56,7 @@ def step_served(context: Context) -> None:
 def _login(
     context: Context, *args: str, stdin: str = "", extra_env: dict[str, str] | None = None
 ) -> None:
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file), **(extra_env or {})}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file), **(extra_env or {})}
     output, errors = io.StringIO(), io.StringIO()
     context.exit_message = None
     with (
@@ -99,7 +99,7 @@ def step_login_token_env(context: Context) -> None:
 
 @when('the user runs "exactdocs logout"')
 def step_logout(context: Context) -> None:
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}
     output = io.StringIO()
     with patch.dict(os.environ, env), redirect_stdout(output):
         cli.app(["logout"], exit_on_error=False, result_action="return_value")
@@ -157,7 +157,7 @@ def step_login_url(context: Context, url: str) -> None:
 
 
 def _stored(context: Context) -> ClientConfig:
-    with patch.dict(os.environ, {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}):
+    with patch.dict(os.environ, {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}):
         return ClientConfig.resolve()
 
 

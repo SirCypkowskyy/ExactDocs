@@ -21,7 +21,7 @@ HORSE = "correct horse battery staple"
 
 @given('the user is logged in with "exactdocs login"')
 def step_logged_in(context: Context) -> None:
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}
     args = ["login", context.server_url, "--username", "ada", "--password-stdin"]
     with (
         patch.dict(os.environ, env),
@@ -35,7 +35,7 @@ def step_logged_in(context: Context) -> None:
 @when('the user runs "exactdocs config {options}"')
 def step_config(context: Context, options: str) -> None:
     output = io.StringIO()
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}
     with patch.dict(os.environ, env), redirect_stdout(output):
         cli.app(["config", *options.split()], exit_on_error=False, result_action="return_value")
     context.output = output.getvalue()
@@ -44,7 +44,7 @@ def step_config(context: Context, options: str) -> None:
 @when('the user runs "exactdocs config {options}" with the admin\'s password')
 def step_config_password(context: Context, options: str) -> None:
     output, errors = io.StringIO(), io.StringIO()
-    env = {"EXACTDOCS_CONFIG_FILE": str(context.config_file)}
+    env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}
     with (
         patch.dict(os.environ, env),
         patch("sys.stdin", io.StringIO(HORSE + "\n")),

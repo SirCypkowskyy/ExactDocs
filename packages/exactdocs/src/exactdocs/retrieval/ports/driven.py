@@ -16,12 +16,15 @@ from exactdocs.retrieval.models import (
     EmbeddingSpaceId,
     EmbeddingSpec,
     IndexedManifest,
+    LibraryAi,
     ManifestChunk,
     ManifestHit,
     ManifestStatus,
+    ModelCheck,
     ModelRole,
     PipelineAnswer,
     PipelineRequest,
+    ProviderProfile,
     RebuiltIndex,
     Removed,
     RetrievalMode,
@@ -305,21 +308,19 @@ class SearchTracer(Protocol):
 class ModelRoles(Protocol):
     """Which model roles a library's searches may use: the availability view of role resolution.
 
-    In the decision record's terms (docs/decisions/ai-retrieval.md, *Where the code lives*),
-    retrieval resolves the profile and model of each role from ``ProviderProfiles`` (instance
-    roles from the environment, the TOML file or the UI, #241) plus the library's overrides
-    (AI on or off, its own ``llm``/``judge``/``reranker``, #102); ``ModelFactory`` then turns a
-    resolved profile into something callable. This port only says which roles resolve for a
-    library, so #241 implements it inside retrieval over ``ProviderProfiles``, not as a second
-    source of truth in bootstrap. A library with AI off has no role at all: nothing of it is
-    sent to a provider. Asked at every search, so a change counts at the next one.
+    Retrieval implements it itself (``ProfileModelRoles``) over the instance's roles, the
+    ``ProviderProfiles`` and the library's overrides (docs/decisions/ai-retrieval.md, *Where the
+    code lives*); tests may give their own. A library with AI off has no role at all: nothing of
+    it is sent to a provider. Asked at every search, so a change counts at the next one.
     """
 
-    async def configured(self, library: str) -> frozenset[ModelRole]:
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
         """Say which roles a search of ``library`` may use.
 
         Args:
             library: The library ID, any letter case.
+            ai: The library's overrides as they are about to be stored (a setting being
+                checked); ``None`` reads the stored ones.
 
         Returns:
             The roles; empty when nothing is configured or the library has AI off (BM25 only).
@@ -328,7 +329,7 @@ class ModelRoles(Protocol):
 
 
 class LibraryModes(Protocol):
-    """Each library's own retrieval mode, which a search uses when the call names none.
+    """Each library's own retrieval settings: its mode and its AI overrides (RET-06).
 
     Library IDs match in any letter case.
     """
@@ -344,6 +345,17 @@ class LibraryModes(Protocol):
         """
         ...
 
+    async def ai_of(self, library: str) -> LibraryAi:
+        """Read the library's AI overrides.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its overrides; the defaults (AI on, nothing overridden) when it has none.
+        """
+        ...
+
     async def forget(self, library: str) -> None:
         """Drop everything stored for a library that was removed (a no-op when nothing is).
 
@@ -352,12 +364,165 @@ class LibraryModes(Protocol):
         """
         ...
 
-    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
-        """Store the library's mode.
+    async def save(self, library: str, mode: RetrievalMode | None, ai: LibraryAi) -> None:
+        """Store the library's settings, replacing what it had.
 
         Args:
             library: The library ID as the catalog spells it.
-            mode: The mode; ``None`` removes it.
+            mode: The mode; ``None`` for the instance's.
+            ai: The AI overrides; the defaults with no mode remove the library's row.
+        """
+        ...
+
+
+class ProviderProfiles(Protocol):
+    """The provider profiles stored over the REST API (the environment's are given read-only).
+
+    Names are lower case. A sealed key is stored as sealed; this port never sees a plaintext key.
+    """
+
+    async def all(self) -> Sequence[ProviderProfile]:
+        """List every stored profile.
+
+        Returns:
+            The profiles, by name.
+        """
+        ...
+
+    async def get(self, name: str) -> ProviderProfile | None:
+        """Read one profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            The profile, or ``None``.
+        """
+        ...
+
+    async def save(self, profile: ProviderProfile) -> None:
+        """Create or replace a profile.
+
+        Args:
+            profile: The profile (``origin`` ``api``).
+        """
+        ...
+
+    async def delete(self, name: str) -> bool:
+        """Delete a profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            Whether there was one.
+        """
+        ...
+
+
+class SecretBox(Protocol):
+    """Seals provider keys before they are stored (bootstrap's Fernet box, its own HKDF purpose).
+
+    Nothing here logs or raises with a key or a sealed text.
+    """
+
+    def seal(self, plaintext: str) -> str:
+        """Encrypt and authenticate a key.
+
+        Args:
+            plaintext: The key.
+
+        Returns:
+            The sealed text, safe to store.
+        """
+        ...
+
+    def open(self, sealed: str) -> str:
+        """Decrypt a sealed key.
+
+        Args:
+            sealed: What ``seal`` returned.
+
+        Returns:
+            The key.
+        """
+        ...
+
+
+class ModelFactory(Protocol):
+    """Turns a resolved profile and model into something that can be called.
+
+    Bootstrap implements it with pydantic-ai and httpx2, importing the SDKs only when called.
+    It always passes explicit endpoints, keys and projects, never an SDK's environment
+    variables. The handles are opaque here: only AI adapters narrow them to pydantic-ai types.
+    A profile changed over the REST API counts at the next call.
+    """
+
+    def unsupported(self, profile: ProviderProfile) -> str | None:
+        """Say why this installation cannot call the profile, if it cannot (imports nothing).
+
+        Args:
+            profile: The profile.
+
+        Returns:
+            A fixed text naming what to install, or ``None`` when it can be called.
+        """
+        ...
+
+    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+        """Build a chat model (``llm`` and ``judge`` roles).
+
+        Args:
+            profile: The profile.
+            model: The model name.
+
+        Returns:
+            An opaque handle (a pydantic-ai model).
+        """
+        ...
+
+    async def embedder(self, profile: ProviderProfile, model: str) -> object:
+        """Build an embedder (``embedding`` role).
+
+        Args:
+            profile: The profile.
+            model: The model name.
+
+        Returns:
+            An opaque handle (a pydantic-ai ``Embedder``).
+        """
+        ...
+
+    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+        """Build a reranker (``reranker`` role).
+
+        Args:
+            profile: The profile.
+            model: The model name.
+
+        Returns:
+            An opaque handle.
+        """
+        ...
+
+    async def release(self, name: str) -> None:
+        """Let go of what was built for a profile that was deleted (its HTTP client).
+
+        Args:
+            name: The profile's name.
+        """
+        ...
+
+    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+        """Make one minimal call to the model as ``role`` uses it and time it.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+            role: Which kind of call: a chat turn, an embedding or a rerank.
+
+        Returns:
+            The outcome; a failed call is ``ok=False`` with an error text holding no key.
         """
         ...
 

@@ -3,6 +3,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from typing import NoReturn
 
 from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
@@ -22,6 +23,7 @@ from exactdocs.retrieval.constants import (
 from exactdocs.retrieval.dtos import (
     ArticleOutlineOut,
     ArticleOutlineQuery,
+    CheckProviderCommand,
     ChunkHeadingOut,
     ChunkOut,
     ChunkSetsOut,
@@ -39,7 +41,12 @@ from exactdocs.retrieval.dtos import (
     LibraryMatchOut,
     LibraryRetrievalOut,
     LibrarySearchResultOut,
+    ModelCheckOut,
+    ModelChecksOut,
     OpenEmbeddingSpaceCommand,
+    ProviderListOut,
+    ProviderNameQuery,
+    ProviderOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -50,6 +57,9 @@ from exactdocs.retrieval.dtos import (
     ResolveLibraryIdResult,
     RetagArticlesCommand,
     RetaggedChunks,
+    RoleListOut,
+    RoleOut,
+    SaveProviderCommand,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
@@ -62,9 +72,17 @@ from exactdocs.retrieval.dtos import (
 from exactdocs.retrieval.errors import (
     ArticleNotFoundError,
     ChunkNotFoundError,
+    InvalidProviderError,
     MovedSection,
+    NothingToCheckError,
+    ProviderExistsError,
+    ProviderInUseError,
+    ProviderReadOnlyError,
+    ProviderUnsupportedError,
+    SecretKeyRequiredError,
     StaleChunkError,
     UnknownLibraryError,
+    UnknownProviderError,
     VectorStoreUnavailableError,
     VersionNotIndexedError,
 )
@@ -79,15 +97,24 @@ from exactdocs.retrieval.models import (
     DocTarget,
     EmbeddingSpec,
     IndexedManifest,
+    InstanceRoles,
+    KeySource,
+    LibraryAi,
     ManifestChunk,
     ManifestStatus,
     ModeChoice,
+    ModelCheck,
+    ModelRef,
     ModelRole,
     ModeRegistry,
     NameMatch,
     PipelineAnswer,
     PipelineRequest,
+    ProfileOrigin,
+    ProviderKind,
+    ProviderProfile,
     RetrievalMode,
+    RoleBinding,
     SearchableVersion,
     SearchText,
     SectionRef,
@@ -95,6 +122,7 @@ from exactdocs.retrieval.models import (
     TagFilter,
     TagMatch,
     article_chunk_rows,
+    bind_role,
     language_first,
     name_match,
     outline,
@@ -107,7 +135,9 @@ from exactdocs.retrieval.ports.driven import (
     DefaultVersions,
     Libraries,
     LibraryModes,
+    ModelFactory,
     ModelRoles,
+    ProviderProfiles,
     RenamedPaths,
     RetrievalPipeline,
     SearchableVersions,
@@ -115,6 +145,7 @@ from exactdocs.retrieval.ports.driven import (
     SearchIndexMaintenance,
     SearchSpan,
     SearchTracer,
+    SecretBox,
     VectorIndex,
 )
 from exactdocs_kernel import NOTICE, Clock
@@ -188,16 +219,17 @@ class UntracedSearches:
 class NoModelRoles:
     """Implements ``ports.driven.ModelRoles`` for an instance with no model configured."""
 
-    async def configured(self, library: str) -> frozenset[ModelRole]:
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
         """Say that no role is set, for any library.
 
         Args:
             library: The library searched.
+            ai: The library's overrides being checked.
 
         Returns:
             The empty set: BM25 is the only mode.
         """
-        del library
+        del library, ai
         return frozenset()
 
 
@@ -251,17 +283,18 @@ class RetrievalModes:
     """The vector store the hybrid modes search; asked whether it can load only once an
     embedding model is configured. Without one, nothing is checked (pipelines decide)."""
 
-    async def registry(self, library: str) -> ModeRegistry:
+    async def registry(self, library: str, ai: LibraryAi | None = None) -> ModeRegistry:
         """Say which modes can run now for a library's searches.
 
         Args:
             library: The library, any letter case: roles can differ per library.
+            ai: The library's overrides as they are about to be stored; ``None``: the stored.
 
         Returns:
             The registry of the library's configured roles, the registered pipelines and
             whether the vector store can search.
         """
-        roles = await self.roles.configured(library)
+        roles = await self.roles.configured(library, ai)
         vector_store = True
         if ModelRole.EMBEDDING in roles and self.vectors is not None:
             vector_store = await self.vectors.available()
@@ -1081,7 +1114,7 @@ class QueryDocsUseCase:
 
 
 async def _library_retrieval(
-    modes: RetrievalModes, library: str, mode: RetrievalMode | None
+    modes: RetrievalModes, library: str, mode: RetrievalMode | None, ai: LibraryAi
 ) -> LibraryRetrievalOut:
     """Describe a library's setting and what a search without ``mode`` would run in now.
 
@@ -1089,11 +1122,12 @@ async def _library_retrieval(
         modes: The instance's modes.
         library: The library's ID as the catalog spells it.
         mode: The library's setting.
+        ai: The library's AI overrides.
 
     Returns:
         The setting, the effective mode and the modes on offer.
     """
-    registry = await modes.registry(library)
+    registry = await modes.registry(library, ai)
     choice = registry.choose(asked=None, library=mode, instance=modes.instance_mode)
     return LibraryRetrievalOut(
         library=library,
@@ -1103,6 +1137,10 @@ async def _library_retrieval(
         fallback_reason=choice.fallback_reason,
         available_modes=list(registry.available()),
         configured_roles=[r for r in ModelRole if r in registry.roles],
+        ai_enabled=ai.enabled,
+        llm=_ref_text(ai.llm),
+        judge=_ref_text(ai.judge),
+        reranker=_ref_text(ai.reranker),
     )
 
 
@@ -1128,7 +1166,8 @@ class GetLibraryRetrievalUseCase:
         if library is None:
             raise UnknownLibraryError(query.library)
         mode = await self.modes.library_modes.mode_of(library)
-        return await _library_retrieval(self.modes, library, mode)
+        ai = await self.modes.library_modes.ai_of(library)
+        return await _library_retrieval(self.modes, library, mode, ai)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1139,24 +1178,39 @@ class SetLibraryRetrievalUseCase:
     """Spells the library ID as the catalog does."""
     modes: RetrievalModes
     """The instance's modes and the libraries' settings."""
+    providers: AiProviders
+    """The profiles an override may name."""
 
     async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
-        """Validate the mode against what can run now, then store it (or clear it).
+        """Validate the settings against what can run with them, then store them.
 
         Args:
-            command: The library and its mode.
+            command: The library, its mode and its AI overrides.
 
         Returns:
-            The stored setting, the effective mode and the modes available.
+            The stored settings, the effective mode and the modes available.
+
+        Raises:
+            UnknownLibraryError: There is no such library.
+            UnknownProviderError: An override names a profile that does not exist.
         """
         library = await self.libraries.canonical_id(command.library)
         if library is None:
             raise UnknownLibraryError(command.library)
+        ai = LibraryAi(
+            enabled=command.ai_enabled,
+            llm=_parse_ref(command.llm),
+            judge=_parse_ref(command.judge),
+            reranker=_parse_ref(command.reranker),
+        )
+        for name in sorted(ai.profiles()):
+            if await self.providers.profile(name) is None:
+                raise UnknownProviderError(name)
         mode = None
         if command.mode is not None:
-            mode = (await self.modes.registry(library)).check(command.mode)
-        await self.modes.library_modes.set_mode(library, mode)
-        return await _library_retrieval(self.modes, library, mode)
+            mode = (await self.modes.registry(library, ai)).check(command.mode)
+        await self.modes.library_modes.save(library, mode, ai)
+        return await _library_retrieval(self.modes, library, mode, ai)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1173,6 +1227,602 @@ class ForgetLibraryUseCase:
             command: The removed library.
         """
         await self.library_modes.forget(command.library)
+
+
+def _ref_text(ref: ModelRef | None) -> str | None:
+    """Write a model reference back as text.
+
+    Args:
+        ref: The reference.
+
+    Returns:
+        ``<profile>:<model>``, or ``None``.
+    """
+    return None if ref is None else str(ref)
+
+
+def _parse_ref(text: str | None) -> ModelRef | None:
+    """Read an optional ``<profile>:<model>``.
+
+    Args:
+        text: The text, or ``None``.
+
+    Returns:
+        The reference, or ``None``.
+    """
+    return None if text is None else ModelRef.parse(text)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NoStoredProfiles:
+    """Implements ``ports.driven.ProviderProfiles`` for a process that stores none (read-only)."""
+
+    async def all(self) -> Sequence[ProviderProfile]:
+        """List nothing.
+
+        Returns:
+            No profile.
+        """
+        return ()
+
+    async def get(self, name: str) -> ProviderProfile | None:
+        """Find nothing.
+
+        Args:
+            name: The name asked for.
+
+        Returns:
+            ``None``.
+        """
+        del name
+        return None
+
+    async def save(self, profile: ProviderProfile) -> None:
+        """Refuse to store.
+
+        Args:
+            profile: The profile.
+
+        Raises:
+            SecretKeyRequiredError: Always; this process cannot store profiles.
+        """
+        del profile
+        raise SecretKeyRequiredError
+
+    async def delete(self, name: str) -> bool:
+        """Delete nothing.
+
+        Args:
+            name: The name asked for.
+
+        Returns:
+            False.
+        """
+        del name
+        return False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NoModelFactory:
+    """Implements ``ports.driven.ModelFactory`` for a build that calls no model."""
+
+    def unsupported(self, profile: ProviderProfile) -> str | None:
+        """Say that nothing can be called.
+
+        Args:
+            profile: The profile.
+
+        Returns:
+            A fixed text.
+        """
+        del profile
+        return "this process calls no AI model"
+
+    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+        """Refuse.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            Nothing: it raises ``ProviderUnsupportedError``.
+        """
+        return self._refuse(profile, model)
+
+    async def embedder(self, profile: ProviderProfile, model: str) -> object:
+        """Refuse.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            Nothing: it raises ``ProviderUnsupportedError``.
+        """
+        return self._refuse(profile, model)
+
+    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+        """Refuse.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            Nothing: it raises ``ProviderUnsupportedError``.
+        """
+        return self._refuse(profile, model)
+
+    async def release(self, name: str) -> None:
+        """Hold nothing, so release nothing.
+
+        Args:
+            name: The profile's name.
+        """
+        del name
+
+    def _refuse(self, profile: ProviderProfile, model: str) -> NoReturn:
+        """Refuse to build a model.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Raises:
+            ProviderUnsupportedError: Always.
+        """
+        del model
+        raise ProviderUnsupportedError(profile.name, "this process calls no AI model")
+
+    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+        """Report that nothing can be called.
+
+        Args:
+            profile: The profile.
+            model: The model.
+            role: The role.
+
+        Returns:
+            A failed check.
+        """
+        return ModelCheck(
+            role=role,
+            profile=profile.name,
+            model=model,
+            ok=False,
+            error=self.unsupported(profile),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AiProviders:
+    """The instance's AI configuration: profiles (configured and stored), roles and overrides.
+
+    Configured profiles (the environment, the TOML file) are read-only and shadow a stored one of
+    the same name. Everything is read at each call, so a profile edited over the REST API counts
+    at the next one without a restart.
+    """
+
+    configured: Sequence[ProviderProfile] = ()
+    """The environment's and the file's profiles."""
+    stored: ProviderProfiles = field(default_factory=NoStoredProfiles)
+    """The profiles managed over the REST API."""
+    roles: InstanceRoles = field(default_factory=InstanceRoles)
+    """The instance's roles."""
+    library_modes: LibraryModes
+    """Each library's overrides."""
+    factory: ModelFactory = field(default_factory=NoModelFactory)
+    """Turns a profile into a callable model."""
+    box: SecretBox | None = None
+    """Seals keys sent over the REST API; ``None``: they cannot be stored."""
+
+    def configured_profile(self, name: str) -> ProviderProfile | None:
+        """Find a configured profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            The profile, or ``None``.
+        """
+        return next((p for p in self.configured if p.name == name), None)
+
+    async def profile(self, name: str) -> ProviderProfile | None:
+        """Find a profile: a configured one first, then a stored one.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            The profile, or ``None``.
+        """
+        return self.configured_profile(name) or await self.stored.get(name)
+
+    async def profiles(self) -> list[ProviderProfile]:
+        """List every profile: the configured ones, then the stored ones they do not shadow.
+
+        Returns:
+            The profiles.
+        """
+        names = {p.name for p in self.configured}
+        stored = [p for p in await self.stored.all() if p.name not in names]
+        return [*sorted(self.configured, key=lambda p: p.name), *stored]
+
+    def instance_bindings(self) -> list[RoleBinding]:
+        """Resolve the instance's roles, outside any library.
+
+        Returns:
+            One binding per role that is set (the judge may default to the LLM).
+        """
+        defaults = LibraryAi()
+        return [b for r in ModelRole if (b := bind_role(r, self.roles, defaults)) is not None]
+
+    def roles_using(self, name: str) -> list[ModelRole]:
+        """Name the instance roles set to one of a profile's models.
+
+        Args:
+            name: The profile's name.
+
+        Returns:
+            The roles.
+        """
+        return [b.role for b in self.instance_bindings() if b.ref.profile == name]
+
+    async def configured_roles(self, ai: LibraryAi) -> frozenset[ModelRole]:
+        """Say which roles resolve to an existing profile under some overrides.
+
+        Args:
+            ai: The library's overrides (the defaults outside any library).
+
+        Returns:
+            The roles; empty with AI off.
+        """
+        found: set[ModelRole] = set()
+        for role in ModelRole:
+            binding = bind_role(role, self.roles, ai)
+            if binding is not None and await self.profile(binding.ref.profile) is not None:
+                found.add(role)
+        return frozenset(found)
+
+    async def model_for(self, role: ModelRole, library: str) -> object | None:
+        """Build the model a role uses for a library, from the profile as it is now.
+
+        The path every AI pipeline takes (#91 onwards): resolve the role (the library's override,
+        else the instance's), read the profile (so an edit over the REST API counts at once), and
+        let the factory build it. A library with AI off gets nothing, and nothing is sent.
+
+        Args:
+            role: The role.
+            library: The library ID, any letter case.
+
+        Returns:
+            An opaque handle, or ``None`` when the role does not resolve for the library.
+        """
+        binding = bind_role(role, self.roles, await self.library_modes.ai_of(library))
+        if binding is None:
+            return None
+        profile = await self.profile(binding.ref.profile)
+        if profile is None:
+            return None
+        match role:
+            case ModelRole.EMBEDDING:
+                return await self.factory.embedder(profile, binding.ref.model)
+            case ModelRole.RERANKER:
+                return await self.factory.reranker(profile, binding.ref.model)
+            case ModelRole.LLM | ModelRole.JUDGE:
+                return await self.factory.chat_model(profile, binding.ref.model)
+
+    async def check(self, binding_role: ModelRole | None, ref: ModelRef) -> ModelCheck:
+        """Make one minimal call, or say why it cannot be made.
+
+        Args:
+            binding_role: The role being checked; ``None`` when not a configured role.
+            ref: The profile and model.
+
+        Returns:
+            The outcome.
+        """
+        role = binding_role or ModelRole.LLM
+        profile = await self.profile(ref.profile)
+        if profile is None:
+            return ModelCheck(
+                role=binding_role,
+                profile=ref.profile,
+                model=ref.model,
+                ok=False,
+                error=f"no AI provider {ref.profile!r}",
+            )
+        if (reason := self.factory.unsupported(profile)) is not None:
+            return ModelCheck(
+                role=binding_role, profile=ref.profile, model=ref.model, ok=False, error=reason
+            )
+        return await self.factory.check(profile, ref.model, role)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProfileModelRoles:
+    """Implements ``ports.driven.ModelRoles`` over the instance's profiles, roles and overrides.
+
+    A role counts when it resolves (the library's override, else the instance's; the judge else
+    the LLM) to a profile that exists. A library with AI off has none.
+    """
+
+    providers: AiProviders
+    """The profiles, the roles and the overrides."""
+
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
+        """Resolve every role for the library.
+
+        Args:
+            library: The library ID, any letter case.
+            ai: Overrides about to be stored; ``None`` reads the stored ones.
+
+        Returns:
+            The roles its searches may use.
+        """
+        if ai is None:
+            ai = await self.providers.library_modes.ai_of(library)
+        return await self.providers.configured_roles(ai)
+
+
+def _profile_from(
+    command: SaveProviderCommand, key: KeySource, sealed_key: str | None
+) -> ProviderProfile:
+    """Build a stored profile from a REST command.
+
+    Args:
+        command: The command.
+        key: Where its key comes from (``none`` or ``sealed``).
+        sealed_key: The sealed key, if any.
+
+    Returns:
+        The profile (``InvalidProviderError`` when it is not valid for its kind).
+    """
+    return ProviderProfile(
+        name=command.name,
+        kind=ProviderKind.parse(command.name, command.kind),
+        origin=ProfileOrigin.API,
+        base_url=command.base_url,
+        key=key,
+        sealed_key=sealed_key,
+        headers=tuple(command.headers.items()),
+        proxy=command.proxy,
+        request_timeout=command.request_timeout,
+        max_retries=command.max_retries,
+        api_version=command.api_version,
+        project=command.project,
+        location=command.location,
+        credentials_file=command.credentials_file,
+        adc=command.credentials == "adc",
+        platform=command.platform,
+        auth=command.auth,
+        resource=command.resource,
+    )
+
+
+def _provider_out(providers: AiProviders, profile: ProviderProfile) -> ProviderOut:
+    """Describe a profile with the roles that use it.
+
+    Args:
+        providers: The instance's AI configuration.
+        profile: The profile.
+
+    Returns:
+        Its description, without secrets.
+    """
+    return ProviderOut.from_model(
+        profile, providers.roles_using(profile.name), providers.factory.unsupported(profile)
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListProvidersUseCase:
+    """Implements ``ports.driving.ListProviders``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self) -> ProviderListOut:
+        """List every profile.
+
+        Returns:
+            The profiles, without keys or header values.
+        """
+        profiles = await self.providers.profiles()
+        return ProviderListOut(providers=[_provider_out(self.providers, p) for p in profiles])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetProviderUseCase:
+    """Implements ``ports.driving.GetProvider``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self, query: ProviderNameQuery) -> ProviderOut:
+        """Read one profile.
+
+        Args:
+            query: Its name.
+
+        Returns:
+            The profile.
+
+        Raises:
+            UnknownProviderError: There is none of that name.
+        """
+        profile = await self.providers.profile(query.name)
+        if profile is None:
+            raise UnknownProviderError(query.name)
+        return _provider_out(self.providers, profile)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SaveProviderUseCase:
+    """Implements ``ports.driving.SaveProvider``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self, command: SaveProviderCommand) -> ProviderOut:
+        """Validate the profile, seal its key, store it.
+
+        Args:
+            command: The profile.
+
+        Returns:
+            The stored profile, without its key.
+
+        Raises:
+            ProviderReadOnlyError: A configured profile has the name.
+            ProviderExistsError: ``create`` and a stored profile has the name.
+            SecretKeyRequiredError: A key was sent and nothing can seal it.
+            InvalidProviderError: The profile is not valid for its kind.
+            ProviderUnsupportedError: This installation cannot call it.
+        """
+        providers = self.providers
+        if providers.configured_profile(command.name) is not None:
+            raise ProviderReadOnlyError(command.name)
+        existing = await providers.stored.get(command.name)
+        if command.create and existing is not None:
+            raise ProviderExistsError(command.name)
+        key, sealed = KeySource.NONE, None
+        if command.api_key is not None:
+            plaintext = command.api_key.get_secret_value().strip()
+            if not plaintext:
+                raise InvalidProviderError(command.name, "the key is empty")
+            if providers.box is None:
+                raise SecretKeyRequiredError
+            key, sealed = KeySource.SEALED, providers.box.seal(plaintext)
+        elif command.keep_key and existing is not None and existing.key is KeySource.SEALED:
+            key, sealed = KeySource.SEALED, existing.sealed_key
+        profile = _profile_from(command, key, sealed)
+        kept = command.api_key is None and key is KeySource.SEALED
+        if kept and existing is not None and not existing.same_endpoint(profile):
+            # The stored key never follows a profile to another endpoint.
+            reason = "its endpoint changed: send api_key again (or keep_key false)"
+            raise InvalidProviderError(command.name, reason)
+        if (reason := providers.factory.unsupported(profile)) is not None:
+            raise ProviderUnsupportedError(profile.name, reason)
+        await providers.stored.save(profile)
+        return _provider_out(providers, profile)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeleteProviderUseCase:
+    """Implements ``ports.driving.DeleteProvider``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self, command: ProviderNameQuery) -> None:
+        """Delete a stored profile no instance role uses.
+
+        A library override naming it stops resolving (that role is then not configured for the
+        library) until the profile exists again.
+
+        Args:
+            command: Its name.
+
+        Raises:
+            ProviderReadOnlyError: It is configured in the environment or the file.
+            ProviderInUseError: An instance role uses it.
+            UnknownProviderError: There is none of that name.
+        """
+        if self.providers.configured_profile(command.name) is not None:
+            raise ProviderReadOnlyError(command.name)
+        if roles := self.providers.roles_using(command.name):
+            raise ProviderInUseError(command.name, [r.value for r in roles])
+        if not await self.providers.stored.delete(command.name):
+            raise UnknownProviderError(command.name)
+        await self.providers.factory.release(command.name)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CheckProviderUseCase:
+    """Implements ``ports.driving.CheckProvider``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self, command: CheckProviderCommand) -> ModelChecksOut:
+        """Call the profile once per role that uses it, or once for the model named.
+
+        Args:
+            command: The profile, and optionally a role and a model.
+
+        Returns:
+            One check per call.
+
+        Raises:
+            UnknownProviderError: There is no such profile.
+            NothingToCheckError: No model was named and no role uses it.
+        """
+        if await self.providers.profile(command.name) is None:
+            raise UnknownProviderError(command.name)
+        if command.role is not None and command.model is not None:
+            ref = ModelRef(profile=command.name, model=command.model)
+            checks = [await self.providers.check(command.role, ref)]
+        else:
+            bindings = [
+                b for b in self.providers.instance_bindings() if b.ref.profile == command.name
+            ]
+            if not bindings:
+                raise NothingToCheckError(command.name)
+            checks = [await self.providers.check(b.role, b.ref) for b in bindings]
+        return ModelChecksOut(checks=[ModelCheckOut.from_model(c) for c in checks])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CheckRolesUseCase:
+    """Implements ``ports.driving.CheckRoles``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self) -> ModelChecksOut:
+        """Call every configured instance role once.
+
+        Returns:
+            One check per role that is set.
+        """
+        checks = [
+            await self.providers.check(b.role, b.ref) for b in self.providers.instance_bindings()
+        ]
+        return ModelChecksOut(checks=[ModelCheckOut.from_model(c) for c in checks])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListRolesUseCase:
+    """Implements ``ports.driving.ListRoles``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self) -> RoleListOut:
+        """Show each instance role.
+
+        Returns:
+            One entry per role, set or not.
+        """
+        bound = {b.role: b for b in self.providers.instance_bindings()}
+        roles = []
+        for role in ModelRole:
+            binding = bound.get(role)
+            exists = (
+                binding is not None
+                and await self.providers.profile(binding.ref.profile) is not None
+            )
+            roles.append(
+                RoleOut(
+                    role=role,
+                    model=None if binding is None else str(binding.ref),
+                    source=None if binding is None else binding.source,
+                    profile_exists=exists,
+                )
+            )
+        return RoleListOut(roles=roles)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

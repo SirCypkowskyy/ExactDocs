@@ -265,6 +265,83 @@ DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "hybrid", "bm25")
 can run. Agentic is never a default; a call, a library or the instance must choose it.
 """
 
+# ---------------------------------------------------------------- models (AI providers, #241)
+PROFILE_NAME_PATTERN: Final[str] = r"^[a-z0-9][a-z0-9_-]{0,62}$"
+"""``PROFILE_NAME`` for request validation."""
+PROFILE_NAME: Final[re.Pattern[str]] = re.compile(PROFILE_NAME_PATTERN)
+"""A provider profile's name: lower case (environment variable names fold case), digits, ``_``
+and ``-``; it is the ``<profile>`` of a role's ``<profile>:<model>``.
+"""
+_EXCLUDED_KINDS: Final[frozenset[str]] = frozenset(
+    {"bedrock", "groq", "mistral", "cohere", "xai", "huggingface"}
+)
+"""Provider kinds pydantic-ai has whose SDK ``exactdocs[ai]`` does not include."""
+_SELF_HOSTED_KINDS: Final[frozenset[str]] = frozenset(
+    {"openai-compatible", "ollama", "vllm", "litellm", "azure"}
+)
+"""Provider kinds with no endpoint of their own: a profile must give ``base_url``."""
+_HOSTED_KINDS: Final[frozenset[str]] = frozenset({
+    "openai", "openrouter", "google", "deepseek", "together", "fireworks", "cerebras", "github",
+    "vercel", "moonshotai", "heroku", "nebius", "ovhcloud", "sambanova", "alibaba",
+})  # fmt: skip
+"""Hosted provider kinds: every call needs a key."""
+_OPTIONAL_KIND_FIELDS: Final[tuple[str, ...]] = (
+    "api_version", "project", "location", "credentials_file", "adc", "platform", "auth", "resource",
+)  # fmt: skip
+"""Profile fields that apply to some kinds only."""
+_KIND_FIELDS: Final[dict[str, frozenset[str]]] = {
+    "azure": frozenset({"api_version", "auth", "resource"}),
+    "google-vertex": frozenset({"project", "location", "credentials_file", "adc"}),
+    "anthropic/api": frozenset({"platform"}),
+    "anthropic/vertex": frozenset({"platform", "project", "location", "credentials_file", "adc"}),
+    "anthropic/foundry": frozenset({"platform", "resource", "auth"}),
+    "anthropic/bedrock": frozenset({"platform", "location"}),
+}
+"""Which of ``_OPTIONAL_KIND_FIELDS`` a kind (an Anthropic platform: ``anthropic/<platform>``)
+may set; any other kind sets none.
+"""
+DNS_LABEL: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", re.IGNORECASE)
+"""One DNS label: ``resource``, ``location`` and ``project`` become part of an endpoint's host or
+path, so nothing that could end the host (``.``, ``/``, ``?``, ``#``, ``@``, ``%``) gets in.
+"""
+MAX_MODEL_NAME: Final[int] = 200
+"""Longest model name a role or a check may name."""
+MAX_MODEL_REF: Final[int] = 264
+"""Longest ``<profile>:<model>``."""
+MAX_URL: Final[int] = 2048
+"""Longest base URL or proxy URL of a profile."""
+MAX_KEY: Final[int] = 16384
+"""Longest provider key the REST API stores."""
+HEADER_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}")
+"""An HTTP header name (an RFC 9110 token) of a profile's extra headers."""
+CREDENTIAL_HEADERS: Final[frozenset[str]] = frozenset({
+    "authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey",
+})  # fmt: skip
+"""Extra header names refused (lower case): they carry a credential, which belongs in the key."""
+CREDENTIAL_HEADER_SUFFIXES: Final[tuple[str, ...]] = ("-key", "-token", "-secret", "-password")
+"""Extra header name endings refused for the same reason (``X-Portkey-Api-Key``, ...)."""
+MAX_HEADERS: Final[int] = 20
+"""Most extra headers a profile may send."""
+MAX_HEADER_VALUE: Final[int] = 4096
+"""Longest value of one extra header."""
+MAX_REQUEST_TIMEOUT: Final[float] = 600.0
+"""Longest overall timeout of one model call, in seconds."""
+MAX_RETRIES: Final[int] = 10
+"""Most retries of one model call (the SDK's own, the one retry layer)."""
+DEFAULT_REQUEST_TIMEOUT: Final[float] = 60.0
+"""Overall timeout of one model call when a profile sets none, in seconds."""
+DEFAULT_RETRIES: Final[int] = 2
+"""Retries of one model call when a profile sets none."""
+MASK: Final[str] = "***"
+"""What stands for a secret (a key, a header value, a proxy password) wherever one is shown."""
+STORED_PROFILE_FIELDS: Final[tuple[str, ...]] = (
+    "base_url", "key_file", "proxy", "request_timeout", "max_retries", "api_version", "project",
+    "location", "credentials_file", "adc", "platform", "auth", "resource",
+)  # fmt: skip
+"""The ``ProviderProfile`` fields a stored profile keeps as JSON (beside name, kind and key)."""
+MAX_CHECK_ERROR: Final[int] = 500
+"""Longest error text a provider check reports."""
+
 ARTICLE_OUTLINE_DESCRIPTION: Final[str] = (
     "Outline one article of a version: its heading tree, a chunk ID per heading, no text.\n\n"
     "A fraction of the tokens of `read_article`: use it to see what an article covers, then "

@@ -284,6 +284,12 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   Retrieval declares its own small `SecretBox` port. The Fernet adapter itself **moves from
   ingestion to `bootstrap`** first (#248): retrieval (#241) and identity (#105) would otherwise
   depend on another domain's adapter module. The kernel cannot hold it (it needs `cryptography`).
+- **The server's cloud identity is configuration only** (#241 review): a profile signed with
+  ADC, a service-account file, Entra ID or the AWS identity (Claude on Bedrock) is configured in
+  the environment or the file, never over REST, and takes no `base_url` (its endpoint is derived
+  from `location` or `resource`, each a single DNS label), so a token of the machine's identity
+  reaches only Google's, Azure's or AWS's endpoints. Extra headers may
+  not carry credentials (`Authorization`, `*-key`, `*-token`, ...): keys go in the key field.
 - **Per-library overrides** (stored by retrieval, #102; edited by admins until library roles
   exist, E12-05/06, then by the library's owner and admins): AI on or
   off (off: nothing of the library is ever sent to a provider), retrieval mode, the `llm`, `judge`
@@ -306,7 +312,10 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 `openaipublic.blob.core.windows.net` on first use (pydantic-ai's
 `OpenAIEmbeddingModel.count_tokens` calls it). ExactDocs never calls `count_tokens`: accounting
 uses the `usage` the provider returns, and `exactdocs ai estimate` estimates from characters
-(4 per token) and says it is an estimate. A test asserts that tiktoken is not imported.
+(4 per token) and says it is an estimate. A test asserts that tiktoken is never used: a chat role
+does not import it, and no encoding is ever loaded. (pydantic-ai 2.60.0's
+`pydantic_ai.embeddings.openai` imports tiktoken when it loads, so an OpenAI-API embedding role
+imports the module, but never calls it; found in #241.)
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
