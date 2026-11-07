@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from exactdocs.ingestion.adapters.driven import git_cli
-from exactdocs.ingestion.adapters.driven.git_cli import _DRAIN_SECONDS, GitCli
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.constants._git import _DRAIN_SECONDS
 from exactdocs.ingestion.errors import (
     GitNotInstalledError,
     InvalidRepositoryUrlError,

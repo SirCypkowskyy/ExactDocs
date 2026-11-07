@@ -43,8 +43,8 @@ async def repository(request: pytest.FixtureRequest) -> AsyncIterator[TokenRepos
             role=Role.ADMIN,
             created_at=NOW,
         )
-        await SqliteAccountRepository(container.engine).add_first(ada)
-        yield SqliteTokenRepository(container.engine)
+        await SqliteAccountRepository(engine=container.engine).add_first(ada)
+        yield SqliteTokenRepository(engine=container.engine)
 
 
 async def test_a_stored_token_is_found_by_hash_and_an_unknown_one_is_not(

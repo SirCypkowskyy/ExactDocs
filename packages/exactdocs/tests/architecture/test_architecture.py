@@ -22,10 +22,10 @@ DOMAINS = sorted(
 
 # The fixed module set of every domain. Each entry may be a module (`x.py`) or a package (`x/`).
 REQUIRED = {"__init__", "models", "dtos", "ports", "use_cases", "adapters", "module"}
-OPTIONAL = {"errors"}
+OPTIONAL = {"errors", "constants"}
 
 # Inner -> outer. A layer may import only layers that come before it in this list.
-LAYERS = ["errors", "models", "dtos", "ports", "use_cases", "module"]
+LAYERS = ["constants", "errors", "models", "dtos", "ports", "use_cases", "module"]
 # Layers are optional per domain (e.g. `errors`) and may be a module or a package.
 _ALLOW_EMPTY = CheckOptions(allow_empty_tests=True)
 DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*"]

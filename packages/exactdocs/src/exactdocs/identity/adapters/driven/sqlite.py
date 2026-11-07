@@ -64,7 +64,7 @@ def _stamp(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteAccountRepository:
     """Implements ``ports.driven.AccountRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -129,7 +129,7 @@ def _account(row: Row[Any]) -> Account:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteSessionRepository:
     """Implements ``ports.driven.SessionRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -196,7 +196,7 @@ def _moment(value: str | None) -> datetime | None:
     return None if value is None else datetime.fromisoformat(value)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteTokenRepository:
     """Implements ``ports.driven.TokenRepository`` with SQLAlchemy Core on SQLite."""
 

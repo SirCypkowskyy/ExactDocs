@@ -26,7 +26,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
 )
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.models import Credential, RemoteRefs, RepositoryUrl
@@ -86,9 +86,9 @@ PLACEHOLDER_ADMIN = Account(
 async def store_demo_catalog(settings: Settings) -> None:
     container = Container.build(settings)
     async with container.running(jobs=False):
-        await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
+        await SqliteAccountRepository(engine=container.engine).add_first(PLACEHOLDER_ADMIN)
         now = datetime.now(UTC)
-        await SqliteSessionRepository(container.engine).add(
+        await SqliteSessionRepository(engine=container.engine).add(
             Session(
                 token_hash=hash_token(DEMO_COOKIE),
                 account_id=PLACEHOLDER_ADMIN.id,
@@ -96,7 +96,7 @@ async def store_demo_catalog(settings: Settings) -> None:
                 last_used_at=now,
             )
         )
-        repository = SqliteLibraryRepository(container.engine)
+        repository = SqliteLibraryRepository(engine=container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)
 

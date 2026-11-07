@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ListLibraryJobsQuery
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
@@ -15,7 +16,7 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
     UnknownJobKindError,
 )
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
+from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode
 from exactdocs.ingestion.ports import JobProgress
 from exactdocs_kernel import ValidationError
 

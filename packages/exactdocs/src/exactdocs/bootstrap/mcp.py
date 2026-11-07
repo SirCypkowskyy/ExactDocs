@@ -10,10 +10,11 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, ListResourcesResult, PaginatedRequestParams
 
 from exactdocs import __version__
+from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND, SKILL_PATH
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
-from exactdocs.bootstrap.mcp_config import SKILL_PATH
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driving import mcp as catalog_mcp
+from exactdocs.catalog.constants import MAX_LISTED_RESOURCES, RESOURCE_PAGE_SIZE
 from exactdocs.identity.adapters.driving.mcp import ApiTokenVerifier
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driving import mcp as retrieval_mcp
@@ -62,9 +63,6 @@ class DomainErrorsAsToolErrors(Middleware):
             raise ResourceError(message) from cause
 
 
-RESOURCE_NOT_FOUND = -32002
-
-
 class ExactDocsMCP(FastMCP):
     """FastMCP with a stable ``resources/list``: a keyset cursor and a ``truncated`` marker.
 
@@ -89,7 +87,7 @@ class ExactDocsMCP(FastMCP):
             (r for r in full.resources if after is None or str(r.uri) > after),
             key=lambda r: str(r.uri),
         )
-        page = items[: catalog_mcp.RESOURCE_PAGE_SIZE]
+        page = items[:RESOURCE_PAGE_SIZE]
         more = len(items) > len(page)
         return ListResourcesResult(
             resources=page,
@@ -98,7 +96,7 @@ class ExactDocsMCP(FastMCP):
             else None,
             meta={
                 "truncated": self.listing.truncated,
-                "max_resources": catalog_mcp.MAX_LISTED_RESOURCES,
+                "max_resources": MAX_LISTED_RESOURCES,
             },
         )
 

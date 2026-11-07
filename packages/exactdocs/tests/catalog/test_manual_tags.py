@@ -75,10 +75,10 @@ def catalog() -> CatalogModule:
     )
     return CatalogModule.build(
         repository=libraries,
-        manifests=(written := InMemoryManifestRepository(libraries)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=libraries)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
 
@@ -158,9 +158,9 @@ def test_an_entry_shows_imported_tags_first_then_the_manual_ones_it_lacks() -> N
         title="A",
         tags=("guide", "api"),
         manual_tags=(
-            ManualTag("api", "a.md"),
-            ManualTag("onboarding", "a.md"),
-            ManualTag("onboarding", "old.md"),
+            ManualTag(tag="api", path="a.md"),
+            ManualTag(tag="onboarding", path="a.md"),
+            ManualTag(tag="onboarding", path="old.md"),
         ),
     )
 
@@ -173,10 +173,10 @@ def test_reaching_merges_the_tags_of_every_path_an_article_came_from() -> None:
     )
 
     assert reached == {
-        "c.md": (ManualTag("x", "a.md"), ManualTag("y", "b.md")),
-        "a.md": (ManualTag("x", "a.md"),),
-        "b.md": (ManualTag("y", "b.md"),),
-        "z.md": (ManualTag("z", "z.md"),),
+        "c.md": (ManualTag(tag="x", path="a.md"), ManualTag(tag="y", path="b.md")),
+        "a.md": (ManualTag(tag="x", path="a.md"),),
+        "b.md": (ManualTag(tag="y", path="b.md"),),
+        "z.md": (ManualTag(tag="z", path="z.md"),),
     }
 
 
@@ -184,9 +184,9 @@ def test_reaching_keeps_a_tag_once_for_each_path_it_was_set_on() -> None:
     reached = ManualTags.reaching({"b.md": {"a.md"}}, {"a.md": ("x",), "b.md": ("x", "y")})
 
     assert reached["b.md"] == (
-        ManualTag("x", "a.md"),
-        ManualTag("x", "b.md"),
-        ManualTag("y", "b.md"),
+        ManualTag(tag="x", path="a.md"),
+        ManualTag(tag="x", path="b.md"),
+        ManualTag(tag="y", path="b.md"),
     )
 
 

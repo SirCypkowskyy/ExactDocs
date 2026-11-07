@@ -39,6 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql.elements import TextClause
 
+from exactdocs.catalog.constants import _FILES_PER_QUERY, _PATHS_PER_QUERY
 from exactdocs.catalog.errors import (
     LibraryAlreadyExistsError,
     LibraryNotFoundError,
@@ -198,8 +199,8 @@ manifest_images = Table(
     Column("blob_sha", Text, ForeignKey("catalog_image_blobs.blob_sha"), nullable=False),
 )
 
-_SETTINGS = TypeAdapter(LibrarySettings)  # settings are stored as one JSON document
-_LIBRARY_COLUMNS = (
+_settings = TypeAdapter(LibrarySettings)  # settings are stored as one JSON document
+_library_columns = (
     libraries.c.id,
     libraries.c.title,
     libraries.c.description,
@@ -214,7 +215,7 @@ _LIBRARY_COLUMNS = (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteLibraryRepository:
     """Implements ``ports.driven.LibraryRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -266,7 +267,7 @@ class SqliteLibraryRepository:
             await connection.execute(
                 update(libraries)
                 .where(libraries.c.id == library_id.value)
-                .values(settings=_SETTINGS.dump_json(settings).decode())
+                .values(settings=_settings.dump_json(settings).decode())
             )
 
     async def set_text(
@@ -352,7 +353,7 @@ class SqliteLibraryRepository:
     async def _load(self, *where: ColumnElement[bool]) -> Sequence[Library]:
         chosen = select(libraries.c.id).where(*where)
         async with self.engine.connect() as connection:
-            rows = (await connection.execute(select(*_LIBRARY_COLUMNS).where(*where))).all()
+            rows = (await connection.execute(select(*_library_columns).where(*where))).all()
             version_rows = (
                 await connection.execute(
                     select(library_versions).where(library_versions.c.library_id.in_(chosen))
@@ -377,7 +378,7 @@ class SqliteLibraryRepository:
                 source_url=row.source_url,
                 host=HostKind(row.host),
                 default_branch=VersionRef(row.default_branch) if row.default_branch else None,
-                settings=_SETTINGS.validate_json(row.settings),
+                settings=_settings.validate_json(row.settings),
                 versions=frozenset(versions[row.id]),
                 title_edited=row.title_edited,
                 description_edited=row.description_edited,
@@ -403,7 +404,9 @@ def _entry(row: Row) -> ManifestEntry:
         tags=tuple(json.loads(imported)),
         front_matter=json.loads(row.front_matter),
         size=row.size,
-        manual_tags=tuple(ManualTag(t["tag"], t["path"]) for t in json.loads(row.manual_tags)),
+        manual_tags=tuple(
+            ManualTag(tag=t["tag"], path=t["path"]) for t in json.loads(row.manual_tags)
+        ),
     )
 
 
@@ -418,11 +421,11 @@ def _tag_columns(entry: ManifestEntry) -> dict[str, str | None]:
 
 # ponytail: a correlated json_each per row of the manifest, so a sparse tag on a huge manifest
 # scans it all; upgrade to a catalog_manifest_entry_tags(manifest_id, tag, path) side table.
-_HAS_ANY_TAG = text(
+_has_any_tag = text(
     "EXISTS (SELECT 1 FROM json_each(catalog_manifest_entries.tags)"
     " WHERE value IN (SELECT value FROM json_each(:tags)))"
 )
-_HAS_ALL_TAGS = text(
+_has_all_tags = text(
     "NOT EXISTS (SELECT 1 FROM json_each(:tags)"
     " WHERE value NOT IN (SELECT value FROM json_each(catalog_manifest_entries.tags)))"
 )
@@ -430,11 +433,11 @@ _HAS_ALL_TAGS = text(
 
 def _tag_condition(selection: TagSelection) -> TextClause:
     """Match the tags JSON list of the entry against the filter's, inside SQLite."""
-    condition = _HAS_ALL_TAGS if selection.match is TagMatch.ALL else _HAS_ANY_TAG
+    condition = _has_all_tags if selection.match is TagMatch.ALL else _has_any_tag
     return condition.bindparams(tags=json.dumps(sorted(selection.tags)))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteManifestRepository:
     """Implements ``ports.driven.ManifestRepository`` with SQLAlchemy Core on SQLite."""
 
@@ -990,7 +993,7 @@ def _library_values(library: Library) -> dict[str, str | bool | None]:
         "source_url": library.source_url,
         "host": library.host.value,
         "default_branch": None if library.default_branch is None else library.default_branch.value,
-        "settings": _SETTINGS.dump_json(library.settings).decode(),
+        "settings": _settings.dump_json(library.settings).decode(),
         "title_edited": library.title_edited,
         "description_edited": library.description_edited,
     }
@@ -1015,7 +1018,7 @@ async def _insert_versions(connection: AsyncConnection, library: Library) -> Non
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteImportedTags:
     """Implements ``ports.driven.ImportedTagWriter`` on the catalog's SQLite tables."""
 
@@ -1053,10 +1056,7 @@ class SqliteImportedTags:
         return touched
 
 
-_PATHS_PER_QUERY = 500  # bound variables per statement stay far below SQLite's limit
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on the catalog's SQLite tables."""
 
@@ -1201,10 +1201,7 @@ async def _texts(
     return texts
 
 
-_FILES_PER_QUERY = 250  # three bound variables per file at most
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteManifestCopier:
     """Implements ``ports.driven.ManifestCopier`` on the catalog's SQLite tables."""
 

@@ -17,6 +17,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.constants import UNKNOWN_MANIFEST_GRACE
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ArticleTagsIn,
@@ -48,7 +49,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository
-from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE, ReadChunkUseCase
+from exactdocs.retrieval.use_cases import ReadChunkUseCase
 from exactdocs_kernel import NOTICE
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -238,7 +239,9 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
         async def count() -> int:
             return len(memory.chunk_sets)
 
-        yield World(build(memory, InMemorySearchIndex(memory)), catalog, clock, count, memory)
+        yield World(
+            build(memory, InMemorySearchIndex(chunks=memory)), catalog, clock, count, memory
+        )
         return
     container = Container.build(Settings())
     async with container.running():
@@ -249,8 +252,8 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
                     await connection.execute(select(func.count()).select_from(chunk_set_rows))
                 ).scalar_one()
 
-        sqlite = SqliteChunkRepository(container.engine)
-        search = SqliteSearchIndex(container.engine)
+        sqlite = SqliteChunkRepository(engine=container.engine)
+        search = SqliteSearchIndex(engine=container.engine)
         yield World(build(sqlite, search), catalog, clock, count_rows, sqlite)
 
 
@@ -862,7 +865,11 @@ async def test_an_id_held_by_two_versions_is_refused_not_guessed(world: World) -
                 replace(holders[0], manifest_id="x2", version_id="/acme/payments/v2"),
             ]
 
-    use_case = ReadChunkUseCase(world.catalog, world.catalog, TwoVersions())  # ty: ignore[invalid-argument-type]
+    use_case = ReadChunkUseCase(
+        versions=world.catalog,
+        manifests=world.catalog,
+        chunks=TwoVersions(),  # ty: ignore[invalid-argument-type]
+    )
     with pytest.raises(ChunkNotFoundError):
         await use_case(ReadChunkQuery(chunk_id=chunk_id))
 

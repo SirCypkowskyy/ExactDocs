@@ -1,16 +1,8 @@
 """Links from a stored article or section back to the repository host, pinned to a commit."""
 
-import re
 from urllib.parse import quote, urlsplit
 
-_SCP_URL = re.compile(r"[\w.-]+@(?P<host>[\w.-]+):(?P<path>[^:].*)")
-# Host kind (the values of the domains' host enums) -> the path segment of a file view.
-_BLOB_PATHS = {
-    "github": "blob",
-    "gitlab": "-/blob",
-    "bitbucket": "src",
-    "gitea": "src/commit",
-}
+from exactdocs_kernel.constants import _BLOB_PATHS, _SCP_URL
 
 
 def _web_base(repository_url: str) -> str | None:

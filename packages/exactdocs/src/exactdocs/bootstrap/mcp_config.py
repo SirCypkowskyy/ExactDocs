@@ -7,16 +7,11 @@ variable where the client expands them) unless the caller passes the real one.
 """
 
 import json
-from pathlib import Path
 from typing import Literal
 
-CLIENTS = ("claude", "claude-desktop", "cursor", "vscode", "codex")
-type Client = Literal["claude", "claude-desktop", "cursor", "vscode", "codex"]
+from exactdocs.bootstrap.constants import NAME, PLACEHOLDER, STDIO
 
-SKILL_PATH = Path(__file__).parent / "skill" / "SKILL.md"
-NAME = "exactdocs"
-STDIO = {"command": "uvx", "args": ["exactdocs", "serve", "--stdio"]}
-PLACEHOLDER = "<your-exactdocs-token>"  # for clients that cannot expand environment variables
+type Client = Literal["claude", "claude-desktop", "cursor", "vscode", "codex"]
 
 
 def render(client: Client, *, mcp_url: str, token: str | None, stdio: bool) -> str:

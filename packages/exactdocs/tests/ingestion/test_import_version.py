@@ -22,6 +22,15 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoCopier,
     NoStoredTags,
 )
+from exactdocs.ingestion.constants import (
+    IMPORT_JOB,
+    MAX_JOB_NOTES,
+    MAX_JOB_PROBLEMS,
+    MAX_WANTED_IMAGES,
+    PARSER_VERSION,
+    REFRESH_JOB,
+    JobKind,
+)
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     CredentialsRequiredError,
@@ -33,11 +42,6 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    MAX_JOB_NOTES,
-    MAX_JOB_PROBLEMS,
-    PARSER_VERSION,
-    REFRESH_JOB,
     AccessToken,
     ArticleChunk,
     ChunkingConfig,
@@ -48,7 +52,6 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
-    JobKind,
     JobState,
     ParsedArticle,
     PathSelection,
@@ -65,7 +68,6 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.module import TagLocks, import_job
 from exactdocs.ingestion.ports import RenameSource
 from exactdocs.ingestion.use_cases import (
-    MAX_WANTED_IMAGES,
     ImportVersionUseCase,
     RunNextJobUseCase,
     Skip,
@@ -445,7 +447,9 @@ async def test_an_import_and_a_refresh_fetch_with_the_librarys_stored_credential
     tmp_path: Path, kind: JobKind
 ) -> None:
     token = AccessToken(token="ghp_s3cretvalue")
-    vault = InMemoryCredentialVault({"/a/b": token, "/other/lib": AccessToken(token="nope")})
+    vault = InMemoryCredentialVault(
+        credentials={"/a/b": token, "/other/lib": AccessToken(token="nope")}
+    )
     world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault, kind=kind)
 
     await world.run(make_job(), world.progress)
@@ -717,7 +721,7 @@ async def test_an_auth_demand_without_a_credential_means_the_repository_is_gone_
 async def test_an_auth_demand_with_a_stored_credential_stays_an_auth_failure(
     tmp_path: Path,
 ) -> None:
-    vault = InMemoryCredentialVault({"/a/b": AccessToken(token="ghp_revoked")})
+    vault = InMemoryCredentialVault(credentials={"/a/b": AccessToken(token="ghp_revoked")})
     world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault)
     world.gateway.error = RepositoryAuthRequiredError()
 
@@ -945,7 +949,7 @@ class CountingJobs:
 
 async def test_progress_is_stored_now_and_then_not_for_every_file() -> None:
     jobs = CountingJobs()
-    progress = _Progress(jobs, make_job())  # ty: ignore[invalid-argument-type]
+    progress = _Progress(jobs=jobs, job=make_job())  # ty: ignore[invalid-argument-type]
 
     await progress.report(done=0, total=1000)
     for done in range(1, 1001):
@@ -1065,7 +1069,7 @@ async def test_a_library_removed_before_the_import_runs_fails_the_job_cleanly(
 ) -> None:
     jobs = InMemoryJobRepository.of([make_job()])
     importer = replace(world.run, sources=InMemoryLibrarySources())
-    run_next = RunNextJobUseCase(jobs, SystemClock(), {IMPORT_JOB: importer})
+    run_next = RunNextJobUseCase(jobs=jobs, clock=SystemClock(), handlers={IMPORT_JOB: importer})
 
     assert await run_next()
 

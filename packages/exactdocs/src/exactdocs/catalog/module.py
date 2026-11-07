@@ -137,37 +137,51 @@ class CatalogModule:
         imported from.
         """
         clock = clock or SystemClock()
-        tagger = ManualTagger(repository, manifests)
+        tagger = ManualTagger(repository=repository, manifests=manifests)
         return cls(
-            list_libraries=ListLibrariesUseCase(repository),
-            create_library=CreateLibraryUseCase(repository),
-            discard_library=DiscardLibraryUseCase(repository),
-            get_library=GetLibraryUseCase(repository),
-            resolve_version=ResolveVersionUseCase(repository),
-            resolve_renamed_path=ResolveRenamedPathUseCase(repository, manifests),
-            list_renames=ListRenamesUseCase(repository, manifests),
-            store_manifest=StoreManifestUseCase(repository, manifests, clock),
-            activate_manifest=ActivateManifestUseCase(repository, manifests, clock),
-            list_articles=ListArticlesUseCase(repository, manifests),
-            list_tags=ListTagsUseCase(repository, manifests),
-            get_article=GetArticleUseCase(repository, manifests),
-            get_asset=GetAssetUseCase(repository, manifests),
-            discard_pending_manifests=DiscardPendingManifestsUseCase(manifests, clock),
-            collect_garbage=CollectGarbageUseCase(manifests, clock),
-            get_manifest_states=GetManifestStatesUseCase(manifests),
-            get_active_manifest=GetActiveManifestUseCase(repository, manifests),
-            list_default_manifests=ListDefaultManifestsUseCase(repository, manifests),
-            update_library=UpdateLibraryUseCase(repository),
-            pin_default_version=PinDefaultVersionUseCase(repository),
-            apply_readme=ApplyReadmeUseCase(repository),
-            remove_version=RemoveVersionUseCase(repository, manifests),
-            remove_library=RemoveLibraryUseCase(repository, manifests),
-            set_manual_tags=SetManualTagsUseCase(repository, tagger),
-            apply_manual_tags=ApplyManualTagsUseCase(manifests, tagger),
-            set_library_settings=SetLibrarySettingsUseCase(repository),
-            get_version_tags=GetVersionTagsUseCase(repository, manifests),
-            set_imported_tags=SetImportedTagsUseCase(manifests, imported_tags),
-            find_stored_articles=FindStoredArticlesUseCase(stored_articles),
-            replace_renames=ReplaceRenamesUseCase(repository, manifests, tagger),
-            copy_manifest=CopyManifestUseCase(repository, copier, clock),
+            list_libraries=ListLibrariesUseCase(repository=repository),
+            create_library=CreateLibraryUseCase(repository=repository),
+            discard_library=DiscardLibraryUseCase(repository=repository),
+            get_library=GetLibraryUseCase(repository=repository),
+            resolve_version=ResolveVersionUseCase(repository=repository),
+            resolve_renamed_path=ResolveRenamedPathUseCase(
+                repository=repository, manifests=manifests
+            ),
+            list_renames=ListRenamesUseCase(repository=repository, manifests=manifests),
+            store_manifest=StoreManifestUseCase(
+                repository=repository, manifests=manifests, clock=clock
+            ),
+            activate_manifest=ActivateManifestUseCase(
+                repository=repository, manifests=manifests, clock=clock
+            ),
+            list_articles=ListArticlesUseCase(repository=repository, manifests=manifests),
+            list_tags=ListTagsUseCase(repository=repository, manifests=manifests),
+            get_article=GetArticleUseCase(repository=repository, manifests=manifests),
+            get_asset=GetAssetUseCase(repository=repository, manifests=manifests),
+            discard_pending_manifests=DiscardPendingManifestsUseCase(
+                manifests=manifests, clock=clock
+            ),
+            collect_garbage=CollectGarbageUseCase(manifests=manifests, clock=clock),
+            get_manifest_states=GetManifestStatesUseCase(manifests=manifests),
+            get_active_manifest=GetActiveManifestUseCase(
+                repository=repository, manifests=manifests
+            ),
+            list_default_manifests=ListDefaultManifestsUseCase(
+                repository=repository, manifests=manifests
+            ),
+            update_library=UpdateLibraryUseCase(repository=repository),
+            pin_default_version=PinDefaultVersionUseCase(repository=repository),
+            apply_readme=ApplyReadmeUseCase(repository=repository),
+            remove_version=RemoveVersionUseCase(repository=repository, manifests=manifests),
+            remove_library=RemoveLibraryUseCase(repository=repository, manifests=manifests),
+            set_manual_tags=SetManualTagsUseCase(repository=repository, tagger=tagger),
+            apply_manual_tags=ApplyManualTagsUseCase(manifests=manifests, tagger=tagger),
+            set_library_settings=SetLibrarySettingsUseCase(repository=repository),
+            get_version_tags=GetVersionTagsUseCase(repository=repository, manifests=manifests),
+            set_imported_tags=SetImportedTagsUseCase(manifests=manifests, writer=imported_tags),
+            find_stored_articles=FindStoredArticlesUseCase(finder=stored_articles),
+            replace_renames=ReplaceRenamesUseCase(
+                repository=repository, manifests=manifests, tagger=tagger
+            ),
+            copy_manifest=CopyManifestUseCase(repository=repository, copier=copier, clock=clock),
         )

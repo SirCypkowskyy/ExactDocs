@@ -21,7 +21,8 @@ from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
-from exactdocs.ingestion.models import IMPORT_JOB, Job, JobId, RefKind
+from exactdocs.ingestion.constants import IMPORT_JOB
+from exactdocs.ingestion.models import Job, JobId, RefKind
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
 from exactdocs_kernel import SystemClock
@@ -65,22 +66,23 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
             gateway=GitCli.locate(),
             chunker=MarkdownChunker(),
             sources=CatalogLibrarySources(
-                container.catalog.get_library, container.catalog.list_renames
+                get_library=container.catalog.get_library,
+                list_renames=container.catalog.list_renames,
             ),
             versions=CatalogVersionPublisher(
-                container.catalog.store_manifest,
-                container.catalog.activate_manifest,
-                container.catalog.discard_pending_manifests,
-                container.catalog.apply_readme,
-                container.catalog.apply_manual_tags,
-                container.catalog.replace_renames,
+                store_manifest=container.catalog.store_manifest,
+                activate_manifest=container.catalog.activate_manifest,
+                discard_pending_manifests=container.catalog.discard_pending_manifests,
+                apply_readme=container.catalog.apply_readme,
+                apply_manual_tags_to=container.catalog.apply_manual_tags,
+                replace_renames_of=container.catalog.replace_renames,
             ),
             index=RetrievalChunkIndex(
-                container.retrieval.index_manifest,
-                container.retrieval.get_chunk_sets,
-                container.retrieval.discard_pending_chunks,
-                container.retrieval.remove_chunks,
-                container.retrieval.retag_articles,
+                index_manifest=container.retrieval.index_manifest,
+                get_chunk_sets=container.retrieval.get_chunk_sets,
+                discard_pending_chunks=container.retrieval.discard_pending_chunks,
+                remove_chunks=container.retrieval.remove_chunks,
+                retag_articles=container.retrieval.retag_articles,
             ),
             vault=InMemoryCredentialVault(),
         )

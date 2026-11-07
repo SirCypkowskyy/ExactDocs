@@ -4,10 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self, cast
 
+from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS
 from exactdocs.ingestion.errors import CredentialsRequiredError, VersionImportingError
 from exactdocs.ingestion.models import (
-    ACTIVE_JOB_STATES,
-    IMPORT_KINDS,
     ArticleChunk,
     AutoSync,
     CopiedVersion,
@@ -25,7 +24,7 @@ from exactdocs.ingestion.models import (
 from exactdocs_kernel import NotFoundError
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryJobRepository:
     """Implements ``ports.driven.JobRepository``. For tests."""
 
@@ -34,7 +33,7 @@ class InMemoryJobRepository:
     @classmethod
     def of(cls, jobs: Iterable[Job]) -> Self:
         """Create a repository pre-filled with ``jobs``."""
-        return cls({job.id: job for job in jobs})
+        return cls(jobs={job.id: job for job in jobs})
 
     async def add(self, job: Job) -> None:
         """Store a new job; a second unfinished import of one (library, ref) is refused."""
@@ -96,7 +95,7 @@ class InMemoryJobRepository:
         return None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryLibrarySources:
     """Implements ``ports.driven.LibrarySources``. For tests."""
 
@@ -181,12 +180,13 @@ class NoStoredTags:
         raise NotImplementedError
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryCredentialVault:
     """Implements ``ports.driven.CredentialVault``. For tests; nothing is encrypted."""
 
     credentials: dict[str, Credential] = field(default_factory=dict)
-    scopes: dict[str, str] = field(default_factory=dict)  # of the credentials saved through here
+    scopes: dict[str, str] = field(default_factory=dict)
+    """Of the credentials saved through here."""
 
     async def save(self, library: str, scope: str, credential: Credential) -> None:
         """Store the library's credential."""
@@ -209,7 +209,7 @@ class InMemoryCredentialVault:
         return library in self.credentials
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- replay position
 class InMemoryCheckpoints:
     """``Checkpoints`` that keep the results of one job's completed steps, as DBOS does.
 
@@ -244,7 +244,7 @@ class InMemoryCheckpoints:
         return type(self)(completed=list(self.completed))
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryAutoSyncStore:
     """Implements ``ports.driven.AutoSyncStore``. For tests."""
 

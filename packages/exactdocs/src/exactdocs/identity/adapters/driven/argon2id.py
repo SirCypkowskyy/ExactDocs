@@ -7,7 +7,7 @@ from typing import Protocol
 from argon2 import PasswordHasher as Argon2
 from argon2.exceptions import InvalidHashError, VerificationError
 
-MAX_CONCURRENT_HASHES = 4
+from exactdocs.identity.constants import MAX_CONCURRENT_HASHES
 
 
 class Kdf(Protocol):
@@ -22,7 +22,7 @@ class Kdf(Protocol):
         ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Argon2idPasswordHasher:
     """Implements ``ports.driven.PasswordHasher`` with argon2id (argon2-cffi's defaults).
 

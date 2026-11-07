@@ -7,6 +7,20 @@ from typing import Any
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from exactdocs.retrieval.constants import (
+    _COUNT,
+    _CREATE_NEXT,
+    _CREATE_NEXT_TRIGGER,
+    _CREATE_TRIGGER,
+    _SEARCH,
+    FORMAT,
+    HEADING_WEIGHT,
+    IDENTIFIERS_WEIGHT,
+    PATH_WEIGHT,
+    REBUILD_BATCH,
+    TAG_CONDITIONS,
+    TEXT_WEIGHT,
+)
 from exactdocs.retrieval.models import (
     ChunkId,
     ChunkSet,
@@ -15,7 +29,6 @@ from exactdocs.retrieval.models import (
     SearchHit,
     SearchIndexState,
     TagFilter,
-    TagMatch,
     highlights,
     identifier_tokens,
     search_terms,
@@ -26,127 +39,45 @@ from exactdocs.retrieval.models import (
 # the explicit INTEGER PRIMARY KEY, so one entry exists per stored chunk, not per manifest, and
 # neither VACUUM nor a table rebuild can detach an entry from its chunk. The tokenizer keeps
 # `-_.` inside a token (see `identifier_tokens`). Columns: heading, path, text, identifiers.
-# FTS5 adds the weighted term counts of all columns *before* BM25 saturates them, so a repeated
-# word in the body can drown a heading hit. The identifiers column repeats every word (and adds
-# its parts), so it only gets a small weight: it makes camelCase and snake_case parts findable
-# without counting twice.
-# `heading` is the section's own heading and `path` its ancestors: a section that *defines* a term
-# outranks the sub-sections that merely sit under a heading naming it (ranking suite: `docker`
-# finds "Docker", not "Docker > Troubleshooting"), yet "docker troubleshooting" still finds the
-# latter because the path still counts.
-HEADING_WEIGHT, PATH_WEIGHT, TEXT_WEIGHT, IDENTIFIERS_WEIGHT = 20.0, 4.0, 1.0, 0.1
+# Column weights: see `HEADING_WEIGHT` and the others in `exactdocs.retrieval.constants`.
 
-# The format this build writes, stored in `retrieval_search_format` by every rebuild. Bump it when
-# what an entry holds changes but the table keeps its columns (`fts_row`, `identifier_tokens`, the
-# tokenizer): old entries keep answering, built the old way, until `exactdocs reindex`, and the
-# release notes say "requires reindex" (docs/releasing.md). A change of columns needs an Alembic
-# revision that rebuilds the table instead (as a91c4e7b3d02 did), since these queries name them.
-FORMAT = 2
-REBUILD_BATCH = 500  # chunks per write transaction while the new index is built
 
-# `exactdocs reindex` builds `retrieval_search_next` beside `retrieval_search`, then renames it over
-# it. Same definition as the Alembic revisions' (columns, tokenizer). While it is built, a trigger
-# deletes from it the chunks deleted meanwhile, so a reused chunk id never keeps the old text.
-_CREATE_NEXT = """
-    CREATE VIRTUAL TABLE retrieval_search_next USING fts5(
-        heading, path, text, identifiers,
-        tokenize = "unicode61 tokenchars '-_.'"
-    )
-"""
-_CREATE_NEXT_TRIGGER = """
-    CREATE TRIGGER retrieval_chunks_search_next_delete AFTER DELETE ON retrieval_chunks
-    BEGIN
-        DELETE FROM retrieval_search_next WHERE rowid = old.id;
-    END
-"""
-_CREATE_TRIGGER = """
-    CREATE TRIGGER retrieval_chunks_search_delete AFTER DELETE ON retrieval_chunks
-    BEGIN
-        DELETE FROM retrieval_search WHERE rowid = old.id;
-    END
-"""
-_CHUNKS_AFTER = text(
+_chunks_after = text(
     "SELECT id, heading_path, content FROM retrieval_chunks WHERE id > :after "
     "ORDER BY id LIMIT :limit"
 )
-_NOT_IN_NEXT = text(
+_not_in_next = text(
     """
     SELECT c.id, c.heading_path, c.content FROM retrieval_chunks c
     WHERE NOT EXISTS (SELECT 1 FROM retrieval_search_next s WHERE s.rowid = c.id)
     """
 )
-_INSERT_NEXT = text(
+_insert_next = text(
     "INSERT INTO retrieval_search_next (rowid, heading, path, text, identifiers) "
     "VALUES (:rowid, :heading, :path, :text, :identifiers)"
 )
 
-_MISSING = text(
+_missing = text(
     """
     SELECT c.id, c.position FROM retrieval_chunks c
     WHERE c.blob_sha = :blob AND c.config_hash = :config
       AND NOT EXISTS (SELECT 1 FROM retrieval_search s WHERE s.rowid = c.id)
     """
 )
-_INSERT = text(
+_insert = text(
     "INSERT INTO retrieval_search (rowid, heading, path, text, identifiers) "
     "VALUES (:rowid, :heading, :path, :text, :identifiers)"
 )
-# Rank first and cut to LIMIT, then build snippets for the survivors only. MATERIALIZED and CROSS
-# JOIN pin that order: left to itself the planner can scan the FTS table on the outside and re-run
-# the ranking for every match (seconds instead of milliseconds).
-_SEARCH = """
-    WITH ranked AS MATERIALIZED (
-        SELECT c.id AS id, mc.manifest_id AS manifest_id, mc.chunk_id AS chunk_id,
-               -bm25(retrieval_search, :heading_weight, :path_weight, :text_weight,
-                     :identifiers_weight) AS score
-        FROM retrieval_search
-        JOIN retrieval_chunks c ON c.id = retrieval_search.rowid
-        JOIN retrieval_manifest_chunks mc
-          ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
-         AND mc.position = c.position
-        WHERE retrieval_search MATCH :match AND mc.manifest_id IN :manifests {tags}
-        ORDER BY score DESC, mc.chunk_id
-        LIMIT :limit
-    )
-    SELECT r.manifest_id, r.chunk_id, r.score,
-           snippet(retrieval_search, 2, '', '', '', 24) AS snippet
-    FROM ranked r
-    CROSS JOIN retrieval_search ON retrieval_search.rowid = r.id
-    WHERE retrieval_search MATCH :match
-    ORDER BY r.score DESC, r.chunk_id
-"""
-# The tag condition sits in WHERE, so it is applied before ORDER BY ... LIMIT.
-_TAG_CONDITIONS = {
-    None: "",
-    TagMatch.ANY: (
-        "AND EXISTS (SELECT 1 FROM json_each(mc.tags)"
-        " WHERE value IN (SELECT value FROM json_each(:tags)))"
-    ),
-    TagMatch.ALL: (
-        "AND NOT EXISTS (SELECT 1 FROM json_each(:tags) wanted"
-        " WHERE wanted.value NOT IN (SELECT value FROM json_each(mc.tags)))"
-    ),
-}
-_COUNT = """
-    SELECT mc.manifest_id AS manifest_id, count(*) AS matches
-    FROM retrieval_search
-    JOIN retrieval_chunks c ON c.id = retrieval_search.rowid
-    JOIN retrieval_manifest_chunks mc
-      ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
-     AND mc.position = c.position
-    WHERE retrieval_search MATCH :match AND mc.manifest_id IN :manifests {tags}
-    GROUP BY mc.manifest_id
-"""
 
 
 def _statements(template: str) -> dict[object, Any]:
     return {
         match: text(template.format(tags=sql)).bindparams(bindparam("manifests", expanding=True))
-        for match, sql in _TAG_CONDITIONS.items()
+        for match, sql in TAG_CONDITIONS.items()
     }
 
 
-_SEARCHES, _COUNTS = _statements(_SEARCH), _statements(_COUNT)
+_searches, _counts = _statements(_SEARCH), _statements(_COUNT)
 
 
 def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, object]:
@@ -174,7 +105,7 @@ def _match(query: str) -> str | None:
     return " OR ".join('"' + term.replace('"', '""') + '"' for term in search_terms(query)) or None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteSearchIndex:
     """Implements ``ports.driven.SearchIndex`` with SQLite FTS5 and its ``bm25()`` ranking.
 
@@ -193,7 +124,7 @@ class SqliteSearchIndex:
         """
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
             missing = await connection.execute(
-                _MISSING, {"blob": chunk_set.blob_sha, "config": chunk_set.config_hash}
+                _missing, {"blob": chunk_set.blob_sha, "config": chunk_set.config_hash}
             )
             rows = [
                 fts_row(
@@ -204,7 +135,7 @@ class SqliteSearchIndex:
                 for rowid, position in missing
             ]
             if rows:
-                await connection.execute(_INSERT, rows)
+                await connection.execute(_insert, rows)
 
     async def search(
         self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
@@ -227,7 +158,7 @@ class SqliteSearchIndex:
             "identifiers_weight": IDENTIFIERS_WEIGHT,
             "limit": limit,
         }
-        statement = _SEARCHES[tag_filter.match if tag_filter.tags else None]
+        statement = _searches[tag_filter.match if tag_filter.tags else None]
         async with self.engine.connect() as connection:
             found = (await connection.execute(statement, params)).all()
         terms = search_terms(query)
@@ -251,7 +182,7 @@ class SqliteSearchIndex:
         match = _match(query)
         if match is None or not manifest_ids:
             return {}
-        statement = _COUNTS[tag_filter.match if tag_filter.tags else None]
+        statement = _counts[tag_filter.match if tag_filter.tags else None]
         async with self.engine.connect() as connection:
             found = await connection.execute(
                 statement, self._params(match, manifest_ids, tag_filter)
@@ -287,12 +218,12 @@ class SqliteSearchIndex:
             async with self._writing() as connection:
                 batch = (
                     await connection.execute(
-                        _CHUNKS_AFTER, {"after": after, "limit": self.rebuild_batch}
+                        _chunks_after, {"after": after, "limit": self.rebuild_batch}
                     )
                 ).all()
                 if not batch:
                     break
-                await connection.execute(_INSERT_NEXT, _rows(batch))
+                await connection.execute(_insert_next, _rows(batch))
             after = batch[-1].id
         async with self._writing() as connection:  # merge the b-trees: faster searches after
             await connection.exec_driver_sql(
@@ -305,9 +236,9 @@ class SqliteSearchIndex:
         One write transaction: a search sees the old index or the new one, never a mix.
         """
         async with self._writing() as connection:
-            missing = (await connection.execute(_NOT_IN_NEXT)).all()
+            missing = (await connection.execute(_not_in_next)).all()
             if missing:
-                await connection.execute(_INSERT_NEXT, _rows(missing))
+                await connection.execute(_insert_next, _rows(missing))
             for statement in (
                 "DROP TRIGGER retrieval_chunks_search_next_delete",
                 "DROP TRIGGER retrieval_chunks_search_delete",

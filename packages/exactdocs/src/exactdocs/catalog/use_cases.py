@@ -6,6 +6,12 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid4
 
+from exactdocs.catalog.constants import (
+    MAX_RENAMES,
+    MAX_SUGGESTION_SCAN,
+    MAX_TAG_FACETS,
+    TAG_SOURCE_PAGE,
+)
 from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
@@ -79,7 +85,6 @@ from exactdocs.catalog.errors import (
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
-    MAX_RENAMES,
     ChunkingConfig,
     ContentKey,
     HostKind,
@@ -109,9 +114,6 @@ from exactdocs.catalog.ports.driven import (
 )
 from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
 
-# A missing article lists at most this many paths to look for close matches.
-MAX_SUGGESTION_SCAN = 10_000
-
 
 async def _find_version(
     repository: LibraryRepository, library_id: LibraryId, ref: VersionRef | None
@@ -126,7 +128,7 @@ async def _find_version(
     return library, version
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListLibrariesUseCase:
     """Implements ``ports.driving.ListLibraries``."""
 
@@ -141,7 +143,7 @@ class ListLibrariesUseCase:
         return LibraryList.from_page(page)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CreateLibraryUseCase:
     """Implements ``ports.driving.CreateLibrary``."""
 
@@ -165,7 +167,7 @@ class CreateLibraryUseCase:
         return LibraryDetail.from_model(library)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UpdateLibraryUseCase:
     """Implements ``ports.driving.UpdateLibrary``."""
 
@@ -185,7 +187,7 @@ class UpdateLibraryUseCase:
         return LibraryDetail.from_model(updated)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SetLibrarySettingsUseCase:
     """Implements ``ports.driving.SetLibrarySettings``."""
 
@@ -218,7 +220,7 @@ class SetLibrarySettingsUseCase:
         return LibraryDetail.from_model(updated)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PinDefaultVersionUseCase:
     """Implements ``ports.driving.PinDefaultVersion``."""
 
@@ -246,7 +248,7 @@ class PinDefaultVersionUseCase:
         return LibraryDetail.from_model(updated)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ApplyReadmeUseCase:
     """Implements ``ports.driving.ApplyReadme``."""
 
@@ -277,7 +279,7 @@ class ApplyReadmeUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DiscardLibraryUseCase:
     """Implements ``ports.driving.DiscardLibrary``."""
 
@@ -293,7 +295,7 @@ class DiscardLibraryUseCase:
         await self.repository.delete(library.id)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetLibraryUseCase:
     """Implements ``ports.driving.GetLibrary``."""
 
@@ -307,7 +309,7 @@ class GetLibraryUseCase:
         return LibraryDetail.from_model(library)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ResolveVersionUseCase:
     """Implements ``ports.driving.ResolveVersion``."""
 
@@ -320,7 +322,7 @@ class ResolveVersionUseCase:
         return ResolvedVersion.from_library(library, version)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StoreManifestUseCase:
     """Implements ``ports.driving.StoreManifest``."""
 
@@ -404,7 +406,7 @@ class StoreManifestUseCase:
         return manifest, contents, images
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ManualTagger:
     """Brings a manifest's manual tags in line with the ones users set for its library."""
 
@@ -461,7 +463,7 @@ class ManualTagger:
         return found
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SetManualTagsUseCase:
     """Implements ``ports.driving.SetManualTags``."""
 
@@ -488,11 +490,7 @@ class SetManualTagsUseCase:
         )
 
 
-# Entries read per page when a whole manifest's tag sources are collected.
-TAG_SOURCE_PAGE = 1000
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetVersionTagsUseCase:
     """Implements ``ports.driving.GetVersionTags``."""
 
@@ -529,7 +527,7 @@ class GetVersionTagsUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FindStoredArticlesUseCase:
     """Implements ``ports.driving.FindStoredArticles``."""
 
@@ -558,7 +556,7 @@ class FindStoredArticlesUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SetImportedTagsUseCase:
     """Implements ``ports.driving.SetImportedTags``."""
 
@@ -575,7 +573,7 @@ class SetImportedTagsUseCase:
         return RetaggedManifest.of(command.manifest_id, touched)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ApplyManualTagsUseCase:
     """Implements ``ports.driving.ApplyManualTags``."""
 
@@ -591,7 +589,7 @@ class ApplyManualTagsUseCase:
         return await self.tagger.apply(manifest, by_path)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReplaceRenamesUseCase:
     """Implements ``ports.driving.ReplaceRenames``."""
 
@@ -634,7 +632,7 @@ class ReplaceRenamesUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ActivateManifestUseCase:
     """Implements ``ports.driving.ActivateManifest``."""
 
@@ -662,7 +660,7 @@ class ActivateManifestUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListArticlesUseCase:
     """Implements ``ports.driving.ListArticles``."""
 
@@ -708,7 +706,7 @@ async def _renames_manifest(
     return str(found.id), str(version.ref), manifest.id
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ResolveRenamedPathUseCase:
     """Implements ``ports.driving.ResolveRenamedPath``."""
 
@@ -724,7 +722,7 @@ class ResolveRenamedPathUseCase:
         return None if rename is None else RenamedPath.from_model(library, ref, rename)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListRenamesUseCase:
     """Implements ``ports.driving.ListRenames``."""
 
@@ -740,7 +738,7 @@ class ListRenamesUseCase:
         return RenameList(renames=[RenamedPath.from_model(library, ref, r) for r in renames])
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetArticleUseCase:
     """Implements ``ports.driving.GetArticle``."""
 
@@ -775,7 +773,7 @@ class GetArticleUseCase:
         return await asyncio.to_thread(close_paths, path, paths)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetAssetUseCase:
     """Implements ``ports.driving.GetAsset``."""
 
@@ -801,10 +799,7 @@ class GetAssetUseCase:
         return Asset(blob_sha=image.blob_sha, content_type=image.content_type, data=image.data)
 
 
-MAX_TAG_FACETS = 100
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListTagsUseCase:
     """Implements ``ports.driving.ListTags``."""
 
@@ -829,7 +824,7 @@ class ListTagsUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DiscardPendingManifestsUseCase:
     """Implements ``ports.driving.DiscardPendingManifests``."""
 
@@ -847,7 +842,7 @@ class DiscardPendingManifestsUseCase:
         return DiscardedManifests(count=count)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CollectGarbageUseCase:
     """Implements ``ports.driving.CollectGarbage``."""
 
@@ -861,7 +856,7 @@ class CollectGarbageUseCase:
         return CollectionResult.from_model(collected)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetManifestStatesUseCase:
     """Implements ``ports.driving.GetManifestStates``."""
 
@@ -876,7 +871,7 @@ class GetManifestStatesUseCase:
         return ManifestStates(states={m.id: m.state for m in found if m is not None})
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetActiveManifestUseCase:
     """Implements ``ports.driving.GetActiveManifest``."""
 
@@ -896,7 +891,7 @@ class GetActiveManifestUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListDefaultManifestsUseCase:
     """Implements ``ports.driving.ListDefaultManifests``."""
 
@@ -927,7 +922,7 @@ class ListDefaultManifestsUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RemoveVersionUseCase:
     """Implements ``ports.driving.RemoveVersion``."""
 
@@ -955,7 +950,7 @@ class RemoveVersionUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RemoveLibraryUseCase:
     """Implements ``ports.driving.RemoveLibrary``."""
 
@@ -973,7 +968,7 @@ class RemoveLibraryUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CopyManifestUseCase:
     """Implements ``ports.driving.CopyManifest``."""
 

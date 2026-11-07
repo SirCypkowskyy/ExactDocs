@@ -1,6 +1,5 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -8,6 +7,17 @@ from difflib import get_close_matches
 from enum import StrEnum
 from typing import Any, NewType, Self
 
+from exactdocs.catalog.constants import (
+    _HEADING_LEVELS,
+    _ID_PARTS,
+    _OBJECT_ID,
+    _SEGMENT,
+    _SHORT_SHA,
+    _STABLE_SEMVER,
+    IMAGE_TYPES,
+    MAX_CLOSE_MATCHES,
+    MAX_SIMILARITY,
+)
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
     DuplicateArticlePathError,
@@ -28,19 +38,8 @@ from exactdocs.catalog.errors import (
 )
 from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
 
-# A segment is `[a-z0-9._-]+` once lower-cased, but never only dots (`.`, `..`).
-_ID_PARTS = 3  # "", owner, repo
-_HEADING_LEVELS = 6
-_SEGMENT = re.compile(r"(?!\.+$)[A-Za-z0-9._-]+")
-_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-_SHORT_SHA = re.compile(r"[0-9a-f]{7,64}")
-# Stable semver (https://semver.org) with an optional `v`: a pre-release suffix means not stable.
-_STABLE_SEMVER = re.compile(
-    r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?"
-)
 
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class LibraryId:
     """`/owner/repo`, exactly two segments. Stored lower-case, so matched case-insensitively."""
 
@@ -56,7 +55,7 @@ class LibraryId:
         return self.value
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class VersionRef:
     """A git ref as published (`v1.4.0`, `main`, `release/1.4`, a SHA). Case-sensitive.
 
@@ -80,7 +79,7 @@ class VersionRef:
         return self.value
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ParsedId:
     """A context7-style ID split into its library and the optional ref after it."""
 
@@ -164,7 +163,7 @@ class TagMatch(StrEnum):
     ALL = "all"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TagSelection:
     """Which articles a tag filter keeps. No tags keeps every article."""
 
@@ -179,7 +178,7 @@ class TagSelection:
         if None in found:
             message = f"tags must be valid tags, at most {MAX_TAGS} of them"
             raise InvalidTagFilterError(message)
-        return cls(frozenset(t for t in found if t), match)
+        return cls(tags=frozenset(t for t in found if t), match=match)
 
     def keeps(self, article_tags: Iterable[str]) -> bool:
         """Tell whether an article with these tags passes."""
@@ -336,13 +335,15 @@ class ManifestEntry:
     """
 
     path: str
-    blob_sha: str  # git blob SHA
+    blob_sha: str
+    """Git blob SHA."""
     content_version: int
     title: str
     tags: tuple[str, ...] = ()
     """Imported: from front matter and the library's path rules."""
     front_matter: dict[str, Any] = field(default_factory=dict)
-    size: int = 0  # bytes of the content
+    size: int = 0
+    """Bytes of the content."""
     manual_tags: tuple[ManualTag, ...] = ()
     """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
 
@@ -368,7 +369,7 @@ def _check_path(path: str) -> None:
         raise InvalidArticlePathError(path)
 
 
-@dataclass(frozen=True, slots=True, order=True)
+@dataclass(frozen=True, slots=True, kw_only=True, order=True)
 class ManualTag:
     """A tag an entry carries because a user set it by hand on ``path``.
 
@@ -380,7 +381,7 @@ class ManualTag:
     path: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ManualTags:
     """Tags a user set by hand on an article path of a library: they hold for every version.
 
@@ -400,7 +401,7 @@ class ManualTags:
         found = [normalize_tag(tag) for tag in raw]
         if len(raw) > MAX_TAGS or None in found:
             raise InvalidManualTagsError
-        return cls(path, tuple(sorted({t for t in found if t})))
+        return cls(path=path, tags=tuple(sorted({t for t in found if t})))
 
     @staticmethod
     def reaching(
@@ -412,11 +413,13 @@ class ManualTags:
         versions back); paths it leaves out only have their own tags. Each tag names the path it
         was set on, so a tag set on two of them is there twice.
         """
-        reached = {path: {ManualTag(t, path) for t in tags} for path, tags in by_path.items()}
+        reached = {
+            path: {ManualTag(tag=t, path=path) for t in tags} for path, tags in by_path.items()
+        }
         for path, olds in origins.items():
             for old in olds:
                 found = reached.setdefault(path, set())
-                found.update(ManualTag(t, old) for t in by_path.get(old, ()))
+                found.update(ManualTag(tag=t, path=old) for t in by_path.get(old, ()))
         return {path: tuple(sorted(tags)) for path, tags in reached.items() if tags}
 
 
@@ -432,7 +435,8 @@ class ManifestRename:
     from_ref: VersionRef
     old_path: str
     new_path: str
-    similarity: int  # percent of the content kept; 1..100
+    similarity: int
+    """Percent of the content kept; 1..100."""
 
     def __post_init__(self) -> None:
         _check_path(self.old_path)
@@ -441,21 +445,13 @@ class ManifestRename:
             raise InvalidSimilarityError(self.similarity)
 
 
-MAX_LIBRARY_RULES = 20
-MAX_LIBRARY_RULE_CHARS = 500
-"""A library's rules: at most this many, each one line of at most this many characters."""
-MAX_SIMILARITY = 100
-MAX_RENAMES = 10_000
-IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"})
-"""The only types the catalog stores and serves (the importer sniffs, the catalog re-checks)."""
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ManifestImage:
     """One image of a manifest: the repository path articles reference, and the blob it holds."""
 
     path: str
-    blob_sha: str  # git blob SHA: images with the same blob share one stored copy
+    blob_sha: str
+    """Git blob SHA: images with the same blob share one stored copy."""
     content_type: str
     size: int = 0
 
@@ -537,9 +533,6 @@ class GarbageCollected:
     manifests: int
     contents: int
     images: int = 0
-
-
-MAX_CLOSE_MATCHES = 5
 
 
 def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHES) -> list[str]:

@@ -1,10 +1,7 @@
 from dataclasses import dataclass
 
+from exactdocs.retrieval.constants import MAX_DATA_CHARS, MAX_HEADING_CHARS, MAX_HEADINGS
 from exactdocs_kernel import ConflictError, NotFoundError, ValidationError
-
-MAX_DATA_CHARS = 200
-MAX_HEADING_CHARS = 60
-MAX_HEADINGS = 8
 
 
 def _data(text: str, limit: int = MAX_DATA_CHARS) -> str:

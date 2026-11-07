@@ -15,6 +15,13 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import (
+    IMPORT_JOB,
+    RECHUNK_JOB,
+    REFRESH_JOB,
+    REPROCESS_JOB,
+    RETAG_JOB,
+)
 from exactdocs.ingestion.dtos import (
     ChunkingIn,
     EnqueueJobCommand,
@@ -33,11 +40,6 @@ from exactdocs.ingestion.errors import (
     ReprocessFailedError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    RECHUNK_JOB,
-    REFRESH_JOB,
-    REPROCESS_JOB,
-    RETAG_JOB,
     ChunkingConfig,
     ImportedRef,
     ImportSource,
@@ -114,7 +116,7 @@ async def _noop(job: Job, progress: object, /) -> None:
 
 @pytest.fixture
 def sources() -> InMemoryLibrarySources:
-    return InMemoryLibrarySources({LIBRARY: SOURCE}, {LIBRARY: list(VERSIONS)})
+    return InMemoryLibrarySources(sources={LIBRARY: SOURCE}, versions={LIBRARY: list(VERSIONS)})
 
 
 def make_module(
@@ -371,7 +373,9 @@ async def test_settings_are_put_back_when_the_job_cannot_be_queued(sources, jobs
     async def cannot_queue(command: EnqueueJobCommand) -> JobSummary:
         raise RuntimeError(command.kind)
 
-    update = UpdateLibrarySettingsUseCase(sources, settings, jobs, cannot_queue)
+    update = UpdateLibrarySettingsUseCase(
+        sources=sources, settings=settings, jobs=jobs, enqueue_job=cannot_queue
+    )
 
     with pytest.raises(RuntimeError, match="reprocess"):
         await update(command(exclude=["a/"]))
@@ -550,7 +554,7 @@ async def test_every_version_is_re_imported_at_its_recorded_commit(sources):
     importer = Importer()
     progress = Progress()
 
-    await ReprocessLibraryUseCase(sources, importer)(library_job(), progress)
+    await ReprocessLibraryUseCase(sources=sources, importer=importer)(library_job(), progress)
 
     assert [(j.kind, j.version, j.commit_sha, j.ref_kind) for j in importer.seen] == [
         (REFRESH_JOB, "v1.0.0", "a" * 40, RefKind.TAG),
@@ -566,7 +570,7 @@ async def test_a_failing_version_does_not_stop_the_others_and_fails_the_job(sour
     importer = Importer(failures={"v1.0.0": NoArticlesError()})
 
     with pytest.raises(ReprocessFailedError) as raised:
-        await ReprocessLibraryUseCase(sources, importer)(library_job(), Progress())
+        await ReprocessLibraryUseCase(sources=sources, importer=importer)(library_job(), Progress())
 
     assert [j.version for j in importer.seen] == ["v1.0.0", "main"]
     assert raised.value.refs == ("v1.0.0",)
@@ -580,7 +584,7 @@ async def test_different_failures_share_a_generic_code(sources):
     )
 
     with pytest.raises(ReprocessFailedError) as raised:
-        await ReprocessLibraryUseCase(sources, importer)(library_job(), Progress())
+        await ReprocessLibraryUseCase(sources=sources, importer=importer)(library_job(), Progress())
 
     assert raised.value.code == "reprocess_failed"
     assert raised.value.refs == ("v1.0.0", "main")
@@ -594,14 +598,18 @@ async def test_a_resumed_reprocess_skips_the_versions_it_had_finished(sources):
     importer = Importer(failures={"main": Killed()})
     steps = InMemoryCheckpoints()
     with pytest.raises(Killed):
-        await ReprocessLibraryUseCase(sources, importer, steps)(library_job(), Progress())
+        await ReprocessLibraryUseCase(sources=sources, importer=importer, checkpoints=steps)(
+            library_job(), Progress()
+        )
     sources.versions[LIBRARY].append(  # imported meanwhile: not in this job's recorded list
         ImportedRef(ref="v2.0.0", kind=RefKind.TAG, commit_sha="c" * 40)
     )
     resumed = steps.resumed()
     progress = Progress()  # the job's progress is rebuilt from scratch on a resume
 
-    await ReprocessLibraryUseCase(sources, importer, resumed)(library_job(), progress)
+    await ReprocessLibraryUseCase(sources=sources, importer=importer, checkpoints=resumed)(
+        library_job(), progress
+    )
 
     assert [j.version for j in importer.seen] == ["v1.0.0", "main", "main"]
     assert resumed.ran == ["re-import main"]
@@ -619,11 +627,15 @@ async def test_a_replayed_failure_still_fails_the_job(sources):
     importer = Importer(failures={"v1.0.0": NoArticlesError()})
     steps = InMemoryCheckpoints()
     with pytest.raises(ReprocessFailedError):
-        await ReprocessLibraryUseCase(sources, importer, steps)(library_job(), Progress())
+        await ReprocessLibraryUseCase(sources=sources, importer=importer, checkpoints=steps)(
+            library_job(), Progress()
+        )
     importer.failures.clear()  # it would succeed now: the recorded outcome is what counts
 
     with pytest.raises(ReprocessFailedError) as raised:
-        await ReprocessLibraryUseCase(sources, importer, steps.resumed())(library_job(), Progress())
+        await ReprocessLibraryUseCase(
+            sources=sources, importer=importer, checkpoints=steps.resumed()
+        )(library_job(), Progress())
 
     assert raised.value.refs == ("v1.0.0",)
     assert len(importer.seen) == 2
@@ -695,7 +707,7 @@ def article(
 
 
 def retag(sources, store: Store, index: Index, progress: Progress | None = None):
-    return RetagLibraryUseCase(sources, store, index, TagLocks())(
+    return RetagLibraryUseCase(sources=sources, tags=store, index=index, tag_locks=TagLocks())(
         library_job(RETAG_JOB), progress or Progress()
     )
 
@@ -780,14 +792,14 @@ async def test_a_resumed_retag_skips_the_versions_it_had_finished(sources):
     index = Index(kill_on="m2")
     steps = InMemoryCheckpoints()
     with pytest.raises(Killed):
-        await RetagLibraryUseCase(sources, store, index, TagLocks(), steps)(
-            library_job(RETAG_JOB), Progress()
-        )
+        await RetagLibraryUseCase(
+            sources=sources, tags=store, index=index, tag_locks=TagLocks(), checkpoints=steps
+        )(library_job(RETAG_JOB), Progress())
     progress = Progress()
 
-    await RetagLibraryUseCase(sources, store, index, TagLocks(), steps.resumed())(
-        library_job(RETAG_JOB), progress
-    )
+    await RetagLibraryUseCase(
+        sources=sources, tags=store, index=index, tag_locks=TagLocks(), checkpoints=steps.resumed()
+    )(library_job(RETAG_JOB), progress)
 
     assert [m for m, _ in store.writes] == ["m1", "m2", "m2"]  # m1 is not re-tagged again
     assert [m for m, _ in index.retagged] == ["m1", "m2"]

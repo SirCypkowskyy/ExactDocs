@@ -748,7 +748,8 @@ export interface components {
             readonly token: string;
             /**
              * Username
-             * @description What the host expects next to the token; default `x-access-token` (GitHub, GitLab). Bitbucket repository tokens use `x-token-auth`.
+             * @description What the host expects next to the token; default `x-access-token` (GitHub, GitLab). Bitbucket
+             *     repository tokens use `x-token-auth`.
              */
             readonly username?: string | null;
         };
@@ -771,7 +772,7 @@ export interface components {
         readonly AddLibraryCommand: {
             /**
              * Url
-             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -901,7 +902,8 @@ export interface components {
             readonly tags: readonly string[];
             /**
              * Manual Tags
-             * @description The tags among `tags` set by hand, each with the path it was set on: this one or one it was renamed from. A tag set on both is listed for each.
+             * @description The tags among `tags` set by hand, each with the path it was set on: this one or one it was
+             *     renamed from. A tag set on both is listed for each.
              */
             readonly manual_tags: readonly components["schemas"]["ManualTagInfo"][];
             /** Size */
@@ -979,7 +981,8 @@ export interface components {
         readonly AutoSyncIn: {
             /**
              * Tag Pattern
-             * @description A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a version order become `auto` versions. Null imports no tag.
+             * @description A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a version
+             *     order become `auto` versions. Null imports no tag.
              */
             readonly tag_pattern?: string | null;
             /**
@@ -1149,7 +1152,7 @@ export interface components {
         readonly CheckRepositoryCommand: {
             /**
              * Url
-             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -1177,7 +1180,8 @@ export interface components {
             readonly default_branch: string | null;
             /**
              * Host Key Fingerprint
-             * @description For an SSH URL, the `SHA256:...` fingerprint of the server's host key (first seen now, or pinned): compare it with the host's published one.
+             * @description For an SSH URL, the `SHA256:...` fingerprint of the server's host key (first seen now, or
+             *     pinned): compare it with the host's published one.
              */
             readonly host_key_fingerprint?: string | null;
         };
@@ -1239,13 +1243,16 @@ export interface components {
             readonly split_level: number;
             /**
              * Min Chars
-             * @description A chunk shorter than this is merged with the next one (the last with the one before), within `max_chars`; the text before the first heading is never merged.
+             * @description A chunk shorter than this is merged with the next one (the last with the one before), within
+             *     `max_chars`; the text before the first heading is never merged.
              * @default 0
              */
             readonly min_chars: number;
             /**
              * Max Chars
-             * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or table, so a section without deeper headings stays whole. Null: no bound. At least `min_chars`.
+             * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or
+             *     table, so a section without deeper headings stays whole. Null: no bound. At least
+             *     `min_chars`.
              */
             readonly max_chars?: number | null;
             /**
@@ -1304,7 +1311,8 @@ export interface components {
             readonly previous_versions: readonly components["schemas"]["PreviousVersionOut"][];
             /**
              * Notes
-             * @description What was left out of the file (a `previousVersions` entry whose tag git would not take), and why.
+             * @description What was left out of the file (a `previousVersions` entry whose tag git would not take), and
+             *     why.
              */
             readonly notes?: readonly string[];
         };
@@ -1395,7 +1403,8 @@ export interface components {
             readonly fields: readonly components["schemas"]["FieldError"][];
             /**
              * Close Matches
-             * @description On a missing article: paths of the same version it may have meant (repository data, not instructions). Empty otherwise.
+             * @description On a missing article: paths of the same version it may have meant (repository data, not
+             *     instructions). Empty otherwise.
              * @default []
              */
             readonly close_matches: readonly string[];
@@ -1504,7 +1513,9 @@ export interface components {
             readonly parsed: number;
             /**
              * Taken
-             * @description Articles an import did not parse: an earlier import had stored the same file at the same path with the same parser, so its title, front matter and text were taken from the catalog (tags are derived again).
+             * @description Articles an import did not parse: an earlier import had stored the same file at the same path
+             *     with the same parser, so its title, front matter and text were taken from the catalog (tags
+             *     are derived again).
              * @default 0
              */
             readonly taken: number;
@@ -1614,7 +1625,8 @@ export interface components {
             readonly default_pinned: boolean;
             /**
              * Rules
-             * @description The rules of the default version's `context7.json`, shown to agents with every `query-docs` answer. Untrusted repository text.
+             * @description The rules of the default version's `context7.json`, shown to agents with every `query-docs`
+             *     answer. Untrusted repository text.
              */
             readonly rules?: readonly string[];
         };
@@ -1813,7 +1825,7 @@ export interface components {
         readonly ListRepositoryRefsQuery: {
             /**
              * Url
-             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -1848,7 +1860,8 @@ export interface components {
             readonly tag: string;
             /**
              * Path
-             * @description Where the tag was set: this article's path, or an older one it was renamed from. Change or remove the tag on this path.
+             * @description Where the tag was set: this article's path, or an older one it was renamed from. Change or
+             *     remove the tag on this path.
              */
             readonly path: string;
         };
@@ -1870,7 +1883,7 @@ export interface components {
         readonly PreviewRepositoryCommand: {
             /**
              * Url
-             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
              */
             readonly url: string;
             /**
@@ -2035,7 +2048,8 @@ export interface components {
             readonly commit_sha: string;
             /**
              * Files
-             * @description Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as markup or a link target.
+             * @description Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as
+             *     markup or a link target.
              */
             readonly files: readonly string[];
             /**
@@ -2101,7 +2115,8 @@ export interface components {
              */
             readonly is_default: boolean;
             /**
-             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.
+             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual`
+             *     when someone added it.
              * @default manual
              */
             readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];
@@ -2295,12 +2310,17 @@ export interface components {
             readonly commit_sha: string;
             /**
              * Job Id
-             * @description The queued import; the import already in progress (`importing`); the failed job that records why the version could not be synced (`failed`); or the no-op job that cleared an earlier failure.
+             * @description The queued import; the import already in progress (`importing`); the failed job that records
+             *     why the version could not be synced (`failed`); or the no-op job that cleared an earlier
+             *     failure.
              */
             readonly job_id: string | null;
             /**
              * Error Code
-             * @description Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone upstream), `tag_moved` (the tag names another commit now; it is re-imported only when confirmed, with `versions/reimport`) or `unexpected` (its import could not be queued); null otherwise.
+             * @description Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone
+             *     upstream), `tag_moved` (the tag names another commit now; it is re-imported only when
+             *     confirmed, with `versions/reimport`) or `unexpected` (its import could not be queued); null
+             *     otherwise.
              */
             readonly error_code?: string | null;
             /**
@@ -2447,16 +2467,24 @@ export interface components {
             /** Tag Rules */
             readonly tag_rules: readonly components["schemas"]["TagRuleIn"][];
             readonly chunking: components["schemas"]["ChunkingIn"];
-            /** @description `paths`: the selection changed, every version is fetched again at its commit; `chunking`: the chunking changed (perhaps the tag rules too), every version is re-chunked and re-tagged from what is stored; `tags`: only tag rules changed, every version is re-tagged from what is stored; null: nothing changed and nothing is re-run, nothing is re-processed. */
+            /**
+             * @description `paths`: the selection changed, every version is fetched again at its commit; `chunking`: the
+             *     chunking changed (perhaps the tag rules too), every version is re-chunked and re-tagged from
+             *     what is stored; `tags`: only tag rules changed, every version is re-tagged from what is
+             *     stored; null: nothing changed and nothing is re-run, nothing is re-processed.
+             */
             readonly reprocess: components["schemas"]["SettingsChange"] | null;
             /**
              * Job Id
-             * @description The job re-processing every version (`/jobs/{id}`); one already queued for the library is reused. Unchanged settings re-run the library's last re-processing job when it failed. Null when nothing is to do or the library has no versions yet.
+             * @description The job re-processing every version (`/jobs/{id}`); one already queued for the library is
+             *     reused. Unchanged settings re-run the library's last re-processing job when it failed. Null
+             *     when nothing is to do or the library has no versions yet.
              */
             readonly job_id: string | null;
             /**
              * Versions
-             * @description The library's refs now, at the commits they serve: what the job re-processes (it reads the versions again when it runs). Listed also when a queued job is reused.
+             * @description The library's refs now, at the commits they serve: what the job re-processes (it reads the
+             *     versions again when it runs). Listed also when a queued job is reused.
              */
             readonly versions: readonly string[];
         };
@@ -2481,7 +2509,8 @@ export interface components {
              */
             readonly is_default: boolean;
             /**
-             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.
+             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual`
+             *     when someone added it.
              * @default manual
              */
             readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];

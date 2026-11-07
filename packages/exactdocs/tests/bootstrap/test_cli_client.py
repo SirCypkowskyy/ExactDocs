@@ -23,11 +23,12 @@ from exactdocs.bootstrap.client import (
     read_stored,
     store,
 )
+from exactdocs.bootstrap.constants import LOCAL_COMMANDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.constants import FIRST_WAIT, FREE_FAILURES
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.identity.models import FIRST_WAIT, FREE_FAILURES
 
 HORSE = "correct horse battery staple"
 URL = "https://docs.example.com"
@@ -189,10 +190,10 @@ def _commands(app: Any = cli.app, prefix: str = "") -> dict[str, Any]:
 
 def test_only_the_listed_commands_are_local() -> None:
     commands = _commands()
-    assert commands.keys() >= cli.LOCAL_COMMANDS
+    assert commands.keys() >= LOCAL_COMMANDS
     assert {"login", "logout"} <= commands.keys()
     for name, command in commands.items():
-        if name in cli.LOCAL_COMMANDS:
+        if name in LOCAL_COMMANDS:
             continue
         source = inspect.getsource(command)
         for forbidden in (

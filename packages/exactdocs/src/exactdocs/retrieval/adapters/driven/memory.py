@@ -4,6 +4,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
+from exactdocs.retrieval.constants import MEMORY_FORMAT
 from exactdocs.retrieval.errors import ChunkSetMismatchError
 from exactdocs.retrieval.models import (
     CatalogLibrary,
@@ -28,7 +29,7 @@ from exactdocs.retrieval.models import (
 )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryChunkRepository:
     """Implements ``ports.driven.ChunkRepository`` with dictionaries."""
 
@@ -49,7 +50,7 @@ class InMemoryChunkRepository:
             if key in self.chunk_sets and self.chunk_sets[key].digest != value.digest:
                 raise ChunkSetMismatchError(*key)
         new = {key: value for key, value in chunk_sets.items() if key not in self.chunk_sets}
-        self.chunk_sets |= new
+        self.chunk_sets.update(new)
         self.manifests[manifest.manifest_id] = manifest
         self.rows[manifest.manifest_id] = {row.chunk_id: row for row in rows}
         return len(new)
@@ -149,10 +150,7 @@ class InMemoryChunkRepository:
         return len(changed)
 
 
-MEMORY_FORMAT = 1
-
-
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- index format
 class InMemorySearchIndex:
     """Reference ``ports.driven.SearchIndex``: a term-count score, not BM25.
 
@@ -165,7 +163,8 @@ class InMemorySearchIndex:
 
     chunks: InMemoryChunkRepository
     indexed: set[ChunkSetKey] = field(default_factory=set)
-    stored_format: int = MEMORY_FORMAT  # set it lower to stand for an index from an older build
+    stored_format: int = MEMORY_FORMAT
+    """Set it lower to stand for an index from an older build."""
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Remember the set; the text itself is read from the repository."""
@@ -209,7 +208,8 @@ class InMemorySearchIndex:
 
     async def rebuild(self) -> RebuiltIndex:
         """Index every stored chunk set again (one step: nothing can search in between)."""
-        self.indexed = set(self.chunks.chunk_sets)
+        self.indexed.clear()
+        self.indexed.update(self.chunks.chunk_sets)
         self.stored_format = MEMORY_FORMAT
         entries = sum(len(s.chunks) for s in self.chunks.chunk_sets.values())
         return RebuiltIndex(format=MEMORY_FORMAT, entries=entries)
@@ -234,7 +234,7 @@ def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> Sea
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryDefaultVersions:
     """Implements ``ports.driven.DefaultVersions`` with a fixed list."""
 
@@ -245,7 +245,7 @@ class InMemoryDefaultVersions:
         return sorted(self.versions, key=lambda v: v.library)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryLibraries:
     """Implements ``ports.driven.Libraries`` with a fixed list."""
 

@@ -17,7 +17,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import LibrarySummary
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
-from exactdocs.retrieval.adapters.driven.sqlite_fts import FORMAT
+from exactdocs.retrieval.constants import FORMAT
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -152,7 +152,7 @@ async def test_a_version_is_addressed_by_its_ref(client: httpx.AsyncClient, ref:
 async def test_the_ref_is_everything_after_versions_even_with_slashes_or_a_short_sha(
     client: httpx.AsyncClient, container: Container
 ) -> None:
-    repository = SqliteLibraryRepository(container.engine)
+    repository = SqliteLibraryRepository(engine=container.engine)
     payments = await repository.get(LibraryId("/acme/payments"))
     assert payments is not None
     imported_at = datetime(2026, 11, 4, tzinfo=UTC)

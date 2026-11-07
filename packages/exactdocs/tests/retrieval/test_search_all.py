@@ -10,6 +10,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryLibraries,
     InMemorySearchIndex,
 )
+from exactdocs.retrieval.constants import MAX_SEARCHED_LIBRARIES
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchAllQuery
 from exactdocs.retrieval.errors import EmptySearchTextError, VersionNotIndexedError
 from exactdocs.retrieval.models import (
@@ -19,7 +20,6 @@ from exactdocs.retrieval.models import (
     SourceHost,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.use_cases import MAX_SEARCHED_LIBRARIES
 
 
 @dataclass(slots=True)
@@ -101,7 +101,7 @@ class Fixture:
 def world() -> Fixture:
     chunks = InMemoryChunkRepository()
     versions = Versions()
-    index = InMemorySearchIndex(chunks)
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
         defaults=versions,
         libraries=InMemoryLibraries(),

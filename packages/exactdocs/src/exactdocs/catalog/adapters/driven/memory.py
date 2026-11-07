@@ -35,7 +35,7 @@ from exactdocs.catalog.models import (
 )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryLibraryRepository:
     """Implements ``ports.driven.LibraryRepository``. For tests."""
 
@@ -45,7 +45,7 @@ class InMemoryLibraryRepository:
     @classmethod
     def of(cls, libraries: Iterable[Library]) -> Self:
         """Create a repository pre-filled with ``libraries``."""
-        return cls({lib.id: lib for lib in libraries})
+        return cls(libraries={lib.id: lib for lib in libraries})
 
     async def list_all(self) -> Sequence[Library]:
         """Return every library."""
@@ -133,7 +133,7 @@ class InMemoryLibraryRepository:
         )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryManifestRepository:
     """Implements ``ports.driven.ManifestRepository``. For tests; activation moves a version."""
 
@@ -422,7 +422,7 @@ def _light(manifest: Manifest) -> Manifest:
     return replace(manifest, entries=(), renames=(), images=())
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryImportedTags:
     """Implements ``ports.driven.ImportedTagWriter`` on an ``InMemoryManifestRepository``."""
 
@@ -440,7 +440,7 @@ class InMemoryImportedTags:
         return {e.path: e.all_tags for e in entries if e.path in tags}
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on an ``InMemoryManifestRepository``."""
 
@@ -474,7 +474,7 @@ class InMemoryStoredArticles:
         return list(found.values())
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryManifestCopier:
     """Implements ``ports.driven.ManifestCopier`` on an ``InMemoryManifestRepository``."""
 

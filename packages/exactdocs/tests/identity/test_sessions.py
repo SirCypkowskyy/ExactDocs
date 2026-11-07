@@ -12,6 +12,7 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
+from exactdocs.identity.constants import ABSOLUTE_TIMEOUT, IDLE_TIMEOUT
 from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
@@ -22,13 +23,7 @@ from exactdocs.identity.errors import (
     NotSignedInError,
     UnknownAccountError,
 )
-from exactdocs.identity.models import (
-    ABSOLUTE_TIMEOUT,
-    IDLE_TIMEOUT,
-    AccountId,
-    Session,
-    hash_token,
-)
+from exactdocs.identity.models import AccountId, Session, hash_token
 from exactdocs.identity.module import IdentityModule
 
 HORSE = "correct horse battery staple"

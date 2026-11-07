@@ -22,7 +22,7 @@ async def store(request: pytest.FixtureRequest) -> AsyncIterator[AutoSyncStore]:
         return
     engine = open_database(Settings())
     await migrate(engine)
-    yield SqliteAutoSyncStore(engine)
+    yield SqliteAutoSyncStore(engine=engine)
     await engine.dispose()
 
 

@@ -5,10 +5,11 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from exactdocs.ingestion.models import (
+from exactdocs.ingestion.constants import (
     DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
+    ERROR_CODE,
     MAX_CHUNK_CHARS,
     MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
@@ -16,6 +17,13 @@ from exactdocs.ingestion.models import (
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
     MIN_INTERVAL_MINUTES,
+)
+from exactdocs.ingestion.constants._dtos import (
+    _CONTEXT7,
+    _CONTEXT7_WARNING,
+    _CREDENTIAL_DESCRIPTION,
+)
+from exactdocs.ingestion.models import (
     AccessToken,
     AutoSync,
     ChunkingConfig,
@@ -37,7 +45,7 @@ from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, 
 
 
 class _Dto(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
 class FileProblemSummary(_Dto):
@@ -45,8 +53,10 @@ class FileProblemSummary(_Dto):
 
     path: str
     code: ProblemCode
-    reason: str = Field(description="A sentence for people; may change, branch on `code`.")
-    is_skip: bool = Field(description="False when the file was imported despite the problem.")
+    reason: str
+    """A sentence for people; may change, branch on `code`."""
+    is_skip: bool
+    """False when the file was imported despite the problem."""
 
     @classmethod
     def from_model(cls, problem: FileProblem) -> Self:
@@ -59,16 +69,6 @@ class FileProblemSummary(_Dto):
         )
 
 
-ERROR_CODE = (
-    "The stable code of `error`, null unless the job failed (or failed before codes were "
-    "recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made "
-    "private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot "
-    "be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points "
-    "elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or "
-    "`unexpected`."
-)
-
-
 class JobSummary(_Dto):
     """A job and how far it got. ``total`` is 0 until the job knows its size."""
 
@@ -76,32 +76,27 @@ class JobSummary(_Dto):
     kind: str
     library: str
     version: str | None
-    commit_sha: str | None = Field(description="The commit `version` was pinned to, if any.")
+    commit_sha: str | None
+    """The commit `version` was pinned to, if any."""
     state: JobState
     done: int
     total: int
     problems: list[FileProblemSummary]
-    chunked: int = Field(
-        description="Chunk sets cut by an import: one per distinct new file content."
-    )
-    reused: int = Field(
-        description="Articles whose chunk set an earlier import had stored (files, not blobs)."
-    )
-    parsed: int = Field(default=0, description="Articles an import parsed.")
-    taken: int = Field(
-        default=0,
-        description=(
-            "Articles an import did not parse: an earlier import had stored the same file at the "
-            "same path with the same parser, so its title, front matter and text were taken from "
-            "the catalog (tags are derived again)."
-        ),
-    )
+    chunked: int
+    """Chunk sets cut by an import: one per distinct new file content."""
+    reused: int
+    """Articles whose chunk set an earlier import had stored (files, not blobs)."""
+    parsed: int = Field(default=0)
+    """Articles an import parsed."""
+    taken: int = Field(default=0)
+    """Articles an import did not parse: an earlier import had stored the same file at the same path
+    with the same parser, so its title, front matter and text were taken from the catalog (tags
+    are derived again).
+    """
     error: str | None
     error_code: str | None = Field(description=ERROR_CODE)
-    origin: VersionOrigin = Field(
-        default=VersionOrigin.MANUAL,
-        description="`auto` when the scheduled check queued it, `manual` otherwise.",
-    )
+    origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
+    """`auto` when the scheduled check queued it, `manual` otherwise."""
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -136,9 +131,8 @@ class JobList(_Dto):
     """A page of the jobs of one library, newest first."""
 
     jobs: list[JobSummary]
-    next_cursor: str | None = Field(
-        description="Pass as `cursor` to get the next page; null on the last page."
-    )
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
 
     @classmethod
     def from_page(cls, page: Page[Job]) -> Self:
@@ -158,7 +152,8 @@ class LatestJob(_Dto):
     state: JobState
     done: int
     total: int
-    skipped: int = Field(description="How many files the job skipped; see `/jobs/{id}`.")
+    skipped: int
+    """How many files the job skipped; see `/jobs/{id}`."""
     error: str | None
     error_code: str | None = Field(description=ERROR_CODE)
     created_at: datetime
@@ -198,11 +193,10 @@ class EnqueueJobCommand(_Dto):
     library: str = Field(min_length=1)
     version: str | None = Field(default=None, min_length=1)
     commit_sha: str | None = Field(default=None, min_length=1)
-    ref_kind: RefKind | None = Field(default=None, description="What `version` is.")
-    origin: VersionOrigin = Field(
-        default=VersionOrigin.MANUAL,
-        description="Given to the version by its first import: `auto` ones may be pruned.",
-    )
+    ref_kind: RefKind | None = Field(default=None)
+    """What `version` is."""
+    origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
+    """Given to the version by its first import: `auto` ones may be pruned."""
 
 
 class GetJobQuery(_Dto):
@@ -236,12 +230,10 @@ class AccessTokenIn(_Dto):
 
     kind: Literal["token"]
     token: SecretStr = Field(max_length=8192)
-    username: str | None = Field(
-        default=None,
-        max_length=100,
-        description="What the host expects next to the token; default `x-access-token` "
-        "(GitHub, GitLab). Bitbucket repository tokens use `x-token-auth`.",
-    )
+    username: str | None = Field(default=None, max_length=100)
+    """What the host expects next to the token; default `x-access-token` (GitHub, GitLab). Bitbucket
+    repository tokens use `x-token-auth`.
+    """
 
     def to_model(self) -> Credential:
         """Validate and convert to the domain value."""
@@ -261,37 +253,29 @@ class DeployKeyIn(_Dto):
 
 
 CredentialIn = Annotated[AccessTokenIn | DeployKeyIn, Field(discriminator="kind")]
-_CREDENTIAL_DESCRIPTION = (
-    "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored "
-    "encrypted, offered only to the repository's own host and never returned."
-)
 
 
 class CheckRepositoryCommand(_Dto):
     """Ask whether a git URL works, before anything is saved."""
 
-    url: str = Field(
-        min_length=1,
-        max_length=2048,
-        description="https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, "
-        "without credentials.",
-    )
+    url: str = Field(min_length=1, max_length=2048)
+    """HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
 
 
 class CheckedRepository(_Dto):
     """A reachable git repository and what a new library from it would look like."""
 
-    host: RepositoryHost = Field(description="The hosting service, for source links.")
-    library_id: str = Field(description="The proposed `/owner/repo` library ID.")
-    default_branch: str | None = Field(
-        description="The branch `HEAD` points at; null for an empty repository."
-    )
-    host_key_fingerprint: str | None = Field(
-        default=None,
-        description="For an SSH URL, the `SHA256:...` fingerprint of the server's host key "
-        "(first seen now, or pinned): compare it with the host's published one.",
-    )
+    host: RepositoryHost
+    """The hosting service, for source links."""
+    library_id: str
+    """The proposed `/owner/repo` library ID."""
+    default_branch: str | None
+    """The branch `HEAD` points at; null for an empty repository."""
+    host_key_fingerprint: str | None = Field(default=None)
+    """For an SSH URL, the `SHA256:...` fingerprint of the server's host key (first seen now, or
+    pinned): compare it with the host's published one.
+    """
 
 
 class TagRuleIn(_Dto):
@@ -309,30 +293,16 @@ class AddLibraryCommand(_Dto):
         max_length=2048,
         description=CheckRepositoryCommand.model_fields["url"].description,
     )
-    library_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        description="`/owner/repo`; omitted: the one proposed from the URL.",
-    )
-    ref: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=255,
-        description="A tag, a branch or a full or short commit SHA; omitted: the default branch.",
-    )
-    include_paths: list[str] = Field(
-        default_factory=list,
-        description="Folders, files or globs to import; empty: every `.md`/`.mdx` file.",
-    )
-    exclude_paths: list[str] = Field(
-        default_factory=list, description="Folders, files or globs to leave out; they win."
-    )
-    tag_rules: list[TagRuleIn] = Field(
-        default_factory=list,
-        max_length=MAX_TAG_RULES,
-        description="Tags for articles by path; they are added to the front-matter tags.",
-    )
+    library_id: str | None = Field(default=None, min_length=1, max_length=200)
+    """`/owner/repo`; omitted: the one proposed from the URL."""
+    ref: str | None = Field(default=None, min_length=1, max_length=255)
+    """A tag, a branch or a full or short commit SHA; omitted: the default branch."""
+    include_paths: list[str] = Field(default_factory=list)
+    """Folders, files or globs to import; empty: every `.md`/`.mdx` file."""
+    exclude_paths: list[str] = Field(default_factory=list)
+    """Folders, files or globs to leave out; they win."""
+    tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+    """Tags for articles by path; they are added to the front-matter tags."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
 
 
@@ -340,7 +310,8 @@ class _PinnedImport(_Dto):
     """A ref pinned to its commit and the import queued for it."""
 
     library_id: str
-    ref: str = Field(description="The tag or branch name, or the full SHA of a commit.")
+    ref: str
+    """The tag or branch name, or the full SHA of a commit."""
     ref_kind: RefKind
     commit_sha: str
     job_id: str
@@ -361,7 +332,8 @@ class PreviousVersionOut(_Dto):
     """An older tag the repository's `context7.json` offers for import."""
 
     tag: str
-    title: str = Field(description="Its display title; empty when the file gives none.")
+    title: str
+    """Its display title; empty when the file gives none."""
 
 
 class Context7Out(_Dto):
@@ -378,15 +350,14 @@ class Context7Out(_Dto):
     exclude_files: list[str]
     include_paths: list[str]
     exclude_paths: list[str]
-    rules: list[str] = Field(description="Shown to agents with every `query-docs` answer.")
-    previous_versions: list[PreviousVersionOut] = Field(
-        description="Older tags to offer for import (`POST .../versions` each)."
-    )
-    notes: list[str] = Field(
-        default_factory=list,
-        description="What was left out of the file (a `previousVersions` entry whose tag git "
-        "would not take), and why.",
-    )
+    rules: list[str]
+    """Shown to agents with every `query-docs` answer."""
+    previous_versions: list[PreviousVersionOut]
+    """Older tags to offer for import (`POST .../versions` each)."""
+    notes: list[str] = Field(default_factory=list)
+    """What was left out of the file (a `previousVersions` entry whose tag git would not take), and
+    why.
+    """
 
     @classmethod
     def from_model(cls, config: Context7Config) -> Self:
@@ -408,20 +379,11 @@ class Context7Out(_Dto):
         )
 
 
-_CONTEXT7 = (
-    "The repository's root `context7.json` at that commit; null when there is none or it is "
-    "ignored (see `context7_warning`)."
-)
-_CONTEXT7_WARNING = "Why the `context7.json` at that commit is ignored; null when it is not."
-
-
 class AddedLibrary(_PinnedImport):
     """The new library, the commit its ref was pinned to, and the queued import."""
 
-    include_paths: list[str] = Field(
-        default_factory=list,
-        description="The library's paths: the ones sent, else those of `context7.json`.",
-    )
+    include_paths: list[str] = Field(default_factory=list)
+    """The library's paths: the ones sent, else those of `context7.json`."""
     exclude_paths: list[str] = Field(default_factory=list)
     context7: Context7Out | None = Field(default=None, description=_CONTEXT7)
     context7_warning: str | None = Field(default=None, description=_CONTEXT7_WARNING)
@@ -430,11 +392,8 @@ class AddedLibrary(_PinnedImport):
 class AddVersionBody(_Dto):
     """The request body of adding a version; the library is in the path."""
 
-    ref: str = Field(
-        min_length=1,
-        max_length=255,
-        description="A tag, a branch or a full or short commit SHA.",
-    )
+    ref: str = Field(min_length=1, max_length=255)
+    """A tag, a branch or a full or short commit SHA."""
     credential: CredentialIn | None = Field(
         default=None,
         description=_CREDENTIAL_DESCRIPTION + " Replaces the library's stored credential; "
@@ -445,7 +404,8 @@ class AddVersionBody(_Dto):
 class AddVersionCommand(AddVersionBody):
     """Import another version of an existing library, with the library's own settings."""
 
-    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+    library: str = Field(min_length=1, max_length=200)
+    """The canonical `/owner/repo`."""
 
 
 class AddedVersion(_PinnedImport):
@@ -455,15 +415,15 @@ class AddedVersion(_PinnedImport):
 class ReimportVersionBody(_Dto):
     """The request body of re-importing a version; the library is in the path."""
 
-    ref: str = Field(
-        min_length=1, max_length=255, description="The tag version to re-import, e.g. `v1.4.0`."
-    )
+    ref: str = Field(min_length=1, max_length=255)
+    """The tag version to re-import, e.g. `v1.4.0`."""
 
 
 class ReimportVersionCommand(ReimportVersionBody):
     """Re-import a tag version that moved upstream, at the commit the tag names now."""
 
-    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+    library: str = Field(min_length=1, max_length=200)
+    """The canonical `/owner/repo`."""
 
 
 class ReimportedVersion(_Dto):
@@ -472,8 +432,10 @@ class ReimportedVersion(_Dto):
     library_id: str
     ref: str
     ref_kind: RefKind
-    previous_commit_sha: str = Field(description="The commit the version served until now.")
-    commit_sha: str = Field(description="The commit the tag names now, which the import takes.")
+    previous_commit_sha: str
+    """The commit the version served until now."""
+    commit_sha: str
+    """The commit the tag names now, which the import takes."""
     job_id: str
 
 
@@ -486,6 +448,7 @@ class ListRepositoryRefsQuery(_Dto):
         description=CheckRepositoryCommand.model_fields["url"].description,
     )
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
+    """The credential of a private repository; it is used for this call only, never stored."""
 
 
 class RefOut(_Dto):
@@ -501,7 +464,8 @@ class RepositoryRefs(_Dto):
     default_branch: str | None
     branches: list[RefOut]
     tags: list[RefOut]
-    truncated: bool = Field(description="True when branches or tags were cut at 1000 each.")
+    truncated: bool
+    """True when branches or tags were cut at 1000 each."""
 
 
 class PreviewRepositoryCommand(_Dto):
@@ -532,19 +496,20 @@ class PreviewRepositoryCommand(_Dto):
 class RepositoryPreview(_Dto):
     """The articles an import would take: the first ones, and how many there are in all."""
 
-    ref: str = Field(description="The tag or branch name, or the full SHA of a commit.")
+    ref: str
+    """The tag or branch name, or the full SHA of a commit."""
     ref_kind: RefKind
     commit_sha: str
-    files: list[str] = Field(
-        description="Sorted repository-relative paths, at most 1000. Untrusted text: show it "
-        "as text, never as markup or a link target."
-    )
-    total: int = Field(description="How many files match, also those not listed.")
-    truncated: bool = Field(description="True when `files` is cut (`total` is more than listed).")
-    include_paths: list[str] = Field(
-        default_factory=list,
-        description="The paths applied: the ones sent, else those of `context7.json`.",
-    )
+    files: list[str]
+    """Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as
+    markup or a link target.
+    """
+    total: int
+    """How many files match, also those not listed."""
+    truncated: bool
+    """True when `files` is cut (`total` is more than listed)."""
+    include_paths: list[str] = Field(default_factory=list)
+    """The paths applied: the ones sent, else those of `context7.json`."""
     exclude_paths: list[str] = Field(default_factory=list)
     context7: Context7Out | None = Field(default=None, description=_CONTEXT7)
     context7_warning: str | None = Field(default=None, description=_CONTEXT7_WARNING)
@@ -553,31 +518,30 @@ class RepositoryPreview(_Dto):
 class RemoveVersionCommand(_Dto):
     """Remove one version of a library everywhere and free its content."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
 
 
 class RemoveLibraryCommand(_Dto):
     """Remove a library, with all its versions, everywhere and free its content."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
 
 
 class ManualTagsIn(_Dto):
     """The tags to set by hand on an article path; they replace its earlier manual tags."""
 
-    tags: list[Annotated[str, Field(max_length=MAX_TAG_INPUT)]] = Field(
-        max_length=MAX_TAGS,
-        description=(
-            "Normalized like every tag (lower-case, trimmed, deduplicated). Empty removes them."
-        ),
-    )
+    tags: list[Annotated[str, Field(max_length=MAX_TAG_INPUT)]] = Field(max_length=MAX_TAGS)
+    """Normalized like every tag (lower-case, trimmed, deduplicated). Empty removes them."""
 
 
 class TagArticleCommand(ManualTagsIn):
     """Set the manual tags of `path` for every version of `library`."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
 
 
@@ -596,19 +560,19 @@ class RemovalResult(_Dto):
     """A removal is done for readers when this is returned; the disk is freed by a job."""
 
     library: str
-    ref: str | None = Field(description="The removed version; null when a library was removed.")
-    default_version: str | None = Field(
-        description="What `/owner/repo` means now; null when no version is left."
-    )
-    collection_job_id: str | None = Field(
-        description="The job that frees the content (`/jobs/{id}`); null if it was not queued."
-    )
+    ref: str | None
+    """The removed version; null when a library was removed."""
+    default_version: str | None
+    """What `/owner/repo` means now; null when no version is left."""
+    collection_job_id: str | None
+    """The job that frees the content (`/jobs/{id}`); null if it was not queued."""
 
 
 class SyncLibraryCommand(_Dto):
     """Re-sync the branch versions of a library."""
 
-    library: str = Field(min_length=1, max_length=200, description="The canonical `/owner/repo`.")
+    library: str = Field(min_length=1, max_length=200)
+    """The canonical `/owner/repo`."""
 
 
 class SyncedVersion(_Dto):
@@ -617,29 +581,23 @@ class SyncedVersion(_Dto):
     ref: str
     ref_kind: RefKind
     status: SyncStatus
-    previous_commit_sha: str = Field(description="The commit the version served before.")
-    commit_sha: str = Field(
-        description="The branch tip now; for a tag or a commit, the commit it is pinned to."
-    )
-    job_id: str | None = Field(
-        description=(
-            "The queued import; the import already in progress (`importing`); the failed job "
-            "that records why the version could not be synced (`failed`); or the no-op job "
-            "that cleared an earlier failure."
-        )
-    )
-    error_code: str | None = Field(
-        default=None,
-        description=(
-            "Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is "
-            "gone upstream), `tag_moved` (the tag names another commit now; it is "
-            "re-imported only when confirmed, with `versions/reimport`) or `unexpected` (its "
-            "import could not be queued); null otherwise."
-        ),
-    )
-    error: str | None = Field(
-        default=None, description="The reason of a `failed` version, for people; null otherwise."
-    )
+    previous_commit_sha: str
+    """The commit the version served before."""
+    commit_sha: str
+    """The branch tip now; for a tag or a commit, the commit it is pinned to."""
+    job_id: str | None
+    """The queued import; the import already in progress (`importing`); the failed job that records
+    why the version could not be synced (`failed`); or the no-op job that cleared an earlier
+    failure.
+    """
+    error_code: str | None = Field(default=None)
+    """Why a `failed` version could not be synced: `ref_deleted` (the branch or tag is gone
+    upstream), `tag_moved` (the tag names another commit now; it is re-imported only when
+    confirmed, with `versions/reimport`) or `unexpected` (its import could not be queued); null
+    otherwise.
+    """
+    error: str | None = Field(default=None)
+    """The reason of a `failed` version, for people; null otherwise."""
 
 
 class SyncedLibrary(_Dto):
@@ -652,35 +610,19 @@ class SyncedLibrary(_Dto):
 class ChunkingIn(_Dto):
     """How a library's articles are cut into chunks (the defaults: one chunk per heading)."""
 
-    split_level: int = Field(
-        default=MAX_HEADING_LEVEL,
-        ge=1,
-        le=MAX_HEADING_LEVEL,
-        description="The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.",
-    )
-    min_chars: int = Field(
-        default=0,
-        ge=0,
-        le=MAX_CHUNK_CHARS,
-        description=(
-            "A chunk shorter than this is merged with the next one (the last with the one "
-            "before), within `max_chars`; the text before the first heading is never merged."
-        ),
-    )
-    max_chars: int | None = Field(
-        default=None,
-        ge=1,
-        le=MAX_CHUNK_CHARS,
-        description=(
-            "A chunk longer than this is cut again at its deeper headings; never inside a code "
-            "block or table, so a section without deeper headings stays whole. Null: no bound. "
-            "At least `min_chars`."
-        ),
-    )
-    chunker: Literal["markdown"] = Field(
-        default=DEFAULT_CHUNKER,
-        description="`markdown`: cuts at headings with markdown-it-py (the only one supported).",
-    )
+    split_level: int = Field(default=MAX_HEADING_LEVEL, ge=1, le=MAX_HEADING_LEVEL)
+    """The deepest heading that starts a chunk: 2 cuts at `#` and `##` only."""
+    min_chars: int = Field(default=0, ge=0, le=MAX_CHUNK_CHARS)
+    """A chunk shorter than this is merged with the next one (the last with the one before), within
+    `max_chars`; the text before the first heading is never merged.
+    """
+    max_chars: int | None = Field(default=None, ge=1, le=MAX_CHUNK_CHARS)
+    """A chunk longer than this is cut again at its deeper headings; never inside a code block or
+    table, so a section without deeper headings stays whole. Null: no bound. At least
+    `min_chars`.
+    """
+    chunker: Literal["markdown"] = Field(default=DEFAULT_CHUNKER)
+    """`markdown`: cuts at headings with markdown-it-py (the only one supported)."""
 
     @classmethod
     def of(cls, config: ChunkingConfig) -> Self:
@@ -698,59 +640,57 @@ class ChunkingIn(_Dto):
 class AutoSyncIn(_Dto):
     """How a library is checked on its own; the whole set (what is left out takes its default)."""
 
-    tag_pattern: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=MAX_TAG_PATTERN,
-        description=(
-            "A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a "
-            "version order become `auto` versions. Null imports no tag."
-        ),
-    )
-    keep_last: Annotated[int, Field(ge=1, le=MAX_KEEP_LAST)] = Field(
-        default=DEFAULT_KEEP_LAST,
-        description="How many `auto` versions are kept, the newest; older ones are removed.",
-    )
+    tag_pattern: str | None = Field(default=None, min_length=1, max_length=MAX_TAG_PATTERN)
+    """A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a version
+    order become `auto` versions. Null imports no tag.
+    """
+    keep_last: Annotated[int, Field(ge=1, le=MAX_KEEP_LAST)] = Field(default=DEFAULT_KEEP_LAST)
+    """How many `auto` versions are kept, the newest; older ones are removed."""
     interval_minutes: Annotated[int, Field(ge=MIN_INTERVAL_MINUTES, le=MAX_INTERVAL_MINUTES)] = (
-        Field(default=DEFAULT_INTERVAL_MINUTES, description="How often the library is checked.")
+        Field(default=DEFAULT_INTERVAL_MINUTES)
     )
-    sync_branches: bool = Field(
-        default=False, description="Re-sync every branch version at each check."
-    )
+    """How often the library is checked."""
+    sync_branches: bool = Field(default=False)
+    """Re-sync every branch version at each check."""
 
 
 class SetAutoSyncCommand(AutoSyncIn):
     """Turn a library's scheduled check on, or change it; it runs at the next tick."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
 
 
 class GetAutoSyncQuery(_Dto):
     """Read a library's scheduled check."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
 
 
 class DisableAutoSyncCommand(_Dto):
     """Turn a library's scheduled check off; its versions stay as they are."""
 
-    library: str = Field(min_length=1, description="`/owner/repo`, any letter case.")
+    library: str = Field(min_length=1)
+    """`/owner/repo`, any letter case."""
 
 
 class AutoSyncOut(_Dto):
     """A library's scheduled check, and how the last one went."""
 
     library: str
-    enabled: bool = Field(description="False when the library is never checked on its own.")
+    enabled: bool
+    """False when the library is never checked on its own."""
     tag_pattern: str | None
     keep_last: int
     interval_minutes: int
     sync_branches: bool
-    checked_at: datetime | None = Field(description="When the last check ended.")
-    next_check_at: datetime | None = Field(
-        description="When the library is due again; null while enabled: at the next tick."
-    )
-    last_error: str | None = Field(description="What the last check could not do, for people.")
+    checked_at: datetime | None
+    """When the last check ended."""
+    next_check_at: datetime | None
+    """When the library is due again; null while enabled: at the next tick."""
+    last_error: str | None
+    """What the last check could not do, for people."""
 
     @classmethod
     def from_model(cls, auto_sync: AutoSync) -> Self:
@@ -778,9 +718,12 @@ class AutoSyncOut(_Dto):
 class ScheduledChecks(_Dto):
     """What one tick of the schedule did."""
 
-    checked: list[str] = Field(description="The libraries that were due and were checked.")
-    imports: list[str] = Field(description="IDs of the `auto` import jobs queued.")
-    removed: list[str] = Field(description="The `auto` versions removed, `/owner/repo/ref`.")
+    checked: list[str]
+    """The libraries that were due and were checked."""
+    imports: list[str]
+    """IDs of the `auto` import jobs queued."""
+    removed: list[str]
+    """The `auto` versions removed, `/owner/repo/ref`."""
 
 
 class LibrarySettingsIn(_Dto):
@@ -803,16 +746,15 @@ class LibrarySettingsIn(_Dto):
         max_length=MAX_TAG_RULES,
         description=AddLibraryCommand.model_fields["tag_rules"].description,
     )
-    chunking: ChunkingIn | None = Field(
-        default=None,
-        description="Left out or null: the stored chunking is kept (unlike paths and tag rules).",
-    )
+    chunking: ChunkingIn | None = Field(default=None)
+    """Left out or null: the stored chunking is kept (unlike paths and tag rules)."""
 
 
 class UpdateLibrarySettingsCommand(LibrarySettingsIn):
     """Replace a library's paths and tag rules and re-process every version with them."""
 
-    library: str = Field(min_length=1, max_length=200, description="`/owner/repo`, any case.")
+    library: str = Field(min_length=1, max_length=200)
+    """`/owner/repo`, any case."""
 
 
 class UpdatedLibrarySettings(_Dto):
@@ -823,25 +765,18 @@ class UpdatedLibrarySettings(_Dto):
     exclude_paths: list[str]
     tag_rules: list[TagRuleIn]
     chunking: ChunkingIn
-    reprocess: SettingsChange | None = Field(
-        description=(
-            "`paths`: the selection changed, every version is fetched again at its commit; "
-            "`chunking`: the chunking changed (perhaps the tag rules too), every version is "
-            "re-chunked and re-tagged from what is stored; "
-            "`tags`: only tag rules changed, every version is re-tagged from what is stored; "
-            "null: nothing changed and nothing is re-run, nothing is re-processed."
-        )
-    )
-    job_id: str | None = Field(
-        description=(
-            "The job re-processing every version (`/jobs/{id}`); one already queued for the "
-            "library is reused. Unchanged settings re-run the library's last re-processing job "
-            "when it failed. Null when nothing is to do or the library has no versions yet."
-        )
-    )
-    versions: list[str] = Field(
-        description=(
-            "The library's refs now, at the commits they serve: what the job re-processes (it "
-            "reads the versions again when it runs). Listed also when a queued job is reused."
-        )
-    )
+    reprocess: SettingsChange | None
+    """`paths`: the selection changed, every version is fetched again at its commit; `chunking`: the
+    chunking changed (perhaps the tag rules too), every version is re-chunked and re-tagged from
+    what is stored; `tags`: only tag rules changed, every version is re-tagged from what is
+    stored; null: nothing changed and nothing is re-run, nothing is re-processed.
+    """
+    job_id: str | None
+    """The job re-processing every version (`/jobs/{id}`); one already queued for the library is
+    reused. Unchanged settings re-run the library's last re-processing job when it failed. Null
+    when nothing is to do or the library has no versions yet.
+    """
+    versions: list[str]
+    """The library's refs now, at the commits they serve: what the job re-processes (it reads the
+    versions again when it runs). Listed also when a queued job is reused.
+    """

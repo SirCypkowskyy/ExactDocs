@@ -65,6 +65,56 @@ from pathlib import Path
 from typing import Self
 from urllib.parse import urlsplit
 
+from exactdocs.ingestion.constants import (
+    ALLOWED_PROTOCOLS,
+    FETCH_TIMEOUT_SECONDS,
+    MAX_FETCH_BYTES,
+    MAX_FETCH_FILES,
+    MAX_FETCHES,
+    MAX_PREVIEWS,
+    MAX_PROCESSES,
+    MAX_RENAMES,
+    MAX_SIMILARITY,
+    MAX_STDERR,
+    MAX_STDOUT,
+    PREVIEW_WAIT_SECONDS,
+    RENAME_LIMIT,
+    RENAME_TIMEOUT_SECONDS,
+    STALE_MARGIN_SECONDS,
+    TIMEOUT_SECONDS,
+    WATCH_SECONDS,
+)
+from exactdocs.ingestion.constants._git import (
+    _ARTICLE_PATHSPEC,
+    _ASKPASS,
+    _ASKPASS_FILE,
+    _ATTRIBUTES,
+    _AUTH,
+    _COMMIT,
+    _CONFIG,
+    _DRAIN_SECONDS,
+    _GIT_OVERHEAD,
+    _GONE,
+    _HEADS,
+    _HOST_KEY_CHANGED,
+    _KEY_FILE,
+    _KEYGEN_SECONDS,
+    _MAX_BRACE_EXPANSIONS,
+    _MAX_STEP_OUTPUT,
+    _NO_CONNECTION,
+    _NOT_A_REPO,
+    _PASSTHROUGH,
+    _PREFIX,
+    _REF,
+    _ROOT_CONTEXT7,
+    _ROOT_NAME,
+    _ROOT_README,
+    _RUN_PREFIX,
+    _SHA,
+    _SSH_BASE,
+    _SYMREF,
+    _TOO_BIG,
+)
 from exactdocs.ingestion.errors import (
     CommitUnavailableError,
     GitNotInstalledError,
@@ -79,9 +129,6 @@ from exactdocs.ingestion.errors import (
     UrlProblem,
 )
 from exactdocs.ingestion.models import (
-    CONTEXT7_FILE,
-    MAX_RENAMES,
-    MAX_SIMILARITY,
     AccessToken,
     Credential,
     FetchedFile,
@@ -93,125 +140,12 @@ from exactdocs.ingestion.models import (
     branch_name,
 )
 
-TIMEOUT_SECONDS = 15.0
-MAX_PROCESSES = 4
-ALLOWED_PROTOCOLS = "file:http:https:ssh"
-MAX_STDOUT = 16 * 1024 * 1024
-MAX_STDERR = 64 * 1024
-FETCH_TIMEOUT_SECONDS = 300.0
-MAX_FETCHES = 2
-MAX_PREVIEWS = 2
-PREVIEW_WAIT_SECONDS = 5.0
-MAX_FETCH_FILES = 100_000
-WATCH_SECONDS = 1.0
-STALE_MARGIN_SECONDS = 60.0
-MAX_FETCH_BYTES = 512 * 2**20
-RENAME_TIMEOUT_SECONDS = 60.0
-RENAME_LIMIT = 400
-_MAX_STEP_OUTPUT = 1024 * 1024
-_MAX_BRACE_EXPANSIONS = 64
-_DRAIN_SECONDS = 2.0  # for a killed process's pipes to reach EOF and its exit to be seen
-_KEYGEN_SECONDS = 5.0
-_PREFIX = "fetch-"
-_ROOT_README = ("/README.md", "/README.mdx")
-_ROOT_CONTEXT7 = f"/{CONTEXT7_FILE}"  # last: no exclusion can drop it
-_ROOT_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")  # one plain name, never an option or glob
-# models.ARTICLE_SUFFIXES, whatever the letter case: never fetch the blobs of other files
-_ARTICLE_PATHSPEC = (":(icase)*.md", ":(icase)*.mdx")
-# What servers say when they will not serve a bare SHA (or the ref we named instead).
-_GONE = re.compile(r"not our ref|unadvertised object|couldn't find remote ref|no such remote ref")
-_CONFIG = """\
-[core]
-\trepositoryformatversion = 1
-\tsymlinks = false
-\thooksPath = {null}
-\tfsmonitor = false
-\tprotectNTFS = true
-\tprotectHFS = true
-\tsparseCheckout = true
-\tsparseCheckoutCone = false
-[extensions]
-\tpartialClone = origin
-[gc]
-\tauto = 0
-[maintenance]
-\tauto = false
-[protocol]
-\tversion = 2
-[submodule]
-\trecurse = false
-[remote "origin"]
-\turl = {url}
-\tpromisor = true
-\tpartialclonefilter = blob:none
-"""
-_ATTRIBUTES = "* -text -filter -ident !eol !working-tree-encoding\n"
-_TOO_BIG = "the repository advertises too many refs"
-_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-_COMMIT = re.compile(r"[0-9a-f]{40}")  # fetches are SHA-1 only: no objectformat extension
-_REF = re.compile(r"refs/[A-Za-z0-9._/+@-]+")
-_NO_CONNECTION = "could not connect to it"
-_SYMREF = "ref: "
-_HEADS = "refs/heads/"
-# Not secrets: where certificates live and which proxy to use, so corporate networks keep working.
-_PASSTHROUGH = frozenset(
-    {
-        "path", "systemroot", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-        "ssl_cert_file", "ssl_cert_dir", "curl_ca_bundle", "git_ssl_cainfo", "git_ssl_capath",
-    }
-)  # fmt: skip
-# ssh reads keys from the passwd-entry home (not $HOME) and from any agent, so every
-# authentication method is off unless a deploy key is given: a check must not borrow the server
-# user's identity. Host keys: remembered on first sight (`accept-new`), a changed one is refused;
-# only our own file is consulted, and the server cannot add keys to it (`UpdateHostKeys=no`).
-_SSH_BASE = (
-    "ssh", "-F", os.devnull, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-    "-o", "GSSAPIAuthentication=no", "-o", "HostbasedAuthentication=no",
-    "-o", "KbdInteractiveAuthentication=no", "-o", "PasswordAuthentication=no",
-    "-o", "StrictHostKeyChecking=accept-new", "-o", "GlobalKnownHostsFile=" + os.devnull,
-    "-o", "UpdateHostKeys=no", "-o", "HashKnownHosts=no", "-o", "VerifyHostKeyDNS=no",
-)  # fmt: skip
-# git prints the prompt as `Username for 'scheme://host[:port]': ` and then
-# `Password for 'scheme://user@host[:port]': `, with the host as typed in the URL. Only those
-# two prompts, for the library's own scheme and host (compared in lower case), are answered; a
-# redirect to any other host makes git ask for that host, which gets nothing. The values are
-# read from files of the call's private directory, so they are in no environment.
-_ASKPASS = """\
-#!/bin/sh
-d=$(dirname "$0")
-base=$(cat "$d/askpass.base")
-user=$(cat "$d/askpass.user" | tr '[:upper:]' '[:lower:]')
-prompt=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-case "$prompt" in
-  "username for '$base': ") cat "$d/askpass.user" ;;
-  "password for '$base': ") cat "$d/askpass.secret" ;;
-  "password for '${base%%://*}://$user@${base#*://}': ") cat "$d/askpass.secret" ;;
-  *) exit 1 ;;
-esac
-"""
-_KEY_FILE = "deploy_key"
-_ASKPASS_FILE = "askpass.sh"
-_RUN_PREFIX = "exactdocs-git-"
-# Wording of `git` (LC_ALL=C) and of the transports behind it. Narrow on purpose: a local error
-# ("Permission denied" on a directory, a shell "not found") must not read as a remote verdict.
-_HOST_KEY_CHANGED = re.compile(
-    r"remote host identification has changed|host key verification failed"
-    r"|offending (?:\w+ )?key in"
-)
-_AUTH = re.compile(
-    r"terminal prompts disabled|could not read (?:username|password)|authentication failed"
-    r"|permission denied \(|error: 40[13]\b"
-)
-_NOT_A_REPO = re.compile(
-    r"does not appear to be a git repository|repository (?:'[^']*' )?not found|error: 404\b"
-)
-
 
 class _OutputTooBigError(RepositoryUnreachableError):
     """A git step printed more than its cap."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Output:
     stdout: bytes
     stderr: str
@@ -224,6 +158,12 @@ def _pick_fingerprint(output: str) -> str | None:
     ``-F`` prints ``host TYPE SHA256:... `` per key (OpenSSH 9); older ones print the ``-l``
     layout, ``bits SHA256:... comment (TYPE)``. Either way the fingerprint is the field that
     starts with ``SHA256:``, and the type is the field before it or the one in parentheses.
+
+    Args:
+        output: What ``ssh-keygen -l -F`` printed.
+
+    Returns:
+        The fingerprint, or None when the output has none.
     """
     prints: list[tuple[str, str]] = []
     for line in output.splitlines():
@@ -239,26 +179,33 @@ def _pick_fingerprint(output: str) -> str | None:
     return prints[0][1] if prints else None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GitCli:
     """Implements ``ports.driven.GitRemote`` with ``git ls-remote``."""
 
     git: str
     timeout: float = TIMEOUT_SECONDS
     max_output: int = MAX_STDOUT
-    work_root: Path | None = None  # where fetches get their folders; the temp dir when None
-    known_hosts: Path | None = None  # remembered SSH host keys; none are kept when None
-    fetch_timeout: float = FETCH_TIMEOUT_SECONDS  # for a whole fetch, not per git call
-    rename_timeout: float = RENAME_TIMEOUT_SECONDS  # for a whole rename detection
-    rename_limit: int = RENAME_LIMIT  # git's `-l`: no similarity search above limit x limit pairs
-    max_fetch_bytes: int = MAX_FETCH_BYTES  # of the fetched repository plus its work tree
+    work_root: Path | None = None
+    """Where fetches get their folders; the temp dir when None."""
+    known_hosts: Path | None = None
+    """Remembered SSH host keys; none are kept when None."""
+    fetch_timeout: float = FETCH_TIMEOUT_SECONDS
+    """For a whole fetch, not per git call."""
+    rename_timeout: float = RENAME_TIMEOUT_SECONDS
+    """For a whole rename detection."""
+    rename_limit: int = RENAME_LIMIT
+    """Git's `-l`: no similarity search above limit x limit pairs."""
+    max_fetch_bytes: int = MAX_FETCH_BYTES
+    """Of the fetched repository plus its work tree."""
     max_fetch_files: int = MAX_FETCH_FILES
     watch_interval: float = WATCH_SECONDS
     # Fetches wait here, so long imports cannot take every slot of `slots` from the checks.
     fetch_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_FETCHES), compare=False, repr=False
     )
-    preview_wait: float = PREVIEW_WAIT_SECONDS  # how long a preview waits for a slot
+    preview_wait: float = PREVIEW_WAIT_SECONDS
+    """How long a preview waits for a slot."""
     # Previews wait here, apart from imports: a flood of dry runs must not starve the importer.
     preview_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_PREVIEWS), compare=False, repr=False
@@ -735,7 +682,7 @@ class GitCli:
             raise RepositoryTooLargeError(max_bytes)
         if len(out) > cap:
             raise _OutputTooBigError(_TOO_BIG)
-        return _Output(out, err.decode(errors="replace").lower(), code)
+        return _Output(stdout=out, stderr=err.decode(errors="replace").lower(), code=code)
 
     async def _guard(self, process: Process, folder: Path, max_bytes: int) -> None:
         """Return (after killing git) as soon as ``folder`` holds too many bytes or files."""
@@ -747,7 +694,7 @@ class GitCli:
                 return
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Trees:
     """A blob-less fetch of one commit: its folder, and ``git`` steps under its deadline."""
 
@@ -757,7 +704,7 @@ class _Trees:
     deadline: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MissingGit:
     """Stands in for ``GitCli`` when there is no ``git``: every use says what to install."""
 
@@ -988,9 +935,6 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
     return [*includes, *_ROOT_README, *excludes, _ROOT_CONTEXT7]
 
 
-_GIT_OVERHEAD = 4 * 2**20  # .git of a one-commit, blob-less fetch: trees, refs, config
-
-
 def _literal(path: str) -> str | None:
     """Return a sparse-checkout line that matches exactly this repository path, or ``None``.
 
@@ -1022,16 +966,21 @@ def _anchored(pattern: str) -> list[str] | None:
     return expanded if len(expanded) <= _MAX_BRACE_EXPANSIONS else None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Auth:
     """A credential and the only host it may be offered to."""
 
     credential: Credential = field(repr=False)
-    scope: str  # `scheme://host[:port]`, lower-case
+    scope: str
+    """`scheme://host[:port]`, lower-case."""
 
     @classmethod
     def of(cls, repository: RepositoryUrl, credential: Credential | None) -> Self | None:
-        return None if credential is None else cls(credential, repository.credential_scope)
+        return (
+            None
+            if credential is None
+            else cls(credential=credential, scope=repository.credential_scope)
+        )
 
 
 def _ssh_command(known_hosts: Path | None, key: str | None = None) -> str:

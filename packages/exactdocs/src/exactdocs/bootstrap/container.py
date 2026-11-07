@@ -29,6 +29,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
+from exactdocs.bootstrap.constants import JOBS_FILE, KNOWN_HOSTS_FILE, WORK_DIR
 from exactdocs.bootstrap.database import (
     StartupError,
     check_schema_is_current,
@@ -54,10 +55,6 @@ from exactdocs.identity.adapters.driven.sqlite import (
 )
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
-    QUEUE,
-    SCHEDULE,
-    STEPS_VERSION,
-    WORKFLOW,
     DbosCheckpoints,
     DbosJobQueue,
     DbosScheduleSwitch,
@@ -65,13 +62,14 @@ from exactdocs.ingestion.adapters.driven.dbos import (
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
+from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
     SqliteJobRepository,
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
+from exactdocs.ingestion.constants import KEY_FILE, QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -86,9 +84,6 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
-WORK_DIR = "work"  # under the data dir: one folder per running git fetch
-KNOWN_HOSTS_FILE = "known_hosts"  # under the data dir: SSH host keys, the big three pre-seeded
-JOBS_FILE = "jobs.sqlite"  # under the data dir: DBOS's workflows, the durable steps of jobs
 
 
 def _build_read_side(
@@ -96,22 +91,27 @@ def _build_read_side(
 ) -> tuple[CatalogModule, RetrievalModule]:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use."""
     catalog = CatalogModule.build(
-        repository=SqliteLibraryRepository(engine),
-        manifests=SqliteManifestRepository(engine),
-        imported_tags=SqliteImportedTags(engine),
-        stored_articles=SqliteStoredArticles(engine),
-        copier=SqliteManifestCopier(engine),
+        repository=SqliteLibraryRepository(engine=engine),
+        manifests=SqliteManifestRepository(engine=engine),
+        imported_tags=SqliteImportedTags(engine=engine),
+        stored_articles=SqliteStoredArticles(engine=engine),
+        copier=SqliteManifestCopier(engine=engine),
     )
-    search = SqliteSearchIndex(engine)
+    search = SqliteSearchIndex(engine=engine)
     retrieval = RetrievalModule.build(
-        searchable=CatalogSearchableVersions(catalog.get_library, catalog.get_active_manifest),
-        libraries=CatalogLibraries(catalog.list_libraries),
-        defaults=CatalogDefaultVersions(catalog.list_default_manifests),
-        manifests=CatalogActiveManifests(catalog.get_active_manifest, catalog.get_manifest_states),
-        chunks=SqliteChunkRepository(engine),
+        searchable=CatalogSearchableVersions(
+            get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
+        ),
+        libraries=CatalogLibraries(list_libraries=catalog.list_libraries),
+        defaults=CatalogDefaultVersions(list_default_manifests=catalog.list_default_manifests),
+        manifests=CatalogActiveManifests(
+            get_active_manifest=catalog.get_active_manifest,
+            get_manifest_states=catalog.get_manifest_states,
+        ),
+        chunks=SqliteChunkRepository(engine=engine),
         search=search,
         maintenance=search,
-        renames=CatalogRenamedPaths(catalog.resolve_renamed_path),
+        renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
         query_docs_token_budget=settings.query_docs_token_budget,
     )
     return catalog, retrieval
@@ -221,51 +221,62 @@ class Container:
             )
         except ValueError as error:  # fixed texts: they never repeat a key
             raise StartupError(str(error)) from None
-        vault = SqliteCredentialVault(engine, secret_box)
+        vault = SqliteCredentialVault(engine=engine, box=secret_box)
         catalog, retrieval = _build_read_side(engine, settings)
         index = RetrievalChunkIndex(
-            retrieval.index_manifest,
-            retrieval.get_chunk_sets,
-            retrieval.discard_pending_chunks,
-            retrieval.remove_chunks,
-            retrieval.retag_articles,
+            index_manifest=retrieval.index_manifest,
+            get_chunk_sets=retrieval.get_chunk_sets,
+            discard_pending_chunks=retrieval.discard_pending_chunks,
+            remove_chunks=retrieval.remove_chunks,
+            retag_articles=retrieval.retag_articles,
         )
         tag_locks = TagLocks()  # per library: tagging and an import's activation take turns
         handlers, recovery_hooks = import_job(
             gateway=gateway,
             chunker=chunker or MarkdownChunker(),
-            sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),
+            sources=CatalogLibrarySources(
+                get_library=catalog.get_library, list_renames=catalog.list_renames
+            ),
             versions=CatalogVersionPublisher(
-                catalog.store_manifest,
-                catalog.activate_manifest,
-                catalog.discard_pending_manifests,
-                catalog.apply_readme,
-                catalog.apply_manual_tags,
-                catalog.replace_renames,
+                store_manifest=catalog.store_manifest,
+                activate_manifest=catalog.activate_manifest,
+                discard_pending_manifests=catalog.discard_pending_manifests,
+                apply_readme=catalog.apply_readme,
+                apply_manual_tags_to=catalog.apply_manual_tags,
+                replace_renames_of=catalog.replace_renames,
             ),
             index=index,
             vault=vault,
             max_article_bytes=settings.max_article_bytes,
             max_import_bytes=settings.max_import_bytes,
             renames=renames,
-            stored=CatalogStoredArticles(catalog.find_stored_articles),
+            stored=CatalogStoredArticles(find_stored_articles=catalog.find_stored_articles),
             max_image_bytes=settings.max_image_bytes,
             max_images_bytes=settings.max_images_bytes,
             checkpoints=DbosCheckpoints(),
             batch_files=settings.import_batch_files,
             tag_locks=tag_locks,
-            imported_tags=CatalogImportedTags(catalog.get_version_tags, catalog.set_imported_tags),
-            copier=CatalogVersionCopier(catalog.copy_manifest),
+            imported_tags=CatalogImportedTags(
+                get_version_tags=catalog.get_version_tags,
+                set_imported_tags_of=catalog.set_imported_tags,
+            ),
+            copier=CatalogVersionCopier(copy_manifest=catalog.copy_manifest),
         )
         ingestion = IngestionModule.build(
-            jobs=SqliteJobRepository(engine),
+            jobs=SqliteJobRepository(engine=engine),
             clock=SystemClock(),
             remote=remote,
             tree=tree,
-            library_ids=CatalogLibraryIds(catalog.get_library),
-            libraries=CatalogNewLibraries(catalog.create_library, catalog.discard_library),
-            sources=CatalogLibrarySources(catalog.get_library, catalog.list_renames),
-            removals=CatalogRemovals(catalog.remove_version, catalog.remove_library),
+            library_ids=CatalogLibraryIds(get_library=catalog.get_library),
+            libraries=CatalogNewLibraries(
+                create_library=catalog.create_library, discard_library=catalog.discard_library
+            ),
+            sources=CatalogLibrarySources(
+                get_library=catalog.get_library, list_renames=catalog.list_renames
+            ),
+            removals=CatalogRemovals(
+                version_remover=catalog.remove_version, library_remover=catalog.remove_library
+            ),
             index=index,
             vault=vault,
             # The catalog first: retrieval keeps every manifest the catalog still knows.
@@ -273,17 +284,17 @@ class Container:
                 **handlers,
                 **collect_job(
                     collectors=[
-                        CatalogCollector(catalog.collect_garbage),
-                        RetrievalCollector(retrieval.collect_chunks),
+                        CatalogCollector(collect_garbage=catalog.collect_garbage),
+                        RetrievalCollector(collect_chunks=retrieval.collect_chunks),
                     ]
                 ),
             },
             recovery_hooks=recovery_hooks,
-            manual_tags=CatalogManualTags(catalog.set_manual_tags),
+            manual_tags=CatalogManualTags(set_manual_tags=catalog.set_manual_tags),
             tag_locks=tag_locks,
-            settings=CatalogLibrarySettings(catalog.set_library_settings),
+            settings=CatalogLibrarySettings(set_library_settings=catalog.set_library_settings),
             runner=DbosJobQueue(),
-            auto_syncs=SqliteAutoSyncStore(engine),
+            auto_syncs=SqliteAutoSyncStore(engine=engine),
             schedule_switch=DbosScheduleSwitch(SCHEDULE),
         )
         return cls(
@@ -291,9 +302,9 @@ class Container:
             engine=engine,
             catalog=catalog,
             identity=IdentityModule.build(
-                repository=SqliteAccountRepository(engine),
-                sessions=SqliteSessionRepository(engine),
-                tokens=SqliteTokenRepository(engine),
+                repository=SqliteAccountRepository(engine=engine),
+                sessions=SqliteSessionRepository(engine=engine),
+                tokens=SqliteTokenRepository(engine=engine),
                 hasher=Argon2idPasswordHasher(),
                 failures=InMemoryFailedSignInLog(),
                 clock=SystemClock(),

@@ -14,6 +14,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import COLLECT_JOB, IMPORT_JOB, REFRESH_JOB, JobKind
 from exactdocs.ingestion.dtos import (
     EnqueueJobCommand,
     GetJobQuery,
@@ -21,15 +22,7 @@ from exactdocs.ingestion.dtos import (
     RemoveVersionCommand,
 )
 from exactdocs.ingestion.errors import ImportInProgressError
-from exactdocs.ingestion.models import (
-    COLLECT_JOB,
-    IMPORT_JOB,
-    REFRESH_JOB,
-    AccessToken,
-    Collected,
-    JobKind,
-    Removed,
-)
+from exactdocs.ingestion.models import AccessToken, Collected, Removed
 from exactdocs_kernel import NotFoundError, SystemClock
 
 LIBRARY = "/acme/payments"
@@ -104,7 +97,10 @@ class World:
 def build(*, with_collect: bool = True, broken_index: bool = False) -> World:
     jobs, catalog, index, calls = InMemoryJobRepository(), Catalog(), Index(broken=broken_index), []
     vault = InMemoryCredentialVault(
-        {LIBRARY: AccessToken(token="ghp_s3cretvalue"), "/b/c": AccessToken(token="other")}
+        credentials={
+            LIBRARY: AccessToken(token="ghp_s3cretvalue"),
+            "/b/c": AccessToken(token="other"),
+        }
     )
     handlers: dict[JobKind, object] = {IMPORT_JOB: nothing, REFRESH_JOB: nothing}
     if with_collect:

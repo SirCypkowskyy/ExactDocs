@@ -5,15 +5,9 @@ import json
 import httpx2
 import pytest
 
-from exactdocs.bootstrap.cli_library import (
-    EXIT_NOT_FOUND,
-    EXIT_USAGE,
-    UsageError,
-    exit_code,
-    find_library,
-    query_docs,
-)
+from exactdocs.bootstrap.cli_library import UsageError, exit_code, find_library, query_docs
 from exactdocs.bootstrap.client import ApiClient, ApiError, ClientError
+from exactdocs.bootstrap.constants import EXIT_NOT_FOUND, EXIT_USAGE
 from exactdocs_kernel import NOTICE
 
 BIDI = chr(0x202E)

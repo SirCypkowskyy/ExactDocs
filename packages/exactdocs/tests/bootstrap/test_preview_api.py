@@ -7,7 +7,8 @@ import pytest
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.git_cli import MAX_FETCHES, MAX_PREVIEWS, GitCli
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.constants import MAX_FETCHES, MAX_PREVIEWS
 from exactdocs.ingestion.errors import PreviewBusyError
 from exactdocs.ingestion.models import FetchedFile
 from fixture_repo import DocsRepo

@@ -11,6 +11,11 @@ from enum import IntEnum, StrEnum
 from itertools import groupby
 from typing import NewType
 
+from exactdocs.retrieval.constants import (
+    _LANGUAGE_ALIASES,
+    _WORD,
+    STOP_WORDS,
+)
 from exactdocs.retrieval.errors import DuplicateChunkError, EmptySearchTextError
 from exactdocs_kernel import section_link
 
@@ -23,7 +28,7 @@ class DocTarget:
     version: str
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
 class SearchText:
     """What the agent is looking for: an identifier, an error code or a question."""
 
@@ -99,8 +104,6 @@ def _split_case(segment: str) -> list[str]:
     return parts
 
 
-_WORD = re.compile(r"[\w.-]+")
-
 ChunkId = NewType("ChunkId", str)
 type ChunkSetKey = tuple[str, str]  # (git blob SHA, chunking-config hash)
 
@@ -132,7 +135,8 @@ class Chunk:
     """One section of an article, as the chunker cut it."""
 
     heading_path: tuple[str, ...]
-    occurrence_index: int  # 0 for the first heading with this text, 1 for the next one, ...
+    occurrence_index: int
+    """0 for the first heading with this text, 1 for the next one, ..."""
     content: str
     content_hash: str
     anchor: str
@@ -172,7 +176,8 @@ class ManifestChunk:
 
     chunk_id: ChunkId
     article_path: str
-    position: int  # 0-based index in the article
+    position: int
+    """0-based index in the article."""
     total: int
     prev_chunk_id: ChunkId | None
     next_chunk_id: ChunkId | None
@@ -197,7 +202,8 @@ class IndexedManifest:
     """A catalog manifest that has chunk rows. Its ID is held by value."""
 
     manifest_id: str
-    version_id: str  # `<library>/<ref>`, as in `chunk_id`
+    version_id: str
+    """`<library>/<ref>`, as in `chunk_id`"""
     library: str
     indexed_at: datetime
 
@@ -207,7 +213,8 @@ class StoredChunk:
     """A chunk with its content, as ``read_chunk`` returns it."""
 
     manifest_id: str
-    version_id: str  # `<library>/<ref>` the manifest was indexed under
+    version_id: str
+    """`<library>/<ref>` the manifest was indexed under."""
     row: ManifestChunk
     chunk: Chunk
 
@@ -218,11 +225,13 @@ class SearchHit:
 
     chunk_id: ChunkId
     score: float
-    snippet: str  # verbatim text of the chunk (no marker added), possibly cut at either end
-    highlights: tuple[tuple[int, int], ...]  # [start, end) offsets into ``snippet``, in order
+    snippet: str
+    """Verbatim text of the chunk (no marker added), possibly cut at either end."""
+    highlights: tuple[tuple[int, int], ...]
+    """[start, end) offsets into ``snippet``, in order."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ManifestHit:
     """A hit of a search over several manifests: which manifest (so which library) it came from."""
 
@@ -430,10 +439,6 @@ def _words(text: str) -> set[str]:
     return {w for w in re.split(r"[^\w]+", unicodedata.normalize("NFKC", text).casefold()) if w}
 
 
-# Words agents add to a library's name ("fastapi docs"); matched with and without them.
-STOP_WORDS = frozenset({"docs", "doc", "documentation", "library", "lib", "sdk", "api", "the"})
-
-
 def _match_once(name: str, library: CatalogLibrary) -> NameMatch | None:
     """Try the tiers best first, each only when the better ones failed (the description is dear)."""
     wanted = _squash(name)
@@ -503,39 +508,6 @@ def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
     return sorted(candidates, key=key)
 
 
-# Spellings of a fence language that mean the same as another; anything else compares by lowercase.
-_LANGUAGE_ALIASES = {
-    "py": "python",
-    "js": "javascript",
-    "ts": "typescript",
-    "tsx": "typescript",
-    "jsx": "javascript",
-    "sh": "bash",
-    "shell": "bash",
-    "zsh": "bash",
-    "golang": "go",
-    "c#": "csharp",
-    "cs": "csharp",
-    "yml": "yaml",
-    "rb": "ruby",
-    "rs": "rust",
-    "cpp": "c++",
-    "cc": "c++",
-    "hpp": "c++",
-    "cxx": "c++",
-    "kt": "kotlin",
-    "py3": "python",
-    "python3": "python",
-    "ps1": "powershell",
-    "node": "javascript",
-    "nodejs": "javascript",
-    "mjs": "javascript",
-    "cjs": "javascript",
-    "objc": "objective-c",
-    "dockerfile": "docker",
-}
-
-
 def canonical_language(name: str) -> str:
     """Return a code language in one spelling, so `TypeScript`, `ts` and `typescript` agree."""
     lowered = name.strip().lower()
@@ -548,21 +520,3 @@ def language_first[T](
     """Put the items with code in ``wanted`` first; each group keeps its order (sort is stable)."""
     want = canonical_language(wanted)
     return sorted(items, key=lambda i: want not in {canonical_language(x) for x in languages(i)})
-
-
-# What the `query-docs` payload adds around its parts, counted against the budget by the use case
-# and produced by the driving adapter (a test holds the adapter to these numbers).
-# A section is `### title\n\nSource: src\n\nChunk: id\n\ncontent`, sections are separated by 36
-# characters; 4 + 10 + 9 + 2 + 36 = 61 <= 64. Title, source, ID and content are counted on top.
-SECTION_FRAMING_CHARS = 64
-# The closing line "N more matching chunks did not fit the size budget; narrow the query." and its
-# separator, reserved whenever the answer could be partial.
-FOOTER_CHARS = 140
-# The rules block "### Rules from the repository's context7.json (...)\n\n- rule\n- rule" and its
-# separator: the heading and separator, then each rule's "- " and newline. The rules are counted
-# on top, and the block takes at most RULES_SHARE of the room, so documentation always fits too.
-RULES_FRAMING_CHARS = 192
-RULE_FRAMING_CHARS = 3
-RULES_SHARE = 4  # rules use at most 1/RULES_SHARE of the budget
-CHARS_PER_TOKEN = 4  # undercounts for CJK text and dense code, which cost more tokens per character
-POINTER_TEXT = "Too large for the size budget; fetch it with read_chunk."

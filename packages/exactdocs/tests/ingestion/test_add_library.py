@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
+from exactdocs.ingestion.constants import IMPORT_JOB, MAX_LISTED_REFS
 from exactdocs.ingestion.dtos import AddLibraryCommand, ListRepositoryRefsQuery, TagRuleIn
 from exactdocs.ingestion.errors import (
     InvalidPathPatternError,
@@ -13,7 +14,6 @@ from exactdocs.ingestion.errors import (
     UnknownRefError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
     Credential,
     JobId,
     NewLibrary,
@@ -25,7 +25,6 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
 )
 from exactdocs.ingestion.module import IngestionModule
-from exactdocs.ingestion.use_cases import MAX_LISTED_REFS
 from exactdocs_kernel import SystemClock
 
 HEAD, TAG = "a" * 40, "b" * 40

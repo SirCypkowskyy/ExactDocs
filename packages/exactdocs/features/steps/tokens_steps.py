@@ -104,7 +104,7 @@ async def _plant(context: Context, secret: str) -> None:
     async with container.running(jobs=False):
         owner = await _first_account_id(container)
         now = datetime.now(UTC)
-        await SqliteTokenRepository(container.engine).add(
+        await SqliteTokenRepository(engine=container.engine).add(
             ApiToken(
                 id="expired-token",
                 account_id=owner,

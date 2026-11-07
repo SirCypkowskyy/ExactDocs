@@ -61,9 +61,10 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.ingestion.adapters.driven.git_cli import ALLOWED_PROTOCOLS, GitCli
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
+from exactdocs.ingestion.constants import ALLOWED_PROTOCOLS
 from exactdocs.ingestion.errors import RepositoryUnreachableError
 from exactdocs.ingestion.models import Job, JobId, RefKind, RepositoryUrl
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
@@ -408,21 +409,23 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
     importer = ImportVersionUseCase(
         gateway=GitCli.locate(),
         chunker=MarkdownChunker(),
-        sources=CatalogLibrarySources(c.catalog.get_library, c.catalog.list_renames),
+        sources=CatalogLibrarySources(
+            get_library=c.catalog.get_library, list_renames=c.catalog.list_renames
+        ),
         versions=CatalogVersionPublisher(
-            c.catalog.store_manifest,
-            c.catalog.activate_manifest,
-            c.catalog.discard_pending_manifests,
-            c.catalog.apply_readme,
-            c.catalog.apply_manual_tags,
-            c.catalog.replace_renames,
+            store_manifest=c.catalog.store_manifest,
+            activate_manifest=c.catalog.activate_manifest,
+            discard_pending_manifests=c.catalog.discard_pending_manifests,
+            apply_readme=c.catalog.apply_readme,
+            apply_manual_tags_to=c.catalog.apply_manual_tags,
+            replace_renames_of=c.catalog.replace_renames,
         ),
         index=RetrievalChunkIndex(
-            c.retrieval.index_manifest,
-            c.retrieval.get_chunk_sets,
-            c.retrieval.discard_pending_chunks,
-            c.retrieval.remove_chunks,
-            c.retrieval.retag_articles,
+            index_manifest=c.retrieval.index_manifest,
+            get_chunk_sets=c.retrieval.get_chunk_sets,
+            discard_pending_chunks=c.retrieval.discard_pending_chunks,
+            remove_chunks=c.retrieval.remove_chunks,
+            retag_articles=c.retrieval.retag_articles,
         ),
         refresh=False,
         vault=InMemoryCredentialVault(),

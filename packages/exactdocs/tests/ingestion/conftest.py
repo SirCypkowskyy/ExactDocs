@@ -7,7 +7,7 @@ import pytest
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
-from exactdocs.ingestion.models import JobKind
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.ports import JobHandler, JobRepository, JobRunner, RecoveryHook
 from exactdocs.ingestion.ports.driven import ManualTagStore
 

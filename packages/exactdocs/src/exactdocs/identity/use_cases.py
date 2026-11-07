@@ -9,6 +9,15 @@ from uuid import uuid7
 
 from pydantic import SecretStr
 
+from exactdocs.identity.constants import (
+    ABSOLUTE_TIMEOUT,
+    IDLE_TIMEOUT,
+    MAX_TOKENS_PER_ACCOUNT,
+    PREFIX_SHOWN,
+    TOKEN_BYTES,
+    TOUCH_INTERVAL,
+    VALUE_PREFIX,
+)
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
@@ -36,10 +45,6 @@ from exactdocs.identity.errors import (
     UnknownTokenError,
 )
 from exactdocs.identity.models import (
-    ABSOLUTE_TIMEOUT,
-    IDLE_TIMEOUT,
-    PREFIX_SHOWN,
-    VALUE_PREFIX,
     Account,
     AccountId,
     ApiToken,
@@ -60,7 +65,7 @@ from exactdocs.identity.ports.driving import Authenticate, CreateToken, Identify
 from exactdocs_kernel import Clock
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetSetupStateUseCase:
     """Implements ``ports.driving.GetSetupState``."""
 
@@ -71,7 +76,7 @@ class GetSetupStateUseCase:
         return SetupState(setup_required=not await self.repository.any_exists())
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CreateFirstAdminUseCase:
     """Implements ``ports.driving.CreateFirstAdmin``."""
 
@@ -96,7 +101,7 @@ class CreateFirstAdminUseCase:
         return AccountSummary.from_model(account)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AuthenticateUseCase:
     """Implements ``ports.driving.Authenticate``.
 
@@ -157,15 +162,9 @@ class AuthenticateUseCase:
 
 
 logger = logging.getLogger(__name__)
-MAX_TOKENS_PER_ACCOUNT = 50
-TOKEN_BYTES = 32  # 256 bits of randomness
-# Using a session only writes `last_used_at` when it is older than this: a read-only request
-# should not cost a database write each time, and it is tiny next to the 7-day idle timeout.
-# Consequence: idle expiry is accurate to this interval, not to the second.
-TOUCH_INTERVAL = timedelta(hours=1)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SignInUseCase:
     """Implements ``ports.driving.SignIn``."""
 
@@ -209,7 +208,7 @@ class SignInUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SignOutUseCase:
     """Implements ``ports.driving.SignOut``."""
 
@@ -220,7 +219,7 @@ class SignOutUseCase:
         await self.sessions.delete(hash_token(token))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IdentifyCallerUseCase:
     """Implements ``ports.driving.IdentifyCaller``."""
 
@@ -250,7 +249,7 @@ class IdentifyCallerUseCase:
         return AccountSummary.from_model(account)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetSessionStateUseCase:
     """Implements ``ports.driving.GetSessionState``."""
 
@@ -268,7 +267,7 @@ class GetSessionStateUseCase:
         return SessionState(state="signed_in", account=account)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ResetPasswordUseCase:
     """Implements ``ports.driving.ResetPassword``."""
 
@@ -296,7 +295,7 @@ class ResetPasswordUseCase:
         await self.tokens.delete_for_account(account.id)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CreateTokenUseCase:
     """Implements ``ports.driving.CreateToken``."""
 
@@ -325,7 +324,7 @@ class CreateTokenUseCase:
         return TokenGrant(**TokenSummary.from_model(token).model_dump(), token=secret)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class LoginForTokenUseCase:
     """Implements ``ports.driving.LoginForToken``."""
 
@@ -343,7 +342,7 @@ class LoginForTokenUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListTokensUseCase:
     """Implements ``ports.driving.ListTokens``."""
 
@@ -355,7 +354,7 @@ class ListTokensUseCase:
         return TokenList(tokens=[TokenSummary.from_model(t) for t in found])
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RevokeTokenUseCase:
     """Implements ``ports.driving.RevokeToken``."""
 
@@ -367,7 +366,7 @@ class RevokeTokenUseCase:
             raise UnknownTokenError
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IdentifyTokenUseCase:
     """Implements ``ports.driving.IdentifyToken``."""
 

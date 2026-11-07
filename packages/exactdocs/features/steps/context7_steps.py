@@ -6,7 +6,7 @@ from http import HTTPStatus
 from behave import given, then, when
 from behave.runner import Context
 
-from exactdocs.retrieval.adapters.driving.mcp import RULES_HEADING
+from exactdocs.retrieval.constants import RULES_HEADING
 from steps.import_steps import LIBRARY, articles_of, import_version
 from steps.mcp_steps import call_tool
 

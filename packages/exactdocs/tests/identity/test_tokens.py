@@ -12,6 +12,7 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
+from exactdocs.identity.constants import MAX_TOKENS_PER_ACCOUNT, TOUCH_INTERVAL, VALUE_PREFIX
 from exactdocs.identity.dtos import (
     AccountSummary,
     CreateFirstAdminCommand,
@@ -25,9 +26,8 @@ from exactdocs.identity.errors import (
     TooManyTokensError,
     UnknownTokenError,
 )
-from exactdocs.identity.models import VALUE_PREFIX, hash_token
+from exactdocs.identity.models import hash_token
 from exactdocs.identity.module import IdentityModule
-from exactdocs.identity.use_cases import MAX_TOKENS_PER_ACCOUNT, TOUCH_INTERVAL
 
 START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 

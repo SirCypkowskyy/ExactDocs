@@ -15,7 +15,7 @@ from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.rest import v1_openapi
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.retrieval.models import CHARS_PER_TOKEN
+from exactdocs.retrieval.constants import CHARS_PER_TOKEN
 from exactdocs_kernel import NOTICE
 from next_library import LIBRARY, REF, import_next
 

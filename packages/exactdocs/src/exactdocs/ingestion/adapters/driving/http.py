@@ -133,6 +133,13 @@ def build_router(
         The same answer as `GET /repositories/refs`; the body keeps the credential out of URLs
         and logs, and nothing is stored. A `credential` needs a signed-in session, not an API
         token.
+
+        Args:
+            query: The repository URL and, for a private one, the credential.
+            request: The HTTP request, for the caller's session.
+
+        Returns:
+            The repository's refs.
         """
         await _session_for(require_session, query.credential, request)
         return await list_repository_refs(query)

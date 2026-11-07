@@ -26,12 +26,15 @@ from urllib.parse import urlsplit
 import httpx2
 from platformdirs import user_config_path
 
-URL_VARIABLE = "EXACTDOCS_URL"
-TOKEN_VARIABLE = "EXACTDOCS_TOKEN"  # ruff: ignore[hardcoded-password-string] (a variable name, not a secret)
-CONFIG_FILE_VARIABLE = "EXACTDOCS_CONFIG_FILE"
-DEFAULT_PORTS = {"http": 80, "https": 443}
-MAX_TOKEN_NAME_LENGTH = 64  # the server's limit, so a long hostname is cut instead of refused
-TIMEOUT_SECONDS = 15.0
+from exactdocs.bootstrap.constants import (
+    CONFIG_FILE_VARIABLE,
+    DEFAULT_PORTS,
+    FRIENDLY,
+    MAX_TOKEN_NAME_LENGTH,
+    TIMEOUT_SECONDS,
+    TOKEN_VARIABLE,
+    URL_VARIABLE,
+)
 
 
 class ClientError(Exception):
@@ -101,7 +104,7 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ClientConfig:
     """The server to talk to and the API token to do it with (never shown in a repr)."""
 
@@ -186,24 +189,6 @@ def forget(path: Path) -> bool:
     except FileNotFoundError:
         return False
     return True
-
-
-# What the API's `error` codes mean to a person at a terminal. Anything else shows the server's
-# own `detail`, which is already a sentence.
-FRIENDLY: dict[str, str] = {
-    "invalid_credentials": "wrong username or password",
-    "unauthenticated": "the server did not accept the token (invalid, expired or revoked); "
-    "run `exactdocs login` again",
-    "setup_required": "that instance has no admin account yet; "
-    "run `exactdocs admin create` on the server first",
-    "too_many_tokens": "this account holds the most API tokens it may; "
-    "revoke one in the web UI or log in with --token",
-    "not_found": "the server has no such endpoint; is that URL an ExactDocs instance "
-    "of a compatible version?",
-    "rate_limited": "too many failed sign-ins from here or for this username; "
-    "wait a little and try again",
-    "preview_busy": "the server is running as many previews as it allows; try again",
-}
 
 
 def printable(text: str) -> str:

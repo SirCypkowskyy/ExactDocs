@@ -19,17 +19,14 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from exactdocs.ingestion.constants import MIN_SECRET_KEY_LENGTH
+from exactdocs.ingestion.constants._secrets import _HKDF_INFO, _OWNER_ONLY
 from exactdocs.ingestion.errors import CredentialsRequiredError
 
 log = logging.getLogger(__name__)
 
-KEY_FILE = "secret.key"
-MIN_SECRET_KEY_LENGTH = 32
-_HKDF_INFO = b"exactdocs credentials v1"
-_OWNER_ONLY = 0o600
 
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FernetSecretBox:
     """Implements ``ports.driven.SecretBox``.
 
@@ -42,7 +39,7 @@ class FernetSecretBox:
     @classmethod
     def from_secrets(cls, secret: str, *previous: str) -> Self:
         """Derive the keys from ``EXACTDOCS_SECRET_KEY`` (and ``_PREVIOUS``), 32+ characters."""
-        return cls(MultiFernet([_derive(text) for text in (secret, *previous)]))
+        return cls(fernet=MultiFernet([_derive(text) for text in (secret, *previous)]))
 
     @classmethod
     def from_secret(cls, secret: str) -> Self:

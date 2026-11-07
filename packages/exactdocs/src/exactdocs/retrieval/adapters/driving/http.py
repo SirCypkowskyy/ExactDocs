@@ -1,6 +1,5 @@
 """REST adapter for retrieval."""
 
-import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -11,11 +10,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.alias_generators import to_camel
 
 from exactdocs.retrieval.adapters.driving.mcp import format_docs
-from exactdocs.retrieval.dtos import (
-    MAX_NAME,
+from exactdocs.retrieval.constants import (
+    _AT_VERSION,
+    CHARS_PER_TOKEN,
+    MAX_LIBRARY_ID,
     MAX_QUERY,
     MAX_TAG,
     MAX_TAGS,
+    NOTICE_HEADER,
+    POINTER_TEXT,
+)
+from exactdocs.retrieval.dtos import (
+    MAX_NAME,
     ChunkOut,
     LibraryMatchOut,
     QueryDocsQuery,
@@ -27,7 +33,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     SearchDocsResult,
 )
-from exactdocs.retrieval.models import CHARS_PER_TOKEN, POINTER_TEXT, TagMatch
+from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import (
     QueryDocs,
     ReadChunk,
@@ -37,18 +43,12 @@ from exactdocs.retrieval.ports.driving import (
 )
 from exactdocs_kernel import NOTICE
 
-NOTICE_HEADER = "X-ExactDocs-Notice"
-MAX_LIBRARY_ID = 500  # context7's cap on `libraryId`
-
-
-# context7 also writes a pinned version as `/owner/repo@ref`; ours is `/owner/repo/ref`.
-_AT_VERSION = re.compile(r"^(/[^/@]+/[^/@]+)@(.+)$")
-
 
 class _Camel(BaseModel):
     """context7's field names (camelCase) on the wire."""
 
     model_config = ConfigDict(
+        use_attribute_docstrings=True,
         alias_generator=to_camel,
         populate_by_name=True,
         json_schema_serialization_defaults_required=True,
@@ -61,13 +61,14 @@ class C7Library(_Camel):
     id: str
     title: str
     description: str
-    branch: str = Field(description="The default version (context7: the tracked branch).")
+    branch: str
+    """The default version (context7: the tracked branch)."""
     state: Literal["finalized"] = "finalized"
-    total_snippets: int = Field(description="Chunks of the default version.")
+    total_snippets: int
+    """Chunks of the default version."""
     versions: list[str]
-    last_update_date: datetime | None = Field(
-        default=None, description="When any version was last imported."
-    )
+    last_update_date: datetime | None = Field(default=None)
+    """When any version was last imported."""
     source_url: str
     default_version: str
     articles: int
@@ -92,9 +93,8 @@ class C7Library(_Camel):
 class C7SearchResponse(_Camel):
     """context7's ``/v2/libs/search`` response, plus the untrusted-content notice."""
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the results."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the results."""
     results: list[C7Library]
     search_filter_applied: bool = False
 
@@ -113,14 +113,13 @@ class C7InfoSnippet(_Camel):
 class C7ContextResponse(_Camel):
     """context7's ``/v2/context`` JSON response, plus the untrusted-content notice."""
 
-    notice: str = Field(
-        default=NOTICE, description="Untrusted-content notice; read it before the results."
-    )
-    code_snippets: list[dict[str, Any]] = Field(
-        default=[], description="Always empty: chunks are not split into code and prose."
-    )
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the results."""
+    code_snippets: list[dict[str, Any]] = Field(default=[])
+    """Always empty: chunks are not split into code and prose."""
     info_snippets: list[C7InfoSnippet]
-    omitted: int = Field(description="Matching chunks that did not fit the size budget.")
+    omitted: int
+    """Matching chunks that did not fit the size budget."""
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:

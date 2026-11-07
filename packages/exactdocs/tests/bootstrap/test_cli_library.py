@@ -16,13 +16,6 @@ from pydantic import SecretStr
 
 from exactdocs.bootstrap import cli
 from exactdocs.bootstrap.cli_library import (
-    EXIT_AUTH,
-    EXIT_CONFLICT,
-    EXIT_FAILED,
-    EXIT_IMPORT,
-    EXIT_INTERRUPTED,
-    EXIT_NOT_FOUND,
-    EXIT_USAGE,
     ImportFailedError,
     UsageError,
     exit_code,
@@ -37,6 +30,15 @@ from exactdocs.bootstrap.cli_library import (
     wait_for_job,
 )
 from exactdocs.bootstrap.client import ApiClient, ApiError, ClientError
+from exactdocs.bootstrap.constants import (
+    EXIT_AUTH,
+    EXIT_CONFLICT,
+    EXIT_FAILED,
+    EXIT_IMPORT,
+    EXIT_INTERRUPTED,
+    EXIT_NOT_FOUND,
+    EXIT_USAGE,
+)
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings

@@ -1,53 +1,42 @@
 from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
+from exactdocs.bootstrap.constants import _UNSAFE_METHODS, MCP_PATH, OPENAPI_PATH, WEB_DIST
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import current_revision
 from exactdocs.bootstrap.mcp import build_mcp
-from exactdocs.bootstrap.rest import (
-    ERROR_RESPONSES,
-    OPENAPI_PATH,
-    SetupGuard,
-    add_error_handlers,
-    v1_openapi,
-)
+from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
-
-# Built web UI, copied into the package by CI / the Docker build (see web/README.md).
-WEB_DIST = Path(__file__).parent.parent / "_web"
-MCP_PATH = "/mcp"
 
 
 class Health(BaseModel):
     """Liveness payload."""
 
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
     status: str
     version: str
     schema_revision: str | None
-    search_index_format: int | None = Field(
-        description="Format the stored search index was built in; null when none is recorded."
-    )
-    reindex_required: bool = Field(
-        description="The index is in an older or unrecorded format: run `exactdocs reindex` "
-        "(it keeps serving)."
-    )
+    search_index_format: int | None
+    """Format the stored search index was built in; null when none is recorded."""
+    reindex_required: bool
+    """The index is in an older or unrecorded format: run `exactdocs reindex` (it keeps serving)."""
 
 
 def create_app(container: Container) -> FastAPI:
@@ -105,7 +94,7 @@ def create_app(container: Container) -> FastAPI:
             reindex_required=index.needs_rebuild,
         )
 
-    v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
+    v1 = APIRouter(prefix="/v1", responses=error_responses())
     # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.
     v1.include_router(
         identity_http.build_router(
@@ -202,7 +191,9 @@ def create_app(container: Container) -> FastAPI:
     # (e.g. ChatGPT) are configured with.
     for path in _route_paths(mcp_app.routes):
         app.router.routes.append(Route(path, endpoint=mcp_app))
-    app.router.routes.append(Route(f"{MCP_PATH}/", endpoint=_RewritePath(mcp_app, MCP_PATH)))
+    app.router.routes.append(
+        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=mcp_app, path=MCP_PATH))
+    )
     if WEB_DIST.is_dir():
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
@@ -219,7 +210,7 @@ def _route_paths(routes: Iterable[object]) -> list[str]:
     return [path for route in routes if isinstance(path := getattr(route, "path", None), str)]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _RewritePath:
     """ASGI wrapper that serves another path's app (an alias without a redirect)."""
 
@@ -231,10 +222,7 @@ class _RewritePath:
         await self.app(aliased, receive, send)
 
 
-_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # conventions: allow-positional -- middleware
 class OriginCheck:
     """Reject state-changing browser requests from foreign origins (CSRF / DNS rebinding).
 

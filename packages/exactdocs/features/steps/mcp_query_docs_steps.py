@@ -5,7 +5,7 @@ import re
 from behave import given, then, when
 from behave.runner import Context
 
-from exactdocs.retrieval.adapters.driving.mcp import SECTION_SEPARATOR
+from exactdocs.retrieval.constants import SECTION_SEPARATOR
 from exactdocs_kernel import NOTICE
 from fixture_repo import git_bytes
 from steps.mcp_steps import call_tool

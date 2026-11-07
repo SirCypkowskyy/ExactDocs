@@ -1,7 +1,6 @@
 """Ingestion use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
 import asyncio
-import codecs
 import logging
 import os
 import stat
@@ -16,6 +15,38 @@ from functools import partial
 from pathlib import Path
 from typing import BinaryIO, Self
 
+from exactdocs.ingestion.constants import (
+    ACTIVE_JOB_STATES,
+    CHANGE_JOBS,
+    CHECKED_KINDS,
+    COLLECT_JOB,
+    CONTEXT7_FILE,
+    CONTEXT7_MAX_BYTES,
+    DEFAULT_GRACE_SECONDS,
+    DEFAULT_IMPORT_BATCH_FILES,
+    DEFAULT_MAX_ARTICLE_BYTES,
+    DEFAULT_MAX_IMAGE_BYTES,
+    DEFAULT_MAX_IMAGES_BYTES,
+    DEFAULT_MAX_IMPORT_BYTES,
+    IMPORT_JOB,
+    IMPORT_KINDS,
+    KNOWN_BATCH,
+    LIBRARY_KINDS,
+    MAX_CONTROL_RATIO,
+    MAX_IMAGES,
+    MAX_LISTED_REFS,
+    MAX_PREVIEW_FILES,
+    MAX_WANTED_IMAGES,
+    PARSER_VERSION,
+    PERMANENT_IMPORT_FAILURES,
+    REFRESH_JOB,
+    SAVE_EVERY_FILES,
+    SAVE_EVERY_SECONDS,
+    UNEXPECTED_BACKOFF_CAP,
+    UNEXPECTED_ERROR,
+    JobKind,
+)
+from exactdocs.ingestion.constants._use_cases import _BOMS, _MAX_DOUBLINGS, _NOT_TEXT
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
     AddedVersion,
@@ -87,28 +118,6 @@ from exactdocs.ingestion.errors import (
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
-    ACTIVE_JOB_STATES,
-    COLLECT_JOB,
-    CONTEXT7_FILE,
-    CONTEXT7_MAX_BYTES,
-    DEFAULT_GRACE_SECONDS,
-    DEFAULT_IMPORT_BATCH_FILES,
-    DEFAULT_MAX_ARTICLE_BYTES,
-    DEFAULT_MAX_IMAGE_BYTES,
-    DEFAULT_MAX_IMAGES_BYTES,
-    DEFAULT_MAX_IMPORT_BYTES,
-    IMPORT_JOB,
-    IMPORT_KINDS,
-    LIBRARY_KINDS,
-    MAX_IMAGES,
-    PARSER_VERSION,
-    PERMANENT_IMPORT_FAILURES,
-    RECHUNK_JOB,
-    REFRESH_JOB,
-    REPROCESS_JOB,
-    RETAG_JOB,
-    UNEXPECTED_BACKOFF_CAP,
-    UNEXPECTED_ERROR,
     ArticleChunk,
     AutoSync,
     ChunkingConfig,
@@ -125,7 +134,6 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
-    JobKind,
     JobState,
     NewLibrary,
     ParsedArticle,
@@ -191,9 +199,6 @@ from exactdocs_kernel import Clock, DomainError, NotFoundError, paginate
 
 log = logging.getLogger(__name__)
 
-MAX_LISTED_REFS = 1000
-MAX_PREVIEW_FILES = 1000
-
 
 def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
     """Convert what a client sent and refuse one the repository's transport cannot carry."""
@@ -207,7 +212,7 @@ def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credent
 """Branches and tags listed each; a repository with more is cut and flagged ``truncated``."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EnqueueJobUseCase:
     """Implements ``ports.driving.EnqueueJob``."""
 
@@ -236,7 +241,7 @@ class EnqueueJobUseCase:
         return JobSummary.from_model(job)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetJobUseCase:
     """Implements ``ports.driving.GetJob``."""
 
@@ -250,7 +255,7 @@ class GetJobUseCase:
         return JobSummary.from_model(job)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetLibraryAccessUseCase:
     """Implements ``ports.driving.GetLibraryAccess``."""
 
@@ -269,7 +274,7 @@ class GetLibraryAccessUseCase:
         return LibraryAccess(private=await self.vault.has(library))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListLibraryJobsUseCase:
     """Implements ``ports.driving.ListLibraryJobs``."""
 
@@ -286,7 +291,7 @@ class ListLibraryJobsUseCase:
         return JobList.from_page(page)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListLatestJobsUseCase:
     """Implements ``ports.driving.ListLatestJobs``."""
 
@@ -302,7 +307,7 @@ class ListLatestJobsUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RecoverJobsUseCase:
     """Implements ``ports.driving.RecoverJobs``."""
 
@@ -344,7 +349,7 @@ class RecoverJobsUseCase:
         await _submit_queued(self.jobs, self.runner, resuming)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SubmitQueuedJobsUseCase:
     """Implements ``ports.driving.SubmitQueuedJobs``."""
 
@@ -362,7 +367,7 @@ async def _submit_queued(jobs: JobRepository, runner: JobRunner, skip: Collectio
             await runner.submit(job)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RunJobUseCase:
     """Implements ``ports.driving.RunJob``."""
 
@@ -399,7 +404,7 @@ class RunJobUseCase:
         await _run(self.jobs, self.clock, self.handlers, started)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RunNextJobUseCase:
     """Implements ``ports.driving.RunNextJob``."""
 
@@ -420,7 +425,7 @@ async def _run(
     jobs: JobRepository, clock: Clock, handlers: Mapping[JobKind, JobHandler], job: Job
 ) -> None:
     """Run a started job's handler and store how it ended (raising only if that store fails)."""
-    progress = _Progress(jobs, job)
+    progress = _Progress(jobs=jobs, job=job)
     handler = handlers.get(job.kind)
     code = UNEXPECTED_ERROR
     try:
@@ -445,11 +450,7 @@ async def _run(
         raise
 
 
-SAVE_EVERY_FILES = 100
-SAVE_EVERY_SECONDS = 0.25
-
-
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- job counters
 class _Progress:
     """Implements ``ports.driven.JobProgress``: keeps the latest job, stores it every so often.
 
@@ -497,16 +498,6 @@ def _describe(error: Exception) -> str:
     return str(error) if isinstance(error, DomainError) else f"unexpected {type(error).__name__}"
 
 
-# Upstream failures, by what users can do about them; the git adapter's finer errors stay the
-# HTTP answer of the request that met them (adding a library), a job records the coarse code.
-_UPSTREAM_CODES: tuple[tuple[type[DomainError], SyncErrorCode], ...] = (
-    (NotAGitRepositoryError, SyncErrorCode.REPO_UNREACHABLE),
-    (RepositoryUnreachableError, SyncErrorCode.REPO_UNREACHABLE),
-    (RepositoryAuthRequiredError, SyncErrorCode.AUTH_FAILED),
-    (CredentialsRequiredError, SyncErrorCode.AUTH_FAILED),
-)
-
-
 def failure_code(error: Exception) -> str:
     """Return the stable code a failed job records for ``error``.
 
@@ -515,9 +506,13 @@ def failure_code(error: Exception) -> str:
     ``NotAGitRepositoryError`` first, see ``_anonymous``); any other domain error keeps its own
     code (``no_articles``, ``host_key_changed``...), anything else is ``unexpected``.
     """
-    for kind, code in _UPSTREAM_CODES:
-        if isinstance(error, kind):
-            return code
+    # Upstream failures, by what users can do about them; the git adapter's finer errors stay the
+    # HTTP answer of the request that met them (adding a library), a job records the coarse code.
+    match error:
+        case NotAGitRepositoryError() | RepositoryUnreachableError():
+            return SyncErrorCode.REPO_UNREACHABLE
+        case RepositoryAuthRequiredError() | CredentialsRequiredError():
+            return SyncErrorCode.AUTH_FAILED
     return error.code if isinstance(error, DomainError) else UNEXPECTED_ERROR
 
 
@@ -533,7 +528,7 @@ def _anonymous(error: DomainError, credential: Credential | None) -> DomainError
     return error
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CheckRepositoryUseCase:
     """Implements ``ports.driving.CheckRepository``."""
 
@@ -555,7 +550,7 @@ class CheckRepositoryUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListRepositoryRefsUseCase:
     """Implements ``ports.driving.ListRepositoryRefs``."""
 
@@ -582,7 +577,7 @@ class ListRepositoryRefsUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PreviewRepositoryUseCase:
     """Implements ``ports.driving.PreviewRepository``."""
 
@@ -637,7 +632,7 @@ def _context7_out(context7: _Context7Read) -> Context7Out | None:
     return None if context7.config is None else Context7Out.from_model(context7.config)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AddLibraryUseCase:
     """Implements ``ports.driving.AddLibrary``."""
 
@@ -735,7 +730,7 @@ async def _enqueue_import(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AddVersionUseCase:
     """Implements ``ports.driving.AddVersion``."""
 
@@ -788,11 +783,7 @@ def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
     }
 
 
-_CHECKED_KINDS = frozenset({RefKind.BRANCH, RefKind.TAG})
-"""What a sync asks the remote about: a commit names itself and cannot move or go."""
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SyncLibraryUseCase:
     """Implements ``ports.driving.SyncLibrary``."""
 
@@ -827,7 +818,7 @@ class SyncLibraryUseCase:
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
-        checked = [v for v in versions if v.kind in _CHECKED_KINDS]
+        checked = [v for v in versions if v.kind in CHECKED_KINDS]
         jobs = await self.jobs.list_for_library(library)  # newest first
         busy = _busy_refs(jobs)
         newest: dict[str, Job] = {}
@@ -884,7 +875,7 @@ class SyncLibraryUseCase:
                 update={"error_code": job.error_code, "error": job.error}
             )
 
-        if current.kind not in _CHECKED_KINDS:
+        if current.kind not in CHECKED_KINDS:
             return outcome(SyncStatus.PINNED, current.commit_sha)
         if current.ref in busy:
             return outcome(SyncStatus.IMPORTING, current.commit_sha, busy[current.ref].id)
@@ -985,7 +976,7 @@ class _NoCheckpoints:
         return await run()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReimportVersionUseCase:
     """Implements ``ports.driving.ReimportVersion``."""
 
@@ -1047,7 +1038,7 @@ class ReimportVersionUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TagLocks:
     """One ``asyncio.Lock`` per library: re-tagging (see ``TagArticleUseCase``), settings edits.
 
@@ -1085,12 +1076,13 @@ def _settings_change(
     return None
 
 
-_CHANGE_JOBS = {
-    SettingsChange.PATHS: REPROCESS_JOB,
-    SettingsChange.CHUNKING: RECHUNK_JOB,
-    SettingsChange.TAGS: RETAG_JOB,
-}
-_JOB_CHANGES = {kind: change for change, kind in _CHANGE_JOBS.items()}
+def _job_changes() -> dict[JobKind, SettingsChange]:
+    """The settings change each re-processing job applies.
+
+    Returns:
+        ``CHANGE_JOBS`` the other way round.
+    """
+    return {kind: SettingsChange(change) for change, kind in CHANGE_JOBS.items()}
 
 
 def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
@@ -1103,7 +1095,7 @@ def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
     covered = 0
     worst: SettingsChange | None = None
     for job in jobs:
-        change = _JOB_CHANGES.get(job.kind)
+        change = _job_changes().get(job.kind)
         if change is None:
             continue
         if job.state is JobState.FAILED:
@@ -1118,7 +1110,7 @@ def _wider(one: SettingsChange, other: SettingsChange | None) -> SettingsChange:
     return one if other is None or one.reach >= other.reach else other
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UpdateLibrarySettingsUseCase:
     """Implements ``ports.driving.UpdateLibrarySettings``."""
 
@@ -1212,17 +1204,17 @@ class UpdateLibrarySettingsUseCase:
         return change, refs, await self._queue(library, change, jobs)
 
     async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
-        reusable = {kind for kind, done in _JOB_CHANGES.items() if done.reach >= change.reach}
+        reusable = {kind for kind, done in _job_changes().items() if done.reach >= change.reach}
         for job in jobs:
             if job.kind in reusable and job.state is JobState.QUEUED:
                 return job.id
         queued = await self.enqueue_job(
-            EnqueueJobCommand(kind=_CHANGE_JOBS[change], library=library)
+            EnqueueJobCommand(kind=CHANGE_JOBS[change], library=library)
         )
         return queued.id
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _VersionOutcome:
     """What re-processing one version did: the result of its durable step (plain data)."""
 
@@ -1247,7 +1239,7 @@ class _VersionOutcome:
         )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- step counters
 class _OneVersion:
     """Implements ``ports.driven.JobProgress`` for one version's re-import, inside its step.
 
@@ -1270,7 +1262,7 @@ class _OneVersion:
         del done, total
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
-        self.problems.append(FileProblem(path, code, f"{self.ref}: {reason}"))
+        self.problems.append(FileProblem(path=path, code=code, reason=f"{self.ref}: {reason}"))
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.chunked, self.reused = chunked, reused
@@ -1299,7 +1291,7 @@ async def _versions(sources: LibrarySources, library: str) -> tuple[ImportedRef,
     return tuple(await sources.imported_versions(library))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReprocessLibraryUseCase:
     """Implements ``ports.driven.JobHandler`` for ``REPROCESS_JOB``.
 
@@ -1331,7 +1323,7 @@ class ReprocessLibraryUseCase:
         total = _VersionOutcome()
         failures: list[tuple[str, str, str]] = []
         for done, current in enumerate(versions, 1):
-            tracker = _OneVersion(progress, current.ref, total)
+            tracker = _OneVersion(progress=progress, ref=current.ref, before=total)
             outcome = await step(
                 f"re-import {current.ref}", partial(self._one, job, current, tracker)
             )
@@ -1369,7 +1361,7 @@ async def _reimport(
     return tracker.outcome()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RetagLibraryUseCase:
     """Implements ``ports.driven.JobHandler`` for ``RETAG_JOB``: nothing is fetched or chunked.
 
@@ -1432,7 +1424,7 @@ class RetagLibraryUseCase:
             return len(stored.articles)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RechunkLibraryUseCase:
     """Implements ``ports.driven.JobHandler`` for ``RECHUNK_JOB``: nothing is fetched.
 
@@ -1472,7 +1464,7 @@ class RechunkLibraryUseCase:
         total = _VersionOutcome()
         failures: list[tuple[str, str, str]] = []
         for done, current in enumerate(versions, 1):
-            tracker = _OneVersion(progress, current.ref, total)
+            tracker = _OneVersion(progress=progress, ref=current.ref, before=total)
             outcome = await step(
                 f"re-chunk {current.ref}", partial(self._one, job, current, tracker)
             )
@@ -1580,7 +1572,7 @@ class RechunkLibraryUseCase:
         return True
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImportVersionUseCase:
     """Implements ``ports.driven.JobHandler`` for ``IMPORT_JOB``: a whole version or nothing.
 
@@ -1657,14 +1649,14 @@ class ImportVersionUseCase:
         try:
             async with AsyncExitStack() as stack:
                 checkout = _Checkout(
-                    lambda: self.gateway.fetch(
+                    fetch=lambda: self.gateway.fetch(
                         source.url,
                         str(job.commit_sha),
                         source.selection,
                         refs=refs,
                         credential=credential,
                     ),
-                    stack,
+                    stack=stack,
                 )
                 paths = await step("list the selected files", lambda: _list(checkout, source))
                 articles, wanted = await self._articles(
@@ -1751,7 +1743,7 @@ class ImportVersionUseCase:
         """Read the root README and ``context7.json``, and the wanted images the checkout holds."""
         folder = await checkout.folder()
         readme, context7 = await asyncio.to_thread(_root_files, folder, self.max_article_bytes)
-        taken = _ImageBudget(self.max_image_bytes, self.max_images_bytes)
+        taken = _ImageBudget(per_image=self.max_image_bytes, total=self.max_images_bytes)
         taken.absent = await asyncio.to_thread(_read_images, folder, wanted, taken)
         return readme, context7, taken
 
@@ -1900,7 +1892,7 @@ class ImportVersionUseCase:
             "fetch the images outside the selection",
             lambda: self._outside_images(job, source, credential, taken),
         )
-        for skip in (*taken.skipped, *outside.skipped, *(_Missing(p) for p in outside.absent)):
+        for skip in (*taken.skipped, *outside.skipped, *(_Missing(path=p) for p in outside.absent)):
             await progress.problem(
                 skip.path.encode(errors="replace").decode(), skip.code, skip.reason
             )
@@ -1919,7 +1911,9 @@ class ImportVersionUseCase:
         what is left of ``taken``'s budget: the images of the checkout are stored once, by the
         step that read them.
         """
-        outside = _ImageBudget(taken.per_image, taken.total, count=taken.count, used=taken.used)
+        outside = _ImageBudget(
+            per_image=taken.per_image, total=taken.total, count=taken.count, used=taken.used
+        )
         if taken.absent and job.commit_sha and job.version:
             async with self.gateway.fetch_files(
                 source.url,
@@ -1965,16 +1959,16 @@ class ImportVersionUseCase:
                     self._batch,
                     checkout,
                     _BatchInput(
-                        files,
-                        start,
-                        total,
-                        used,
-                        dict(chunks),
-                        source,
-                        config_hash,
-                        chunker,
-                        library,
-                        ref,
+                        paths=files,
+                        first=start,
+                        total=total,
+                        used=used,
+                        known=dict(chunks),
+                        source=source,
+                        config_hash=config_hash,
+                        chunker=chunker,
+                        library=library,
+                        ref=ref,
                     ),
                     progress,
                 ),
@@ -2147,12 +2141,10 @@ def _full_refs(kind: RefKind, name: str) -> list[str]:
     return [] if prefix is None else [prefix + name]
 
 
-KNOWN_BATCH = 500
-MAX_WANTED_IMAGES = 4 * MAX_IMAGES  # distinct image paths looked for per version
 _cleanups: set[asyncio.Future[None]] = set()  # the loop holds tasks weakly
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- fetched lazily
 class _Checkout:
     """The commit's files, fetched when a step first needs them, removed with ``stack``."""
 
@@ -2176,7 +2168,7 @@ async def _list(checkout: _Checkout, source: ImportSource) -> list[str]:
         raise CheckoutUnreadableError from error
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _BatchInput:
     """What one parse-and-chunk step needs, all of it fixed by the steps before it."""
 
@@ -2195,13 +2187,13 @@ class _BatchInput:
     ref: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Article:
     imported: ImportedArticle
     images: tuple[str, ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Batch:
     """The durable result of one parse-and-chunk step."""
 
@@ -2214,7 +2206,7 @@ class _Batch:
     """Articles not parsed: taken as an earlier import had stored them."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DiscardInterruptedImportUseCase:
     """Implements ``ports.driven.RecoveryHook`` for ``IMPORT_JOB``."""
 
@@ -2270,7 +2262,7 @@ def _full_refs(kind: RefKind, version: str) -> list[str]:
     return [] if prefix is None else [prefix + version]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- spent on import
 class _ImageBudget:
     """What the images of one version may still take; the images turned away, with why."""
 
@@ -2283,7 +2275,7 @@ class _ImageBudget:
     absent: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Missing:
     """The repository has no file at this path (at the commit)."""
 
@@ -2320,23 +2312,25 @@ def _read_images(folder: Path, paths: Sequence[str], budget: _ImageBudget) -> li
     for path in paths:
         try:
             if _through_a_link(folder, path):
-                budget.skipped.append(Skip(ProblemCode.NOT_A_FILE, "not a regular file", path))
+                budget.skipped.append(
+                    Skip(code=ProblemCode.NOT_A_FILE, reason="not a regular file", path=path)
+                )
                 continue
             data = _read(folder / path, budget.per_image)
         except FileNotFoundError, NotADirectoryError:
             absent.append(path)
             continue
         except OSError:
-            budget.skipped.append(Skip(ProblemCode.UNREADABLE, "unreadable", path))
+            budget.skipped.append(Skip(code=ProblemCode.UNREADABLE, reason="unreadable", path=path))
             continue
         if isinstance(data, Skip):
             budget.skipped.append(replace(data, path=path))
         elif (kind := sniff_image(data)) is None:
             reason = "not a PNG, JPEG, GIF, WebP or SVG image"
-            budget.skipped.append(Skip(ProblemCode.NOT_AN_IMAGE, reason, path))
+            budget.skipped.append(Skip(code=ProblemCode.NOT_AN_IMAGE, reason=reason, path=path))
         elif budget.count >= MAX_IMAGES or budget.used + len(data) > budget.total:
             reason = "the version's image budget is used up"
-            budget.skipped.append(Skip(ProblemCode.IMAGE_BUDGET, reason, path))
+            budget.skipped.append(Skip(code=ProblemCode.IMAGE_BUDGET, reason=reason, path=path))
         else:
             budget.count += 1
             budget.used += len(data)
@@ -2371,7 +2365,7 @@ def _root_files(folder: Path, limit: int) -> tuple[ReadmeSummary, _Context7Read]
     return _readme(folder, limit), _context7(folder)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Context7Read:
     """The root ``context7.json`` of a checkout: parsed, or why it is ignored, or neither."""
 
@@ -2455,7 +2449,7 @@ def _context7_of(found: FetchedFile) -> _Context7Read:
         return _Context7Read(warning=str(error))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Skip:
     """Why a file is left out of the version (never echoes its content)."""
 
@@ -2479,28 +2473,17 @@ def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:
     try:
         path.encode()
     except UnicodeEncodeError:
-        return Skip(ProblemCode.BAD_FILE_NAME, "file name is not valid UTF-8")
+        return Skip(code=ProblemCode.BAD_FILE_NAME, reason="file name is not valid UTF-8")
     try:
         data = _read(folder / path, limit)
     except OSError:
-        return Skip(ProblemCode.UNREADABLE, "unreadable")
+        return Skip(code=ProblemCode.UNREADABLE, reason="unreadable")
     if isinstance(data, Skip):
         return data
     text = _decode(data)
     if isinstance(text, Skip):
         return text
     return git_blob_sha(data), text, len(data)
-
-
-# FF FE 00 00 is also a UTF-16-LE file starting with U+0000; UTF-32 is tried first, and a file
-# that then fails to decode is reported undecodable, which is right for such a file anyway.
-_BOMS = (
-    (codecs.BOM_UTF32_LE, "utf-32"),
-    (codecs.BOM_UTF32_BE, "utf-32"),
-    (codecs.BOM_UTF16_LE, "utf-16"),
-    (codecs.BOM_UTF16_BE, "utf-16"),
-)
-MAX_CONTROL_RATIO = 0.02
 
 
 def _decode(data: bytes) -> str | Skip:
@@ -2517,9 +2500,9 @@ def _decode(data: bytes) -> str | Skip:
             try:
                 return data.decode(codec)
             except UnicodeDecodeError:
-                return Skip(ProblemCode.UNDECODABLE, _NOT_TEXT)
+                return Skip(code=ProblemCode.UNDECODABLE, reason=_NOT_TEXT)
     if b"\0" in data:
-        return Skip(ProblemCode.BINARY, "binary file")
+        return Skip(code=ProblemCode.BINARY, reason="binary file")
     with suppress(UnicodeDecodeError):
         return data.decode("utf-8-sig")
     with suppress(UnicodeDecodeError):
@@ -2527,16 +2510,13 @@ def _decode(data: bytes) -> str | Skip:
         controls = sum(c < " " and c not in "\t\n\r\f" for c in text)
         if controls <= len(text) * MAX_CONTROL_RATIO:
             return text
-    return Skip(ProblemCode.UNDECODABLE, _NOT_TEXT)
-
-
-_NOT_TEXT = "not text in any supported encoding"
+    return Skip(code=ProblemCode.UNDECODABLE, reason=_NOT_TEXT)
 
 
 def _read(file: Path, limit: int) -> bytes | Skip:
     """Return the bytes of a plain file of up to ``limit`` bytes, else why it is skipped."""
-    too_big = Skip(ProblemCode.TOO_LARGE, f"larger than {limit} bytes")
-    not_a_file = Skip(ProblemCode.NOT_A_FILE, "not a regular file")
+    too_big = Skip(code=ProblemCode.TOO_LARGE, reason=f"larger than {limit} bytes")
+    not_a_file = Skip(code=ProblemCode.NOT_A_FILE, reason="not a regular file")
     info = file.lstat()
     if not stat.S_ISREG(info.st_mode):
         return not_a_file
@@ -2610,7 +2590,7 @@ async def _forget_chunks(index: ChunkIndex, removed: Removed) -> None:
         log.exception("could not remove the chunks of %s", removed.library)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TagArticleUseCase:
     """Implements ``ports.driving.TagArticle``.
 
@@ -2634,7 +2614,7 @@ class TagArticleUseCase:
         return TaggedArticle(library=tagged.library, path=tagged.path, tags=list(tagged.tags))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RemoveVersionUseCase:
     """Implements ``ports.driving.RemoveVersion``."""
 
@@ -2658,7 +2638,7 @@ class RemoveVersionUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RemoveLibraryUseCase:
     """Implements ``ports.driving.RemoveLibrary``."""
 
@@ -2688,7 +2668,7 @@ class RemoveLibraryUseCase:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CollectGarbageUseCase:
     """Implements ``ports.driven.JobHandler`` for ``COLLECT_JOB``.
 
@@ -2716,7 +2696,7 @@ class CollectGarbageUseCase:
             raise errors[0]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GetAutoSyncUseCase:
     """Implements ``ports.driving.GetAutoSync``."""
 
@@ -2731,7 +2711,7 @@ class GetAutoSyncUseCase:
         return AutoSyncOut.disabled(library) if found is None else AutoSyncOut.from_model(found)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SetAutoSyncUseCase:
     """Implements ``ports.driving.SetAutoSync``."""
 
@@ -2756,7 +2736,7 @@ class SetAutoSyncUseCase:
         return AutoSyncOut.from_model(auto_sync)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DisableAutoSyncUseCase:
     """Implements ``ports.driving.DisableAutoSync``."""
 
@@ -2773,7 +2753,7 @@ class DisableAutoSyncUseCase:
         return AutoSyncOut.disabled(library)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SwitchScheduleUseCase:
     """Implements ``ports.driving.SwitchSchedule``."""
 
@@ -2789,7 +2769,7 @@ async def _switch_to_need(schedules: AutoSyncStore, switch: ScheduleSwitch) -> N
     await switch.turn(on=bool(await schedules.list_all()))
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Tally:
     """What a tick did so far."""
 
@@ -2949,9 +2929,6 @@ def _failed_tags(
         if last.error_code in PERMANENT_IMPORT_FAILURES or backing_off:
             held.add((ref, last.commit_sha))
     return held
-
-
-_MAX_DOUBLINGS = 16
 
 
 def _backoff(tried: Sequence[Job], interval: timedelta) -> timedelta:

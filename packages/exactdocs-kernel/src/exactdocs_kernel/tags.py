@@ -2,10 +2,7 @@
 
 import unicodedata
 
-MAX_TAG_LENGTH = 40
-MAX_TAGS = 20  # tags on an article, and values in a tag filter
-
-_EXTRA = frozenset("._+-")
+from exactdocs_kernel.constants import _EXTRA, MAX_TAG_LENGTH
 
 
 def normalize_tag(raw: str) -> str | None:

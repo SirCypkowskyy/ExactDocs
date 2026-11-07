@@ -1,5 +1,6 @@
 """The `/api/v1` conventions: OpenAPI description, error envelope, pagination, route rules."""
 
+import json
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -88,6 +89,20 @@ async def test_the_preview_documents_its_429_and_retry_after(spec: dict[str, Any
     assert busy["content"]["application/json"]["schema"]["$ref"].endswith("/ErrorResponse")
     assert "preview_busy" in busy["description"]
     assert "Retry-After" in busy["headers"]
+
+
+def test_operation_descriptions_leave_out_the_python_docstring_sections(app) -> None:
+    document = json.loads(v1_openapi_json(app))
+    descriptions = [
+        op["description"]
+        for ops in document["paths"].values()
+        for op in ops.values()
+        if "description" in op
+    ]
+    assert descriptions
+    assert not [
+        d for d in descriptions if re.search(r"^\s*(Args|Returns|Raises):", d, re.MULTILINE)
+    ]
 
 
 def test_committed_openapi_file_is_up_to_date(app) -> None:

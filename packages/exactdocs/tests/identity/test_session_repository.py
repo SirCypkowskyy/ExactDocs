@@ -43,9 +43,9 @@ async def repository(request: pytest.FixtureRequest) -> AsyncIterator[SessionRep
         return
     container = Container.build(Settings())
     async with container.running():
-        accounts = SqliteAccountRepository(container.engine)
+        accounts = SqliteAccountRepository(engine=container.engine)
         await accounts.add_first(account("ada"))
-        yield SqliteSessionRepository(container.engine)
+        yield SqliteSessionRepository(engine=container.engine)
 
 
 async def test_a_stored_session_is_found_and_an_unknown_one_is_not(

@@ -14,6 +14,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.dtos import (
     AccessTokenIn,
     AddLibraryCommand,
@@ -33,7 +34,6 @@ from exactdocs.ingestion.models import (
     Credential,
     DeployKey,
     ImportSource,
-    JobKind,
     NewLibrary,
     PathSelection,
     RemoteRef,
@@ -214,7 +214,7 @@ def build(
         remote=remote,
         library_ids=catalog,
         libraries=catalog,
-        sources=InMemoryLibrarySources({"/acme/orders": source}),
+        sources=InMemoryLibrarySources(sources={"/acme/orders": source}),
         vault=vault,
         removals=NoRemovals(),
         index=NoIndex(),
@@ -289,7 +289,7 @@ async def test_check_offers_the_credential_and_reports_the_ssh_host_key() -> Non
 
 async def test_adding_a_version_uses_the_stored_credential() -> None:
     remote = FakeRemote()
-    vault = InMemoryCredentialVault({"/acme/orders": AccessToken(token=TOKEN)})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": AccessToken(token=TOKEN)})
 
     await build(remote, vault).add_version(AddVersionCommand(library="/acme/orders", ref="main"))
 
@@ -310,7 +310,7 @@ async def test_adding_a_version_with_an_unreadable_credential_says_credentials_r
 
 async def test_sending_the_credential_again_replaces_the_stored_one() -> None:
     remote = FakeRemote()
-    vault = InMemoryCredentialVault({"/acme/orders": AccessToken(token="old-" + TOKEN)})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": AccessToken(token="old-" + TOKEN)})
     command = AddVersionCommand(
         library="/acme/orders", ref="main", credential=AccessTokenIn(kind="token", token=TOKEN)
     )
@@ -323,7 +323,7 @@ async def test_sending_the_credential_again_replaces_the_stored_one() -> None:
 
 async def test_a_rejected_new_credential_does_not_replace_the_stored_one() -> None:
     old = AccessToken(token="old-" + TOKEN)
-    vault = InMemoryCredentialVault({"/acme/orders": old})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": old})
     command = AddVersionCommand(
         library="/acme/orders", ref="main", credential=AccessTokenIn(kind="token", token=TOKEN)
     )
@@ -335,7 +335,7 @@ async def test_a_rejected_new_credential_does_not_replace_the_stored_one() -> No
 
 
 async def test_re_adding_a_library_without_a_credential_forgets_the_old_one() -> None:
-    vault = InMemoryCredentialVault({"/acme/orders": AccessToken(token="old-" + TOKEN)})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": AccessToken(token="old-" + TOKEN)})
 
     await build(FakeRemote(), vault).add_library(
         AddLibraryCommand(url="https://other.example.com/acme/orders")

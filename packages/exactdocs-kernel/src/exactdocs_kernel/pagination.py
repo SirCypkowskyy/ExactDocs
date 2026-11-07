@@ -5,10 +5,8 @@ from binascii import Error as Base64Error
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from exactdocs_kernel.constants import MAX_LIMIT
 from exactdocs_kernel.errors import ValidationError
-
-DEFAULT_LIMIT = 50
-MAX_LIMIT = 200
 
 
 class InvalidCursorError(ValidationError):
@@ -20,7 +18,7 @@ class InvalidCursorError(ValidationError):
         super().__init__("cursor is not valid")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Page[T]:
     """One page of ``items``; ``next_cursor`` is ``None`` on the last page."""
 
@@ -55,7 +53,7 @@ def paginate[T](
         if after is None or (key(item) < after if descending else key(item) > after)
     ]
     page, more = rest[:limit], len(rest) > limit
-    return Page(page, encode_cursor(key(page[-1])) if more else None)
+    return Page(items=page, next_cursor=encode_cursor(key(page[-1])) if more else None)
 
 
 def encode_cursor(key: str) -> str:

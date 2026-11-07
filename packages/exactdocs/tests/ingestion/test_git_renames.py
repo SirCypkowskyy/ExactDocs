@@ -6,19 +6,14 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven import git_cli
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, _parse_renames
+from exactdocs.ingestion.constants import MAX_RENAMES
 from exactdocs.ingestion.errors import (
     CommitUnavailableError,
     GitNotInstalledError,
     InvalidRepositoryUrlError,
     RepositoryUnreachableError,
 )
-from exactdocs.ingestion.models import (
-    MAX_RENAMES,
-    GitRename,
-    ProposedId,
-    RepositoryHost,
-    RepositoryUrl,
-)
+from exactdocs.ingestion.models import GitRename, ProposedId, RepositoryHost, RepositoryUrl
 from fixture_repo import DocsRepo, git
 
 SETUP = "docs/guide/setup.md"

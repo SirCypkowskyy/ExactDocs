@@ -12,7 +12,7 @@ import hashlib
 import json
 import typing
 
-from exactdocs.ingestion.adapters.driven.dbos import STEPS_VERSION
+from exactdocs.ingestion.constants import STEPS_VERSION
 from exactdocs.ingestion.models import ChunkingConfig, GitRename, ImportedRef, ReadmeSummary
 from exactdocs.ingestion.use_cases import (
     _Batch,

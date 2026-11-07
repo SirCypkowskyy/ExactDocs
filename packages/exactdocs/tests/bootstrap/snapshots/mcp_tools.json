@@ -264,7 +264,7 @@
                     },
                     "origin": {
                       "default": "manual",
-                      "description": "`auto` when the library's scheduled check imported it (retention may remove it), `manual` when someone added it.",
+                      "description": "`auto` when the library's scheduled check imported it (retention may remove it), `manual`\nwhen someone added it.",
                       "enum": [
                         "manual",
                         "auto"
@@ -455,13 +455,13 @@
           "type": "string"
         },
         "manual_tags": {
-          "description": "The tags among `tags` set by hand, each with the path it was set on: this one or one it was renamed from. A tag set on both is listed for each.",
+          "description": "The tags among `tags` set by hand, each with the path it was set on: this one or one it was\nrenamed from. A tag set on both is listed for each.",
           "items": {
             "additionalProperties": false,
             "description": "A tag set by hand, and the article path it was set on.",
             "properties": {
               "path": {
-                "description": "Where the tag was set: this article's path, or an older one it was renamed from. Change or remove the tag on this path.",
+                "description": "Where the tag was set: this article's path, or an older one it was renamed from. Change or\nremove the tag on this path.",
                 "title": "Path",
                 "type": "string"
               },

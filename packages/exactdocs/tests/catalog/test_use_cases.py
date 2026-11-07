@@ -76,10 +76,10 @@ def catalog() -> CatalogModule:
     )
     return CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
 
@@ -200,10 +200,10 @@ async def test_a_library_is_created_without_versions_and_not_twice() -> None:
     repository = InMemoryLibraryRepository()
     create = CatalogModule.build(
         repository=repository,
-        manifests=(written := InMemoryManifestRepository(repository)),
-        imported_tags=InMemoryImportedTags(written),
-        copier=InMemoryManifestCopier(written),
-        stored_articles=InMemoryStoredArticles(written),
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     ).create_library
     command = CreateLibraryCommand(
         id="/Acme/Docs",

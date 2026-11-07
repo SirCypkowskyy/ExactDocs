@@ -58,7 +58,7 @@ async def test_lists_libraries_next_to_a_running_server_that_keeps_writing() -> 
     async with server.running():  # the HTTP server: WAL mode, its connections open
         assert await listed() == ["/acme/ledger", "/acme/payments"]
 
-        await SqliteLibraryRepository(server.engine).save(
+        await SqliteLibraryRepository(engine=server.engine).save(
             Library(
                 id=LibraryId("/acme/new"),
                 title="New",

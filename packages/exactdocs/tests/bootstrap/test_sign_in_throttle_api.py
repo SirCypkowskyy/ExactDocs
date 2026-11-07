@@ -11,8 +11,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.constants import FIRST_WAIT, FREE_FAILURES
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.identity.models import FIRST_WAIT, FREE_FAILURES
 
 HORSE = "correct horse battery staple"
 SESSION, TOKEN_LOGIN = "/api/v1/session", "/api/v1/tokens/login"

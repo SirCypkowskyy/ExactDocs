@@ -23,6 +23,16 @@ from pathlib import Path
 
 from dbos import DBOS, DBOSConfig
 
+from exactdocs.ingestion.constants import EVERY_MINUTE, SCHEDULE_WORKFLOW
+from exactdocs.ingestion.constants._jobs import (
+    _DONE,
+    _FORGET_POLL,
+    _FORGET_TRIES,
+    _LIVE,
+    _THREADS,
+    _VACUUM_ABOVE,
+    _WAIT_FOR_OTHER,
+)
 from exactdocs.ingestion.ports.driving import (
     RecoverJobs,
     RunJob,
@@ -35,16 +45,7 @@ log = logging.getLogger(__name__)
 
 # DBOS keeps one instance per process (its registry and its threads are module state), so one
 # worker runs at a time per process; a second would take over the first one's workflows.
-_ONE_PER_PROCESS = threading.Lock()
-_WAIT_FOR_OTHER = 30.0  # seconds
-_THREADS = 32  # the most asyncio's own default pool has (min(32, CPUs + 4))
-_FORGET_POLL = 0.05  # seconds between looks at a finished workflow's status, while it is recorded
-_FORGET_TRIES = 200
-_VACUUM_ABOVE = 2**20  # bytes of free pages
-_LIVE = ["ENQUEUED", "PENDING", "DELAYED"]
-SCHEDULE_WORKFLOW = "exactdocs.scheduled_checks"
-EVERY_MINUTE = "0 * * * * *"  # seconds first: second 0 of every minute
-_DONE = frozenset({"SUCCESS", "ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"})
+_one_per_process = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,7 +97,7 @@ class DbosJobWorker:
         workflow pending, so the next start resumes it.
         """
         # A worker that is still stopping (a server in another thread) is waited for.
-        if not await asyncio.to_thread(_ONE_PER_PROCESS.acquire, timeout=_WAIT_FOR_OTHER):
+        if not await asyncio.to_thread(_one_per_process.acquire, timeout=_WAIT_FOR_OTHER):
             message = "a DBOS job worker is already running in this process"
             raise RuntimeError(message)
         try:
@@ -147,7 +148,7 @@ class DbosJobWorker:
                 # DBOS shut its pool down; `asyncio.to_thread` needs one after the worker stops.
                 asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(_THREADS))
         finally:
-            _ONE_PER_PROCESS.release()
+            _one_per_process.release()
 
     async def _run(self, job_id: str) -> None:
         """Run the job (the workflow); a resumed workflow skips the steps it completed."""

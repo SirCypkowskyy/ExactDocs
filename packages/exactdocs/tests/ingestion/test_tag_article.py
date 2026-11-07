@@ -67,7 +67,9 @@ async def test_every_touched_manifest_gets_the_new_tags_in_the_chunk_index() -> 
     )
     index = FakeIndex()
 
-    tagged = await TagArticleUseCase(catalog, index, TagLocks())(command("Onboarding"))
+    tagged = await TagArticleUseCase(tags=catalog, index=index, locks=TagLocks())(
+        command("Onboarding")
+    )
 
     assert (tagged.library, tagged.path, tagged.tags) == (
         "/acme/payments",
@@ -84,7 +86,9 @@ async def test_an_unknown_library_changes_nothing() -> None:
     index = FakeIndex()
 
     with pytest.raises(NotFoundError):
-        await TagArticleUseCase(FakeCatalog(known=False), index, TagLocks())(command("x"))
+        await TagArticleUseCase(tags=FakeCatalog(known=False), index=index, locks=TagLocks())(
+            command("x")
+        )
 
     assert index.copies == []
 
@@ -92,7 +96,9 @@ async def test_an_unknown_library_changes_nothing() -> None:
 async def test_tagging_waits_while_an_import_of_its_library_activates_a_version() -> None:
     locks = TagLocks()
     index = FakeIndex()
-    tag = TagArticleUseCase(FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index, locks)
+    tag = TagArticleUseCase(
+        tags=FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index=index, locks=locks
+    )
 
     async with locks.of("/acme/payments"):  # what the importer holds from re-tag to activation
         waiting = asyncio.create_task(tag(command("x")))
@@ -107,7 +113,9 @@ async def test_tagging_waits_while_an_import_of_its_library_activates_a_version(
 async def test_tagging_does_not_wait_for_an_import_of_another_library() -> None:
     locks = TagLocks()
     index = FakeIndex()
-    tag = TagArticleUseCase(FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index, locks)
+    tag = TagArticleUseCase(
+        tags=FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index=index, locks=locks
+    )
 
     async with locks.of("/acme/other"):
         await asyncio.wait_for(tag(command("x")), timeout=5)
