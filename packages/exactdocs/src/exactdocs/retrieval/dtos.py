@@ -1302,7 +1302,7 @@ class EmbeddingEstimateOut(_Dto):
     chunks: int
     """Distinct stored chunks without a vector (a blob shared by versions counts once)."""
     characters: int
-    """Characters of their text and heading paths."""
+    """Characters of their text, heading paths and article titles, as they are embedded."""
     estimated_tokens: int
     """`characters` / 4, rounded up: an estimate."""
     usd_per_million_tokens: float | None

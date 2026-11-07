@@ -28,7 +28,9 @@ from exactdocs.ingestion.constants import (
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
+    EMBED_ATTEMPTS,
     EMBED_JOB,
+    EMBED_RETRY_SECONDS,
     IMPORT_JOB,
     IMPORT_KINDS,
     KNOWN_BATCH,
@@ -97,6 +99,7 @@ from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     CommitImportedError,
     CredentialsRequiredError,
+    EmbeddingUnavailableError,
     ImportInProgressError,
     ImportNotPinnedError,
     ImportTooLargeError,
@@ -3082,6 +3085,8 @@ class EmbedVersionUseCase:
     """Queues the other versions when the model changed."""
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
     """Makes each step durable; without it an interrupted job starts over."""
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    """Waits between tries of a batch the model did not answer for now (tests: no wait)."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Embed the job's version, batch by batch.
@@ -3108,10 +3113,32 @@ class EmbedVersionUseCase:
         while True:
             number += 1
             batch: EmbeddedBatch = await steps.step(
-                f"embed batch {number}", partial(self.embedder.embed_batch, library, ref, plan)
+                f"embed batch {number}", partial(self._batch, library, ref, plan)
             )
             done += batch.embedded
             await progress.report(done=done, total=max(done, plan.missing))
             if batch.finished:
                 break
         await steps.step("switch embedding spaces", partial(self.embedder.finish, plan))
+
+    async def _batch(self, library: str, ref: str, plan: EmbedPlan) -> EmbeddedBatch:
+        """Embed one batch, trying again with a growing wait while the model is unavailable.
+
+        Inside the batch's step, so a try that succeeds is what the step records.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            plan: The job's plan.
+
+        Returns:
+            What the batch embedded. After ``EMBED_ATTEMPTS`` tries the last
+            ``EmbeddingUnavailableError`` fails the job; the next start or import queues the
+            version again.
+        """
+        for attempt in range(EMBED_ATTEMPTS - 1):
+            try:
+                return await self.embedder.embed_batch(library, ref, plan)
+            except EmbeddingUnavailableError:
+                await self.sleep(EMBED_RETRY_SECONDS * 2**attempt)
+        return await self.embedder.embed_batch(library, ref, plan)

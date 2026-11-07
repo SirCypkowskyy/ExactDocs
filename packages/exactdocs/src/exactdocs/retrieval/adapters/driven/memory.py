@@ -32,6 +32,7 @@ from exactdocs.retrieval.models import (
     ManifestChunk,
     ManifestHit,
     ModelRole,
+    PendingArticle,
     PendingChunks,
     ProviderProfile,
     RebuiltIndex,
@@ -652,16 +653,25 @@ class InMemoryVectorIndex:
         if space_id is not None:
             self._live(space_id)
             stored = self._stored(space_id)
-        keys = {
-            (*row.chunk_set, row.position)
-            for manifest_id in manifest_ids
-            for row in self.chunks.rows.get(manifest_id, {}).values()
-        }
-        missing = [k for k in keys if k not in stored]
+        first: dict[ChunkKey, tuple[str, str]] = {}
+        for manifest_id in sorted(set(manifest_ids)):
+            for row in self.chunks.rows.get(manifest_id, {}).values():
+                key: ChunkKey = (row.chunk_set[0], row.chunk_set[1], row.position)
+                where = (manifest_id, row.article_path)
+                if key not in stored and (key not in first or where < first[key]):
+                    first[key] = where
         characters = sum(
-            _characters(self.chunks.chunk_sets[k[0], k[1]].chunks[k[2]]) for k in missing
+            _characters(self.chunks.chunk_sets[k[0], k[1]].chunks[k[2]]) for k in first
         )
-        return PendingChunks(chunks=len(missing), characters=characters)
+        articles = Counter(first.values())
+        return PendingChunks(
+            chunks=len(first),
+            characters=characters,
+            articles=tuple(
+                PendingArticle(manifest_id=m, article_path=p, chunks=n)
+                for (m, p), n in sorted(articles.items())
+            ),
+        )
 
     def _space(self, space_id: EmbeddingSpaceId) -> EmbeddingSpace:
         """Find the space.
@@ -912,6 +922,7 @@ class InMemorySpendLedger:
                     output_tokens=row.output_tokens + entry.output_tokens,
                     requests=row.requests + entry.requests,
                     usd_micros=row.usd_micros + entry.usd_micros,
+                    unpriced=row.unpriced + entry.unpriced,
                 )
             )
 

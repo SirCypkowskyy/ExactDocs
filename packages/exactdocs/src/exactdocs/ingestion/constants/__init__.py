@@ -23,6 +23,8 @@ from exactdocs.ingestion.constants._git import (
     WATCH_SECONDS,
 )
 from exactdocs.ingestion.constants._jobs import (
+    EMBED_ATTEMPTS,
+    EMBED_RETRY_SECONDS,
     EVERY_MINUTE,
     LEGACY_CODES,
     QUEUE,
@@ -130,7 +132,9 @@ __all__ = [
     "DEFAULT_MAX_IMAGE_BYTES",
     "DEFAULT_MAX_IMPORT_BYTES",
     "EMBED_AFTER_KINDS",
+    "EMBED_ATTEMPTS",
     "EMBED_JOB",
+    "EMBED_RETRY_SECONDS",
     "ERROR_CODE",
     "EVERY_MINUTE",
     "FETCH_TIMEOUT_SECONDS",

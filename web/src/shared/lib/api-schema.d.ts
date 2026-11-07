@@ -1668,7 +1668,7 @@ export interface components {
             readonly chunks: number;
             /**
              * Characters
-             * @description Characters of their text and heading paths.
+             * @description Characters of their text, heading paths and article titles, as they are embedded.
              */
             readonly characters: number;
             /**

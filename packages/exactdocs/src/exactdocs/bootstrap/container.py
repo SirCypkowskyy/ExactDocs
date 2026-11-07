@@ -4,7 +4,7 @@ import os
 import signal
 import threading
 from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
@@ -51,6 +51,7 @@ from exactdocs.bootstrap.database import (
     migrate,
     open_database,
 )
+from exactdocs.bootstrap.embedding import SaveProviderThenEmbed
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
@@ -58,6 +59,7 @@ from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteArticleTitles,
     SqliteImportedTags,
     SqliteLibraryRepository,
     SqliteManifestCopier,
@@ -113,6 +115,7 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.models import RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
+from exactdocs.retrieval.ports.driving import SaveProvider
 from exactdocs_kernel import DomainError, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -214,6 +217,7 @@ def _build_read_side(
         imported_tags=SqliteImportedTags(engine=engine),
         stored_articles=SqliteStoredArticles(engine=engine),
         copier=SqliteManifestCopier(engine=engine),
+        article_titles=SqliteArticleTitles(engine=engine),
     )
     search = (
         PostgresSearchIndex(engine=engine)
@@ -259,7 +263,7 @@ def _build_read_side(
         tracer=search_tracer(settings),
         vectors=vectors,
         embedding_models=PydanticAiEmbeddingModels(),
-        article_titles=CatalogArticleTitles(list_articles=catalog.list_articles),
+        article_titles=CatalogArticleTitles(get_article_titles=catalog.get_article_titles),
         spend=SqliteSpendLedger(engine=engine),
         prices=GenaiPrices(),
         embedding_dimensions=settings.ai.embedding.dimensions,
@@ -418,6 +422,9 @@ class Container:
     ingestion: IngestionModule
     retrieval: RetrievalModule
     job_worker: DbosJobWorker
+    save_provider: SaveProvider
+    """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
+    changed (REST ``/ai/providers``)."""
     work_owner: Path | None = field(default=None, repr=False)
     """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
     # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
@@ -574,6 +581,9 @@ class Container:
             ),
             ingestion=ingestion,
             retrieval=retrieval,
+            save_provider=SaveProviderThenEmbed(
+                save_provider=retrieval.save_provider, queue_embedding=ingestion.queue_embedding
+            ),
             job_worker=DbosJobWorker(
                 run_job=ingestion.run_job,
                 recover_jobs=ingestion.recover_jobs,
@@ -589,6 +599,23 @@ class Container:
                 **_dbos_database(settings, engine),
             ),
         )
+
+    @asynccontextmanager
+    async def _embedding_queued(self) -> AsyncGenerator[None]:
+        """Queue the missing embedding in the background while the block runs.
+
+        A start never waits for the coverage of every version; stopping cancels what is left.
+
+        Yields:
+            Nothing: the block runs while the queueing goes on.
+        """
+        queueing = asyncio.create_task(self._queue_embedding())
+        try:
+            yield
+        finally:
+            queueing.cancel()
+            with suppress(asyncio.CancelledError):
+                await queueing
 
     async def _queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.
@@ -641,8 +668,7 @@ class Container:
                     # one job runner; on PostgreSQL only the folders of processes that are gone.
                     sweep = sweep_abandoned_work if self.work_owner else sweep_stale_fetches
                     await asyncio.to_thread(sweep, self.settings.data_dir / WORK_DIR)
-                    async with self.job_worker.running():
-                        await self._queue_embedding()
+                    async with self.job_worker.running(), self._embedding_queued():
                         yield
                 else:
                     yield

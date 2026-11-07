@@ -24,6 +24,7 @@ def upgrade() -> None:
         sa.Column("output_tokens", sa.Integer, nullable=False, server_default="0"),
         sa.Column("requests", sa.Integer, nullable=False, server_default="0"),
         sa.Column("usd_micros", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("unpriced", sa.Integer, nullable=False, server_default="0"),
     )
 
 

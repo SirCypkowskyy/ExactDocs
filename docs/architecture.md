@@ -301,17 +301,29 @@ only holds each process's git work folders and `known_hosts`. What changes:
   `FinishEmbedding`: the plan creates the space of a new model (asking the model its dimensions
   once with a fixed text, unless they are configured) and then queues every other version; each
   batch reads up to `batch_size` chunks without a vector (`VectorIndex.missing`), embeds their
-  article title (catalog bridge `ArticleTitles`), heading path and text through the `Embeddings`
-  port (adapter over pydantic-ai's `Embedder`, from the `ModelFactory`'s handle), records the
-  provider's reported tokens in `retrieval_ai_spend` and stores the vectors; the finish activates
-  the space once it covers every active version of every library with AI on and retires the
-  older ones (their tables are dropped). A library with AI off is never planned or sent, and a
-  batch re-reads its library's setting and the configured model first. A search in a hybrid mode
-  answers BM25 with `embedding_in_progress` while the configured model's space does not cover
-  the version. `retrieval_ai_spend` is one row per (scope kind, scope ID, UTC window, window
-  start) with an atomic upsert; embedding runs count under `embedding`/`instance`, the budgets
-  of #95 read the same rows. `exactdocs ai estimate` counts the distinct chunks without a vector
-  (`VectorIndex.pending`) at 4 characters per token, priced from the bundled `genai-prices` data.
+  article title (catalog bridge `ArticleTitles`: one query by path over the plan's manifest),
+  heading path and text through the `Embeddings` port (adapter over pydantic-ai's `Embedder`,
+  from the `ModelFactory`'s handle), records the provider's reported tokens in
+  `retrieval_ai_spend` and stores the vectors; the finish activates the space once it covers every
+  active version of every library with AI on, then retires every other space, newer ones too (a
+  model switched to and back from leaves one no configured model finishes); their tables are
+  dropped. A library with AI off is never planned or sent, and a batch re-reads its library's
+  setting and the configured model first. A batch the model did not answer for now (a timeout, a
+  429, a 5xx) is tried again inside its step, `EMBED_ATTEMPTS` times with doubling waits; then
+  the job fails and the next start or import queues the version again. A search in a hybrid
+  mode answers BM25 with `embedding_in_progress` while the configured model's space does not
+  cover the version; otherwise the pipeline is given that space (`PipelineRequest.space`) and
+  must search it, never the active one. Saving over REST the profile the embedding role uses
+  queues the embedding too (`bootstrap/embedding.py`), and the start queues what is missing in
+  the background. `retrieval_ai_spend` is one row per (scope kind, scope ID, UTC window, window
+  start) with an atomic upsert on SQLite and PostgreSQL: each batch adds to the instance's row
+  (`instance`, `""`) and its library's (`library`, the library ID) for the day and the month,
+  the rows the LLM spend and the budgets of #95 use; `unpriced` counts the requests whose model
+  has no known price. `exactdocs ai estimate` counts the distinct chunks without a vector
+  (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
+  `genai-prices` data (a model the instance runs itself, `ollama`, `vllm` or `local`, is never
+  priced from another provider's list). On a database without a vector store (PostgreSQL until
+  #243) nothing is planned, queued or estimated.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.

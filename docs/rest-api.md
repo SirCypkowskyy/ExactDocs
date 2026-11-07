@@ -358,7 +358,8 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   the LLM) and whether its profile exists.
 - `GET /ai/embedding/estimate`: what embedding every version not embedded yet would send and cost,
   before it runs (`exactdocs ai estimate` over REST): `{"model", "space_id", "versions", "chunks",
-  "characters", "estimated_tokens", "usd_per_million_tokens", "estimated_usd", "note"}`. Only
+  "characters", "estimated_tokens", "usd_per_million_tokens", "estimated_usd", "note"}`;
+  `characters` counts each chunk's text, heading path and article title, as embedded. Only
   active versions of libraries with AI on count, and each stored chunk once (a blob held by many
   versions is embedded once). Tokens are 4 characters each and the price is the bundled price
   list's (`null` for a model it does not know): an estimate, as `note` says. No model or

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from exactdocs.retrieval.constants import (
     FALLBACK_PRICE_PROVIDER,
+    GATEWAY_PRICE_KINDS,
     PRICE_PROVIDERS,
     TOKENS_PER_MILLION,
 )
@@ -22,8 +23,10 @@ class GenaiPrices:
     def input_usd_per_million(self, profile_kind: str, model: str) -> float | None:
         """Price a million input tokens of the model.
 
-        Tries the profile kind's provider, then the vendor of a ``vendor/model`` name, then
-        OpenAI's list (a gateway's model is most often one of OpenAI's).
+        Tries the profile kind's provider, then the vendor of a ``vendor/model`` name, then, for a
+        gateway kind only, OpenAI's list (a gateway's model is most often one of OpenAI's). A
+        model the instance runs itself (``ollama``, ``vllm``, ``local``) is never priced from
+        another provider's list: it stays unpriced.
 
         Args:
             profile_kind: The profile's kind.
@@ -42,7 +45,8 @@ class GenaiPrices:
         vendor, slash, name = model.partition("/")
         if slash:
             candidates.append((vendor, name))
-        candidates.append((FALLBACK_PRICE_PROVIDER, name if slash else model))
+        if profile_kind in GATEWAY_PRICE_KINDS:
+            candidates.append((FALLBACK_PRICE_PROVIDER, name if slash else model))
         usage = prices.Usage(input_tokens=TOKENS_PER_MILLION)
         for provider_id, model_ref in candidates:
             try:

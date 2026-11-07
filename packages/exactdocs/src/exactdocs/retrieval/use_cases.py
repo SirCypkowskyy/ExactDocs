@@ -120,6 +120,7 @@ from exactdocs.retrieval.models import (
     KeySource,
     LibraryAi,
     ManifestChunk,
+    ManifestPaths,
     ManifestStatus,
     ModeChoice,
     ModelCheck,
@@ -127,6 +128,7 @@ from exactdocs.retrieval.models import (
     ModelRole,
     ModeRegistry,
     NameMatch,
+    PendingChunks,
     PipelineAnswer,
     PipelineRequest,
     ProfileOrigin,
@@ -383,13 +385,12 @@ class RetrievalModes:
             limit=limit,
             rerank=choice.rerank,
         )
-        if (
-            choice.mode.needs_vectors
-            and self.embedded is not None
-            and not await self.embedded.searchable(version.manifest_id)
-        ):
-            answer = await self.pipelines[RetrievalMode.BM25].run(request)
-            return replace(answer, fallback_reason=FallbackReason.EMBEDDING_IN_PROGRESS)
+        if choice.mode.needs_vectors and self.embedded is not None:
+            found = await self.embedded.search_space(version.manifest_id)
+            if not found.searchable:
+                answer = await self.pipelines[RetrievalMode.BM25].run(request)
+                return replace(answer, fallback_reason=FallbackReason.EMBEDDING_IN_PROGRESS)
+            request = replace(request, space=found.space)
         answer = await self.pipelines[choice.mode].run(request)
         if answer.fallback_reason is None and choice.fallback_reason is not None:
             return replace(answer, fallback_reason=choice.fallback_reason)
@@ -1917,6 +1918,16 @@ class _ActiveVersion:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _SearchSpace:
+    """Whether a version can be searched with vectors now, and in which space."""
+
+    searchable: bool
+    """False while the configured model has not embedded the whole version."""
+    space: EmbeddingSpace | None
+    """The configured model's space, which covers the version; ``None`` without a model."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Configured:
     """The embedding role as it resolves now."""
 
@@ -2058,22 +2069,25 @@ class EmbeddingRuns:
         """
         return (await self.store().coverage(space.id, manifest_id)).complete
 
-    async def searchable(self, manifest_id: str) -> bool:
-        """Say whether a version can be searched with the configured model's vectors.
+    async def search_space(self, manifest_id: str) -> _SearchSpace:
+        """Find the space a version's vector search must use, if it covers the version.
 
         Args:
             manifest_id: The version's active manifest.
 
         Returns:
-            False while the configured model's space does not cover it yet (or does not exist);
-            True when it does, or when no embedding model or no vector store is configured (the
-            pipeline decides).
+            Not searchable while the configured model's space does not cover the version yet
+            (or does not exist); searchable in that space when it does; searchable with no
+            space when no embedding model or no vector store is configured (the pipeline
+            decides).
         """
         configured = await self.configured()
         if configured is None or self.vectors is None:
-            return True
+            return _SearchSpace(searchable=True, space=None)
         space = await self.space(configured.target)
-        return space is not None and await self.covers(space, manifest_id)
+        if space is None or not await self.covers(space, manifest_id):
+            return _SearchSpace(searchable=False, space=None)
+        return _SearchSpace(searchable=True, space=space)
 
     def price(self, configured: _Configured) -> float | None:
         """Look up the configured model's input price.
@@ -2206,10 +2220,11 @@ class EmbedBatchUseCase:
             return _done()
         ordered = sorted(sources)
         titles: Mapping[str, str] = {}
-        if runs.titles is not None:
-            paths = {sources[k].article_path for k in ordered}
-            target = DocTarget(library=command.library, version=command.ref)
-            titles = await runs.titles.titles(target, paths)
+        if runs.titles is not None:  # the plan's manifest: the job's library runs one job at a time
+            paths = tuple(sorted({sources[k].article_path for k in ordered}))
+            titles = await runs.titles.titles(
+                ManifestPaths(manifest_id=command.manifest_id, paths=paths)
+            )
         texts = [
             embedding_text(titles.get(sources[k].article_path, ""), sources[k]) for k in ordered
         ]
@@ -2220,6 +2235,7 @@ class EmbedBatchUseCase:
                     runs.clock.now(),
                     input_tokens=embedded.input_tokens,
                     requests=embedded.requests,
+                    library=command.library,
                     usd_per_million=runs.price(configured),
                 )
             )
@@ -2274,8 +2290,10 @@ class FinishEmbeddingUseCase:
                     if not await runs.covers(space, version.manifest_id):
                         return _finished(space, [])
                 space = await vectors.activate_space(space.id, runs.clock.now())
+            # Every other space, newer ones too: a model switched to and then away from (A, B,
+            # back to A) leaves a half-filled space that no configured model will finish.
             retired = [
-                s.id for s in spaces if s.id < space.id and s.state is not SpaceState.RETIRED
+                s.id for s in spaces if s.id != space.id and s.state is not SpaceState.RETIRED
             ]
             for space_id in retired:
                 await vectors.retire_space(space_id)
@@ -2355,6 +2373,7 @@ class EstimateEmbeddingUseCase:
         pending = await self.runs.store().pending(
             None if space is None else space.id, [v.manifest_id for v in versions]
         )
+        pending = pending.with_titles(await self._titles(pending))
         price = self.runs.price(configured)
         return EmbeddingEstimateOut(
             model=str(configured.ref),
@@ -2366,3 +2385,25 @@ class EstimateEmbeddingUseCase:
             usd_per_million_tokens=price,
             estimated_usd=estimated_usd(pending.estimated_tokens, price),
         )
+
+    async def _titles(self, pending: PendingChunks) -> dict[tuple[str, str], str]:
+        """Read the titles the pending chunks are embedded with: one lookup per manifest.
+
+        Args:
+            pending: The chunks, per article.
+
+        Returns:
+            The title of each (manifest ID, article path).
+        """
+        if self.runs.titles is None:
+            return {}
+        by_manifest: dict[str, set[str]] = {}
+        for article in pending.articles:
+            by_manifest.setdefault(article.manifest_id, set()).add(article.article_path)
+        found: dict[tuple[str, str], str] = {}
+        for manifest_id, paths in sorted(by_manifest.items()):
+            titles = await self.runs.titles.titles(
+                ManifestPaths(manifest_id=manifest_id, paths=tuple(sorted(paths)))
+            )
+            found |= {(manifest_id, path): title for path, title in titles.items()}
+        return found

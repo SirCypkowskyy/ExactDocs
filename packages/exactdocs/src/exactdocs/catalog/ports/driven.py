@@ -296,6 +296,23 @@ class ImportedTagWriter(Protocol):
         ...
 
 
+class ArticleTitleFinder(Protocol):
+    """Titles of a manifest's articles by path, for other domains (one query per batch)."""
+
+    async def titles(self, manifest_id: ManifestId, paths: Collection[str]) -> Mapping[str, str]:
+        """Return the title of each of these paths of the manifest.
+
+        Args:
+            manifest_id: The manifest (any state).
+            paths: The article paths.
+
+        Returns:
+            The titles found; paths the manifest does not have are left out, and an unknown
+            manifest has none.
+        """
+        ...
+
+
 class StoredArticleFinder(Protocol):
     """Finds stored articles by what they were imported from, across a library's manifests.
 

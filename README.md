@@ -583,7 +583,9 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   by the new model its searches answer BM25 with `fallback_reason: embedding_in_progress` (two
   models' vectors are never mixed). The old space is dropped once the new one covers every
   version. The tokens each call used (from the provider's answer) are recorded per UTC day and
-  month in the `retrieval_ai_spend` table, which budgets will read (#95).
+  month, for the instance and for the library, in the `retrieval_ai_spend` table, which budgets
+  will read (#95). Saving the embedding role's profile over REST re-queues what it changes; a
+  batch the provider does not answer for now (a timeout, a 429) is tried again a few times.
   On PostgreSQL there is no vector store yet (pgvector, #243): nothing is embedded or queued, and
   the estimate answers `vector_store_unavailable`.
 - **Estimate first:** `exactdocs ai estimate` (where the server runs) prints the chunks still to

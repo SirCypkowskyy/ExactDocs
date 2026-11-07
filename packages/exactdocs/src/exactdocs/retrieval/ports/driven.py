@@ -21,6 +21,7 @@ from exactdocs.retrieval.models import (
     LibraryAi,
     ManifestChunk,
     ManifestHit,
+    ManifestPaths,
     ManifestStatus,
     ModelCheck,
     ModelRole,
@@ -756,7 +757,8 @@ class VectorIndex(Protocol):
             manifest_ids: The manifests.
 
         Returns:
-            The chunks and the characters of their text and heading paths.
+            The chunks, the characters of their text and heading paths, and how many of them
+            each article holds (each chunk under its first manifest and path), for its title.
 
         Raises:
             UnknownEmbeddingSpaceError: No space has this ID.
@@ -841,17 +843,17 @@ class EmbeddingModels(Protocol):
 
 
 class ArticleTitles(Protocol):
-    """The titles of a version's articles (the catalog answers)."""
+    """The titles of a manifest's articles (the catalog answers, in one query)."""
 
-    async def titles(self, target: DocTarget, paths: Collection[str]) -> Mapping[str, str]:
-        """Return the title of each of these articles of the version.
+    async def titles(self, articles: ManifestPaths) -> Mapping[str, str]:
+        """Return the title of each of these articles of the manifest.
 
         Args:
-            target: The version.
-            paths: The article paths.
+            articles: The manifest and the article paths.
 
         Returns:
-            The titles found; a path the version does not have is left out.
+            The titles found; a path the manifest does not have (or a manifest collected
+            meanwhile) is left out.
         """
         ...
 

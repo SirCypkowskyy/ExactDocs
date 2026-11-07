@@ -36,6 +36,7 @@ from exactdocs.retrieval.models import (
     EmbeddingSpec,
     IndexedManifest,
     ManifestChunk,
+    PendingArticle,
     PendingChunks,
     SpaceState,
     TagFilter,
@@ -424,7 +425,15 @@ async def test_pending_counts_each_stored_chunk_once_across_manifests(world: Wor
     pending = await world.vectors.pending(None, ["m1", "m2"])
 
     expected = characters("b1", 0) + characters("b1", 1) + characters("b2", 0)
-    assert pending == PendingChunks(chunks=3, characters=expected)
+    assert pending == PendingChunks(
+        chunks=3,
+        characters=expected,
+        # Each chunk once, under its first manifest and path: b1's under m1, b2's under m2.
+        articles=(
+            PendingArticle(manifest_id="m1", article_path="docs/b1.md", chunks=2),
+            PendingArticle(manifest_id="m2", article_path="docs/b2.md", chunks=1),
+        ),
+    )
     assert await world.vectors.pending(None, []) == PendingChunks(chunks=0, characters=0)
     assert await world.vectors.pending(None, ["unknown"]) == PendingChunks(chunks=0, characters=0)
 
@@ -436,7 +445,9 @@ async def test_pending_leaves_out_chunks_with_a_vector_in_the_space(world: World
     await world.vectors.upsert(space.id, {key("b1", 0): [1, 0, 0], key("b2"): [0, 1, 0]})
 
     assert await world.vectors.pending(space.id, ["m1"]) == PendingChunks(
-        chunks=1, characters=characters("b1", 1)
+        chunks=1,
+        characters=characters("b1", 1),
+        articles=(PendingArticle(manifest_id="m1", article_path="docs/b1.md", chunks=1),),
     )
     assert (await world.vectors.pending(other.id, ["m1"])).chunks == 3
     await world.vectors.retire_space(space.id)

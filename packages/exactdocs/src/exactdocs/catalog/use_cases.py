@@ -23,6 +23,7 @@ from exactdocs.catalog.dtos import (
     ArticleList,
     ArticleSummary,
     ArticleTagSource,
+    ArticleTitles,
     Asset,
     CollectGarbageCommand,
     CollectionResult,
@@ -38,6 +39,7 @@ from exactdocs.catalog.dtos import (
     FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetArticleTitlesQuery,
     GetAssetQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
@@ -106,6 +108,7 @@ from exactdocs.catalog.models import (
     close_paths,
 )
 from exactdocs.catalog.ports.driven import (
+    ArticleTitleFinder,
     ImportedTagWriter,
     LibraryRepository,
     ManifestCopier,
@@ -869,6 +872,26 @@ class GetManifestStatesUseCase:
         )
         return ManifestStates(states={i: m.state for i, m in found.items()})
         return ManifestStates(states={m.id: m.state for m in found if m is not None})
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetArticleTitlesUseCase:
+    """Implements ``ports.driving.GetArticleTitles``."""
+
+    titles: ArticleTitleFinder
+    """Reads the manifest's entries."""
+
+    async def __call__(self, query: GetArticleTitlesQuery) -> ArticleTitles:
+        """Look the paths up in the manifest's entries.
+
+        Args:
+            query: The manifest and the paths.
+
+        Returns:
+            The titles found.
+        """
+        titles = await self.titles.titles(ManifestId(query.manifest_id), query.paths)
+        return ArticleTitles(titles=dict(titles))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

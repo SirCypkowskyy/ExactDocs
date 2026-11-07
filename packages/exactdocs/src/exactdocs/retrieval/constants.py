@@ -513,10 +513,12 @@ NO_VECTOR_STORE: Final[str] = (
 DIMENSIONS_PROBE: Final[str] = "ExactDocs embedding dimensions"
 """The fixed text embedded once to learn a model's dimensions when none are configured: no
 library text, so it may be sent before any library is known to have AI on."""
-SPEND_SCOPE_EMBEDDING: Final[str] = "embedding"
-"""The ledger scope kind of embedding runs: they count against their own budget (#95)."""
 SPEND_SCOPE_INSTANCE: Final[str] = "instance"
-"""The ledger scope ID of what the whole instance spends."""
+"""The ledger scope kind of what the whole instance spends (docs/decisions/ai-retrieval.md)."""
+SPEND_INSTANCE_ID: Final[str] = ""
+"""The scope ID of the instance's rows: there is one instance."""
+SPEND_SCOPE_LIBRARY: Final[str] = "library"
+"""The ledger scope kind of what one library spends; its scope ID is the library ID."""
 MICROS_PER_USD: Final[int] = 1_000_000
 """The ledger keeps US dollars as whole millionths, so atomic additions stay exact."""
 TOKENS_PER_MILLION: Final[int] = 1_000_000
@@ -526,6 +528,10 @@ ESTIMATE_NOTE: Final[str] = (
     "and the price is the bundled price list's."
 )
 """What ``exactdocs ai estimate`` and its REST route say about their numbers."""
+TRANSIENT_STATUSES: Final[frozenset[int]] = frozenset({408, 409, 425, 429})
+"""HTTP statuses below 500 an embedding call may succeed after: timeouts and rate limits."""
+SERVER_ERROR: Final[int] = 500
+"""From here on a provider's answer is its own failure, which may pass."""
 MAX_EMBEDDING_ERROR: Final[int] = 200
 """Longest provider error text kept in a failed embedding job (keys are never in it)."""
 
@@ -603,6 +609,22 @@ _VECTOR_PENDING: Final[str] = (
 )
 """Counts the distinct stored chunks of some manifests (and their characters), ``missing``
 narrowing them to those without a vector in a space."""
+_PENDING_FIRST: Final[str] = (
+    "SELECT c.id, mc.manifest_id, mc.article_path, row_number() OVER (PARTITION BY c.id "
+    "ORDER BY mc.manifest_id, mc.article_path) AS n"
+)
+"""Each stored chunk with every (manifest, path) holding it, its first one numbered 1."""
+_PENDING_PER_ARTICLE: Final[str] = "SELECT manifest_id, article_path, count(*) AS chunks"
+"""Counts per article (``FROM`` follows in ``_VECTOR_PENDING_ARTICLES``)."""
+_VECTOR_PENDING_ARTICLES: Final[str] = (
+    _PENDING_PER_ARTICLE
+    + " FROM ("
+    + _PENDING_FIRST
+    + _VECTOR_JOIN
+    + "WHERE mc.manifest_id IN :manifests {missing}) first_holders WHERE n = 1 "
+    "GROUP BY manifest_id, article_path ORDER BY manifest_id, article_path"
+)
+"""The pending chunks per article, each chunk under its first manifest and path (for titles)."""
 _VECTOR_ABSENT: Final[str] = "AND c.id NOT IN (SELECT chunk_key FROM {table})"
 """Narrows ``_VECTOR_PENDING`` to chunks without a vector in one space's table."""
 
@@ -620,5 +642,8 @@ PRICE_PROVIDERS: Final[dict[str, str]] = {
 }
 """The ``genai-prices`` provider of each profile kind that has one of its own."""
 FALLBACK_PRICE_PROVIDER: Final[str] = "openai"
-"""Where a gateway's model (``openai-compatible``, LiteLLM...) is looked up last: gateways mostly
-serve OpenAI's embedding models under their own names."""
+"""Where a gateway's model is looked up last: gateways mostly serve OpenAI's embedding models
+under their own names."""
+GATEWAY_PRICE_KINDS: Final[frozenset[str]] = frozenset({"openai-compatible", "litellm"})
+"""Kinds whose models are looked up in ``FALLBACK_PRICE_PROVIDER``'s list too. Never a model the
+instance runs itself (``ollama``, ``vllm``, ``local``): those stay unpriced."""

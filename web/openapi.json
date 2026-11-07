@@ -7890,7 +7890,7 @@
           "characters": {
             "type": "integer",
             "title": "Characters",
-            "description": "Characters of their text and heading paths."
+            "description": "Characters of their text, heading paths and article titles, as they are embedded."
           },
           "estimated_tokens": {
             "type": "integer",

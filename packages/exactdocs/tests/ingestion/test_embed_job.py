@@ -7,9 +7,15 @@ from datetime import UTC, datetime
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCheckpoints, InMemoryJobRepository
-from exactdocs.ingestion.constants import EMBED_JOB, IMPORT_JOB, JobKind
+from exactdocs.ingestion.constants import (
+    EMBED_ATTEMPTS,
+    EMBED_JOB,
+    EMBED_RETRY_SECONDS,
+    IMPORT_JOB,
+    JobKind,
+)
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, QueueEmbeddingCommand
-from exactdocs.ingestion.errors import UnknownJobKindError
+from exactdocs.ingestion.errors import EmbeddingUnavailableError, UnknownJobKindError
 from exactdocs.ingestion.models import (
     EmbeddedBatch,
     EmbedPlan,
@@ -257,3 +263,52 @@ async def test_the_module_runs_embed_jobs_and_embeds_after_imports_only_with_an_
     assert await module.run_next_job()  # the embedding
     assert imported == [LIB]
     assert embedder.missing[LIB, "v2"] == 0
+
+
+@dataclass(slots=True)
+class Flaky(Embedder):
+    """Fails ``unavailable`` times as a model that does not answer for now, then embeds."""
+
+    unavailable: int = 0
+
+    async def embed_batch(self, library: str, ref: str, plan: EmbedPlan) -> EmbeddedBatch:
+        if self.unavailable:
+            self.unavailable -= 1
+            reason = "embedding with corp:e5 failed: ModelHTTPError 429"
+            raise EmbeddingUnavailableError(reason)
+        return await Embedder.embed_batch(self, library, ref, plan)
+
+
+async def test_a_batch_the_model_did_not_answer_is_tried_again_with_growing_waits() -> None:
+    embedder = Flaky(missing={(LIB, "v1"): 1}, unavailable=EMBED_ATTEMPTS - 1)
+    world = World(embedder)
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    handler = EmbedVersionUseCase(
+        embedder=embedder, queue=world.queue, checkpoints=world.steps, sleep=sleep
+    )
+    await handler(_job(), Progress())
+
+    assert embedder.missing[LIB, "v1"] == 0
+    assert waits == [EMBED_RETRY_SECONDS * 2**n for n in range(EMBED_ATTEMPTS - 1)]
+    assert world.steps.ran.count("embed batch 1") == 1  # the tries are one step
+
+
+async def test_a_model_that_never_answers_fails_the_job_after_a_bounded_number_of_tries() -> None:
+    embedder = Flaky(missing={(LIB, "v1"): 1}, unavailable=EMBED_ATTEMPTS)
+    world = World(embedder)
+
+    async def sleep(seconds: float) -> None:
+        del seconds
+
+    handler = EmbedVersionUseCase(
+        embedder=embedder, queue=world.queue, checkpoints=world.steps, sleep=sleep
+    )
+    with pytest.raises(EmbeddingUnavailableError):
+        await handler(_job(), Progress())
+
+    assert embedder.unavailable == 0
+    assert embedder.finished == []

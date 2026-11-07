@@ -457,3 +457,17 @@ class StoredTextOutdatedError(DomainError):
         super().__init__(
             f"{library} {ref} was stored by another parser version; it is re-imported instead"
         )
+
+
+class EmbeddingUnavailableError(DomainError):
+    """The embedding model did not answer for now (a timeout, a rate limit, a 5xx): try again."""
+
+    code = "embedding_unavailable"
+
+    def __init__(self, reason: str) -> None:
+        """Keep retrieval's reason (the model and the error type, never a key).
+
+        Args:
+            reason: Why the batch was not embedded.
+        """
+        super().__init__(reason)

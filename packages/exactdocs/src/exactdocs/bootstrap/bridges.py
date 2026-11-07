@@ -22,12 +22,12 @@ from exactdocs.catalog.dtos import (
     FindStoredArticlesQuery,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetArticleTitlesQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
     HostKind,
     ImageIn,
-    ListArticlesQuery,
     ListLibrariesQuery,
     ListRenamesQuery,
     RemoveLibraryCommand,
@@ -71,10 +71,10 @@ from exactdocs.catalog.ports.driving import (
     FindStoredArticles,
     GetActiveManifest,
     GetArticle,
+    GetArticleTitles,
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
-    ListArticles,
     ListDefaultManifests,
     ListLibraries,
     ListRenames,
@@ -88,7 +88,7 @@ from exactdocs.catalog.ports.driving import (
     StoreManifest,
 )
 from exactdocs.ingestion.constants import PARSER_VERSION
-from exactdocs.ingestion.errors import StoredTextOutdatedError
+from exactdocs.ingestion.errors import EmbeddingUnavailableError, StoredTextOutdatedError
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ChunkHeading,
@@ -133,9 +133,11 @@ from exactdocs.retrieval.dtos import (
     RetagArticlesCommand,
     UnembeddedVersionsQuery,
 )
+from exactdocs.retrieval.errors import EmbeddingFailedError
 from exactdocs.retrieval.models import (
     CatalogLibrary,
     DocTarget,
+    ManifestPaths,
     ManifestStatus,
     SearchableVersion,
     SourceHost,
@@ -613,11 +615,15 @@ class RetrievalVersionEmbedder:
         """
         if plan.space_id is None or plan.manifest_id is None:
             return EmbeddedBatch(embedded=0, finished=True)
-        batch = await self.embed_batch_of(
-            EmbedBatchCommand(
-                library=library, ref=ref, manifest_id=plan.manifest_id, space_id=plan.space_id
-            )
+        command = EmbedBatchCommand(
+            library=library, ref=ref, manifest_id=plan.manifest_id, space_id=plan.space_id
         )
+        try:
+            batch = await self.embed_batch_of(command)
+        except EmbeddingFailedError as error:
+            if error.transient:  # the job tries the batch again, after a wait
+                raise EmbeddingUnavailableError(str(error)) from error
+            raise
         return EmbeddedBatch(embedded=batch.embedded, finished=batch.finished)
 
     async def finish(self, plan: EmbedPlan) -> None:
@@ -942,34 +948,21 @@ def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestC
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogArticleTitles:
-    """Implements ``retrieval.ports.driven.ArticleTitles`` using the catalog's article listing."""
+    """Implements ``retrieval.ports.driven.ArticleTitles`` using the catalog (one query)."""
 
-    list_articles: ListArticles
-    """The catalog's article listing."""
+    get_article_titles: GetArticleTitles
+    """The catalog's titles of a manifest's articles, by path."""
 
-    async def titles(self, target: DocTarget, paths: Collection[str]) -> Mapping[str, str]:
-        """Page through the version's articles and keep the titles of these paths.
+    async def titles(self, articles: ManifestPaths) -> Mapping[str, str]:
+        """Look the paths up in the manifest's entries.
 
         Args:
-            target: The version.
-            paths: The article paths.
+            articles: The manifest and the article paths.
 
         Returns:
-            The titles found.
+            The titles found (none for a manifest collected meanwhile).
         """
-        library, ref = target.library, target.version
-        wanted = set(paths)
-        found: dict[str, str] = {}
-        cursor: str | None = None
-        while wanted - found.keys():
-            try:
-                page = await self.list_articles(
-                    ListArticlesQuery(library=library, ref=ref, limit=MAX_LIMIT, cursor=cursor)
-                )
-            except CatalogArticleNotFoundError:  # the version is gone: no title
-                return found
-            found |= {a.path: a.title for a in page.articles if a.path in wanted}
-            cursor = page.next_cursor
-            if cursor is None:
-                break
-        return found
+        found = await self.get_article_titles(
+            GetArticleTitlesQuery(manifest_id=articles.manifest_id, paths=list(articles.paths))
+        )
+        return found.titles

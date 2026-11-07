@@ -173,6 +173,7 @@ ai_spend = Table(
     Column("output_tokens", Integer, nullable=False, server_default="0"),
     Column("requests", Integer, nullable=False, server_default="0"),
     Column("usd_micros", Integer, nullable=False, server_default="0"),
+    Column("unpriced", Integer, nullable=False, server_default="0"),  # requests without a price
 )
 
 
@@ -859,7 +860,7 @@ class SqliteSpendLedger:
             ],
             set_={
                 name: ai_spend.c[name] + statement.excluded[name]
-                for name in ("input_tokens", "output_tokens", "requests", "usd_micros")
+                for name in ("input_tokens", "output_tokens", "requests", "usd_micros", "unpriced")
             },
         )
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
@@ -875,6 +876,7 @@ class SqliteSpendLedger:
                         "output_tokens": e.output_tokens,
                         "requests": e.requests,
                         "usd_micros": e.usd_micros,
+                        "unpriced": e.unpriced,
                     }
                     for e in entries
                 ],

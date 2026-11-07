@@ -19,6 +19,10 @@ added the steps of ``embed`` (#91). A workflow of another version is not resumed
 starts over from the beginning.
 """
 
+EMBED_ATTEMPTS: Final[int] = 4
+"""Tries of one batch of an ``embed`` job whose model did not answer for now (inside its step)."""
+EMBED_RETRY_SECONDS: Final[float] = 2.0
+"""The first wait before a batch is tried again; it doubles each time (2, 4, then 8 seconds)."""
 _WAIT_FOR_OTHER: Final[float] = 30.0
 """Seconds."""
 _THREADS: Final[int] = 32

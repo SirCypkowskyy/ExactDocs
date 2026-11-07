@@ -11,12 +11,17 @@ from itertools import batched
 import httpx2
 from azure.core.exceptions import AzureError
 from google.genai.errors import APIError as GoogleAPIError
-from openai import OpenAIError
+from openai import APIConnectionError, APITimeoutError, OpenAIError
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings import EmbeddingResult, EmbeddingSettings
-from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import AgentRunError, ModelAPIError, ModelHTTPError, UserError
 
-from exactdocs.retrieval.constants import DIMENSIONS_PROBE, MAX_EMBEDDING_ERROR
+from exactdocs.retrieval.constants import (
+    DIMENSIONS_PROBE,
+    MAX_EMBEDDING_ERROR,
+    SERVER_ERROR,
+    TRANSIENT_STATUSES,
+)
 from exactdocs.retrieval.errors import EmbeddingFailedError, ProviderUnsupportedError
 from exactdocs.retrieval.models import EmbeddedTexts
 
@@ -39,6 +44,22 @@ def _call_errors() -> tuple[type[Exception], ...]:
         ValueError,
         KeyError,
         TypeError,
+    )
+
+
+def _transient(error: Exception) -> bool:
+    """Say whether asking again later may succeed: a timeout, a lost connection, a 429 or a 5xx.
+
+    Args:
+        error: What the call raised.
+
+    Returns:
+        True for those; False for an answer that will not change (401, 404, a bad request).
+    """
+    if isinstance(error, ModelHTTPError):
+        return error.status_code in TRANSIENT_STATUSES or error.status_code >= SERVER_ERROR
+    return isinstance(
+        error, (ModelAPIError, httpx2.TransportError, APIConnectionError, APITimeoutError)
     )
 
 
@@ -160,4 +181,6 @@ class PydanticAiEmbeddings:
             reason = type(error).__name__
             if isinstance(error, ModelHTTPError):
                 reason = f"{reason} {error.status_code}"
-            raise EmbeddingFailedError(self.name, reason[:MAX_EMBEDDING_ERROR]) from None
+            raise EmbeddingFailedError(
+                self.name, reason[:MAX_EMBEDDING_ERROR], transient=_transient(error)
+            ) from None

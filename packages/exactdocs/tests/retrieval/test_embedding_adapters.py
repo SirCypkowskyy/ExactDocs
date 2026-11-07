@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from databases import SQL_BACKENDS
+from databases import ADMIN_URL, SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.ingestion.dtos import QueueEmbeddingCommand
@@ -108,6 +108,24 @@ async def test_a_failed_call_names_the_model_and_status_never_the_message() -> N
     assert "sk-secret" not in str(raised.value)
 
 
+@pytest.mark.parametrize(
+    ("status", "transient"), [(429, True), (503, True), (408, True), (401, False), (404, False)]
+)
+async def test_a_failed_call_says_whether_asking_again_may_help(
+    status: int, *, transient: bool
+) -> None:
+    model = _model(TestEmbeddingModel("e5"))
+    error = ModelHTTPError(status_code=status, model_name="e5", body=None)
+
+    with (
+        patch.object(TestEmbeddingModel, "embed", side_effect=error),
+        pytest.raises(EmbeddingFailedError) as raised,
+    ):
+        await model.embed_documents(["text"])
+
+    assert raised.value.transient is transient
+
+
 async def test_a_handle_that_is_no_embedder_is_refused() -> None:
     with pytest.raises(ProviderUnsupportedError):
         PydanticAiEmbeddingModels().bind(object(), name="corp:e5", dimensions=None, batch_size=2)
@@ -126,6 +144,10 @@ def test_prices_come_from_the_bundled_price_list() -> None:
     routed = prices.input_usd_per_million("openrouter", "openai/text-embedding-3-large")
     assert routed == pytest.approx(0.13)
     assert prices.input_usd_per_million("ollama", "nomic-embed-text") is None
+    # A model the instance runs itself is never priced from another provider's list.
+    assert prices.input_usd_per_million("ollama", "text-embedding-3-small") is None
+    assert prices.input_usd_per_million("vllm", "text-embedding-3-small") is None
+    assert prices.input_usd_per_million("local", "text-embedding-3-small") is None
 
 
 # ---------------------------------------------------------------- the spend ledger
@@ -161,8 +183,12 @@ def engine(container: Container) -> AsyncEngine:
 async def test_the_sqlite_ledger_adds_usage_to_its_rows(engine: AsyncEngine) -> None:
     ledger = SqliteSpendLedger(engine=engine)
     memory = InMemorySpendLedger()
-    first = embedding_spend(T0, input_tokens=100, requests=1, usd_per_million=0.02)
-    second = embedding_spend(T0, input_tokens=50, requests=2, usd_per_million=0.02)
+    first = embedding_spend(
+        T0, library="/acme/x", input_tokens=100, requests=1, usd_per_million=0.02
+    )
+    second = embedding_spend(
+        T0, library="/acme/x", input_tokens=50, requests=2, usd_per_million=None
+    )
 
     for store in (ledger, memory):
         await store.add(first)
@@ -170,18 +196,24 @@ async def test_the_sqlite_ledger_adds_usage_to_its_rows(engine: AsyncEngine) -> 
         await store.add(())
 
     async with engine.connect() as connection:
-        rows = (await connection.execute(select(ai_spend).order_by(ai_spend.c.window_kind))).all()
+        rows = (
+            await connection.execute(
+                select(ai_spend).order_by(ai_spend.c.scope_kind, ai_spend.c.window_kind)
+            )
+        ).all()
     assert [
         (r.scope_kind, r.scope_id, r.window_kind, r.window_start, r.input_tokens, r.requests)
         for r in rows
     ] == [
-        ("embedding", "instance", "day", "2026-11-07", 150, 3),
-        ("embedding", "instance", "month", "2026-11-01", 150, 3),
+        ("instance", "", "day", "2026-11-07", 150, 3),
+        ("instance", "", "month", "2026-11-01", 150, 3),
+        ("library", "/acme/x", "day", "2026-11-07", 150, 3),
+        ("library", "/acme/x", "month", "2026-11-01", 150, 3),
     ]
-    assert [r.usd_micros for r in rows] == [3, 3]  # 2 + 1 (rounded per call)
-    by_window = {key[2]: row for key, row in memory.rows.items()}
-    assert by_window[SpendWindow.DAY].input_tokens == 150
-    assert by_window[SpendWindow.MONTH].usd_micros == 3
+    # The first call is priced (2 micro-USD), the second's two requests are not.
+    assert {(r.usd_micros, r.unpriced) for r in rows} == {(2, 2)}
+    assert {(row.usd_micros, row.unpriced) for row in memory.rows.values()} == {(2, 2)}
+    assert {key[2] for key in memory.rows} == {SpendWindow.DAY, SpendWindow.MONTH}
 
 
 async def test_embedding_sources_are_read_on_every_sql_database(container: Container) -> None:
@@ -221,6 +253,7 @@ async def test_embedding_sources_are_read_on_every_sql_database(container: Conta
     }
 
 
+@pytest.mark.skipif(ADMIN_URL is None, reason="needs a PostgreSQL server (no vector store there)")
 async def test_without_a_vector_store_nothing_is_embedded_or_queued(
     on_postgres: object,
 ) -> None:

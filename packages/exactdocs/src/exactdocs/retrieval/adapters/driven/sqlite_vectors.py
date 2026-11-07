@@ -37,6 +37,7 @@ from exactdocs.retrieval.constants import (
     _VECTOR_MISSING,
     _VECTOR_NEAREST,
     _VECTOR_PENDING,
+    _VECTOR_PENDING_ARTICLES,
     _VECTOR_UPSERT,
     SQLITE_VEC_MODULE,
     TAG_CONDITIONS,
@@ -55,6 +56,7 @@ from exactdocs.retrieval.models import (
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
+    PendingArticle,
     PendingChunks,
     SpaceState,
     TagFilter,
@@ -420,11 +422,25 @@ class SqliteVectorIndex:
         statement = text(_VECTOR_PENDING.format(missing=missing)).bindparams(
             bindparam("manifests", expanding=True)
         )
+        by_article = text(_VECTOR_PENDING_ARTICLES.format(missing=missing)).bindparams(
+            bindparam("manifests", expanding=True)
+        )
+        params = {"manifests": sorted(set(manifest_ids))}
         async with self.engine.connect() as connection:
             if space_id is not None:
                 await self._live(connection, space_id)
-            row = (await connection.execute(statement, {"manifests": list(manifest_ids)})).one()
-        return PendingChunks(chunks=row.chunks, characters=row.characters)
+            row = (await connection.execute(statement, params)).one()
+            articles = (await connection.execute(by_article, params)).all()
+        return PendingChunks(
+            chunks=row.chunks,
+            characters=row.characters,
+            articles=tuple(
+                PendingArticle(
+                    manifest_id=a.manifest_id, article_path=a.article_path, chunks=a.chunks
+                )
+                for a in articles
+            ),
+        )
 
     def _write(self) -> AbstractAsyncContextManager[AsyncConnection]:
         """Open a write transaction (BEGIN IMMEDIATE, as the other repositories do).

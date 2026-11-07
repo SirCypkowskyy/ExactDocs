@@ -5,8 +5,8 @@ import json
 import math
 import re
 import unicodedata
-from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import IntEnum, StrEnum
 from itertools import groupby
@@ -41,8 +41,9 @@ from exactdocs.retrieval.constants import (
     MAX_RETRIES,
     MICROS_PER_USD,
     PROFILE_NAME,
-    SPEND_SCOPE_EMBEDDING,
+    SPEND_INSTANCE_ID,
     SPEND_SCOPE_INSTANCE,
+    SPEND_SCOPE_LIBRARY,
     STOP_WORDS,
     TOKENS_PER_MILLION,
 )
@@ -813,6 +814,10 @@ class PipelineRequest:
     """How many hits to return at most."""
     rerank: bool
     """Reorder the best candidates with the configured reranker."""
+    space: EmbeddingSpace | None = None
+    """The embedding space a mode that searches vectors must search: the configured model's, which
+    the caller checked covers ``version``. Never look up the active space instead: during a switch
+    of models it is another model's. ``None`` when no embedding model resolves (BM25 modes)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1864,13 +1869,51 @@ class EmbeddedTexts:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PendingArticle:
+    """How many of the pending chunks are embedded with one article's title."""
+
+    manifest_id: str
+    """The manifest the chunks are counted under (the first one holding each chunk)."""
+    article_path: str
+    """The article (the first path holding each chunk)."""
+    chunks: int
+    """The chunks."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestPaths:
+    """Some articles of one manifest, by path: whose titles are embedded with their chunks."""
+
+    manifest_id: str
+    """The manifest."""
+    paths: tuple[str, ...]
+    """The article paths."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PendingChunks:
     """Stored chunks some manifests hold that have no vector yet, each counted once."""
 
     chunks: int
     """Distinct stored chunks."""
     characters: int
-    """Characters of their text and heading paths."""
+    """Characters of their text and heading paths (titles are added by ``with_titles``)."""
+    articles: tuple[PendingArticle, ...] = ()
+    """Where the chunks are, per article: their titles are embedded with them."""
+
+    def with_titles(self, titles: Mapping[tuple[str, str], str]) -> PendingChunks:
+        """Count each chunk's article title in, as it is embedded (input format 1).
+
+        Args:
+            titles: The title of each (manifest ID, article path).
+
+        Returns:
+            The same chunks with their titles' characters added.
+        """
+        extra = sum(
+            len(titles.get((a.manifest_id, a.article_path), "")) * a.chunks for a in self.articles
+        )
+        return replace(self, characters=self.characters + extra)
 
     @property
     def estimated_tokens(self) -> int:
@@ -1938,33 +1981,47 @@ class SpendEntry:
     """Calls made."""
     usd_micros: int = 0
     """Their price in millionths of a US dollar; 0 when the price is unknown."""
+    unpriced: int = 0
+    """Of ``requests``, those whose price is unknown (so ``usd_micros`` leaves them out)."""
 
 
 def embedding_spend(
-    at: datetime, *, input_tokens: int, requests: int, usd_per_million: float | None
+    at: datetime,
+    *,
+    library: str,
+    input_tokens: int,
+    requests: int,
+    usd_per_million: float | None,
 ) -> tuple[SpendEntry, ...]:
-    """Write one embedding call's usage as ledger entries: its day and its month.
+    """Write one embedding batch's usage as ledger entries: the instance's and the library's rows.
+
+    The same rows LLM spend uses (docs/decisions/ai-retrieval.md, *Cost and budgets*): one per
+    scope and UTC window, so budgets per instance and per library see embedding runs too.
 
     Args:
-        at: When the call was made.
+        at: When the calls were made.
+        library: The library whose chunks were embedded.
         input_tokens: Tokens the provider reported.
         requests: Calls made.
         usd_per_million: The model's input price per million tokens, if known.
 
     Returns:
-        One entry per window.
+        One entry per scope (instance, library) and window (day, month).
     """
     usd = estimated_usd(input_tokens, usd_per_million)
     micros = 0 if usd is None else round(usd * MICROS_PER_USD)
+    scopes = ((SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID), (SPEND_SCOPE_LIBRARY, library))
     return tuple(
         SpendEntry(
-            scope_kind=SPEND_SCOPE_EMBEDDING,
-            scope_id=SPEND_SCOPE_INSTANCE,
+            scope_kind=kind,
+            scope_id=scope_id,
             window=window,
             window_start=window.start(at),
             input_tokens=input_tokens,
             requests=requests,
             usd_micros=micros,
+            unpriced=requests if usd is None else 0,
         )
+        for kind, scope_id in scopes
         for window in SpendWindow
     )
