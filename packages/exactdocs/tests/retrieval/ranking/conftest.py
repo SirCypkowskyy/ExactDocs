@@ -2,14 +2,17 @@
 
 To run the suite on another engine (hybrid retrieval, ParadeDB), add its name to ``ENGINES`` and
 build its ``Container`` in ``open_container``: the cases and the assertions do not change.
+``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
 
+from databases import ADMIN_URL, SECRET_KEY, postgres_database
 from exactdocs.bootstrap.bridges import (
     CatalogLibrarySources,
     CatalogVersionPublisher,
@@ -30,7 +33,8 @@ from fixture_repo import DocsRepo, git
 
 LIBRARY = "/fixture/docs-repo"
 VERSIONS = {"v1.3.0": RefKind.TAG, "v1.4.0": RefKind.TAG, "next": RefKind.BRANCH}
-ENGINES = ["fts5"]
+ENGINES = ["fts5", *(["postgres_fts"] if ADMIN_URL else [])]
+_DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
 
 
 class _Progress:
@@ -46,6 +50,10 @@ class _Progress:
 def open_container(engine: str, data_dir: Path) -> Container:
     """The app's container for ``engine``; every engine shares the import and the search port."""
     assert engine in ENGINES, engine
+    if engine == "postgres_fts":
+        return Container.build(
+            Settings(data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY)
+        )
     return Container.build(Settings(data_dir=data_dir))
 
 
@@ -102,15 +110,18 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
 @pytest.fixture(scope="session", params=ENGINES)
 def imported(
     request: pytest.FixtureRequest, docs_repo: DocsRepo, tmp_path_factory: pytest.TempPathFactory
-) -> tuple[str, Path]:
+) -> Generator[tuple[str, Path]]:
     """Import the three versions once per engine; tests reopen the same data directory.
 
-    Returns:
+    Yields:
         The engine's name and the data directory holding its imported versions.
     """
     data_dir = tmp_path_factory.mktemp("ranking")
-    asyncio.run(_import_all(request.param, data_dir, docs_repo))
-    return request.param, data_dir
+    with ExitStack() as stack:
+        if request.param == "postgres_fts":
+            _DATABASES[request.param] = stack.enter_context(postgres_database()).url
+        asyncio.run(_import_all(request.param, data_dir, docs_repo))
+        yield request.param, data_dir
 
 
 @pytest.fixture

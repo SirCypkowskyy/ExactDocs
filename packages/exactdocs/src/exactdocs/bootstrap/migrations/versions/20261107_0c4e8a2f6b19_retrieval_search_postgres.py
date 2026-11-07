@@ -8,9 +8,11 @@ PostgreSQL, and this one creates PostgreSQL's index instead (a no-op on SQLite).
 chunk, keyed by `retrieval_chunks.id`: the foreign key removes it with its chunk, as the FTS5
 trigger does. `document` is computed by PostgreSQL from the four columns FTS5 has (heading, path,
 text, identifiers) with the `simple` configuration (no stemming, no stop words, like FTS5's
-`unicode61`), weighted A to D. The format row records PostgreSQL's format 1
-(`retrieval.adapters.driven.postgres_fts`). A database only ever reaches this revision through the
-whole history, so `retrieval_chunks` is still empty here: nothing needs indexing.
+`unicode61`), weighted A to D. Each column first goes through `retrieval_search_words` (below), so
+PostgreSQL's parser cuts words as FTS5's `tokenchars '-_.'` does. The format row records
+PostgreSQL's format 1 (`retrieval.adapters.driven.postgres_fts`). A database only ever reaches this
+revision through the whole history, so `retrieval_chunks` is still empty here: nothing needs
+indexing.
 """
 
 import sqlalchemy as sa
@@ -23,17 +25,28 @@ branch_labels = None
 depends_on = None
 
 _TEXT = sa.Text(collation="C")  # never sorted; "C" so `migrate` leaves them as they are
+# Frozen copy of the adapter's function (`retrieval.constants._PG_WORDS`). PostgreSQL's parser
+# reads `/v1/tokens` as one file name and splits `retry_policy` at the underscore. FTS5 keeps
+# `-_.` inside a word and splits at everything else: so everything else becomes a space, and an
+# underscore inside a word a hyphen, which the parser keeps whole (`retry-policy`) and in parts.
+_WORDS = r"""
+    CREATE FUNCTION retrieval_search_words(words text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    RETURN regexp_replace(regexp_replace(words, '[^[:alnum:]_.-]+', ' ', 'g'),
+                          '([[:alnum:]])_(?=[[:alnum:]])', '\1-', 'g')
+"""
 _DOCUMENT = (
-    "setweight(to_tsvector('simple'::regconfig, heading), 'A')"
-    " || setweight(to_tsvector('simple'::regconfig, path), 'B')"
-    " || setweight(to_tsvector('simple'::regconfig, body), 'C')"
-    " || setweight(to_tsvector('simple'::regconfig, identifiers), 'D')"
+    "setweight(to_tsvector('simple'::regconfig, retrieval_search_words(heading)), 'A')"
+    " || setweight(to_tsvector('simple'::regconfig, retrieval_search_words(path)), 'B')"
+    " || setweight(to_tsvector('simple'::regconfig, retrieval_search_words(body)), 'C')"
+    " || setweight(to_tsvector('simple'::regconfig, retrieval_search_words(identifiers)), 'D')"
 )
 
 
 def upgrade() -> None:
     if op.get_bind().dialect.name != "postgresql":
         return
+    op.execute(_WORDS)
     op.create_table(
         "retrieval_search",
         sa.Column(
@@ -61,4 +74,5 @@ def downgrade() -> None:
     if op.get_bind().dialect.name != "postgresql":
         return
     op.drop_table("retrieval_search")
+    op.execute("DROP FUNCTION retrieval_search_words(text)")
     op.execute("UPDATE retrieval_search_format SET format = 2")

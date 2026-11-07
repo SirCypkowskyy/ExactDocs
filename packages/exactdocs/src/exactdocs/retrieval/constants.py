@@ -249,13 +249,17 @@ POSTGRES_WEIGHTS: Final[tuple[float, float, float, float]] = (
 column weights scaled to PostgreSQL's 0 to 1 range, so the columns count in the same proportions.
 """
 _PG_DOCUMENT: Final[str] = (
-    "setweight(to_tsvector('simple'::regconfig, heading), 'A')"
-    " || setweight(to_tsvector('simple'::regconfig, path), 'B')"
-    " || setweight(to_tsvector('simple'::regconfig, body), 'C')"
-    " || setweight(to_tsvector('simple'::regconfig, identifiers), 'D')"
+    "setweight(to_tsvector('simple'::regconfig, retrieval_search_words(heading)), 'A')"
+    " || setweight(to_tsvector('simple'::regconfig, retrieval_search_words(path)), 'B')"
+    " || setweight(to_tsvector('simple'::regconfig, retrieval_search_words(body)), 'C')"
+    " || setweight(to_tsvector('simple'::regconfig, retrieval_search_words(identifiers)), 'D')"
 )
 """The computed `document` column: the `simple` configuration (no stemming or stop words, like
-FTS5's `unicode61`), heading A, path B, text C, identifiers D (as revision 0c4e8a2f6b19)."""
+FTS5's `unicode61`), heading A, path B, text C, identifiers D (as revision 0c4e8a2f6b19). Each
+column goes through `retrieval_search_words` (that revision's SQL function) first: everything but
+letters, digits and `-_.` becomes a space and an underscore inside a word a hyphen, so PostgreSQL's
+parser cuts words as FTS5's `tokenchars '-_.'` does (`/v1/tokens` holds `tokens`; `retry_policy`
+stays whole as `retry-policy`, its parts as well)."""
 _PG_CREATE_NEXT: Final[str] = f"""
     CREATE TABLE retrieval_search_next (
         chunk_id integer PRIMARY KEY REFERENCES retrieval_chunks (id) ON DELETE CASCADE,
@@ -284,32 +288,41 @@ _PG_SWAP: Final[tuple[str, ...]] = (
 )
 """Replace the index with the rebuilt one, under the names revision 0c4e8a2f6b19 gave."""
 _PG_QUERY: Final[str] = """
-    SELECT to_tsquery('simple', string_agg('(' || plainto_tsquery('simple', term)::text || ')',
-                                           ' | '))
+    SELECT
+        to_tsquery('simple', string_agg(
+            '(' || plainto_tsquery('simple', retrieval_search_words(term))::text || ')', ' | ')
+        ) AS query,
+        CAST(string_agg(quote_literal(retrieval_search_words(term)), ' | ')
+             FILTER (WHERE term ~ '[[:alnum:]][-_.][[:alnum:]]') AS tsquery) AS whole
     FROM unnest(CAST(:terms AS text[])) AS term
-    WHERE numnode(plainto_tsquery('simple', term)) > 0
+    WHERE numnode(plainto_tsquery('simple', retrieval_search_words(term))) > 0
 """
-"""The search terms as one `tsquery`: each term parsed as the indexed text is (its parts must all
-be there), the terms OR-ed (see `identifier_tokens`). Bound values only: nothing a user typed
-reaches the query syntax. ``NULL`` when no term has a word, which matches nothing."""
+"""The search terms as one `tsquery` (``query``): each term parsed as the indexed text is (its
+parts must all be there), the terms OR-ed (see `identifier_tokens`). ``whole``: the identifiers
+among them (`retry_policy`, `v1.4.0`) as single lexemes, matched only where the identifier is
+written whole; its rank is added, as BM25 weighs such a rare token high. Bound values only:
+nothing a user typed reaches the query syntax. ``NULL`` when no term has a word, which matches
+nothing."""
 _PG_SEARCH: Final[str] = """
     WITH q AS MATERIALIZED ({query}),
     ranked AS MATERIALIZED (
         SELECT s.chunk_id AS id, mc.manifest_id AS manifest_id, mc.chunk_id AS chunk_id,
-               ts_rank_cd(CAST(:weights AS real[]), s.document, q.to_tsquery, 1) AS score
+               (ts_rank_cd(CAST(:weights AS real[]), s.document, q.query, 1)
+                + coalesce(ts_rank_cd(CAST(:weights AS real[]), s.document, q.whole, 1), 0))
+                   AS score
         FROM q CROSS JOIN retrieval_search s
         JOIN retrieval_chunks c ON c.id = s.chunk_id
         JOIN retrieval_manifest_chunks mc
           ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
          AND mc.position = c.position
-        WHERE s.document @@ q.to_tsquery AND mc.manifest_id IN :manifests {tags}
+        WHERE s.document @@ q.query AND mc.manifest_id IN :manifests {tags}
         ORDER BY score DESC, mc.chunk_id
         LIMIT :limit
     )
     SELECT r.manifest_id, r.chunk_id, r.score,
            CASE WHEN cardinality(regexp_split_to_array(btrim(s.body), '\\s+')) <= :words
                 THEN s.body
-                ELSE ts_headline('simple', s.body, q.to_tsquery, :headline) END AS snippet
+                ELSE ts_headline('simple', s.body, q.query, :headline) END AS snippet
     FROM ranked r
     JOIN retrieval_search s ON s.chunk_id = r.id
     CROSS JOIN q
@@ -328,7 +341,7 @@ _PG_COUNT: Final[str] = """
     JOIN retrieval_manifest_chunks mc
       ON mc.blob_sha = c.blob_sha AND mc.config_hash = c.config_hash
      AND mc.position = c.position
-    WHERE s.document @@ q.to_tsquery AND mc.manifest_id IN :manifests {tags}
+    WHERE s.document @@ q.query AND mc.manifest_id IN :manifests {tags}
     GROUP BY mc.manifest_id
 """
 """Counts the matches of a search per manifest (``{query}``, ``{tags}``: as `_PG_SEARCH`)."""
