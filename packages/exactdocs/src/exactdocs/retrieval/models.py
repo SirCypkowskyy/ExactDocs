@@ -136,6 +136,18 @@ def chunk_id(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ChunkHeading:
+    """One heading a chunk holds: a chunking config may merge several headings into one chunk."""
+
+    heading_path: tuple[str, ...]
+    """The heading and every heading above it."""
+    anchor: str
+    """The heading's own anchor in the article."""
+    starts_chunk: bool
+    """True for the heading the chunk is named after; false for one merged into it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Chunk:
     """One section of an article, as the chunker cut it."""
 
@@ -146,6 +158,9 @@ class Chunk:
     content_hash: str
     anchor: str
     code_languages: tuple[str, ...] = ()
+    headings: tuple[ChunkHeading, ...] | None = None
+    """Every heading the chunk holds, in order; ``None`` for a chunk stored before they were
+    recorded. Not part of ``ChunkSet.digest``: they follow from the text and the config hash."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -200,6 +215,20 @@ class SectionRef:
     occurrence_index: int
     content_hash: str
     anchor: str
+    headings: tuple[ChunkHeading, ...] | None = None
+    """Every heading the chunk holds, in order; ``None`` when they were not recorded."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OutlineEntry:
+    """Where one heading of an outline is: the chunk that holds it and its own anchor."""
+
+    chunk_id: ChunkId
+    """The chunk that starts with this heading, or that it was merged into."""
+    anchor: str
+    """The heading's own anchor in the article."""
+    starts_chunk: bool
+    """False when the chunking merged this heading into a chunk another heading starts."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -208,8 +237,9 @@ class OutlineNode:
 
     heading: str
     """The heading's text, untrusted repository text."""
-    section: SectionRef | None
-    """The chunk this heading starts; ``None`` when it starts none (only deeper headings do)."""
+    entry: OutlineEntry | None
+    """The chunk that holds this heading; ``None`` when no chunk records it (a chunk stored
+    before heading records existed, whose first heading is a deeper one)."""
     children: tuple[OutlineNode, ...]
     """The headings directly under it."""
 
@@ -227,10 +257,11 @@ class Outline:
 def outline(sections: Sequence[SectionRef]) -> Outline:
     """Build the heading tree of an article from its sections, given in document order.
 
-    Every section becomes the node of its own (last) heading, so two sections with the same
-    headings are two sibling nodes. An ancestor heading that starts no chunk of its own is a node
-    without a section. Headings inside a chunk (merged by the chunking config) are not in its
-    heading path, so they are not in the outline either.
+    Every heading a section records becomes a node pointing to that section: the one it starts
+    with, and those the chunking config merged into it (``starts_chunk`` false). A section stored
+    before heading records existed gives its own (last) heading only, so headings merged into it
+    are missing until its library is re-chunked. Two headings with the same path are two sibling
+    nodes; an ancestor heading no section records is a node without an entry.
 
     Args:
         sections: The article's sections, ordered by position.
@@ -239,37 +270,64 @@ def outline(sections: Sequence[SectionRef]) -> Outline:
         The tree, with the text before the first heading (if a chunk) apart as the preamble.
     """
     preamble = next((s for s in sections if not s.heading_path), None)
-    return Outline(
-        preamble=preamble, sections=_outline_nodes([s for s in sections if s.heading_path], 0)
-    )
+    headings = [h for s in sections for h in _outline_headings(s)]
+    return Outline(preamble=preamble, sections=_outline_nodes(headings, 0))
 
 
-def _outline_nodes(sections: Sequence[SectionRef], depth: int) -> tuple[OutlineNode, ...]:
-    """Group sections whose heading paths are all longer than ``depth`` into nodes at ``depth``.
+type _Heading = tuple[tuple[str, ...], OutlineEntry]
+"""A heading path and where the heading is."""
+
+
+def _outline_headings(section: SectionRef) -> list[_Heading]:
+    """List the headings a section holds, in order, each with where it is.
 
     Args:
-        sections: Consecutive sections in document order, each deeper than ``depth``.
+        section: One section of the article.
+
+    Returns:
+        Its recorded headings, or its own heading when none were recorded (none for a preamble).
+    """
+    if section.headings is None:
+        if not section.heading_path:
+            return []
+        entry = OutlineEntry(chunk_id=section.chunk_id, anchor=section.anchor, starts_chunk=True)
+        return [(section.heading_path, entry)]
+    return [
+        (
+            h.heading_path,
+            OutlineEntry(chunk_id=section.chunk_id, anchor=h.anchor, starts_chunk=h.starts_chunk),
+        )
+        for h in section.headings
+        if h.heading_path
+    ]
+
+
+def _outline_nodes(headings: Sequence[_Heading], depth: int) -> tuple[OutlineNode, ...]:
+    """Group headings whose paths are all longer than ``depth`` into nodes at ``depth``.
+
+    Args:
+        headings: Consecutive headings in document order, each deeper than ``depth``.
         depth: The index of the heading in each heading path that names the nodes.
 
     Returns:
-        One node per heading at ``depth``, each with the deeper sections that follow it.
+        One node per heading at ``depth``, each with the deeper headings that follow it.
     """
     nodes: list[OutlineNode] = []
     start = 0
-    while start < len(sections):
-        head = sections[start]
-        prefix = head.heading_path[: depth + 1]
-        own = head if len(head.heading_path) == depth + 1 else None
+    while start < len(headings):
+        path, entry = headings[start]
+        prefix = path[: depth + 1]
+        own = entry if len(path) == depth + 1 else None
         end = start + 1
         while (
-            end < len(sections)
-            and len(sections[end].heading_path) > depth + 1
-            and sections[end].heading_path[: depth + 1] == prefix
+            end < len(headings)
+            and len(headings[end][0]) > depth + 1
+            and headings[end][0][: depth + 1] == prefix
         ):
             end += 1
-        below = sections[start + 1 if own else start : end]
+        below = headings[start + 1 if own else start : end]
         nodes.append(
-            OutlineNode(heading=prefix[-1], section=own, children=_outline_nodes(below, depth + 1))
+            OutlineNode(heading=prefix[-1], entry=own, children=_outline_nodes(below, depth + 1))
         )
         start = end
     return tuple(nodes)

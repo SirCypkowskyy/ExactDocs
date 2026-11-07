@@ -22,6 +22,7 @@ from exactdocs.retrieval.constants import (
 from exactdocs.retrieval.dtos import (
     ArticleOutlineOut,
     ArticleOutlineQuery,
+    ChunkHeadingOut,
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
@@ -68,6 +69,7 @@ from exactdocs.retrieval.models import (
     Candidate,
     CatalogLibrary,
     Chunk,
+    ChunkHeading,
     ChunkId,
     ChunkSet,
     ChunkSetKey,
@@ -542,6 +544,16 @@ class IndexManifestUseCase:
                             content_hash=c.content_hash,
                             anchor=c.anchor,
                             code_languages=tuple(c.code_languages),
+                            headings=None
+                            if c.headings is None
+                            else tuple(
+                                ChunkHeading(
+                                    heading_path=tuple(h.heading_path),
+                                    anchor=h.anchor,
+                                    starts_chunk=h.starts_chunk,
+                                )
+                                for h in c.headings
+                            ),
                         )
                         for c in article.chunks
                     ),
@@ -715,6 +727,16 @@ class GetChunkSetsUseCase:
                         content_hash=c.content_hash,
                         anchor=c.anchor,
                         code_languages=list(c.code_languages),
+                        headings=None
+                        if c.headings is None
+                        else [
+                            ChunkHeadingOut(
+                                heading_path=list(h.heading_path),
+                                anchor=h.anchor,
+                                starts_chunk=h.starts_chunk,
+                            )
+                            for h in c.headings
+                        ],
                     )
                     for c in chunk_set.chunks
                 ]

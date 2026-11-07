@@ -24,6 +24,7 @@ from exactdocs.retrieval.constants import UNKNOWN_MANIFEST_GRACE
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ArticleTagsIn,
+    ChunkHeadingIn,
     ChunkIn,
     CollectChunksCommand,
     DiscardPendingChunksCommand,
@@ -43,6 +44,7 @@ from exactdocs.retrieval.errors import (
     StaleChunkError,
 )
 from exactdocs.retrieval.models import (
+    ChunkHeading,
     ChunkId,
     DocTarget,
     ManifestStatus,
@@ -967,3 +969,93 @@ async def test_retagging_changes_one_articles_chunk_tags_in_one_manifest_only(
         assert (await world.read(chunk_id)).tags == ["guide", "onboarding"]
     assert (await world.read(done.chunk_ids["b.md"][0])).tags == ["guide"]
     assert (await world.read(other.chunk_ids["a.md"][0])).tags == ["guide"]
+
+
+async def test_heading_records_are_stored_with_the_chunk_set_and_come_back_with_it(
+    world: World,
+) -> None:
+    merged = ChunkIn(
+        heading_path=["Guide"],
+        occurrence_index=0,
+        content="# Guide\n\n## Install\n",
+        content_hash="h-merged",
+        anchor="guide",
+        headings=[
+            ChunkHeadingIn(heading_path=["Guide"], anchor="guide", starts_chunk=True),
+            ChunkHeadingIn(heading_path=["Guide", "Install"], anchor="install", starts_chunk=False),
+        ],
+    )
+    unrecorded = ChunkIn(  # a chunk set stored before heading records existed
+        heading_path=["Old"],
+        occurrence_index=0,
+        content="# Old\n",
+        content_hash="h-old",
+        anchor="old",
+    )
+    for manifest_id, ref in (("m1", "v1"), ("m2", "v2")):  # the second one is a dedup
+        await world.retrieval.index_manifest(
+            IndexManifestCommand(
+                manifest_id=manifest_id,
+                library=PAYMENTS,
+                ref=ref,
+                config_hash=CONFIG,
+                articles=[
+                    ArticleChunksIn(path="a.md", blob_sha="merged", chunks=[merged]),
+                    ArticleChunksIn(path="b.md", blob_sha="old", chunks=[unrecorded]),
+                ],
+            )
+        )
+
+    expected = (
+        ChunkHeading(heading_path=("Guide",), anchor="guide", starts_chunk=True),
+        ChunkHeading(heading_path=("Guide", "Install"), anchor="install", starts_chunk=False),
+    )
+    for manifest_id in ("m1", "m2"):
+        (section,) = await world.chunks.article(manifest_id, "a.md")
+        (old,) = await world.chunks.article(manifest_id, "b.md")
+        assert section.headings == expected
+        assert old.headings is None
+    sets = await world.retrieval.get_chunk_sets(
+        GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["merged", "old"])
+    )
+    stored = sets.chunks["merged"][0].headings or []
+    assert [h.model_dump() for h in stored] == [h.model_dump() for h in merged.headings or []]
+    assert sets.chunks["old"][0].headings is None
+    assert await world.count_chunk_sets() == 2
+
+
+async def test_a_set_stored_without_heading_records_is_reused_as_it_is_by_one_with_them(
+    world: World,
+) -> None:
+    # A default-config set stored before #251 (no records) and the same blob cut again now (with
+    # records) share a key: the records are not in the digest, and the first write wins.
+    def chunk(headings: list[ChunkHeadingIn] | None) -> ChunkIn:
+        return ChunkIn(
+            heading_path=["Guide"],
+            occurrence_index=0,
+            content="# Guide\n",
+            content_hash="h-guide",
+            anchor="guide",
+            headings=headings,
+        )
+
+    recorded = [ChunkHeadingIn(heading_path=["Guide"], anchor="guide", starts_chunk=True)]
+    for manifest_id, ref, headings in (("m1", "v1", None), ("m2", "v2", recorded)):
+        await world.retrieval.index_manifest(
+            IndexManifestCommand(
+                manifest_id=manifest_id,
+                library=PAYMENTS,
+                ref=ref,
+                config_hash=CONFIG,
+                articles=[ArticleChunksIn(path="a.md", blob_sha="blob", chunks=[chunk(headings)])],
+            )
+        )
+
+    assert await world.count_chunk_sets() == 1
+    for manifest_id in ("m1", "m2"):
+        (section,) = await world.chunks.article(manifest_id, "a.md")
+        assert section.headings is None
+    sets = await world.retrieval.get_chunk_sets(
+        GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["blob"])
+    )
+    assert sets.chunks["blob"][0].headings is None

@@ -103,6 +103,7 @@ class InMemoryChunkRepository:
                     occurrence_index=chunk.occurrence_index,
                     content_hash=chunk.content_hash,
                     anchor=chunk.anchor,
+                    headings=chunk.headings,
                 )
             )
         return found
