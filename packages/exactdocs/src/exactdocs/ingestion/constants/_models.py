@@ -222,6 +222,12 @@ LIBRARY_KINDS: Final[frozenset[JobKind]] = frozenset({REPROCESS_JOB, RECHUNK_JOB
 """Kinds of job that touch every version of the library (their ``version`` is ``None``)."""
 COLLECT_JOB: Final[JobKind] = JobKind("collect")
 """The kind of job that frees what removed or replaced versions left on disk."""
+EMBED_JOB: Final[JobKind] = JobKind("embed")
+"""Embeds one version with the instance's embedding model, a durable step per batch (RET-01)."""
+EMBED_AFTER_KINDS: Final[frozenset[JobKind]] = frozenset(
+    {IMPORT_JOB, REFRESH_JOB, REPROCESS_JOB, RECHUNK_JOB}
+)
+"""Kinds of job whose new chunks need embedding: each queues ``embed`` jobs when it succeeds."""
 CHANGE_JOBS: Final[dict[str, JobKind]] = {
     "paths": REPROCESS_JOB,
     "chunking": RECHUNK_JOB,

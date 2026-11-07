@@ -4,6 +4,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from itertools import batched
 
 from pydantic import TypeAdapter
 from sqlalchemy import (
@@ -1103,6 +1104,36 @@ class SqliteImportedTags:
                             .values(**_tag_columns(after))
                         )
         return touched
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteArticleTitles:
+    """Implements ``ports.driven.ArticleTitleFinder`` on ``catalog_manifest_entries``."""
+
+    engine: AsyncEngine
+    """The database."""
+
+    async def titles(self, manifest_id: ManifestId, paths: Collection[str]) -> Mapping[str, str]:
+        """Return the titles of these paths of the manifest: one ``IN`` query per batch.
+
+        Args:
+            manifest_id: The manifest.
+            paths: The article paths.
+
+        Returns:
+            The title of each path found.
+        """
+        found: dict[str, str] = {}
+        async with self.engine.connect() as connection:
+            for batch in batched(sorted(set(paths)), _PATHS_PER_QUERY, strict=False):
+                rows = await connection.execute(
+                    select(manifest_entries.c.path, manifest_entries.c.title).where(
+                        manifest_entries.c.manifest_id == manifest_id,
+                        manifest_entries.c.path.in_(batch),
+                    )
+                )
+                found |= {row.path: row.title for row in rows}
+        return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

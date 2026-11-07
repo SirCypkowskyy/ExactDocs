@@ -780,3 +780,17 @@ class UpdatedLibrarySettings(_Dto):
     """The library's refs now, at the commits they serve: what the job re-processes (it reads the
     versions again when it runs). Listed also when a queued job is reused.
     """
+
+
+class QueueEmbeddingCommand(_Dto):
+    """Queue an ``embed`` job for every version the embedding model has not fully embedded."""
+
+    library: str | None = Field(default=None, min_length=1)
+    """Only this library's versions; every library's when null."""
+
+
+class QueuedEmbedding(_Dto):
+    """How many ``embed`` jobs were queued."""
+
+    queued: int
+    """Jobs queued now."""

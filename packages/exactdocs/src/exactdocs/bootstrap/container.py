@@ -4,7 +4,7 @@ import os
 import signal
 import threading
 from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
@@ -16,6 +16,7 @@ from exactdocs.bootstrap.ai_models import ConfiguredAi, PydanticAiModels, config
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogArticleSuggestions,
+    CatalogArticleTitles,
     CatalogCollector,
     CatalogDefaultVersions,
     CatalogImportedTags,
@@ -33,6 +34,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionPublisher,
     RetrievalChunkIndex,
     RetrievalCollector,
+    RetrievalVersionEmbedder,
 )
 from exactdocs.bootstrap.constants import (
     AI_KEYS_PURPOSE,
@@ -49,6 +51,7 @@ from exactdocs.bootstrap.database import (
     migrate,
     open_database,
 )
+from exactdocs.bootstrap.embedding import SaveProviderThenEmbed
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox
@@ -57,6 +60,7 @@ from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteArticleTitles,
     SqliteImportedTags,
     SqliteLibraryRepository,
     SqliteManifestCopier,
@@ -88,6 +92,7 @@ from exactdocs.ingestion.adapters.driven.sqlite import (
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
+from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -98,17 +103,21 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
+from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteChunkRepository,
     SqliteLibraryModes,
     SqliteProviderProfiles,
+    SqliteSpendLedger,
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.models import RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
+from exactdocs.retrieval.ports.driving import SaveProvider
 from exactdocs_kernel import DomainError, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -223,6 +232,7 @@ def _build_read_side(
         imported_tags=SqliteImportedTags(engine=engine),
         stored_articles=SqliteStoredArticles(engine=engine),
         copier=SqliteManifestCopier(engine=engine),
+        article_titles=SqliteArticleTitles(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -269,6 +279,12 @@ def _build_read_side(
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
         vectors=vectors,
+        embedding_models=PydanticAiEmbeddingModels(),
+        article_titles=CatalogArticleTitles(get_article_titles=catalog.get_article_titles),
+        spend=SqliteSpendLedger(engine=engine),
+        prices=GenaiPrices(),
+        embedding_dimensions=settings.ai.embedding.dimensions,
+        embedding_batch_size=settings.ai.embedding.batch_size,
     )
     return _ReadSide(catalog=catalog, retrieval=retrieval, search_choice=choice)
 
@@ -432,6 +448,9 @@ class Container:
     ingestion: IngestionModule
     retrieval: RetrievalModule
     job_worker: DbosJobWorker
+    save_provider: SaveProvider
+    """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
+    changed (REST ``/ai/providers``)."""
     work_owner: Path | None = field(default=None, repr=False)
     """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
@@ -568,6 +587,13 @@ class Container:
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine=engine),
             schedule_switch=DbosScheduleSwitch(SCHEDULE),
+            embedder=RetrievalVersionEmbedder(
+                plan_embedding=read.retrieval.plan_embedding,
+                embed_batch_of=read.retrieval.embed_batch,
+                finish_embedding=read.retrieval.finish_embedding,
+                list_unembedded_versions=read.retrieval.list_unembedded_versions,
+            ),
+            checkpoints=DbosCheckpoints(),
         )
         return cls(
             settings=settings,
@@ -585,6 +611,10 @@ class Container:
             ),
             ingestion=ingestion,
             retrieval=read.retrieval,
+            save_provider=SaveProviderThenEmbed(
+                save_provider=read.retrieval.save_provider,
+                queue_embedding=ingestion.queue_embedding,
+            ),
             job_worker=DbosJobWorker(
                 run_job=ingestion.run_job,
                 recover_jobs=ingestion.recover_jobs,
@@ -600,6 +630,38 @@ class Container:
                 **_dbos_database(settings, engine),
             ),
         )
+
+    @asynccontextmanager
+    async def _embedding_queued(self) -> AsyncGenerator[None]:
+        """Queue the missing embedding in the background while the block runs.
+
+        A start never waits for the coverage of every version; stopping cancels what is left.
+
+        Yields:
+            Nothing: the block runs while the queueing goes on.
+        """
+        queueing = asyncio.create_task(self._queue_embedding())
+        try:
+            yield
+        finally:
+            queueing.cancel()
+            with suppress(asyncio.CancelledError):
+                await queueing
+
+    async def _queue_embedding(self) -> None:
+        """Queue the embedding of every version the configured model has not embedded.
+
+        A new or changed embedding model, or versions imported while none was configured, are
+        embedded in the background from here. No model is called: only the stored spaces are
+        read. A failure is logged and never stops the start (BM25 answers meanwhile).
+        """
+        try:
+            queued = await self.ingestion.queue_embedding(QueueEmbeddingCommand())
+        except Exception:
+            logger.exception("could not queue the embedding of the versions not embedded yet")
+            return
+        if queued.queued:
+            logger.info("%d versions are being embedded in the background", queued.queued)
 
     @asynccontextmanager
     async def running(self, *, jobs: bool = True) -> AsyncGenerator[None]:
@@ -639,7 +701,7 @@ class Container:
                     # one job runner; on PostgreSQL only the folders of processes that are gone.
                     sweep = sweep_abandoned_work if self.work_owner else sweep_stale_fetches
                     await asyncio.to_thread(sweep, self.settings.data_dir / WORK_DIR)
-                    async with self.job_worker.running():
+                    async with self.job_worker.running(), self._embedding_queued():
                         yield
                 else:
                     yield

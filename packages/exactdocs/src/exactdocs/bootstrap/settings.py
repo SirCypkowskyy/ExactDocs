@@ -24,7 +24,13 @@ from exactdocs.bootstrap.constants import (
     SECRETS_REFUSED_IN_FILE,
     SETTINGS_FILE_VARIABLE,
 )
-from exactdocs.retrieval.constants import DEFAULT_REQUEST_TIMEOUT, DEFAULT_RETRIES
+from exactdocs.retrieval.constants import (
+    DEFAULT_EMBEDDING_BATCH,
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_RETRIES,
+    MAX_EMBEDDING_BATCH,
+    MAX_EMBEDDING_DIMENSIONS,
+)
 from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RetrievalMode
 
 
@@ -102,14 +108,27 @@ class ProviderSettings(BaseModel):
 class RoleSettings(BaseModel):
     """One model role: ``EXACTDOCS_AI__<ROLE>__MODEL`` or ``[ai.<role>]``.
 
-    Fields the later issues read (``dimensions``, ``batch_size``, ``top_n``) are accepted and kept
-    for them; nothing reads them yet.
+    Fields the later issues read (``top_n``) are accepted and kept for them; nothing reads them
+    yet.
     """
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="allow")
 
     model: str | None = None
     """`<profile>:<model>`, e.g. `corp:gpt-4.1-mini`."""
+
+
+class EmbeddingRoleSettings(RoleSettings):
+    """The embedding role (``EXACTDOCS_AI__EMBEDDING__...`` or ``[ai.embedding]``)."""
+
+    dimensions: int | None = Field(default=None, ge=1, le=MAX_EMBEDDING_DIMENSIONS)
+    """`EXACTDOCS_AI__EMBEDDING__DIMENSIONS`: ask the model for vectors of this size (models that
+    can shorten theirs, such as OpenAI's `text-embedding-3-*`). Unset: the model's own size, asked
+    once with a fixed text. A change makes a new embedding space: every version is embedded again.
+    """
+    batch_size: int = Field(default=DEFAULT_EMBEDDING_BATCH, ge=1, le=MAX_EMBEDDING_BATCH)
+    """`EXACTDOCS_AI__EMBEDDING__BATCH_SIZE`: chunks per embedding call, and per durable step of a
+    version's background `embed` job."""
 
 
 class AiSettings(BaseModel):
@@ -126,7 +145,7 @@ class AiSettings(BaseModel):
 
     providers: dict[str, ProviderSettings] = Field(default_factory=dict)
     """Named provider profiles (`EXACTDOCS_AI__PROVIDERS__<NAME>__...`); read-only over REST."""
-    embedding: RoleSettings = Field(default_factory=RoleSettings)
+    embedding: EmbeddingRoleSettings = Field(default_factory=EmbeddingRoleSettings)
     """The embedding role, instance-wide only (`EXACTDOCS_AI__EMBEDDING__MODEL`)."""
     reranker: RoleSettings = Field(default_factory=RoleSettings)
     """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`)."""

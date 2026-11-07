@@ -151,10 +151,11 @@ def create_app(container: Container) -> FastAPI:
         retrieval_http.build_ai_router(
             list_providers=container.retrieval.list_providers,
             get_provider=container.retrieval.get_provider,
-            save_provider=container.retrieval.save_provider,
+            save_provider=container.save_provider,
             delete_provider=container.retrieval.delete_provider,
             check_provider=container.retrieval.check_provider,
             list_roles=container.retrieval.list_roles,
+            estimate_embedding=container.retrieval.estimate_embedding,
         )
     )
     protected.include_router(

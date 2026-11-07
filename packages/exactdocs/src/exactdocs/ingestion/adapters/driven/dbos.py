@@ -7,6 +7,7 @@ only enqueues by name and records steps, so the two never import each other.
 """
 
 import asyncio
+import contextvars
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -35,11 +36,16 @@ class DbosJobQueue:
     async def submit(self, job: Job) -> None:
         """Queue the workflow; a DBOS that is not running leaves the job for the next start.
 
-        Queuing an ID that already has a workflow returns that one, so this is idempotent.
+        Queuing an ID that already has a workflow returns that one, so this is idempotent. It
+        is queued outside the context of any running workflow: a job that queues another (an
+        import queuing ``embed`` jobs) gets a workflow of its own, not a child step.
         """
         try:
-            await DBOS.enqueue_workflow_with_options_async(
-                enqueue_options(job.id, job.library), job.id
+            await asyncio.get_running_loop().create_task(
+                DBOS.enqueue_workflow_with_options_async(
+                    enqueue_options(job.id, job.library), job.id
+                ),
+                context=contextvars.Context(),
             )
         except Exception:  # e.g. no worker runs in this process: the job waits for one
             log.exception("job %s waits for the next start: DBOS did not take it", job.id)

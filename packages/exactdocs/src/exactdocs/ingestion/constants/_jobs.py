@@ -9,15 +9,20 @@ SCHEDULE: Final[str] = "exactdocs-scheduled-checks"
 """The DBOS schedule that ticks the scheduled checks (the worker creates it)."""
 WORKFLOW: Final[str] = "exactdocs.run_job"
 """Name of the DBOS workflow that runs one job."""
-STEPS_VERSION: Final[str] = "jobs-6"
+STEPS_VERSION: Final[str] = "jobs-7"
 """DBOS's application version: bump it when a job's steps change (names, order or results).
 ``jobs-2`` added the steps of ``reprocess`` and ``retag`` (#61); ``jobs-3`` gave ``ImportedRef``
 its ``origin`` and ``pinned`` (#81); ``jobs-4`` starts the import with "read the chunking
 settings" and added the steps of ``rechunk`` (#67); ``jobs-5`` counted the articles parsed and
-taken as stored (#164); ``jobs-6`` gave ``ArticleChunk`` its heading records (#251). A workflow
-of another version is not resumed: its job starts over from the beginning.
+taken as stored (#164); ``jobs-6`` gave ``ArticleChunk`` its heading records (#251); ``jobs-7``
+added the steps of ``embed`` (#91). A workflow of another version is not resumed: its job
+starts over from the beginning.
 """
 
+EMBED_ATTEMPTS: Final[int] = 4
+"""Tries of one batch of an ``embed`` job whose model did not answer for now (inside its step)."""
+EMBED_RETRY_SECONDS: Final[float] = 2.0
+"""The first wait before a batch is tried again; it doubles each time (2, 4, then 8 seconds)."""
 _WAIT_FOR_OTHER: Final[float] = 30.0
 """Seconds."""
 _THREADS: Final[int] = 32

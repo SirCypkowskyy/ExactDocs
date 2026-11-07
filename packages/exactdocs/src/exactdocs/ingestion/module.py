@@ -17,6 +17,8 @@ from exactdocs.ingestion.constants import (
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
+    EMBED_AFTER_KINDS,
+    EMBED_JOB,
     IMPORT_JOB,
     LIBRARY_KINDS,
     RECHUNK_JOB,
@@ -65,6 +67,7 @@ from exactdocs.ingestion.ports.driven import (
     ScheduleSwitch,
     StoredArticleSource,
     VersionCopier,
+    VersionEmbedder,
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import (
@@ -80,6 +83,7 @@ from exactdocs.ingestion.ports.driving import (
     ListLibraryJobs,
     ListRepositoryRefs,
     PreviewRepository,
+    QueueEmbedding,
     RecoverJobs,
     ReimportVersion,
     RemoveLibrary,
@@ -101,6 +105,9 @@ from exactdocs.ingestion.use_cases import (
     CollectGarbageUseCase,
     DisableAutoSyncUseCase,
     DiscardInterruptedImportUseCase,
+    EmbedAfterJob,
+    EmbeddingQueue,
+    EmbedVersionUseCase,
     EnqueueJobUseCase,
     GetAutoSyncUseCase,
     GetJobUseCase,
@@ -110,6 +117,7 @@ from exactdocs.ingestion.use_cases import (
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     PreviewRepositoryUseCase,
+    QueueEmbeddingUseCase,
     RechunkLibraryUseCase,
     RecoverJobsUseCase,
     ReimportVersionUseCase,
@@ -263,6 +271,8 @@ class IngestionModule:
     list_library_jobs: ListLibraryJobs
     list_repository_refs: ListRepositoryRefs
     preview_repository: PreviewRepository
+    queue_embedding: QueueEmbedding
+    """Queues the ``embed`` jobs of the versions not fully embedded."""
     recover_jobs: RecoverJobs
     reimport_version: ReimportVersion
     remove_library: RemoveLibrary
@@ -300,6 +310,8 @@ class IngestionModule:
         auto_syncs: AutoSyncStore | None = None,
         schedule_switch: ScheduleSwitch | None = None,
         settings: LibrarySettingsStore | None = None,
+        embedder: VersionEmbedder | None = None,
+        checkpoints: Checkpoints | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -313,7 +325,10 @@ class IngestionModule:
         ``schedule_switch`` turns the tick on while any library has a schedule. ``settings``
         stores edited paths and tag rules; it needs the ``reprocess`` and ``retag`` handlers
         of ``import_job``. ``settings_locks`` orders the edits of one library (another object
-        than ``tag_locks``); without it they take turns within this process only.
+        than ``tag_locks``); without it they take turns within this process only. ``embedder``
+        adds the ``embed`` job (one version embedded in the background, a durable step per batch
+        through ``checkpoints``) and makes every job that stores chunks queue the embedding of
+        what it stored.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
@@ -322,6 +337,20 @@ class IngestionModule:
             message = "settings needs the reprocess, rechunk and retag handlers of import_job"
             raise TypeError(message)
         runner = runner or _NoRunner()
+        embedding = None
+        if embedder is not None:
+            embedding = EmbeddingQueue(jobs=jobs, runner=runner, clock=clock, embedder=embedder)
+            handlers = {
+                **{
+                    kind: EmbedAfterJob(inner=handler, queue=embedding)
+                    if kind in EMBED_AFTER_KINDS
+                    else handler
+                    for kind, handler in handlers.items()
+                },
+                EMBED_JOB: EmbedVersionUseCase(
+                    embedder=embedder, queue=embedding, checkpoints=checkpoints or _InlineSteps()
+                ),
+            }
         enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=handlers, runner=runner)
         none = _NoLibrarySources()
         vault = vault or _NoCredentials()
@@ -366,6 +395,7 @@ class IngestionModule:
             list_library_jobs=ListLibraryJobsUseCase(jobs=jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
             preview_repository=PreviewRepositoryUseCase(remote=remote, tree=tree or _NoTree()),
+            queue_embedding=QueueEmbeddingUseCase(queue=embedding),
             recover_jobs=RecoverJobsUseCase(
                 jobs=jobs, clock=clock, hooks=recovery_hooks, runner=runner
             ),

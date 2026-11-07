@@ -1,6 +1,7 @@
 """Jobs' step results are stored (pickled by DBOS) and read back by a later release.
 
-The import's and the re-processing jobs' (``reprocess``, ``rechunk``, ``retag``). A release
+The import's, the re-processing jobs' (``reprocess``, ``rechunk``, ``retag``) and the ``embed``
+job's. A release
 that changes the shape of any of them must bump ``STEPS_VERSION``: a job started by the release
 before then starts over instead of resuming from results of another shape. This test fails
 until both are done: bump the version and record the new fingerprint here.
@@ -13,7 +14,14 @@ import json
 import typing
 
 from exactdocs.ingestion.constants import STEPS_VERSION
-from exactdocs.ingestion.models import ChunkingConfig, GitRename, ImportedRef, ReadmeSummary
+from exactdocs.ingestion.models import (
+    ChunkingConfig,
+    EmbeddedBatch,
+    EmbedPlan,
+    GitRename,
+    ImportedRef,
+    ReadmeSummary,
+)
 from exactdocs.ingestion.use_cases import (
     _Batch,
     _Context7Read,
@@ -23,7 +31,7 @@ from exactdocs.ingestion.use_cases import (
 )
 
 # Every type a step of a job returns (the rest is reached through their fields): the import's,
-# then the re-processing jobs' (``reprocess``, ``rechunk``, ``retag``).
+# then the re-processing jobs' (``reprocess``, ``rechunk``, ``retag``), then ``embed``'s.
 ROOTS = (
     ChunkingConfig,
     _Batch,
@@ -34,6 +42,8 @@ ROOTS = (
     GitRename,
     ImportedRef,
     _VersionOutcome,
+    EmbedPlan,
+    EmbeddedBatch,
 )
 
 FINGERPRINTS = {
@@ -43,6 +53,7 @@ FINGERPRINTS = {
     "jobs-4": "e19a8daa379611288797942dcd93db43fdf4fd15d59d74ee2445fc065d6aef48",
     "jobs-5": "7dc27c94e6f797e0a5c0cf1d186ad1d483bd4207894040d0ae06f6859ab70485",
     "jobs-6": "02834bb3cb61684b0c569b4c10679b893c7398991696bee42c14981b4fdebdfc",
+    "jobs-7": "9ea99f71dd7520c04b54be867a7ae1d85ea2eff0580f0016358d730b36b2beec",
 }
 
 

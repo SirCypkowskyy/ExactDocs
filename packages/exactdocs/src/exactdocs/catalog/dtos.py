@@ -806,6 +806,22 @@ class DefaultManifests(_Dto):
     manifests: list[DefaultManifest]
 
 
+class GetArticleTitlesQuery(_Dto):
+    """Ask for the titles of some articles of one manifest, by path."""
+
+    manifest_id: str = Field(min_length=1)
+    """The manifest (any state)."""
+    paths: list[str]
+    """The article paths."""
+
+
+class ArticleTitles(_Dto):
+    """Titles by article path; paths the manifest does not have are left out."""
+
+    titles: dict[str, str]
+    """The title of each path found."""
+
+
 class ManifestStates(_Dto):
     """Manifest state by ID; IDs the catalog does not know are left out."""
 
