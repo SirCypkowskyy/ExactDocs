@@ -5,7 +5,7 @@ which profile and model a role uses for a library, and reaches models only throu
 ``ModelFactory`` port. Test doubles: a fake factory and a reversible secret box.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -481,9 +481,9 @@ class FakeFactory:
         self.built.append((profile, model))
         return ("embedder", profile.base_url, model)
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+    async def reranker(self, profile: ProviderProfile, model: str) -> NamedReranker:
         self.built.append((profile, model))
-        return ("reranker", profile.base_url, model)
+        return NamedReranker(base_url=profile.base_url, model=model)
 
     async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
         self.built.append((profile, model))
@@ -497,6 +497,18 @@ class FakeFactory:
             served_model=model,
             dimensions=dimensions,
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NamedReranker:
+    """A reranker that says which profile endpoint and model it was built for."""
+
+    base_url: str | None
+    model: str
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
+        del query
+        return [0.0] * len(documents)
 
 
 class StandIn:
@@ -869,7 +881,9 @@ async def test_library_overrides_are_stored_and_forgotten(
     stores: tuple[ProviderProfiles, LibraryModes],
 ) -> None:
     _, modes = stores
-    ai = LibraryAi(enabled=False, llm=CHAT, reranker=ModelRef(profile="tei", model="bge:v2"))
+    ai = LibraryAi(
+        enabled=False, llm=CHAT, reranker=ModelRef(profile="tei", model="bge:v2"), rerank_top_n=8
+    )
 
     await modes.save("/Acme/Payments", None, ai)
 

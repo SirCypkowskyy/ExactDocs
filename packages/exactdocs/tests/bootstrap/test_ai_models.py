@@ -22,6 +22,7 @@ from azure.identity import (
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from google.oauth2.credentials import Credentials
+from pydantic import ValidationError
 
 from exactdocs.bootstrap import ai_sdk
 from exactdocs.bootstrap.ai_endpoint import Endpoint
@@ -38,7 +39,7 @@ from exactdocs.bootstrap.constants import (
     FOUNDRY_HOST,
     VERTEX_HOST,
 )
-from exactdocs.bootstrap.settings import AiSettings
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
@@ -212,6 +213,59 @@ async def test_a_reranker_check_speaks_the_cohere_dialect(fake: FakeGateway) -> 
 
     assert check.ok, check.error
     assert fake.seen[0].path == "/v1/rerank"
+
+
+async def test_a_tei_reranker_check_speaks_the_tei_dialect(fake: FakeGateway) -> None:
+    profile = ProviderProfile(name="tei", kind=ProviderKind.TEI, base_url=fake.url)
+
+    check = await PydanticAiModels().check(profile, "bge-reranker-base", ModelRole.RERANKER)
+
+    assert check.ok, check.error
+    (seen,) = fake.seen
+    assert (seen.path, set(seen.body)) == ("/rerank", {"query", "texts", "truncate"})
+
+
+async def test_a_reranker_sends_the_profiles_key_and_headers_only_to_its_endpoint(
+    fake: FakeGateway,
+) -> None:
+    profile = ProviderProfile(
+        name="cohere",
+        kind=ProviderKind.OPENAI_COMPATIBLE,
+        base_url=f"{fake.url}/v2",
+        key=KeySource.ENVIRONMENT,
+        headers=(("X-Team", "docs"),),
+    )
+    models = PydanticAiModels(keys={"cohere": "cohere-key"})
+
+    reranker = await models.reranker(profile, "rerank-v3.5")
+    scores = await reranker.rerank("retry", ["a", "b"])
+
+    assert list(scores) == [0.5, 1.0]
+    (seen,) = fake.seen
+    assert seen.path == "/v2/rerank"
+    assert (seen.headers["authorization"], seen.headers["x-team"]) == ("Bearer cohere-key", "docs")
+
+
+@pytest.mark.parametrize("kind", [ProviderKind.OPENAI, ProviderKind.ANTHROPIC, ProviderKind.OLLAMA])
+async def test_a_kind_without_a_rerank_api_cannot_rerank(kind: ProviderKind) -> None:
+    profile = ProviderProfile(
+        name="other", kind=kind, base_url="https://llm.example.com/v1", key=KeySource.ENVIRONMENT
+    )
+    models = PydanticAiModels(keys={"other": "k"})
+
+    with pytest.raises(ProviderUnsupportedError, match="has no rerank API"):
+        await models.reranker(profile, "rerank")
+
+
+async def test_a_tei_profile_serves_neither_chat_nor_embeddings(fake: FakeGateway) -> None:
+    profile = ProviderProfile(name="tei", kind=ProviderKind.TEI, base_url=fake.url)
+    models = PydanticAiModels()
+
+    with pytest.raises(ProviderUnsupportedError, match="reranker only"):
+        await models.chat_model(profile, "m")
+    with pytest.raises(ProviderUnsupportedError, match="no embeddings"):
+        await models.embedder(profile, "m")
+    assert not fake.seen
 
 
 async def test_claude_gets_the_profiles_key_and_endpoint(fake: FakeGateway) -> None:
@@ -688,3 +742,22 @@ def test_the_profiles_proxy_goes_only_to_the_credentials_that_call_entra_id() ->
     ]
     # A user-assigned managed identity is chosen by AZURE_CLIENT_ID, as DefaultAzureCredential did.
     assert user_assigned[-1] == (ManagedIdentityCredential, {"client_id": "1111-2222"})
+
+
+def test_the_reranker_top_n_and_timeout_are_read_with_their_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__RERANKER__MODEL", "rr:rerank-v3.5")
+    monkeypatch.setenv("EXACTDOCS_AI__RERANKER__TOP_N", "12")
+    monkeypatch.setenv("EXACTDOCS_AI__RERANKER__TIMEOUT", "0.5")
+
+    reranker = Settings().ai.reranker
+
+    assert (reranker.model, reranker.top_n, reranker.timeout) == ("rr:rerank-v3.5", 12, 0.5)
+    assert (AiSettings().reranker.top_n, AiSettings().reranker.timeout) == (32, 2.0)
+
+
+@pytest.mark.parametrize("role", [{"top_n": 0}, {"top_n": 201}, {"timeout": 0}, {"timeout": 61}])
+def test_reranker_limits_out_of_bounds_are_refused(role: dict[str, float]) -> None:
+    with pytest.raises(ValidationError):
+        AiSettings.model_validate({"reranker": role})

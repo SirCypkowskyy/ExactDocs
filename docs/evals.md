@@ -84,8 +84,19 @@ version, since it loads chunks from the asked version's manifest only; the eval 
 this stays true for every mode and adapter.)
 
 The JSON report also lists, per mode, the cases with a wrong version (and the offending results),
-the questions whose section was not in the top 10, the questions that raised, and how many a
-cheaper mode answered (`fallbacks`).
+the questions whose section was not in the top 10, the questions that raised, how many a
+cheaper mode answered (`fallbacks`), how many a reranker reordered (`reranked`) and how many kept
+the mode's order because the reranker failed or timed out (`rerank_fallbacks`); the Markdown
+summary repeats the last two for a mode that was reranked.
+
+### Evaluating the reranker
+
+Reranking is a flag on top of every mode, so a run with a `reranker` role configured measures each
+mode reranked. Compare two runs on the same dataset: one without the role and one with it, e.g.
+`EXACTDOCS_AI__RERANKER__MODEL=cohere:rerank-v3.5 just eval --configured-models --modes bm25
+--allow-providers` (a hosted reranker) or `--local-roles reranker` (one running on this machine,
+such as TEI on localhost). Without either flag the reranked modes are `skipped`, and no request
+leaves the machine. Check `rerank_fallbacks` is 0: a reranker that timed out was not measured.
 
 ## Gates
 

@@ -21,6 +21,7 @@ from exactdocs.retrieval.constants import (
     MAX_MODEL_NAME,
     MAX_MODEL_REF,
     MAX_QUERY,
+    MAX_RERANK_TOP_N,
     MAX_TAG,
     MAX_TAGS,
     MAX_URL,
@@ -92,6 +93,10 @@ class LibraryRetrievalIn(BaseModel):
     reranker: str | None = Field(default=None, max_length=MAX_MODEL_REF)
     """The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model
     is instance-wide only and cannot be set here.
+    """
+    rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
+    """How many of its best candidates the reranker reorders (1 to 200); null: the instance's
+    (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
     """
 
 

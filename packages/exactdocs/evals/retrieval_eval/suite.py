@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_evals.reporting import EvaluationReport, ReportCase
 
 from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery, LibraryRetrievalOut
-from exactdocs.retrieval.models import ModelRole, RetrievalMode
+from exactdocs.retrieval.models import FallbackReason, ModelRole, RetrievalMode
 from exactdocs.retrieval.ports.driving import GetLibraryRetrieval, ReadChunk, SearchDocs
 from retrieval_eval.dataset import Answer, CaseInfo, Question, RetrievalDataset
 from retrieval_eval.evaluators import (
@@ -53,6 +53,13 @@ _DIGITS: Final[int] = 4
 """Rates are rounded to this many decimals, so a stored baseline reads plainly."""
 _USD_DIGITS: Final[int] = 6
 """USD per question is rounded to this many decimals (a millionth of a dollar)."""
+_RERANK_FALLBACKS: Final[frozenset[str]] = frozenset(
+    {
+        FallbackReason.RERANKER_TIMEOUT.value,
+        FallbackReason.RERANKER_FAILED.value,
+    }
+)
+"""Fallback reasons that mean the reranker did not reorder the answer."""
 
 
 class Tier(StrEnum):
@@ -140,6 +147,10 @@ class ModeOutcome(_Model):
     """Answerable cases whose section was not in the top 10."""
     fallbacks: int = 0
     """Cases a cheaper mode answered."""
+    reranked: int = 0
+    """Cases a reranker reordered (0 without a reranker role)."""
+    rerank_fallbacks: int = 0
+    """Cases whose reranker failed or timed out, so the mode's own order was measured."""
     baseline_recall_at_5: float | None = None
     recall_at_5_delta_points: float | None = None
     """recall@5 minus the baseline's, in points."""
@@ -262,6 +273,10 @@ async def evaluate_mode(
         errors=sorted(failed),
         misses=sorted(misses),
         fallbacks=sum(1 for c in report.cases if c.output.answered_by not in {None, mode.mode}),
+        reranked=sum(1 for c in report.cases if c.output.reranked),
+        rerank_fallbacks=sum(
+            1 for c in report.cases if c.output.fallback_reason in _RERANK_FALLBACKS
+        ),
     )
 
 
@@ -736,6 +751,12 @@ def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
     lines.extend(f"- **Failed:** {p}" for p in report.problems)
     lines.extend(f"- **Warning:** {w}" for w in report.warnings)
     for o in report.modes:
+        if o.reranked or o.rerank_fallbacks:
+            questions = o.metrics.questions if o.metrics else 0
+            lines.append(
+                f"- `{o.mode}` reranked {o.reranked} of {questions} questions; the reranker "
+                f"failed or timed out on {o.rerank_fallbacks}"
+            )
         lines.extend(f"- `{o.mode}` wrong version: {c}" for c in o.wrong_version_cases)
         lines.extend(f"- `{o.mode}` error: {c}" for c in o.errors)
         if o.misses:

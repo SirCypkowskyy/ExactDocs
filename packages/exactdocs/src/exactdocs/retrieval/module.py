@@ -3,7 +3,12 @@ from dataclasses import dataclass
 from typing import Self
 
 from exactdocs.retrieval.constants import DEFAULT_QUERY_DOCS_TOKEN_BUDGET
-from exactdocs.retrieval.models import InstanceRoles, ProviderProfile, RetrievalMode
+from exactdocs.retrieval.models import (
+    InstanceRoles,
+    ProviderProfile,
+    RerankLimits,
+    RetrievalMode,
+)
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ArticleSuggestions,
@@ -75,6 +80,7 @@ from exactdocs.retrieval.use_cases import (
     ReadChunkUseCase,
     RebuildSearchIndexUseCase,
     RemoveChunksUseCase,
+    Reranking,
     ResolveLibraryIdUseCase,
     RetagArticlesUseCase,
     RetrievalModes,
@@ -148,6 +154,7 @@ class RetrievalModule:
         models: ModelFactory | None = None,
         secret_box: SecretBox | None = None,
         instance_mode: RetrievalMode | None = None,
+        rerank_limits: RerankLimits | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         renames: RenamedPaths | None = None,
         suggestions: ArticleSuggestions | None = None,
@@ -163,6 +170,7 @@ class RetrievalModule:
         read-only), ``stored_profiles`` (the REST API's; none without it), ``instance_roles``,
         ``models`` (builds callable models; nothing can be called without it) and
         ``secret_box`` (seals keys sent over the REST API; they are refused without it).
+        ``rerank_limits`` is the instance's reranker top N and timeout (the defaults without it).
         ``roles`` replaces the role resolution over them (tests). ``pipelines`` adds retrieval
         modes beside ``bm25``, which is always there. A mode can run when it has a pipeline and
         its roles are configured, and, for the hybrid modes, when ``vectors`` (the vector store)
@@ -184,6 +192,9 @@ class RetrievalModule:
             library_modes=library_modes,
             instance_mode=instance_mode,
             vectors=vectors,
+            reranking=Reranking(
+                providers=providers, chunks=chunks, limits=rerank_limits or RerankLimits()
+            ),
         )
         return cls(
             search_docs=SearchDocsUseCase(

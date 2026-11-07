@@ -34,7 +34,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
 )
-from exactdocs.retrieval.ports.driven import SecretBox
+from exactdocs.retrieval.ports.driven import Reranker, SecretBox
 
 logger = logging.getLogger(__name__)
 
@@ -214,8 +214,8 @@ class PydanticAiModels:
         """
         return await self._sdk(profile).embedder(await self.endpoint(profile), model)
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
-        """Build a Cohere-compatible HTTP reranker.
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
+        """Build an HTTP reranker in the dialect of the profile's kind (Cohere-compatible, TEI).
 
         Args:
             profile: The profile.
@@ -224,7 +224,9 @@ class PydanticAiModels:
         Returns:
             The reranker.
         """
-        return self._sdk(profile).reranker(await self.endpoint(profile), model)
+        sdk = self._sdk(profile)
+        built: Reranker = sdk.reranker(await self.endpoint(profile), model)
+        return built
 
     async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
         """Make one minimal call as ``role`` uses the model, and time it.
@@ -277,7 +279,8 @@ class PydanticAiModels:
                 embedder = await self.embedder(profile, model)
                 return await sdk.check_embedding(embedder, CHECK_TEXT)
             case ModelRole.RERANKER:
-                return await sdk.check_rerank(await self.reranker(profile, model), CHECK_TEXT), None
+                reranker = await self.reranker(profile, model)
+                return await sdk.check_rerank(reranker, model, CHECK_TEXT), None
             case ModelRole.LLM | ModelRole.JUDGE:
                 return await sdk.check_chat(await self.chat_model(profile, model)), None
 

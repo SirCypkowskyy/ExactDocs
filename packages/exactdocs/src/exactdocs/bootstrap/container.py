@@ -96,7 +96,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
-from exactdocs.retrieval.models import RetrievalMode
+from exactdocs.retrieval.models import RerankLimits, RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs_kernel import DomainError, SystemClock
 
@@ -230,6 +230,9 @@ def _build_read_side(
         models=PydanticAiModels(keys=ai.keys, box=ai_box),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
+        rerank_limits=RerankLimits(
+            top_n=settings.ai.reranker.top_n, timeout=settings.ai.reranker.timeout
+        ),
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
