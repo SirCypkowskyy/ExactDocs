@@ -47,6 +47,9 @@ dependencies = [
     # The OpenTelemetry SDK and OTLP/HTTP exporter for EXACTDOCS_TELEMETRY=otlp; imported only
     # when it is on.
     "opentelemetry-exporter-otlp-proto-http>=1.45.1,<2",
+    # The Prometheus metric reader behind EXACTDOCS_METRICS (`/metrics`); imported only when it is
+    # on. Its versions follow the SDK's (0.66bN with 1.45.N).
+    "opentelemetry-exporter-prometheus>=0.66b1,<1",
     "opentelemetry-sdk>=1.45.1,<2",
     "platformdirs>=4",
     "pydantic>=2.12",

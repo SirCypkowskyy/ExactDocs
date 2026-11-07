@@ -356,7 +356,6 @@ packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.max_article_byte
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.max_image_bytes field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.max_images_bytes field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.max_import_bytes field-without-docstring
-packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.metrics field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.port field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.query_docs_token_budget field-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/settings.py Settings.secret_key field-without-docstring

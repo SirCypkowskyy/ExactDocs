@@ -626,11 +626,11 @@ that last step, which is one transaction in the catalog.
 ## Telemetry
 
 Off by default, and then nothing is set up: only the OpenTelemetry *API* is imported (FastAPI,
-FastMCP and DBOS use it too), which records nothing without an SDK. With `EXACTDOCS_TELEMETRY=otlp`,
-`bootstrap/telemetry.py:start_telemetry` (called by `create_app` and `serve --stdio`) loads
-`bootstrap/otlp.py`, which sets up the plain OpenTelemetry SDK: a tracer and a meter provider,
-exporting over OTLP/HTTP to the collector the `OTEL_EXPORTER_OTLP_*` variables name, never to the
-console. A process's providers are set once and cannot be replaced, so each test that turns
+FastMCP and DBOS use it too), which records nothing without an SDK. With `EXACTDOCS_TELEMETRY=otlp`
+or `EXACTDOCS_METRICS`, `bootstrap/telemetry.py:start_telemetry` (called by `create_app` and
+`serve --stdio`) loads `bootstrap/otlp.py`, which sets up the plain OpenTelemetry SDK: for OTLP, a
+tracer and a meter provider exporting over OTLP/HTTP to the collector the `OTEL_EXPORTER_OTLP_*`
+variables name, never to the console; for metrics, a Prometheus reader on the meter provider. A process's providers are set once and cannot be replaced, so each test that turns
 telemetry on runs in a process of its own. (The Telemetry decision named Logfire as the SDK; it
 was dropped in #87: its pydantic plugin loaded into every process, crashed on a malformed
 `pyproject.toml` in the working directory and could export validated input, and the image had no
@@ -650,6 +650,20 @@ room for its 9 MB.)
   a tracer the use cases get `UntracedSearches`, which records nothing.
 - **Jobs:** bootstrap wraps every job handler in `TracedJobHandler` (`ingestion.<kind>` spans);
   ingestion's code is unchanged. MCP tool calls get FastMCP's own spans.
+- **Metrics:** the same adapters time what they span: `OpenTelemetrySearchTracer` records
+  `exactdocs.search.duration` (by search, stage and mode) and `TracedJobHandler`
+  `exactdocs.job.duration` (by job kind); FastAPI records the request metrics. Their attributes are
+  bounded and anonymous: never the query, library, version or caller, so no opt-in changes them.
+  Both adapters are wired when either `EXACTDOCS_TELEMETRY=otlp` or `EXACTDOCS_METRICS` is on.
+- **Prometheus:** with `EXACTDOCS_METRICS`, `start_telemetry(..., scraped=True)` (from
+  `create_app`; stdio MCP has no HTTP to serve it) adds a `PrometheusMetricReader` to the meter
+  provider, beside the OTLP reader when that is on too, and `create_app` mounts `GET /metrics`
+  (`build_metrics_router`), which renders `prometheus_client`'s registry. It sits behind the Host
+  check and needs no sign-in (Prometheus has none; the metrics hold nothing user-specific); the
+  reader sends nothing. Scrapes, like the probes, get no request span or metric
+  (`UNTRACED_PATHS`). Off, the route does not exist and `prometheus_client` is not imported. Any
+  library that records through OpenTelemetry's global meter (pydantic-ai's
+  `gen_ai.client.token.usage`, once the AI modes exist) shows up without more wiring.
 
 ## Python conventions
 

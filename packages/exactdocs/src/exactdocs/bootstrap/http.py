@@ -21,7 +21,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probe_router
 from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
-from exactdocs.bootstrap.telemetry import is_untraced, start_telemetry
+from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, start_telemetry
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
 from exactdocs.identity.constants import SESSION_COOKIE
@@ -32,7 +32,8 @@ from exactdocs.retrieval.adapters.driving import http as retrieval_http
 def create_app(container: Container) -> FastAPI:
     """Build the single HTTP service: REST API, MCP (Streamable HTTP) and the web UI."""
     settings = container.settings
-    start_telemetry(settings)  # nothing unless EXACTDOCS_TELEMETRY=otlp
+    # Nothing unless EXACTDOCS_TELEMETRY=otlp or EXACTDOCS_METRICS.
+    start_telemetry(settings, scraped=True)
     mcp_app = build_mcp(container).http_app(
         path=MCP_PATH,
         # No server-initiated requests are needed, and stateless sessions let several
@@ -55,8 +56,8 @@ def create_app(container: Container) -> FastAPI:
         generate_unique_id_function=_operation_id,
         # No Swagger UI/ReDoc (they load assets from a CDN); the `/api/v1` description is below.
         openapi_url=None,
-        # FastAPI's built-in OpenTelemetry: request spans, once `start_telemetry` set up an SDK
-        # (none otherwise, so none are made). It never adds exporters of its own.
+        # FastAPI's built-in OpenTelemetry: request spans and metrics, once `start_telemetry` set
+        # up an SDK (none otherwise, so none are made). It never adds exporters of its own.
         telemetry={"exclude": is_untraced, "auto_configure": False},
     )
     add_error_handlers(app)
@@ -78,6 +79,8 @@ def create_app(container: Container) -> FastAPI:
     api = APIRouter(prefix="/api")
 
     app.include_router(build_probe_router(container))
+    if settings.metrics:
+        app.include_router(build_metrics_router())
 
     v1 = APIRouter(prefix="/v1", responses=error_responses())
     # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.

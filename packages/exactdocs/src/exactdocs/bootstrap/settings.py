@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     default: queries can hold code, names or secrets, and traces are read by more people.
     """
     metrics: bool = False
+    """Serve Prometheus metrics at `/metrics` (request, search, job and LLM-usage metrics, no
+    query text, library or caller), behind the Host allowlist and without sign-in. `serve` only;
+    with `EXACTDOCS_TELEMETRY=otlp` too, the same metrics also go to the collector.
+    """
     # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,
     # `*.example.com`) and browser origins (e.g. `https://docs.example.com`), comma-separated.
     allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)

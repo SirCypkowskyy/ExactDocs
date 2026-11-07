@@ -865,7 +865,8 @@ async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltInde
 
 
 async def _serve_stdio(settings: Settings) -> None:
-    start_telemetry(settings)  # nothing unless EXACTDOCS_TELEMETRY=otlp; never on stdout
+    # Nothing unless EXACTDOCS_TELEMETRY=otlp; never on stdout. No /metrics: nowhere to serve it.
+    start_telemetry(settings)
     try:
         container = ReadOnlyContainer.build(settings)
         async with container.running():  # no worker, no migration: the HTTP server owns both

@@ -6,6 +6,7 @@ The end-to-end tests set up process-wide OpenTelemetry providers, so they run in
 their own (``test_telemetry_end_to_end_in_its_own_process``).
 """
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -18,6 +19,9 @@ import pytest
 from fastapi import FastAPI
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -45,6 +49,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.models import RefKind as CatalogRefKind
 from exactdocs.identity.dtos import CreateFirstAdminCommand
 from exactdocs.ingestion.models import Job, JobId, JobKind, RefKind
+from exactdocs.retrieval.adapters.driven.opentelemetry import OpenTelemetrySearchTracer
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs_kernel import SystemClock
 from otlp_collector import Collector, Span, collecting, shut_telemetry_down
@@ -139,11 +144,27 @@ def test_health_checks_get_no_request_span() -> None:
     assert not is_untraced({"type": "http", "path": "/api/v1/search"})
 
 
+def test_the_metrics_scrape_gets_no_request_span_or_metric() -> None:
+    assert is_untraced({"type": "http", "path": "/metrics"})
+
+
 def test_off_nothing_is_traced() -> None:
     handlers = {JobKind("import"): object()}
 
     assert search_tracer(Settings()) is None
     assert traced_jobs(Settings(), handlers) is handlers  # ty: ignore[invalid-argument-type]
+
+
+def test_with_metrics_on_searches_and_jobs_are_observed_without_query_text() -> None:
+    handlers = {JobKind("import"): object()}
+    settings = Settings(metrics=True)
+
+    tracer = search_tracer(settings)
+    traced = traced_jobs(settings, handlers)  # ty: ignore[invalid-argument-type]
+
+    assert isinstance(tracer, OpenTelemetrySearchTracer)
+    assert not tracer.record_query_text
+    assert isinstance(traced[JobKind("import")], TracedJobHandler)
 
 
 class Quiet:
@@ -187,6 +208,64 @@ async def test_a_job_runs_inside_a_span_named_after_its_kind() -> None:
     }
 
 
+def job_points(reader: InMemoryMetricReader) -> list[dict[str, object]]:
+    data = reader.get_metrics_data()
+    assert data is not None
+    return [
+        {"name": metric.name, "count": point.count, **dict(point.attributes or {})}
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        for point in metric.data.data_points
+        if isinstance(point, HistogramDataPoint)
+    ]
+
+
+async def test_every_job_is_timed_by_kind_without_its_library() -> None:
+    reader = InMemoryMetricReader()
+
+    async def handler(job: Job, progress: object, /) -> None:
+        del job, progress
+
+    traced = TracedJobHandler(
+        kind=JobKind("import"),
+        handler=handler,
+        meter_provider=MeterProvider(metric_readers=[reader]),
+    )
+    await traced(job("import"), Quiet())  # ty: ignore[invalid-argument-type]
+    await traced(job("import"), Quiet())  # ty: ignore[invalid-argument-type]
+
+    assert job_points(reader) == [
+        {"name": "exactdocs.job.duration", "count": 2, "exactdocs.job.kind": "import"}
+    ]
+
+
+async def test_a_failing_job_is_timed_with_its_error_type() -> None:
+    reader = InMemoryMetricReader()
+
+    async def handler(job: Job, progress: object, /) -> None:
+        del job, progress
+        message = "remote unreachable"
+        raise RuntimeError(message)
+
+    traced = TracedJobHandler(
+        kind=JobKind("refresh"),
+        handler=handler,
+        meter_provider=MeterProvider(metric_readers=[reader]),
+    )
+    with pytest.raises(RuntimeError):
+        await traced(job("refresh"), Quiet())  # ty: ignore[invalid-argument-type]
+
+    assert job_points(reader) == [
+        {
+            "name": "exactdocs.job.duration",
+            "count": 1,
+            "exactdocs.job.kind": "refresh",
+            "error.type": "RuntimeError",
+        }
+    ]
+
+
 async def test_a_failing_job_fails_its_span_and_still_raises() -> None:
     provider, exporter = provider_with()
 
@@ -223,6 +302,7 @@ def collector(monkeypatch: pytest.MonkeyPatch, query_text: bool) -> Iterator[Col
         monkeypatch.setenv("EXACTDOCS_TELEMETRY", "otlp")
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.url)
         monkeypatch.setenv("OTEL_BSP_SCHEDULE_DELAY", "50")  # export within the test
+        monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "200")
         monkeypatch.setenv("EXACTDOCS_TELEMETRY_QUERY_TEXT", "true" if query_text else "false")
         yield collector
         shut_telemetry_down()
@@ -416,12 +496,135 @@ async def test_the_query_text_is_kept_only_when_the_operator_opted_in(
     assert any("enduser.id" in s.attributes for s in calls), [s.attributes for s in calls]
 
 
+# ----------------------------------------------------------------- Prometheus, own process
+
+
+@pytest.fixture
+def with_otlp() -> bool:
+    """Whether the OTLP export is on as well; a test parametrizes it to say yes."""
+    return False
+
+
+@pytest.fixture
+async def metered_app(monkeypatch: pytest.MonkeyPatch, with_otlp: bool) -> AsyncIterator[FastAPI]:
+    """The app with ``EXACTDOCS_METRICS`` on (and OTLP too, if asked), an admin and one version.
+
+    Yields:
+        The running app.
+    """
+    monkeypatch.setenv("EXACTDOCS_METRICS", "true")
+    monkeypatch.delenv("EXACTDOCS_TELEMETRY_QUERY_TEXT", raising=False)
+    if not with_otlp:
+        # A collector in the environment exports nothing without EXACTDOCS_TELEMETRY=otlp.
+        monkeypatch.delenv("EXACTDOCS_TELEMETRY", raising=False)
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://203.0.113.9:4318")
+    container = Container.build(Settings())
+    async with serving(create_app(container)) as app:
+        await container.identity.create_first_admin(
+            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+        )
+        await index_one_version(container)
+        yield app
+
+
+def use_an_llm() -> None:
+    """Record what pydantic-ai records per model call, through the global OpenTelemetry API."""
+    usage = metrics.get_meter("pydantic-ai").create_histogram(
+        "gen_ai.client.token.usage", unit="{token}", description="Measures number of tokens used"
+    )
+    for kind, tokens in [("input", 120), ("output", 40)]:
+        usage.record(
+            tokens,
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "test-model",
+                "gen_ai.token.type": kind,
+            },
+        )
+
+
+async def scrape(app: FastAPI, host: str = "localhost") -> httpx.Response:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=f"http://{host}"
+    ) as prometheus:
+        return await prometheus.get("/metrics")
+
+
+def sampled(text: str, name: str, **labels: str) -> float:
+    """The sum of the samples of ``name`` that carry every one of ``labels``."""
+    total = 0.0
+    for line in text.splitlines():
+        if line.startswith((f"{name}{{", f"{name} ")) and all(
+            f'{label}="{value}"' in line for label, value in labels.items()
+        ):
+            total += float(line.rsplit(" ", 1)[-1])
+    return total
+
+
+@pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
+async def test_prometheus_scrapes_request_search_and_llm_metrics_without_query_text(
+    metered_app: FastAPI,
+) -> None:
+    await search_everywhere(metered_app)
+    use_an_llm()
+
+    scraped = await scrape(metered_app)
+
+    assert scraped.status_code == 200, scraped.text
+    assert scraped.headers["content-type"].startswith("text/plain")
+    text = scraped.text
+    requests = "http_server_request_duration_seconds_count"
+    assert sampled(text, requests, http_route=SEARCH_ROUTE, http_response_status_code="200") == 1
+    assert sampled(text, requests, http_route="/api/v1/c7/docs") == 1
+    assert sampled(text, requests, http_route="/mcp")  # MCP requests
+    searches = "exactdocs_search_duration_seconds_count"
+    for search in ["search_docs", "query_docs"]:
+        assert sampled(text, searches, exactdocs_search=search, exactdocs_search_stage="total",
+                       exactdocs_retrieval_mode="bm25"), search  # fmt: skip
+    assert sampled(text, searches, exactdocs_search="search_docs", exactdocs_search_stage="rank")
+    tokens = "gen_ai_client_token_usage_sum"  # pydantic-ai's, once the AI modes record it
+    assert sampled(text, tokens, gen_ai_token_type="input") == 120
+    assert sampled(text, tokens, gen_ai_token_type="output") == 40
+    # The probe asked by search_everywhere and this scrape are not requests anyone monitors.
+    assert "/api/health" not in text
+    assert 'http_route="/metrics"' not in text
+    # Nothing a user typed, no library, no caller.
+    for secret in [QUERY, LIBRARY_NAME, "LONGSECRET77", REFUSED, LIBRARY, "payments", '"ada"']:
+        assert secret not in text, secret
+    assert "enduser" not in text
+    # The DNS-rebinding guard covers the scrape like every other path.
+    assert (await scrape(metered_app, host="rebinding.example")).status_code == 400
+
+
+@pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
+@pytest.mark.parametrize("with_otlp", [True])
+async def test_prometheus_is_a_reader_beside_the_otlp_export(
+    with_otlp: bool, collector: Collector, metered_app: FastAPI
+) -> None:
+    assert with_otlp
+    await search_everywhere(metered_app)
+
+    collector.wait_for(lambda found: names(found) >= EXPECTED)
+    text = (await scrape(metered_app)).text
+
+    # One meter provider, two readers: Prometheus pulls, the OTLP exporter pushes the same.
+    assert sampled(text, "exactdocs_search_duration_seconds_count", exactdocs_search="search_docs")
+    deadline = asyncio.get_running_loop().time() + 10
+    while b"exactdocs.search.duration" not in collector.received():
+        assert asyncio.get_running_loop().time() < deadline, "no metrics reached the collector"
+        await asyncio.sleep(0.1)
+    assert QUERY.encode() not in collector.received()
+    assert QUERY not in text
+
+
 @pytest.mark.skipif(bool(os.environ.get(RUN)), reason="this is the run itself")
 @pytest.mark.parametrize(
     "test",
     [
         "test_traces_reach_the_collector_without_query_text",
         "test_the_query_text_is_kept_only_when_the_operator_opted_in",
+        "test_prometheus_scrapes_request_search_and_llm_metrics_without_query_text",
+        "test_prometheus_is_a_reader_beside_the_otlp_export",
     ],
 )
 def test_telemetry_end_to_end_in_its_own_process(test: str) -> None:

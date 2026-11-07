@@ -121,7 +121,7 @@ HEALTH_ALIAS_PATH: Final[str] = "/api/health"
 READINESS_PATH: Final[str] = "/readyz"
 """Readiness probe: 200 when the database answers, 503 otherwise."""
 PROBE_PATHS: Final[frozenset[str]] = frozenset({LIVENESS_PATH, HEALTH_ALIAS_PATH, READINESS_PATH})
-"""Paths orchestrators poll: never traced or metered (telemetry, when added, must skip them)."""
+"""Paths orchestrators poll: never traced or metered."""
 PROBE_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD"})
 """Methods the probes answer; only these skip the Host check, and only on ``PROBE_PATHS``."""
 READINESS_TIMEOUT_SECONDS: Final[float] = 2.0
@@ -247,4 +247,20 @@ URL_QUERY_ATTRIBUTE: Final[str] = "url.query"
 OTLP_MODULE: Final[str] = "exactdocs.bootstrap.otlp"
 """The module that sets up the OpenTelemetry SDK, loaded only when telemetry is on."""
 JOB_TRACER_NAME: Final[str] = "exactdocs.ingestion"
-"""OpenTelemetry instrumentation scope of the job spans."""
+"""OpenTelemetry instrumentation scope of the job spans and metrics."""
+METRICS_PATH: Final[str] = "/metrics"
+"""Where Prometheus scrapes the metrics, with ``EXACTDOCS_METRICS`` on (404 otherwise)."""
+UNTRACED_PATHS: Final[frozenset[str]] = PROBE_PATHS | {METRICS_PATH}
+"""Requests that get no span and count in no request metric: the probes and the scrapes, which
+poll on a timer and would drown what users do.
+"""
+JOB_DURATION_METRIC: Final[str] = "exactdocs.job.duration"
+"""Histogram of how long each job ran, by kind (``import``, ``refresh``: a branch sync...)."""
+JOB_KIND_ATTRIBUTE: Final[str] = "exactdocs.job.kind"
+"""The attribute naming a job's kind on its span and its metric."""
+ERROR_TYPE_ATTRIBUTE: Final[str] = "error.type"
+"""The metric attribute naming the exception class of a failed job (semantic conventions)."""
+JOB_DURATION_BUCKETS: Final[tuple[float, ...]] = (
+    0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600,
+)  # fmt: skip
+"""Bucket bounds of the job duration histogram, in seconds: from a no-op sync to a large import."""

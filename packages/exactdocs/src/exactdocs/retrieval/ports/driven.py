@@ -228,7 +228,7 @@ class SearchIndexMaintenance(Protocol):
 
 
 class SearchTracer(Protocol):
-    """Marks a search and its stages for whoever observes them (traces, OPS-01).
+    """Marks a search and its stages for whoever observes them (traces and metrics, OPS-01).
 
     The use cases open a span per search and one per stage inside it. The query text is handed
     over separately: an adapter records it only when the operator explicitly opted in.

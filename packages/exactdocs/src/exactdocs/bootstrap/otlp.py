@@ -1,10 +1,14 @@
-"""The OpenTelemetry SDK behind ``EXACTDOCS_TELEMETRY=otlp``, loaded only when it is on.
+"""The OpenTelemetry SDK behind ``EXACTDOCS_TELEMETRY=otlp`` and ``EXACTDOCS_METRICS``.
 
-Traces (and metrics) go over OTLP/HTTP to the collector the standard ``OTEL_EXPORTER_OTLP_*``
-variables name, and nowhere when none is named; nothing is written to the console (stdout belongs
-to stdio MCP). Unless the operator opted in to query text, every span is scrubbed on its way out:
-the query-text values of ``url.query``, and exception messages and stack traces, which can quote
-the input (a pydantic ``ValidationError`` names its ``input_value``).
+It is loaded only when one of them is on. OTLP: traces (and metrics) go over OTLP/HTTP to the
+collector the standard ``OTEL_EXPORTER_OTLP_*`` variables name, and nowhere when none is named;
+nothing is written to the console (stdout belongs to stdio MCP). Unless the operator opted in to
+query text, every span is scrubbed on its way out: the query-text values of ``url.query``, and
+exception messages and stack traces, which can quote the input (a pydantic ``ValidationError`` names
+its ``input_value``).
+
+Prometheus: one more metric reader on the same meter provider, which sends nothing; ``/metrics``
+renders what it collects (``exposition``) when Prometheus asks.
 """
 
 import os
@@ -14,12 +18,14 @@ from urllib.parse import parse_qsl, urlencode
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Event, ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.trace import Status
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
 from exactdocs import __version__
 from exactdocs.bootstrap.constants import (
@@ -34,31 +40,52 @@ from exactdocs.bootstrap.constants import (
 )
 
 
-def configure_otlp(*, record_query_text: bool) -> bool:
-    """Set up the global tracer and meter providers and their OTLP exporters, once per process.
+def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> bool:
+    """Set up the global tracer and meter providers, their exporters and readers, once per process.
 
     Args:
+        otlp: Export traces (and metrics, when an endpoint is named for them) over OTLP/HTTP.
+        prometheus: Collect metrics for ``/metrics`` with a Prometheus reader.
         record_query_text: Keep query text and exception messages in spans (the operator opted
             in); scrubbed otherwise.
 
     Returns:
-        Whether the providers were set up (``False``: this process already has a tracer
-        provider, which OpenTelemetry does not let anyone replace).
+        Whether the providers were set up (``False``: this process already has an SDK tracer or
+        meter provider, which OpenTelemetry does not let anyone replace).
     """
-    if not isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider):
+    if not isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider) or isinstance(
+        metrics.get_meter_provider(), MeterProvider
+    ):
         return False
     resource = _resource()
-    tracer_provider = TracerProvider(resource=resource)
-    if exports("TRACES"):
-        exporter = OTLPSpanExporter()
-        tracer_provider.add_span_processor(
-            BatchSpanProcessor(exporter if record_query_text else ScrubbingExporter(exporter))
-        )
-    trace.set_tracer_provider(tracer_provider)
-    if exports("METRICS"):
-        reader = PeriodicExportingMetricReader(OTLPMetricExporter())
-        metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[reader]))
+    readers: list[MetricReader] = []
+    if otlp:
+        tracer_provider = TracerProvider(resource=resource)
+        if exports("TRACES"):
+            exporter = OTLPSpanExporter()
+            tracer_provider.add_span_processor(
+                BatchSpanProcessor(exporter if record_query_text else ScrubbingExporter(exporter))
+            )
+        trace.set_tracer_provider(tracer_provider)
+        if exports("METRICS"):
+            readers.append(PeriodicExportingMetricReader(OTLPMetricExporter()))
+    if prometheus:
+        readers.append(PrometheusMetricReader())
+    if readers:
+        metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=readers))
     return True
+
+
+def exposition() -> tuple[bytes, str]:
+    """Render the metrics for a Prometheus scrape: what the Prometheus reader collects now.
+
+    The registry is ``prometheus_client``'s default one, where the reader registered itself; it
+    also holds the process and Python runtime collectors (memory, CPU, garbage collection).
+
+    Returns:
+        The text exposition and its content type.
+    """
+    return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
 
 
 def exports(signal: str) -> bool:
