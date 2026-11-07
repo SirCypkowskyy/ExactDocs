@@ -246,6 +246,28 @@ class SearchAllResult(_Dto):
     results: list[LibrarySearchResultOut]
 
 
+class ChunkHeadingIn(_Dto):
+    """One heading a chunk holds."""
+
+    heading_path: list[str] = Field(min_length=1)
+    """The heading and every heading above it."""
+    anchor: str
+    """The heading's own anchor in the article."""
+    starts_chunk: bool
+    """True for the heading the chunk is named after; false for one merged into it."""
+
+
+class ChunkHeadingOut(_Dto):
+    """One heading a stored chunk holds."""
+
+    heading_path: list[str]
+    """The heading and every heading above it."""
+    anchor: str
+    """The heading's own anchor in the article."""
+    starts_chunk: bool
+    """True for the heading the chunk is named after; false for one merged into it."""
+
+
 class ChunkIn(_Dto):
     """One chunk as the chunker produced it."""
 
@@ -255,6 +277,31 @@ class ChunkIn(_Dto):
     content_hash: str = Field(min_length=1)
     anchor: str
     code_languages: list[str] = Field(default_factory=list)
+    headings: list[ChunkHeadingIn] | None = None
+    """Every heading the chunk holds, in order, the one it is named after first; null: not
+    recorded (a chunk set stored before heading records existed)."""
+
+    @model_validator(mode="after")
+    def _headings_match_the_chunk(self) -> Self:
+        """Refuse heading records that contradict the chunk's own heading.
+
+        Returns:
+            The chunk unchanged.
+
+        Raises:
+            ValueError: A record other than the first starts the chunk, or the first one is not
+                the chunk's own heading.
+        """
+        if self.headings is None:
+            return self
+        starting = [h for h in self.headings if h.starts_chunk]
+        own = [(self.heading_path, self.anchor)] if self.heading_path else []
+        if [(h.heading_path, h.anchor) for h in starting] != own or (
+            starting and not self.headings[0].starts_chunk
+        ):
+            message = "the first heading record, and only it, is the chunk's own heading"
+            raise ValueError(message)
+        return self
 
 
 class ArticleChunksIn(_Dto):
@@ -309,6 +356,8 @@ class SetChunkOut(_Dto):
     content_hash: str
     anchor: str
     code_languages: list[str]
+    headings: list[ChunkHeadingOut] | None = None
+    """Every heading the chunk holds, in order; null when they were not recorded."""
 
 
 class ChunkSetsOut(_Dto):
@@ -497,9 +546,13 @@ class OutlineSectionOut(_Dto):
     heading: str
     """Heading text (untrusted repository text)."""
     chunk_id: str | None
-    """The chunk this heading starts, for `read_chunk`; null when only deeper headings start one."""
+    """The chunk that holds this heading, for `read_chunk`; null when no chunk records it."""
     anchor: str | None
-    """The heading's anchor in the article; null when `chunk_id` is."""
+    """The heading's own anchor in the article; null when `chunk_id` is."""
+    starts_chunk: bool | None
+    """True when the chunk starts with this heading; false when the library's chunking merged it
+    into a chunk that starts earlier (`read_chunk` then returns that whole chunk); null when
+    `chunk_id` is."""
     children: list[OutlineSectionOut]
     """The headings directly under it, in document order."""
 
@@ -513,10 +566,12 @@ class OutlineSectionOut(_Dto):
         Returns:
             The node as a DTO.
         """
+        entry = node.entry
         return cls(
             heading=node.heading,
-            chunk_id=node.section.chunk_id if node.section else None,
-            anchor=node.section.anchor if node.section else None,
+            chunk_id=entry.chunk_id if entry else None,
+            anchor=entry.anchor if entry else None,
+            starts_chunk=entry.starts_chunk if entry else None,
             children=[cls.from_model(child) for child in node.children],
         )
 
@@ -541,7 +596,8 @@ class ArticleOutlineOut(_Dto):
     source_url: str | None
     """Link to the article at the commit; null when the host is unknown."""
     chunks: int
-    """How many chunks the article has, the preamble's included."""
+    """How many chunks the article has, the preamble's included: fewer than its headings when the
+    library's chunking merges sections (headings with `starts_chunk` false)."""
     preamble_chunk_id: str | None
     """The chunk of the text before the first heading, if it is one; null otherwise."""
     sections: list[OutlineSectionOut]

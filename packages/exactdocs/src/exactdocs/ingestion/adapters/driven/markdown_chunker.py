@@ -17,7 +17,7 @@ from exactdocs.ingestion import models
 from exactdocs.ingestion.constants import DEFAULT_CHUNKER
 from exactdocs.ingestion.constants._chunker import _ANCHOR_DROP, _LANGUAGE, _LINE
 from exactdocs.ingestion.errors import InvalidChunkingConfigError
-from exactdocs.ingestion.models import ArticleChunk, ChunkingConfig, ParsedArticle
+from exactdocs.ingestion.models import ArticleChunk, ChunkHeading, ChunkingConfig, ParsedArticle
 
 _markdown = MarkdownIt("commonmark").enable("table")
 
@@ -64,7 +64,8 @@ class MarkdownChunker:
     the sections it is made of; then chunks shorter than ``min_chars`` are merged with the next
     (the last with the one before) while the result stays within ``max_chars``. The text before
     the first heading is never merged. A chunk is named after its first heading: a cut below the
-    split level names the deeper heading, a merge keeps the first one's name.
+    split level names the deeper heading, a merge keeps the first one's name. Each chunk records
+    every heading it holds (``ArticleChunk.headings``), the one it is named after first.
     """
 
     def __init__(self, config: ChunkingConfig | None = None) -> None:
@@ -116,6 +117,13 @@ class MarkdownChunker:
                     content_hash=hashlib.sha256(content.encode()).hexdigest(),
                     anchor=piece.first.anchor,
                     code_languages=tuple(languages),
+                    headings=tuple(
+                        ChunkHeading(
+                            heading_path=s.path, anchor=s.anchor, starts_chunk=s is piece.first
+                        )
+                        for s in piece.sections
+                        if s.level  # the text before the first heading has none
+                    ),
                 )
             )
         if blank and not chunks:  # a body of whitespace only is still one (unaddressed) chunk
@@ -127,6 +135,7 @@ class MarkdownChunker:
                     content=blank,
                     content_hash=hashlib.sha256(blank.encode()).hexdigest(),
                     anchor="",
+                    headings=(),
                 )
             )
         return tuple(chunks)

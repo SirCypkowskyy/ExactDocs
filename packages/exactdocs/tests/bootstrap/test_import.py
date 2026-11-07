@@ -25,8 +25,10 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     HostKind,
     ListArticlesQuery,
+    SetLibrarySettingsCommand,
     StoreManifestCommand,
 )
+from exactdocs.catalog.dtos import ChunkingIn as CatalogChunkingIn
 from exactdocs.catalog.dtos import RefKind as CatalogRefKind
 from exactdocs.catalog.errors import VersionNotFoundError
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
@@ -50,7 +52,13 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     chunk_set_rows,
     indexed_manifests,
 )
-from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchDocsQuery
+from exactdocs.retrieval.dtos import (
+    ArticleChunksIn,
+    ArticleOutlineQuery,
+    ChunkIn,
+    IndexManifestCommand,
+    SearchDocsQuery,
+)
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
 
@@ -513,3 +521,39 @@ async def test_a_refresh_of_a_removed_version_fails_and_does_not_bring_it_back(
     assert library.versions == []
     assert await world.count(manifest_rows) == 0
     assert await world.count(indexed_manifests) == 0
+
+
+async def test_headings_merged_by_the_chunking_are_outlined_in_every_version_that_reuses_them(
+    world: World,
+) -> None:
+    await world.container.catalog.set_library_settings(
+        SetLibrarySettingsCommand(
+            id=LIBRARY, include_paths=["docs/"], chunking=CatalogChunkingIn(min_chars=400)
+        )
+    )
+    await world.import_ref("v1.3.0")
+    world.chunker.chunked = []
+    await world.import_ref("v1.4.0")  # configuration.md did not change: its chunk set is reused
+
+    assert "docs/guide/configuration.md" not in world.chunker.chunked
+    expected = [
+        ("Configuration", "configuration", True),
+        ("Options", "options", False),
+        ("Connection pool", "connection-pool", False),
+        ("Command line", "command-line", False),
+    ]
+    for ref in ("v1.3.0", "v1.4.0"):
+        found = await world.container.retrieval.article_outline(
+            ArticleOutlineQuery(library=LIBRARY, ref=ref, path="docs/guide/configuration.md")
+        )
+        (top,) = found.sections
+        nodes = [top, *top.children]
+        assert [(n.heading, n.anchor, n.starts_chunk) for n in nodes] == expected, ref
+        assert {n.chunk_id for n in nodes} == {top.chunk_id}
+        assert found.chunks == 1
+    index = world.importer().index
+    blob = git("rev-parse", "v1.3.0:docs/guide/configuration.md", cwd=world.docs_repo.path)
+    (chunk,) = (await index.known(world.chunker.config_hash, [blob]))[blob]
+    assert [(h.heading_path[-1], h.anchor, h.starts_chunk) for h in chunk.headings or ()] == (
+        expected
+    )

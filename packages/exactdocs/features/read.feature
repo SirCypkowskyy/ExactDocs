@@ -41,6 +41,10 @@ Feature: Reading whole articles and single chunks verbatim
     Then it gets the heading tree with chunk IDs and no body text
     And every chunk ID of the outline reads that section of the article
 
+  Scenario: Outlines of the default chunking do not change
+    When an agent calls "article_outline" for "docs/guide/install.md" of "/fixture/docs-repo/v1.4.0"
+    Then the heading tree is the same as before, one chunk per heading
+
   Scenario: A wrong path in an outline suggests close matches
     When an agent calls "article_outline" for "docs/guide/instal.md" of "/fixture/docs-repo/v1.4.0"
     Then the tool error lists "docs/guide/install.md" as a close match

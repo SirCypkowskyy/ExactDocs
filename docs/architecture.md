@@ -612,6 +612,16 @@ that last step, which is one transaction in the catalog.
   removes a manifest it is told is still pending. After a crash the recovery hook does the same
   for the library's pending data before the job resumes or runs again (a library has one running
   job).
+- **Heading records (#251).** Each chunk records every heading it holds, in order (heading path,
+  anchor, whether it starts the chunk), so `article_outline` lists headings a chunking config
+  merged into one chunk. They are stored with the chunk set (`retrieval_chunks.headings`, NULL for
+  chunks stored before) and travel back through `GetChunkSets`, but are not part of the set's
+  digest (a set stored without them and one cut again with them share a key; the first write
+  wins). A config that cannot merge headings (split level h6 and no `min_chars`; `max_chars` only
+  cuts whole sections) keeps its hash; the others' hash names `MERGED_HEADINGS_VERSION`, so their
+  chunk sets are cut again, with the records, when a version is imported at a new commit (a
+  re-sync of an unmoved version re-cuts nothing) or when the library's chunking is changed, which
+  queues a `rechunk` of every version. Until then their outlines list each chunk's first heading.
 - **Reuse.** Content is keyed by git blob SHA and the parser version, chunk sets by blob SHA and
   the chunking config, so a blob that an earlier import chunked is not chunked again. The
   stored chunks are read back through retrieval's `GetChunkSets`. Parsing is skipped too (#164)
