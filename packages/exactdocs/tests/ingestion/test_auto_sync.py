@@ -15,6 +15,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryJobRepository,
     InMemoryLibrarySources,
 )
+from exactdocs.ingestion.constants import IMPORT_JOB, REFRESH_JOB
 from exactdocs.ingestion.dtos import (
     DisableAutoSyncCommand,
     EnqueueJobCommand,
@@ -24,8 +25,6 @@ from exactdocs.ingestion.dtos import (
 )
 from exactdocs.ingestion.errors import InvalidAutoSyncError, RepositoryUnreachableError
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    REFRESH_JOB,
     AutoSync,
     ImportedRef,
     ImportedVersion,

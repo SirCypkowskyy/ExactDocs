@@ -22,6 +22,15 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoCopier,
     NoStoredTags,
 )
+from exactdocs.ingestion.constants import (
+    IMPORT_JOB,
+    MAX_JOB_NOTES,
+    MAX_JOB_PROBLEMS,
+    MAX_WANTED_IMAGES,
+    PARSER_VERSION,
+    REFRESH_JOB,
+    JobKind,
+)
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
     CredentialsRequiredError,
@@ -33,11 +42,6 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    MAX_JOB_NOTES,
-    MAX_JOB_PROBLEMS,
-    PARSER_VERSION,
-    REFRESH_JOB,
     AccessToken,
     ArticleChunk,
     ChunkingConfig,
@@ -48,7 +52,6 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
-    JobKind,
     JobState,
     ParsedArticle,
     PathSelection,
@@ -65,7 +68,6 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.module import TagLocks, import_job
 from exactdocs.ingestion.ports import RenameSource
 from exactdocs.ingestion.use_cases import (
-    MAX_WANTED_IMAGES,
     ImportVersionUseCase,
     RunNextJobUseCase,
     Skip,

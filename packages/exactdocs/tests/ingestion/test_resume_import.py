@@ -14,8 +14,8 @@ from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCredentialVault,
     InMemoryJobRepository,
 )
+from exactdocs.ingestion.constants import IMPORT_JOB
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
     ArticleChunk,
     ArticleTags,
     ChunkingConfig,

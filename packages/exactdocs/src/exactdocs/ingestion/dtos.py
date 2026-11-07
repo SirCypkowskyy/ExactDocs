@@ -5,10 +5,11 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from exactdocs.ingestion.models import (
+from exactdocs.ingestion.constants import (
     DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
+    ERROR_CODE,
     MAX_CHUNK_CHARS,
     MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
@@ -16,6 +17,13 @@ from exactdocs.ingestion.models import (
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
     MIN_INTERVAL_MINUTES,
+)
+from exactdocs.ingestion.constants._dtos import (
+    _CONTEXT7,
+    _CONTEXT7_WARNING,
+    _CREDENTIAL_DESCRIPTION,
+)
+from exactdocs.ingestion.models import (
     AccessToken,
     AutoSync,
     ChunkingConfig,
@@ -57,16 +65,6 @@ class FileProblemSummary(_Dto):
             reason=problem.reason,
             is_skip=problem.code.is_skip,
         )
-
-
-ERROR_CODE = (
-    "The stable code of `error`, null unless the job failed (or failed before codes were "
-    "recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made "
-    "private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot "
-    "be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points "
-    "elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or "
-    "`unexpected`."
-)
 
 
 class JobSummary(_Dto):
@@ -261,10 +259,6 @@ class DeployKeyIn(_Dto):
 
 
 CredentialIn = Annotated[AccessTokenIn | DeployKeyIn, Field(discriminator="kind")]
-_CREDENTIAL_DESCRIPTION = (
-    "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored "
-    "encrypted, offered only to the repository's own host and never returned."
-)
 
 
 class CheckRepositoryCommand(_Dto):
@@ -406,13 +400,6 @@ class Context7Out(_Dto):
             ],
             notes=list(config.notes),
         )
-
-
-_CONTEXT7 = (
-    "The repository's root `context7.json` at that commit; null when there is none or it is "
-    "ignored (see `context7_warning`)."
-)
-_CONTEXT7_WARNING = "Why the `context7.json` at that commit is ignored; null when it is not."
 
 
 class AddedLibrary(_PinnedImport):

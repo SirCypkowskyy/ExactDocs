@@ -9,8 +9,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.ingestion.errors import GitNotInstalledError
-from exactdocs.ingestion.models import (
+from exactdocs.ingestion.constants import (
     COLLECT_JOB,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_IMPORT_BATCH_FILES,
@@ -24,6 +23,10 @@ from exactdocs.ingestion.models import (
     REFRESH_JOB,
     REPROCESS_JOB,
     RETAG_JOB,
+    JobKind,
+)
+from exactdocs.ingestion.errors import GitNotInstalledError
+from exactdocs.ingestion.models import (
     AutoSync,
     ChunkingConfig,
     Credential,
@@ -32,7 +35,6 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportSource,
     Job,
-    JobKind,
     PathSelection,
     TaggedPath,
     TagRule,

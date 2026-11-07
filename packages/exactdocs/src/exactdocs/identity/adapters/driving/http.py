@@ -1,11 +1,12 @@
 """REST adapter for identity: the first-run setup, the browser session and "who is the caller"."""
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 
+from exactdocs.identity.constants import _THROTTLED, COOKIE_ATTRS, SESSION_COOKIE
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
@@ -30,20 +31,6 @@ from exactdocs.identity.ports.driving import (
     SignOut,
 )
 
-SESSION_COOKIE = "exactdocs_session"
-# Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
-COOKIE_PATH = "/api"
-
-
-class _CookieAttrs(TypedDict):
-    path: str
-    httponly: bool
-    samesite: Literal["lax"]
-
-
-# Shared by `set_cookie` and `delete_cookie`: a deletion only works if the attributes match.
-COOKIE_ATTRS: _CookieAttrs = {"path": COOKIE_PATH, "httponly": True, "samesite": "lax"}
-
 # `auto_error=False`: a missing cookie reaches `IdentifyCaller`, which raises the API's own 401.
 _session_cookie = APIKeyCookie(
     name=SESSION_COOKIE,
@@ -61,23 +48,6 @@ _api_token = HTTPBearer(
 )
 
 type CurrentCaller = Callable[..., Awaitable[AccountSummary]]
-
-# The sign-in throttle's answer, on the two routes that check a password. The body is the API's
-# shared error shape, referenced by name (it is defined by the app, not by this domain).
-_THROTTLED: dict[int | str, dict[str, object]] = {
-    429: {
-        "description": (
-            "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds."
-        ),
-        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
-        "headers": {
-            "Retry-After": {
-                "description": "Seconds to wait before the next attempt.",
-                "schema": {"type": "integer"},
-            }
-        },
-    }
-}
 
 
 def client_address(request: Request) -> str | None:

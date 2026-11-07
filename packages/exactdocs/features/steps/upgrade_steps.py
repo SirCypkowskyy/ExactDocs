@@ -21,7 +21,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import alembic_config, open_database
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 from steps.search_steps import LIBRARY, import_versions

@@ -61,9 +61,10 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.ingestion.adapters.driven.git_cli import ALLOWED_PROTOCOLS, GitCli
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
+from exactdocs.ingestion.constants import ALLOWED_PROTOCOLS
 from exactdocs.ingestion.errors import RepositoryUnreachableError
 from exactdocs.ingestion.models import Job, JobId, RefKind, RepositoryUrl
 from exactdocs.ingestion.use_cases import ImportVersionUseCase

@@ -10,11 +10,11 @@ import pytest
 from fastmcp import Client
 
 from exactdocs.bootstrap import cli
-from exactdocs.bootstrap import cli_library as lib
 from exactdocs.bootstrap.client import ClientError, resolve_url
+from exactdocs.bootstrap.constants import CLIENTS, EXIT_USAGE, SKILL_PATH
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
-from exactdocs.bootstrap.mcp_config import CLIENTS, SKILL_PATH, render
+from exactdocs.bootstrap.mcp_config import render
 from exactdocs.bootstrap.settings import Settings
 
 SKILL_URI = "skill://exactdocs/SKILL.md"
@@ -98,7 +98,7 @@ def test_stdio_needs_no_server_and_refuses_show_token(
     for flag in ("--show-token", "--new-token"):
         with pytest.raises(SystemExit) as exit_info:
             run(["config", "--client", "vscode", "--stdio", flag])
-        assert exit_info.value.code == lib.EXIT_USAGE
+        assert exit_info.value.code == EXIT_USAGE
 
 
 def test_http_without_a_server_says_how_to_configure_one(
@@ -185,7 +185,7 @@ def test_conflicting_flags_are_refused(
     monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "config.json"))
     with pytest.raises(SystemExit) as exit_info:
         run(["config", "--client", "claude", "--url", "https://docs.example.com", *flags])
-    assert exit_info.value.code == lib.EXIT_USAGE
+    assert exit_info.value.code == EXIT_USAGE
     captured = capsys.readouterr()
     assert captured.err == f"exactdocs: {message}\n"
     assert not captured.out

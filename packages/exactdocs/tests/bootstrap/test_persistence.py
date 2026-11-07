@@ -16,10 +16,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
 
+from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATIONS
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
-    BUSY_TIMEOUT_MS,
-    MIGRATIONS,
     StartupError,
     alembic_config,
     current_revision,

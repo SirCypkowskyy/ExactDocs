@@ -9,6 +9,15 @@ from uuid import uuid7
 
 from pydantic import SecretStr
 
+from exactdocs.identity.constants import (
+    ABSOLUTE_TIMEOUT,
+    IDLE_TIMEOUT,
+    MAX_TOKENS_PER_ACCOUNT,
+    PREFIX_SHOWN,
+    TOKEN_BYTES,
+    TOUCH_INTERVAL,
+    VALUE_PREFIX,
+)
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
@@ -36,10 +45,6 @@ from exactdocs.identity.errors import (
     UnknownTokenError,
 )
 from exactdocs.identity.models import (
-    ABSOLUTE_TIMEOUT,
-    IDLE_TIMEOUT,
-    PREFIX_SHOWN,
-    VALUE_PREFIX,
     Account,
     AccountId,
     ApiToken,
@@ -157,12 +162,6 @@ class AuthenticateUseCase:
 
 
 logger = logging.getLogger(__name__)
-MAX_TOKENS_PER_ACCOUNT = 50
-TOKEN_BYTES = 32  # 256 bits of randomness
-# Using a session only writes `last_used_at` when it is older than this: a read-only request
-# should not cost a database write each time, and it is tiny next to the 7-day idle timeout.
-# Consequence: idle expiry is accurate to this interval, not to the second.
-TOUCH_INTERVAL = timedelta(hours=1)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

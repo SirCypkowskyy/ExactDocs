@@ -6,6 +6,12 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid4
 
+from exactdocs.catalog.constants import (
+    MAX_RENAMES,
+    MAX_SUGGESTION_SCAN,
+    MAX_TAG_FACETS,
+    TAG_SOURCE_PAGE,
+)
 from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
@@ -79,7 +85,6 @@ from exactdocs.catalog.errors import (
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
-    MAX_RENAMES,
     ChunkingConfig,
     ContentKey,
     HostKind,
@@ -108,9 +113,6 @@ from exactdocs.catalog.ports.driven import (
     StoredArticleFinder,
 )
 from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
-
-# A missing article lists at most this many paths to look for close matches.
-MAX_SUGGESTION_SCAN = 10_000
 
 
 async def _find_version(
@@ -488,10 +490,6 @@ class SetManualTagsUseCase:
         )
 
 
-# Entries read per page when a whole manifest's tag sources are collected.
-TAG_SOURCE_PAGE = 1000
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GetVersionTagsUseCase:
     """Implements ``ports.driving.GetVersionTags``."""
@@ -799,9 +797,6 @@ class GetAssetUseCase:
         if image is None:
             raise AssetNotFoundError(str(library.id), str(version.ref), query.path)
         return Asset(blob_sha=image.blob_sha, content_type=image.content_type, data=image.data)
-
-
-MAX_TAG_FACETS = 100
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

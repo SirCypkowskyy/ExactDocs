@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
+from exactdocs.bootstrap.constants import STATUSES
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ApplyManualTagsCommand,
@@ -55,7 +56,6 @@ from exactdocs.catalog.dtos import (
     VersionOrigin as CatalogVersionOrigin,
 )
 from exactdocs.catalog.errors import StoredContentOutdatedError
-from exactdocs.catalog.models import ManifestState
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     ApplyManualTags,
@@ -82,9 +82,9 @@ from exactdocs.catalog.ports.driving import (
     SetManualTags,
     StoreManifest,
 )
+from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import StoredTextOutdatedError
 from exactdocs.ingestion.models import (
-    PARSER_VERSION,
     ArticleChunk,
     ChunkingConfig,
     Collected,
@@ -239,14 +239,6 @@ class CatalogLibraryIds:
         return True
 
 
-# Explicit, so a state the catalog adds later cannot crash retrieval: it maps to OTHER (keep).
-_STATUSES = {
-    ManifestState.PENDING: ManifestStatus.PENDING,
-    ManifestState.ACTIVE: ManifestStatus.ACTIVE,
-    ManifestState.SUPERSEDED: ManifestStatus.SUPERSEDED,
-}
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogActiveManifests:
     """Implements ``retrieval.ports.driven.ActiveManifests`` using the catalog."""
@@ -269,7 +261,7 @@ class CatalogActiveManifests:
         found = await self.get_manifest_states(
             GetManifestStatesQuery(manifest_ids=list(manifest_ids))
         )
-        return {i: _STATUSES.get(state, ManifestStatus.OTHER) for i, state in found.states.items()}
+        return {i: STATUSES.get(state, ManifestStatus.OTHER) for i, state in found.states.items()}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

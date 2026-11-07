@@ -11,7 +11,7 @@ from mcp.types import ListResourcesResult
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
-from exactdocs.catalog.adapters.driving.mcp import ARTICLE_TEMPLATE, RESOURCE_PAGE_SIZE
+from exactdocs.catalog.constants import ARTICLE_TEMPLATE, RESOURCE_PAGE_SIZE
 from exactdocs_kernel import NOTICE
 from steps.mcp_stdio_steps import FRAMES, rpc, start
 from steps.mcp_steps import call_tool

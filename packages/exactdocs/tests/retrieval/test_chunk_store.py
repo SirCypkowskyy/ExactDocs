@@ -17,6 +17,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository, chunk_set_rows
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.constants import UNKNOWN_MANIFEST_GRACE
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ArticleTagsIn,
@@ -48,7 +49,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository
-from exactdocs.retrieval.use_cases import UNKNOWN_MANIFEST_GRACE, ReadChunkUseCase
+from exactdocs.retrieval.use_cases import ReadChunkUseCase
 from exactdocs_kernel import NOTICE
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)

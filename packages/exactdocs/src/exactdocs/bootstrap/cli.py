@@ -29,24 +29,26 @@ from exactdocs.bootstrap.client import (
     resolve_url,
     store,
 )
+from exactdocs.bootstrap.constants import (
+    CLIENTS,
+    DEFAULT_TOKEN_DAYS,
+    EXIT_FAILED,
+    EXIT_INTERRUPTED,
+    EXIT_USAGE,
+    SKILL_PATH,
+)
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_stdio_mcp
-from exactdocs.bootstrap.mcp_config import CLIENTS, SKILL_PATH, Client, render
+from exactdocs.bootstrap.mcp_config import Client, render
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.dtos import (
-    MAX_PASSWORD_LENGTH,
-    MIN_PASSWORD_LENGTH,
-    CreateFirstAdminCommand,
-    ResetPasswordCommand,
-)
+from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from exactdocs.identity.dtos import CreateFirstAdminCommand, ResetPasswordCommand
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.retrieval.dtos import RebuiltIndexOut, SearchIndexStateOut
 from exactdocs_kernel import DomainError
-
-DEFAULT_TOKEN_DAYS = 90
 
 app = App(name="exactdocs", version=__version__, help="Version-accurate docs for AI agents.")
 
@@ -126,7 +128,7 @@ def _call[T](work: Coroutine[object, object, T]) -> T:
         sys.stderr.write(f"exactdocs: {exc}\n")
         raise SystemExit(exit_code(exc)) from None
     except KeyboardInterrupt:  # `--wait` has already said the job keeps running
-        raise SystemExit(lib.EXIT_INTERRUPTED) from None
+        raise SystemExit(EXIT_INTERRUPTED) from None
 
 
 def _api(url: str | None = None, token: str | None = None) -> ApiClient:
@@ -430,7 +432,7 @@ def docs(
     """Show what an agent gets for a question about a library (like `ctx7 docs`)."""
     if not query:
         sys.stderr.write("exactdocs: docs needs a question after the library ID\n")
-        raise SystemExit(lib.EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
 
     async def work() -> None:
         async with _api(url, token) as api:
@@ -512,7 +514,7 @@ def sync(
     """Re-sync the branch versions of a library; moved tags are re-imported only on --confirm."""
     if confirm and confirm_tag:  # "every moved tag" and "only these" cannot both be meant
         sys.stderr.write("exactdocs: use --confirm or --confirm-tag, not both\n")
-        raise SystemExit(lib.EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
 
     async def work() -> None:
         async with _api(url, token) as api:
@@ -541,7 +543,7 @@ def remove(
     if not yes:
         if not sys.stdin.isatty():
             sys.stderr.write("exactdocs: no terminal to confirm the removal; pass --yes\n")
-            raise SystemExit(lib.EXIT_USAGE)
+            raise SystemExit(EXIT_USAGE)
         try:
             lib.split_target(target)  # a bad target is a usage error before any question
             sys.stderr.write(lib.removal_prompt(target))  # stderr: stdout may be --json
@@ -554,7 +556,7 @@ def remove(
             answer = ""
         if answer.strip().lower() not in {"y", "yes"}:
             sys.stderr.write("exactdocs: not removed\n")
-            raise SystemExit(lib.EXIT_FAILED)
+            raise SystemExit(EXIT_FAILED)
 
     async def work() -> None:
         async with _api(url, token) as api:
@@ -703,7 +705,7 @@ def config(
     )
     if conflict:
         sys.stderr.write(f"exactdocs: {conflict}\n")
-        raise SystemExit(lib.EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
 
     async def work() -> tuple[str, str | None]:
         if stdio:
@@ -896,9 +898,6 @@ def _check_startup(settings: Settings) -> None:
 def asgi_app() -> object:
     """ASGI factory used by uvicorn (also with ``--reload``)."""
     return create_app(Container.build(Settings()))
-
-
-LOCAL_COMMANDS = frozenset({"serve", "reindex", "admin create", "admin reset-password"})
 
 
 def main() -> None:

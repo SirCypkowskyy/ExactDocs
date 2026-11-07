@@ -6,7 +6,6 @@ top-level headings, so a fence, table or any other block can never be split.
 """
 
 import hashlib
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -15,14 +14,12 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 from exactdocs.ingestion import models
+from exactdocs.ingestion.constants import DEFAULT_CHUNKER
+from exactdocs.ingestion.constants._chunker import _ANCHOR_DROP, _LANGUAGE, _LINE
 from exactdocs.ingestion.errors import InvalidChunkingConfigError
 from exactdocs.ingestion.models import ArticleChunk, ChunkingConfig, ParsedArticle
 
-_MARKDOWN = MarkdownIt("commonmark").enable("table")
-# markdown-it numbers lines by \n, \r\n and \r only (not U+2028, U+0085 and the like)
-_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+")
-_ANCHOR_DROP = re.compile(r"[^\w\- ]")
-_LANGUAGE = re.compile(r"[\w+#-]+")  # `python{1,3}` and `{.python}` both name python
+_markdown = MarkdownIt("commonmark").enable("table")
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- grows as lines come
@@ -77,7 +74,7 @@ class MarkdownChunker:
 
     def configured(self, config: ChunkingConfig) -> MarkdownChunker:
         """Return a chunker that cuts with ``config``; see the ``Chunker`` port."""
-        if config.chunker != models.DEFAULT_CHUNKER:
+        if config.chunker != DEFAULT_CHUNKER:
             reason = f"unsupported chunker {config.chunker!r}"
             raise InvalidChunkingConfigError(reason)
         return MarkdownChunker(config)
@@ -89,7 +86,7 @@ class MarkdownChunker:
         skip = 0  # broken front matter stays in the body, but is not Markdown to cut at
         if any(p.startswith("malformed front matter") for p in article.problems):
             skip = len(_LINE.findall(body[: models.malformed_front_matter_length(body)]))
-        sections = _sections(_MARKDOWN.parse(body), len(lines), skip)
+        sections = _sections(_markdown.parse(body), len(lines), skip)
         for section in sections:
             section.size = sum(len(line) for line in lines[section.start : section.end])
         seen: dict[tuple[str, ...], int] = {}

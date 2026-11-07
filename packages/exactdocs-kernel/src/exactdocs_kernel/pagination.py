@@ -5,10 +5,8 @@ from binascii import Error as Base64Error
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from exactdocs_kernel.constants import MAX_LIMIT
 from exactdocs_kernel.errors import ValidationError
-
-DEFAULT_LIMIT = 50
-MAX_LIMIT = 200
 
 
 class InvalidCursorError(ValidationError):

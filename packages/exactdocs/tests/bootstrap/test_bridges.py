@@ -39,9 +39,9 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
+from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import StoredTextOutdatedError
 from exactdocs.ingestion.models import (
-    PARSER_VERSION,
     ChunkingConfig,
     CopiedArticle,
     ImportedRef,

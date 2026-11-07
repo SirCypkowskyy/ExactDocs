@@ -5,10 +5,13 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
 
-from exactdocs.identity.models import MAX_TOKEN_NAME_LENGTH, MAX_USERNAME_LENGTH, Account, ApiToken
-
-MIN_PASSWORD_LENGTH = 12
-MAX_PASSWORD_LENGTH = 1024  # bounds the work a request can make the hasher do
+from exactdocs.identity.constants import (
+    MAX_PASSWORD_LENGTH,
+    MAX_TOKEN_NAME_LENGTH,
+    MAX_USERNAME_LENGTH,
+    MIN_PASSWORD_LENGTH,
+)
+from exactdocs.identity.models import Account, ApiToken
 
 
 class _Dto(BaseModel):

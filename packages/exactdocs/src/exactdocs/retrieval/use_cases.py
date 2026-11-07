@@ -3,6 +3,21 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from exactdocs.retrieval.constants import (
+    CHARS_PER_TOKEN,
+    DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    FOOTER_CHARS,
+    MAX_RESOLVED,
+    MAX_SEARCHED_LIBRARIES,
+    POINTER_TEXT,
+    QUERY_DOCS_CANDIDATES,
+    QUERY_HITS_CAP,
+    RULE_FRAMING_CHARS,
+    RULES_FRAMING_CHARS,
+    RULES_SHARE,
+    SECTION_FRAMING_CHARS,
+    UNKNOWN_MANIFEST_GRACE,
+)
 from exactdocs.retrieval.dtos import (
     ChunkOut,
     ChunkSetsOut,
@@ -42,13 +57,6 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
-    CHARS_PER_TOKEN,
-    FOOTER_CHARS,
-    POINTER_TEXT,
-    RULE_FRAMING_CHARS,
-    RULES_FRAMING_CHARS,
-    RULES_SHARE,
-    SECTION_FRAMING_CHARS,
     Candidate,
     CatalogLibrary,
     Chunk,
@@ -82,11 +90,6 @@ from exactdocs.retrieval.ports.driven import (
     SearchIndexMaintenance,
 )
 from exactdocs_kernel import NOTICE, Clock
-
-# A manifest the catalog does not know may just not have been stored there yet (the order is
-# Store -> Index -> Activate, but the calls are not one transaction), so it is removed only once
-# it is this old.
-UNKNOWN_MANIFEST_GRACE = timedelta(minutes=5)
 
 
 async def _confirmed_removals(
@@ -163,10 +166,6 @@ class SearchDocsUseCase:
             ),
             results=results,
         )
-
-
-# Libraries searched at once: bounds the size of the one FTS query.
-MAX_SEARCHED_LIBRARIES = 500
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -538,12 +537,6 @@ class RebuildSearchIndexUseCase:
         return RebuiltIndexOut.from_model(await self.maintenance.rebuild())
 
 
-# Only the best name matches are looked at: each costs a search. Results are capped to the same.
-MAX_RESOLVED = 10
-# How many matching chunks count as "documents it"; enough to tell libraries apart, cheap to get.
-QUERY_HITS_CAP = 5
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ResolveLibraryIdUseCase:
     """Implements ``ports.driving.ResolveLibraryId``."""
@@ -608,11 +601,6 @@ class ResolveLibraryIdUseCase:
             if len(found) >= MAX_RESOLVED:
                 break
         return found[:MAX_RESOLVED]
-
-
-# Matching chunks looked at per call; the budget decides how many of them are returned.
-QUERY_DOCS_CANDIDATES = 50
-DEFAULT_QUERY_DOCS_TOKEN_BUDGET = 10_000
 
 
 def _cost(section: DocSectionOut) -> int:

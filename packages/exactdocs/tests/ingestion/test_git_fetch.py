@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from exactdocs.ingestion.adapters.driven.git_cli import (
-    MAX_FETCHES,
     GitCli,
     MissingGit,
     sparse_patterns,
     sweep_stale_fetches,
 )
+from exactdocs.ingestion.constants import MAX_FETCHES
 from exactdocs.ingestion.errors import (
     CommitUnavailableError,
     GitNotInstalledError,

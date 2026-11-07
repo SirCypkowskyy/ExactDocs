@@ -29,6 +29,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
     RetrievalCollector,
 )
+from exactdocs.bootstrap.constants import JOBS_FILE, KNOWN_HOSTS_FILE, WORK_DIR
 from exactdocs.bootstrap.database import (
     StartupError,
     check_schema_is_current,
@@ -54,10 +55,6 @@ from exactdocs.identity.adapters.driven.sqlite import (
 )
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
-    QUEUE,
-    SCHEDULE,
-    STEPS_VERSION,
-    WORKFLOW,
     DbosCheckpoints,
     DbosJobQueue,
     DbosScheduleSwitch,
@@ -65,13 +62,14 @@ from exactdocs.ingestion.adapters.driven.dbos import (
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, sweep_stale_fetches
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
+from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
     SqliteJobRepository,
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
+from exactdocs.ingestion.constants import KEY_FILE, QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.ports.driven import (
     Chunker,
@@ -86,9 +84,6 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs_kernel import SystemClock
 
 logger = logging.getLogger(__name__)
-WORK_DIR = "work"  # under the data dir: one folder per running git fetch
-KNOWN_HOSTS_FILE = "known_hosts"  # under the data dir: SSH host keys, the big three pre-seeded
-JOBS_FILE = "jobs.sqlite"  # under the data dir: DBOS's workflows, the durable steps of jobs
 
 
 def _build_read_side(

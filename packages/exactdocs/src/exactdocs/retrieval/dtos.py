@@ -12,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 
+from exactdocs.retrieval.constants import DEFAULT_GRACE_SECONDS, MAX_QUERY, MAX_TAG, MAX_TAGS
 from exactdocs.retrieval.models import (
     Candidate,
     RebuiltIndex,
@@ -28,7 +29,6 @@ from exactdocs_kernel import (
     LIBRARY_ID_PATTERN,
     MAX_NAME,
     MAX_PATH,
-    MAX_TAG_INPUT,
     NOTICE,
     normalize_tag,
 )
@@ -37,10 +37,6 @@ from exactdocs_kernel import (
 class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
-
-MAX_QUERY = 1000
-MAX_TAGS = 20
-MAX_TAG = MAX_TAG_INPUT
 
 Tag = Annotated[str, StringConstraints(max_length=MAX_TAG)]
 
@@ -340,9 +336,6 @@ class DiscardPendingChunksCommand(_Dto):
             message = "give a manifest_id, a library or older_than_seconds"
             raise ValueError(message)
         return self
-
-
-DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
 
 
 class CollectChunksCommand(_Dto):

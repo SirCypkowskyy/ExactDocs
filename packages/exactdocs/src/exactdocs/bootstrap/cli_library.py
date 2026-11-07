@@ -13,7 +13,6 @@ or a sync failed.
 import asyncio
 import json
 import os
-import re
 import stat
 import sys
 import time
@@ -29,18 +28,24 @@ from exactdocs.bootstrap.client import (
     printable,
     printable_text,
 )
-
-EXIT_FAILED, EXIT_USAGE, EXIT_NOT_FOUND, EXIT_CONFLICT, EXIT_AUTH, EXIT_IMPORT = 1, 2, 3, 4, 5, 6
-POLL_SECONDS = 1.0
-SYNC_FAILED_STATUS = 422  # the remote could not be read: repo_unreachable, auth_failed, ...
-CONFLICT_STATUS = 409  # e.g. an import is running and the sync could queue nothing
-TAG_MOVED = "tag_moved"  # a sync's code for a tag that names another commit now
-PAGE = 200  # the largest page the API serves
-MAX_REFS_SHOWN = 5
-WAIT_SECONDS = 600.0  # how long --wait follows a job before it leaves it to the server
-POLL_RETRIES = 3  # consecutive failed polls (timeouts, 5xx) before the wait gives up
-MAX_SECRET_BYTES = 64 * 1024  # a private key is about 3 KB
-EXIT_INTERRUPTED = 130
+from exactdocs.bootstrap.constants import (
+    CONFLICT_STATUS,
+    EXIT_AUTH,
+    EXIT_CONFLICT,
+    EXIT_FAILED,
+    EXIT_IMPORT,
+    EXIT_NOT_FOUND,
+    EXIT_USAGE,
+    LIBRARY_ID,
+    MAX_REFS_SHOWN,
+    MAX_SECRET_BYTES,
+    PAGE,
+    POLL_RETRIES,
+    POLL_SECONDS,
+    SYNC_FAILED_STATUS,
+    TAG_MOVED,
+    WAIT_SECONDS,
+)
 
 
 class ImportFailedError(ClientError):
@@ -599,9 +604,6 @@ async def token_revoke(api: ApiClient, token_id: str) -> None:
     """``DELETE /tokens/{id}``."""
     await api.request("DELETE", f"/tokens/{quote(token_id, safe='')}")
     say(f"Revoked token {token_id}.")
-
-
-LIBRARY_ID = re.compile(r"^/[^/]+/[^/]")  # ctx7's check: /owner/repo, optionally /ref or @ref
 
 
 def _one_line(text: str) -> str:

@@ -1,7 +1,6 @@
 from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -14,25 +13,16 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
+from exactdocs.bootstrap.constants import _UNSAFE_METHODS, MCP_PATH, OPENAPI_PATH, WEB_DIST
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import current_revision
 from exactdocs.bootstrap.mcp import build_mcp
-from exactdocs.bootstrap.rest import (
-    ERROR_RESPONSES,
-    OPENAPI_PATH,
-    SetupGuard,
-    add_error_handlers,
-    v1_openapi,
-)
+from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
-
-# Built web UI, copied into the package by CI / the Docker build (see web/README.md).
-WEB_DIST = Path(__file__).parent.parent / "_web"
-MCP_PATH = "/mcp"
 
 
 class Health(BaseModel):
@@ -107,7 +97,7 @@ def create_app(container: Container) -> FastAPI:
             reindex_required=index.needs_rebuild,
         )
 
-    v1 = APIRouter(prefix="/v1", responses=ERROR_RESPONSES)
+    v1 = APIRouter(prefix="/v1", responses=error_responses())
     # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.
     v1.include_router(
         identity_http.build_router(
@@ -233,9 +223,6 @@ class _RewritePath:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         aliased = {**scope, "path": self.path, "raw_path": self.path.encode()}
         await self.app(aliased, receive, send)
-
-
-_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- middleware

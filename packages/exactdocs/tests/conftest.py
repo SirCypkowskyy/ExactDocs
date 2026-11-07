@@ -19,7 +19,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
 )
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from fixture_repo import DocsRepo, served
 

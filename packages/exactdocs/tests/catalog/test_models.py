@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from exactdocs.catalog.constants import MAX_CLOSE_MATCHES
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
     DuplicateRenameError,
@@ -20,7 +21,6 @@ from exactdocs.catalog.errors import (
     InvalidVersionRefError,
 )
 from exactdocs.catalog.models import (
-    MAX_CLOSE_MATCHES,
     ChunkingConfig,
     HostKind,
     Library,

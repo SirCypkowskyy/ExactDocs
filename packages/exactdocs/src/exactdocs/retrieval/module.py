@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Self
 
+from exactdocs.retrieval.constants import DEFAULT_QUERY_DOCS_TOKEN_BUDGET
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ChunkRepository,
@@ -27,7 +28,6 @@ from exactdocs.retrieval.ports.driving import (
     SearchDocs,
 )
 from exactdocs.retrieval.use_cases import (
-    DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     CollectChunksUseCase,
     DiscardPendingChunksUseCase,
     GetChunkSetsUseCase,

@@ -17,7 +17,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import LibrarySummary
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
-from exactdocs.retrieval.adapters.driven.sqlite_fts import FORMAT
+from exactdocs.retrieval.constants import FORMAT
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 

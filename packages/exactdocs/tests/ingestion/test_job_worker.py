@@ -11,10 +11,6 @@ from sqlalchemy import NullPool
 
 from exactdocs.ingestion import IngestionModule
 from exactdocs.ingestion.adapters.driven.dbos import (
-    QUEUE,
-    SCHEDULE,
-    STEPS_VERSION,
-    WORKFLOW,
     DbosCheckpoints,
     DbosJobQueue,
     DbosScheduleSwitch,
@@ -22,8 +18,9 @@ from exactdocs.ingestion.adapters.driven.dbos import (
 from exactdocs.ingestion.adapters.driven.git_cli import MissingGit
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
+from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW, JobKind
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ScheduledChecks
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
+from exactdocs.ingestion.models import Job, JobId, JobState
 from exactdocs.ingestion.ports import JobHandler, JobProgress, JobRunner, RecoveryHook
 from exactdocs_kernel import SystemClock
 

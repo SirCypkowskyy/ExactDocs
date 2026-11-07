@@ -33,10 +33,9 @@ from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.constants import IMPORT_JOB, PARSER_VERSION
 from exactdocs.ingestion.dtos import RemoveLibraryCommand, RemoveVersionCommand
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    PARSER_VERSION,
     ArticleChunk,
     ChunkingConfig,
     ImportedVersion,

@@ -4,6 +4,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
+from exactdocs.retrieval.constants import MEMORY_FORMAT
 from exactdocs.retrieval.errors import ChunkSetMismatchError
 from exactdocs.retrieval.models import (
     CatalogLibrary,
@@ -147,9 +148,6 @@ class InMemoryChunkRepository:
         }
         rows.update(changed)
         return len(changed)
-
-
-MEMORY_FORMAT = 1
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- index format

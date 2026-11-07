@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository, NoIndex, NoRemovals
+from exactdocs.ingestion.constants import CONTEXT7_MAX_BYTES, IMPORT_JOB, MAX_CONTEXT7_RULES
 from exactdocs.ingestion.dtos import AddLibraryCommand, PreviewRepositoryCommand
 from exactdocs.ingestion.errors import (
     InvalidContext7Error,
@@ -14,9 +15,6 @@ from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
-    CONTEXT7_MAX_BYTES,
-    IMPORT_JOB,
-    MAX_CONTEXT7_RULES,
     Context7Config,
     Credential,
     FetchedFile,

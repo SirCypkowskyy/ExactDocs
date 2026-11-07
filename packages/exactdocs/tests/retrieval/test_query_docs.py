@@ -9,11 +9,15 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryLibraries,
     InMemorySearchIndex,
 )
-from exactdocs.retrieval.adapters.driving.mcp import (
+from exactdocs.retrieval.adapters.driving.mcp import format_docs, format_rules
+from exactdocs.retrieval.constants import (
+    FOOTER_CHARS,
+    POINTER_TEXT,
+    RULE_FRAMING_CHARS,
+    RULES_FRAMING_CHARS,
     RULES_HEADING,
+    SECTION_FRAMING_CHARS,
     SECTION_SEPARATOR,
-    format_docs,
-    format_rules,
 )
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
@@ -25,11 +29,6 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import VersionNotIndexedError
 from exactdocs.retrieval.models import (
-    FOOTER_CHARS,
-    POINTER_TEXT,
-    RULE_FRAMING_CHARS,
-    RULES_FRAMING_CHARS,
-    SECTION_FRAMING_CHARS,
     DocTarget,
     ManifestStatus,
     RetrievalMode,

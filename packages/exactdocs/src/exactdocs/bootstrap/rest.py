@@ -17,27 +17,17 @@ from starlette.exceptions import HTTPException
 from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from exactdocs.bootstrap.constants import (
+    _STATUS_BY_ERROR,
+    ERROR_DESCRIPTIONS,
+    SETUP_EXEMPT,
+    V1_PREFIX,
+)
 from exactdocs_kernel import (
     BusyError,
-    ConflictError,
     DomainError,
-    NotFoundError,
     RateLimitedError,
-    UnauthenticatedError,
-    ValidationError,
 )
-
-V1_PREFIX = "/api/v1"
-OPENAPI_PATH = f"{V1_PREFIX}/openapi.json"
-
-_STATUS_BY_ERROR: dict[type[DomainError], int] = {
-    UnauthenticatedError: 401,
-    NotFoundError: 404,
-    ConflictError: 409,
-    BusyError: 429,
-    ValidationError: 422,
-    RateLimitedError: 429,
-}
 
 
 class FieldError(BaseModel):
@@ -76,19 +66,19 @@ class ErrorResponse(BaseModel):
     )
 
 
-# Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`). 429 is
-# not here: only the credential routes answer it, and they document it themselves.
-ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
-    status: {"model": ErrorResponse, "description": description}
-    for status, description in {
-        400: "The request cannot be processed (error code in `error`).",
-        401: "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
-        403: "Refused: the instance has no admin account yet (`setup_required`).",
-        404: "The thing does not exist or is not visible to the caller.",
-        409: "The request conflicts with the current state.",
-        422: "A field is invalid (`fields` names them) or a business rule is violated.",
-    }.items()
-}
+def error_responses() -> dict[int | str, dict[str, Any]]:
+    """The error answers every ``/api/v1`` operation documents.
+
+    Used as ``APIRouter(responses=...)`` in ``http.py``. 429 is not here: only the credential
+    routes answer it, and they document it themselves.
+
+    Returns:
+        Status code to its OpenAPI response: the ``ErrorResponse`` model and a description.
+    """
+    return {
+        status: {"model": ErrorResponse, "description": description}
+        for status, description in ERROR_DESCRIPTIONS.items()
+    }
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -155,13 +145,6 @@ def v1_openapi(app: FastAPI) -> dict[str, Any]:
 def v1_openapi_json(app: FastAPI) -> str:
     """Render the document as the committed ``web/openapi.json``."""
     return json.dumps(v1_openapi(app), indent=2) + "\n"
-
-
-# (method, path) pairs that stay reachable before the first admin exists: `POST /setup` is the
-# way out of that state, and `GET /session` is how the UI learns that it is in it.
-SETUP_EXEMPT = frozenset(
-    {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
-)
 
 
 @dataclass(slots=True)  # conventions: allow-mutable-dataclass, allow-positional -- middleware

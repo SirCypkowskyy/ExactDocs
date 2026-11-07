@@ -24,7 +24,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
 )
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.models import Session, hash_token
 from import_child import LIBRARY, big_repository, page, run
 from steps.jobs_steps import ADMIN_COOKIE, PLACEHOLDER_ADMIN

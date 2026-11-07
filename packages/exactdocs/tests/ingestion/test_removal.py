@@ -14,6 +14,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import COLLECT_JOB, IMPORT_JOB, REFRESH_JOB, JobKind
 from exactdocs.ingestion.dtos import (
     EnqueueJobCommand,
     GetJobQuery,
@@ -21,15 +22,7 @@ from exactdocs.ingestion.dtos import (
     RemoveVersionCommand,
 )
 from exactdocs.ingestion.errors import ImportInProgressError
-from exactdocs.ingestion.models import (
-    COLLECT_JOB,
-    IMPORT_JOB,
-    REFRESH_JOB,
-    AccessToken,
-    Collected,
-    JobKind,
-    Removed,
-)
+from exactdocs.ingestion.models import AccessToken, Collected, Removed
 from exactdocs_kernel import NotFoundError, SystemClock
 
 LIBRARY = "/acme/payments"

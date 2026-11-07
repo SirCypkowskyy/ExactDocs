@@ -26,6 +26,74 @@ import yaml
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from exactdocs.ingestion.constants import (
+    ANY,
+    ARTICLE_SUFFIXES,
+    CHUNKER_VERSION,
+    CHUNKERS,
+    CONTEXT7_MAX_BYTES,
+    DEFAULT_CHUNKER,
+    DEFAULT_INTERVAL_MINUTES,
+    DEFAULT_KEEP_LAST,
+    FLAT_HOSTS,
+    GLOB_CHARS,
+    HEADS,
+    KNOWN_HOSTS,
+    MAX_CHECK_ERROR,
+    MAX_CHUNK_CHARS,
+    MAX_CONTEXT7_RULE_CHARS,
+    MAX_CONTEXT7_RULES,
+    MAX_HEADING_LEVEL,
+    MAX_IMAGES_PER_ARTICLE,
+    MAX_INTERVAL_MINUTES,
+    MAX_JOB_NOTES,
+    MAX_JOB_PROBLEMS,
+    MAX_KEEP_LAST,
+    MAX_PREVIOUS_VERSION_CHARS,
+    MAX_PREVIOUS_VERSIONS,
+    MAX_RENAMES,
+    MAX_SIMILARITY,
+    MAX_TAG_PATTERN,
+    MAX_TAG_RULES,
+    MIN_INTERVAL_MINUTES,
+    ONE,
+    PARSER_VERSION,
+    PEELED,
+    README_DESCRIPTION_MAX,
+    README_TITLE_MAX,
+    TAGS,
+    JobKind,
+)
+from exactdocs.ingestion.constants._models import (
+    _ALWAYS_INVISIBLE,
+    _BAD_REF_CHARS,
+    _FRONT_MATTER,
+    _GIT_SUFFIX,
+    _HOST,
+    _ID_SEGMENTS,
+    _LOOPBACK,
+    _MAX_BRANCH,
+    _MAX_IMAGE_DEPTH,
+    _MAX_KEY,
+    _MAX_PATH,
+    _MAX_PATTERN,
+    _MAX_PATTERNS,
+    _MAX_RAW_TAGS,
+    _MAX_SEGMENT,
+    _MAX_TOKEN,
+    _NO_ALIASES,
+    _NUMERIC_REF,
+    _ORDER_WIDTH,
+    _SCHEME,
+    _SCHEMES,
+    _SCP_LIKE,
+    _SHA_PREFIX,
+    _SSH_USER,
+    _STRAY_JOINER,
+    _SVG,
+    _TOKEN_USER,
+    _UNSAFE_ID_CHARS,
+)
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
     CredentialProblem,
@@ -44,53 +112,6 @@ from exactdocs.ingestion.errors import (
 )
 from exactdocs_kernel import MAX_TAGS, normalize_tag
 
-# Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02),
-# so a fix here re-chunks stored articles instead of reusing stale chunk sets.
-PARSER_VERSION = 3
-
-# Bump on any change to how a chunker cuts articles. Like PARSER_VERSION it feeds the config hash.
-CHUNKER_VERSION = 1
-MAX_HEADING_LEVEL = 6
-
-# Characters that render as nothing (or as a control) but reach an LLM as text: zero-width
-# space and friends, the byte order mark, bidi controls (Trojan Source), Unicode "tag"
-# characters and supplementary variation selectors (byte smuggling), invisible math operators,
-# fillers, the blank Braille cell, and C0/C1 controls except tab, newline and carriage return
-# (ANSI escapes, NUL). Everything else, including every visible character and the regular
-# variation selectors next to emoji, is left alone. Known cost: LRM/RLM/ALM and the Mongolian
-# vowel separator also have typographic uses, so punctuation placement in RTL text can change.
-_ALWAYS_INVISIBLE = re.compile(
-    # a subdivision flag (England, Scotland, Wales...) is visible text, keep it whole
-    r"(?P<flag>\N{WAVING BLACK FLAG}"
-    r"[\N{TAG DIGIT ZERO}-\N{TAG DIGIT NINE}"
-    r"\N{TAG LATIN SMALL LETTER A}-\N{TAG LATIN SMALL LETTER Z}]"
-    r"{2,7}\N{CANCEL TAG})"
-    r"|[\N{ZERO WIDTH SPACE}\N{WORD JOINER}\N{ZERO WIDTH NO-BREAK SPACE}"
-    r"\N{MONGOLIAN VOWEL SEPARATOR}"
-    r"\N{ARABIC LETTER MARK}\N{LEFT-TO-RIGHT MARK}\N{RIGHT-TO-LEFT MARK}"
-    r"\N{LEFT-TO-RIGHT EMBEDDING}-\N{RIGHT-TO-LEFT OVERRIDE}"  # embeddings, pop, overrides
-    r"\N{LEFT-TO-RIGHT ISOLATE}-\N{POP DIRECTIONAL ISOLATE}"
-    r"\N{FUNCTION APPLICATION}-\N{INVISIBLE PLUS}"  # invisible math operators
-    r"\N{COMBINING GRAPHEME JOINER}"
-    r"\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}"
-    r"\N{HALFWIDTH HANGUL FILLER}\N{KHMER VOWEL INHERENT AQ}\N{KHMER VOWEL INHERENT AA}"
-    r"\N{BRAILLE PATTERN BLANK}"
-    r"\N{VARIATION SELECTOR-17}-\N{VARIATION SELECTOR-256}"
-    r"\N{LANGUAGE TAG}-\N{CANCEL TAG}"  # Unicode tag characters
-    r"\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]"  # C0 and C1 controls, not \t \n \r
-)
-# ZWJ and ZWNJ also carry meaning (emoji sequences, Persian and Indic scripts), so a single one
-# between two non-ASCII characters is kept. Next to ASCII or another joiner it can only be a
-# hidden channel, and it goes.
-_JOINERS = r"\N{ZERO WIDTH NON-JOINER}\N{ZERO WIDTH JOINER}"
-_STRAY_JOINER = re.compile(
-    rf"(?<![^\x00-\x7f{_JOINERS}])[{_JOINERS}]|[{_JOINERS}](?![^\x00-\x7f{_JOINERS}])"
-)
-
-_FRONT_MATTER = re.compile(
-    r"\A---[ \t]*\r?\n(?:(?P<yaml>.*?)\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL
-)
-
 
 class NotJsonSafeError(ValueError):
     """Front matter holds values that cannot be stored as standard JSON."""
@@ -99,9 +120,6 @@ class NotJsonSafeError(ValueError):
         super().__init__(
             "values must be text, numbers, booleans, null, lists or maps with text keys"
         )
-
-
-_NO_ALIASES = "anchors and aliases are not allowed"
 
 
 class _FrontMatterLoader(yaml.SafeLoader):
@@ -122,8 +140,8 @@ _FrontMatterLoader.yaml_implicit_resolvers = {
     first: [(tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:timestamp"]
     for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
-_MARKDOWN = MarkdownIt("commonmark")
-_README_MARKDOWN = MarkdownIt("commonmark").enable("table")  # a table is not a description
+_markdown = MarkdownIt("commonmark")
+_readme_markdown = MarkdownIt("commonmark").enable("table")  # a table is not a description
 
 
 def malformed_front_matter_length(body: str) -> int:
@@ -157,10 +175,6 @@ def stored_front_matter_problems(
 def strip_invisible(text: str) -> str:
     """Remove invisible and control characters (see ``_ALWAYS_INVISIBLE``); change nothing else."""
     return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub(lambda m: m["flag"] or "", text))
-
-
-MAX_TAG_RULES = 64
-_MAX_RAW_TAGS = 100
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -253,11 +267,6 @@ def front_matter_tags(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...],
     return tuple(dict.fromkeys(t for t in normalized if t))[:MAX_TAGS], problems
 
 
-MAX_IMAGES_PER_ARTICLE = 100
-_MAX_IMAGE_DEPTH = 64
-_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.IGNORECASE)
-
-
 def image_paths(article_path: str, body: str) -> tuple[str, ...]:
     """Repository paths of the images ``![](src)`` of a Markdown body points at, first-seen order.
 
@@ -269,7 +278,7 @@ def image_paths(article_path: str, body: str) -> tuple[str, ...]:
     found: dict[str, None] = {}
     if "![" not in body:  # every image, inline or by reference, starts so: skip the parse
         return ()
-    for token in _MARKDOWN.parse(body):
+    for token in _markdown.parse(body):
         for child in token.children or ():
             if child.type != "image" or len(found) >= MAX_IMAGES_PER_ARTICLE:
                 continue
@@ -335,7 +344,7 @@ def _reason(error: Exception) -> str:
 def _title(declared: object, body: str, path: str) -> str:
     if isinstance(declared, str) and declared.strip():
         return declared.strip()
-    tokens = _MARKDOWN.parse(body)
+    tokens = _markdown.parse(body)
     for opening, inline in pairwise(tokens):
         if opening.type == "heading_open" and opening.tag == "h1":
             heading = "".join(
@@ -346,10 +355,6 @@ def _title(declared: object, body: str, path: str) -> str:
             if heading:
                 return heading
     return PurePosixPath(path).stem
-
-
-README_TITLE_MAX = 120
-README_DESCRIPTION_MAX = 500
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -369,7 +374,7 @@ def readme_summary(source: str) -> ReadmeSummary:
     and paragraphs with no text (badges, images), are skipped. Without a heading the first
     paragraph of the file is used.
     """
-    tokens = _README_MARKDOWN.parse(parse_article("README.md", source).body)
+    tokens = _readme_markdown.parse(parse_article("README.md", source).body)
     title, start = None, 0
     for index, token in enumerate(tokens):
         if token.type == "heading_open" and (text := _inline_text(tokens[index + 1])):
@@ -414,25 +419,6 @@ def _inline_text(inline: Token, *, skip_link_only: bool = False) -> str:
 # ---------------------------------------------------------------- jobs
 
 JobId = NewType("JobId", str)
-JobKind = NewType("JobKind", str)
-IMPORT_JOB = JobKind("import")
-"""The kind of job that imports one version of a library."""
-REFRESH_JOB = JobKind("refresh")
-"""Imports a version the catalog has; fails if it was removed meanwhile (no resurrection)."""
-IMPORT_KINDS = frozenset({IMPORT_JOB, REFRESH_JOB})
-"""Kinds of job that import; removal waits for them and the sync state counts them."""
-REPROCESS_JOB = JobKind("reprocess")
-"""Re-imports every version of a library at its commit after its paths changed (one job)."""
-RETAG_JOB = JobKind("retag")
-"""Re-tags every version of a library from its stored articles after its tag rules changed."""
-RECHUNK_JOB = JobKind("rechunk")
-"""Re-chunks (and re-tags) every version from its stored articles after its chunking changed."""
-LIBRARY_KINDS = frozenset({REPROCESS_JOB, RECHUNK_JOB, RETAG_JOB})
-"""Kinds of job that touch every version of the library (their ``version`` is ``None``)."""
-COLLECT_JOB = JobKind("collect")
-"""The kind of job that frees what removed or replaced versions left on disk."""
-DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
-"""How long a replaced manifest is kept so that its chunk IDs can still be recognized as stale."""
 
 
 class VersionOrigin(StrEnum):
@@ -496,19 +482,6 @@ class SyncErrorCode(StrEnum):
     """The branch or tag the version follows is no longer in the repository."""
     TAG_MOVED = "tag_moved"
     """The tag now points at another commit; it is reported, never re-imported by a sync."""
-
-
-PERMANENT_IMPORT_FAILURES = frozenset({"no_articles", "import_too_large"})
-"""Codes of an import that fails again at the same commit; anything else may pass next time.
-
-Not ``checkout_unreadable``: a folder that cannot be listed is the disk's state (full, out of
-file handles, permissions), not the commit's.
-"""
-UNEXPECTED_BACKOFF_CAP = timedelta(days=1)
-"""The longest wait before an auto import that failed ``unexpected`` again is retried."""
-
-UNEXPECTED_ERROR = "unexpected"
-"""The ``error_code`` of a job that failed on something no domain error describes (a bug)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -682,27 +655,6 @@ class RepositoryHost(StrEnum):
     GIT = "git"
 
 
-_KNOWN_HOSTS = {
-    "github.com": RepositoryHost.GITHUB,
-    "gitlab.com": RepositoryHost.GITLAB,
-    "bitbucket.org": RepositoryHost.BITBUCKET,
-    "gitea.com": RepositoryHost.GITEA,
-    "codeberg.org": RepositoryHost.GITEA,
-}
-# These hosts have no nested groups: a longer path is a page (`/tree/main/docs`), not a repo.
-_FLAT_HOSTS = frozenset(_KNOWN_HOSTS) - {"gitlab.com"}
-_GIT_SUFFIX = re.compile(r"\.git\Z", re.IGNORECASE)
-_SCHEMES = frozenset({"https", "http", "ssh", "file"})
-_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?")
-_SSH_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
-# `user@host:path`, git's scp-like syntax. The path cannot start with `:` (`ext::...`).
-_SCP_LIKE = re.compile(
-    r"(?P<user>[A-Za-z0-9_][A-Za-z0-9._-]*)@(?P<host>[A-Za-z0-9][A-Za-z0-9.-]*):(?P<path>[^:].*)"
-)
-_UNSAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
-_ID_SEGMENTS = 2
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RepositoryUrl:
     """A git URL that passed ``parse``: the text to hand to git, where it lives, a library ID.
@@ -763,7 +715,7 @@ class RepositoryUrl:
         # and file URLs (fixture servers, local mirrors) have no such convention: last two.
         if len(segments) < _ID_SEGMENTS:
             raise InvalidRepositoryUrlError(UrlProblem.NO_OWNER)
-        if host in _FLAT_HOSTS and len(segments) != _ID_SEGMENTS:
+        if host in FLAT_HOSTS and len(segments) != _ID_SEGMENTS:
             raise InvalidRepositoryUrlError(UrlProblem.PAGE_URL)
         owner, name = (segments[0] if top_level_owner else segments[-2]), segments[-1]
         name = _GIT_SUFFIX.sub("", name)
@@ -814,7 +766,7 @@ def _is_host(host: str) -> bool:
 
 
 def _host_kind(host: str) -> RepositoryHost:
-    return _KNOWN_HOSTS.get(host, RepositoryHost.GIT)
+    return RepositoryHost(KNOWN_HOSTS.get(host, RepositoryHost.GIT))
 
 
 def _id_segment(raw: str) -> str:
@@ -823,9 +775,6 @@ def _id_segment(raw: str) -> str:
     if not segment or set(segment) == {"."}:
         raise InvalidRepositoryUrlError(UrlProblem.NO_ID)
     return segment
-
-
-_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -876,9 +825,6 @@ class DeployKey:
 
 
 Credential = AccessToken | DeployKey
-_MAX_TOKEN = 4096
-_MAX_KEY = 16 * 1024
-_TOKEN_USER = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
 def check_credential_fits(repository: RepositoryUrl, credential: Credential) -> None:
@@ -935,10 +881,6 @@ class RemoteRefs:
     refs: tuple[RemoteRef, ...] = ()
 
 
-_BAD_REF_CHARS = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
-_MAX_BRANCH = 255
-
-
 def branch_name(raw: str) -> str | None:
     """Return ``raw`` if it is a branch name git would accept (``git check-ref-format``), else None.
 
@@ -958,16 +900,6 @@ def branch_name(raw: str) -> str | None:
         and raw.isprintable()
     )
     return raw if ok else None
-
-
-DEFAULT_CHUNKER = "markdown"
-CHUNKERS = frozenset({DEFAULT_CHUNKER})
-"""The chunkers a library can choose: ``markdown`` cuts at headings with markdown-it-py.
-
-Chonkie was dropped (#27: its Markdown recipe needs the Hugging Face Hub and the network).
-"""
-MAX_CHUNK_CHARS = 1_000_000
-"""Upper bound of ``min_chars`` and ``max_chars``: bigger is no bound at all (a whole article)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1050,10 +982,6 @@ class ResolvedRef:
     commit_sha: str
 
 
-_HEADS, _TAGS, _PEELED = "refs/heads/", "refs/tags/", "^{}"
-_SHA_PREFIX = re.compile(r"[0-9a-f]{7,64}")
-
-
 def ref_tips(refs: RemoteRefs) -> tuple[ResolvedRef, ...]:
     """List the branches then the tags a remote advertises, each sorted, with commit SHAs.
 
@@ -1063,12 +991,12 @@ def ref_tips(refs: RemoteRefs) -> tuple[ResolvedRef, ...]:
     tags: dict[str, str] = {}
     peeled: dict[str, str] = {}
     for ref in refs.refs:
-        if ref.name.startswith(_HEADS) and (name := branch_name(ref.name.removeprefix(_HEADS))):
+        if ref.name.startswith(HEADS) and (name := branch_name(ref.name.removeprefix(HEADS))):
             branches[name] = ref.sha
-        elif ref.name.startswith(_TAGS):
-            tag = ref.name.removeprefix(_TAGS)
-            if tag.endswith(_PEELED):
-                peeled[tag.removesuffix(_PEELED)] = ref.sha
+        elif ref.name.startswith(TAGS):
+            tag = ref.name.removeprefix(TAGS)
+            if tag.endswith(PEELED):
+                peeled[tag.removesuffix(PEELED)] = ref.sha
             else:
                 tags[tag] = ref.sha
     return (
@@ -1117,15 +1045,7 @@ def resolve_ref(refs: RemoteRefs, requested: str | None) -> ResolvedRef:
     return ResolvedRef(name=sha, kind=RefKind.COMMIT, commit_sha=sha)
 
 
-ARTICLE_SUFFIXES = (".md", ".mdx")
-_MAX_PATTERNS = 64
-_MAX_PATTERN = 256
-_MAX_PATH = 1024
-_MAX_SEGMENT = 255
-_GLOB_CHARS = frozenset("*?{")
-
 type _Token = str | tuple[str, ...]  # text, or the alternatives of a `{a,b}`
-_ANY, _ONE = "*", "?"  # as tokens they are the 1-tuples ("*",) and ("?",)
 type _Segment = tuple[_Token, ...] | None  # None: `**`, any number of folders
 
 
@@ -1154,7 +1074,7 @@ def _segment(text: str) -> _Segment:
                     raise InvalidPathPatternError(PatternProblem.BRACE)
                 tokens.append(("{", *text[i + 1 : end].split(",")))
                 i = end
-            elif not (char == "*" and tokens and tokens[-1] == (_ANY,)):  # `**` in a name is `*`
+            elif not (char == "*" and tokens and tokens[-1] == (ANY,)):  # `**` in a name is `*`
                 tokens.append((char,))
         else:
             literal += char
@@ -1167,7 +1087,7 @@ def _segment(text: str) -> _Segment:
 @lru_cache(maxsize=512)
 def _glob(pattern: str) -> _Glob:
     """Parse a cleaned pattern. Matching never backtracks: see ``_matches``."""
-    folder = not _GLOB_CHARS & set(pattern)
+    folder = not GLOB_CHARS & set(pattern)
     parts = pattern.split("/")
     if not parts[-1]:  # `docs/` is `docs/**`
         parts[-1] = "**"
@@ -1188,9 +1108,9 @@ def _name_matches(tokens: tuple[_Token, ...], name: str) -> bool:
     for token in tokens:
         if isinstance(token, str):
             reach = {p + len(token) for p in reach if name.startswith(token, p)}
-        elif token == (_ANY,):
+        elif token == (ANY,):
             reach = set(range(min(reach), len(name) + 1)) if reach else set()
-        elif token == (_ONE,):
+        elif token == (ONE,):
             reach = {p + 1 for p in reach if p < len(name)}
         else:
             reach = {p + len(a) for p in reach for a in token[1:] if name.startswith(a, p)}
@@ -1307,17 +1227,6 @@ def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -
     """
     ruled = (rule.tag for rule in rules if rule.selection.selects(path))
     return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
-
-
-CONTEXT7_FILE = "context7.json"
-"""The root file context7 reads a repository's docs settings from (LIB-06)."""
-CONTEXT7_MAX_BYTES = 64 * 2**10
-"""A bigger ``context7.json`` is ignored with a warning, unread."""
-MAX_CONTEXT7_RULES = 20
-MAX_CONTEXT7_RULE_CHARS = 500
-MAX_PREVIOUS_VERSIONS = 50
-MAX_PREVIOUS_VERSION_CHARS = 255
-_GLOB_CHARS = frozenset("*?{[")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1449,12 +1358,12 @@ def _c7_root(folder: str) -> bool:
 
 def _c7_folder(folder: str) -> str:
     cleaned, _ = _c7_path(folder)
-    return cleaned if _GLOB_CHARS & set(cleaned) else f"{cleaned}/"
+    return cleaned if GLOB_CHARS & set(cleaned) else f"{cleaned}/"
 
 
 def _c7_exclude(entry: str, *, folder: bool) -> str:
     cleaned, anchored = _c7_path(entry)
-    if _GLOB_CHARS & set(cleaned):
+    if GLOB_CHARS & set(cleaned):
         return cleaned
     suffix = "/" if folder else ""
     return f"{cleaned}{suffix}" if anchored else f"**/{cleaned}{suffix}"
@@ -1546,27 +1455,6 @@ class NewLibrary:
 
 # ---------------------------------------------------------------- import
 
-DEFAULT_MAX_ARTICLE_BYTES = 2 * 2**20
-"""Files above this many bytes are skipped without being read."""
-
-DEFAULT_MAX_IMPORT_BYTES = 256 * 2**20
-"""An import whose selected articles add up to more than this many bytes fails."""
-
-DEFAULT_IMPORT_BATCH_FILES = 100
-"""Files an import parses and chunks per durable step: a resumed import loses at most these."""
-
-DEFAULT_MAX_IMAGE_BYTES = 2 * 2**20
-"""Referenced images above this many bytes are skipped without being read."""
-
-DEFAULT_MAX_IMAGES_BYTES = 32 * 2**20
-"""The images of one version are kept until they add up to this many bytes, then skipped."""
-
-MAX_IMAGES = 1000
-"""At most this many distinct images are imported per version; later ones are skipped."""
-
-MAX_JOB_PROBLEMS = 1000
-MAX_JOB_NOTES = 200
-
 
 def _dropped_reason(count: int) -> str:
     return f"{count} more skipped files are not listed"
@@ -1600,15 +1488,6 @@ class ImportedArticle:
     front_matter: dict[str, Any]
     content: str
     chunks: tuple[ArticleChunk, ...]
-
-
-IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml")
-_SVG = re.compile(
-    # Atomic group + tempered comment: no backtracking, so a hostile file cannot stall the loop.
-    rb"\A(?:\xef\xbb\xbf)?\s*(?>(?:<\?xml[^>]*\?>|<!--(?:(?!-->).)*-->)\s*)*"
-    rb"(?:<!DOCTYPE\s+svg[^>\[]*>\s*)?<svg[\s/>]",
-    re.DOTALL | re.IGNORECASE,
-)
 
 
 def sniff_image(data: bytes) -> str | None:
@@ -1654,11 +1533,6 @@ class GitRename:
         if not 0 < self.similarity <= MAX_SIMILARITY:
             message = f"similarity must be 1..{MAX_SIMILARITY}, not {self.similarity}"
             raise ValueError(message)
-
-
-MAX_SIMILARITY = 100
-MAX_RENAMES = 10_000
-"""Renames kept per version; git lists more only for a rewrite of the whole tree."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1853,9 +1727,6 @@ class ImportedRef:
     """The library's owner pinned it as the default version (LIB-10): retention keeps it."""
 
 
-_NUMERIC_REF = re.compile(r"[vV]?(\d{1,9}(?:\.\d{1,9}){0,7})")
-
-
 def _numbers(ref: str) -> tuple[int, ...] | None:
     match = _NUMERIC_REF.fullmatch(ref)
     return tuple(map(int, match[1].split("."))) if match else None
@@ -1917,10 +1788,6 @@ def compose_renames(
     ]
 
 
-ACTIVE_JOB_STATES = frozenset({JobState.QUEUED, JobState.RUNNING})
-"""A job in one of these states is unfinished: at most one import per (library, ref) may be."""
-
-
 class SyncStatus(StrEnum):
     """What a re-sync did with one version."""
 
@@ -1937,14 +1804,6 @@ class SyncStatus(StrEnum):
 
 
 # ---------------------------------------------------------------- the scheduled check (SYNC-02)
-
-MAX_TAG_PATTERN = 200
-MAX_KEEP_LAST = 100
-MIN_INTERVAL_MINUTES = 1
-MAX_INTERVAL_MINUTES = 7 * 24 * 60
-DEFAULT_KEEP_LAST = 5
-DEFAULT_INTERVAL_MINUTES = 60
-MAX_CHECK_ERROR = 500
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2021,9 +1880,6 @@ class AutoImportPlan:
     """Tags to import as ``auto`` versions, oldest first."""
     removals: tuple[str, ...] = ()
     """``auto`` versions that fell out of the newest ``keep_last``."""
-
-
-_ORDER_WIDTH = 8  # what ``_NUMERIC_REF`` allows: ``1.4`` ranks as ``1.4.0.0.0.0.0.0``
 
 
 def _order(ref: str) -> tuple[tuple[int, ...], str]:

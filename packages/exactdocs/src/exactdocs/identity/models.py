@@ -8,32 +8,22 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import NewType
 
+from exactdocs.identity.constants import (
+    _IPV6_NETWORK_BITS,
+    _MAX_DOUBLINGS,
+    _NAT64,
+    ABSOLUTE_TIMEOUT,
+    FIRST_WAIT,
+    FORGET_FAILURES_AFTER,
+    FREE_FAILURES,
+    IDLE_TIMEOUT,
+    LONGEST_WAIT,
+    MAX_TOKEN_NAME_LENGTH,
+    MAX_USERNAME_LENGTH,
+)
 from exactdocs.identity.errors import InvalidTokenNameError, InvalidUsernameError
 
 AccountId = NewType("AccountId", str)
-
-MAX_USERNAME_LENGTH = 64
-MAX_TOKEN_NAME_LENGTH = 64
-VALUE_PREFIX = "exd_"  # recognizable, so secret scanners and humans can spot a leaked token
-PREFIX_SHOWN = len(VALUE_PREFIX) + 4  # the part of a token kept readable, to tell tokens apart
-IDLE_TIMEOUT = timedelta(days=7)  # a session unused for this long ends
-ABSOLUTE_TIMEOUT = timedelta(days=30)  # and none lives longer than this, however busy
-# Sign-in throttle, counted apart per client address and per username: this many failures are
-# free, then each one more doubles the wait before the next attempt, from FIRST_WAIT up to
-# LONGEST_WAIT. Failures are forgotten once none came for FORGET_FAILURES_AFTER.
-FREE_FAILURES = 5
-FIRST_WAIT = timedelta(seconds=5)
-LONGEST_WAIT = timedelta(minutes=15)
-FORGET_FAILURES_AFTER = timedelta(hours=1)
-# An address that signed into a username is remembered this long after its last success: from
-# there, that username's own count does not apply (its address count still does), so failures
-# others cause for the username cannot lock its owner out of a machine they already use.
-REMEMBER_SIGN_INS_FOR = timedelta(days=30)
-_IPV6_NETWORK_BITS = 64  # one IPv6 client usually holds a whole /64
-# NAT64 (RFC 6052 well-known prefix) puts the IPv4 client in the last 32 bits, so every IPv4
-# client reached through it would share one /64.
-_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
-_MAX_DOUBLINGS = 8  # FIRST_WAIT * 2**8 is past LONGEST_WAIT; also keeps the arithmetic small
 
 
 class Role(StrEnum):

@@ -22,10 +22,8 @@ from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
+from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATIONS, MIN_SQLITE
 from exactdocs.bootstrap.settings import Settings
-
-MIGRATIONS = Path(__file__).parent / "migrations"
-BUSY_TIMEOUT_MS = 5000
 
 
 class StartupError(RuntimeError):
@@ -37,9 +35,6 @@ def alembic_config(location: Path = MIGRATIONS) -> Config:
     config = Config()
     config.set_main_option("script_location", str(location).replace("%", "%%"))
     return config
-
-
-MIN_SQLITE = (3, 35)  # search uses `WITH ... AS MATERIALIZED`
 
 
 def _check_sqlite() -> None:

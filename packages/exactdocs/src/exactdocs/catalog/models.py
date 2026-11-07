@@ -1,6 +1,5 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -8,6 +7,17 @@ from difflib import get_close_matches
 from enum import StrEnum
 from typing import Any, NewType, Self
 
+from exactdocs.catalog.constants import (
+    _HEADING_LEVELS,
+    _ID_PARTS,
+    _OBJECT_ID,
+    _SEGMENT,
+    _SHORT_SHA,
+    _STABLE_SEMVER,
+    IMAGE_TYPES,
+    MAX_CLOSE_MATCHES,
+    MAX_SIMILARITY,
+)
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
     DuplicateArticlePathError,
@@ -27,17 +37,6 @@ from exactdocs.catalog.errors import (
     SelfRenameError,
 )
 from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
-
-# A segment is `[a-z0-9._-]+` once lower-cased, but never only dots (`.`, `..`).
-_ID_PARTS = 3  # "", owner, repo
-_HEADING_LEVELS = 6
-_SEGMENT = re.compile(r"(?!\.+$)[A-Za-z0-9._-]+")
-_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-_SHORT_SHA = re.compile(r"[0-9a-f]{7,64}")
-# Stable semver (https://semver.org) with an optional `v`: a pre-release suffix means not stable.
-_STABLE_SEMVER = re.compile(
-    r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?"
-)
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -443,15 +442,6 @@ class ManifestRename:
             raise InvalidSimilarityError(self.similarity)
 
 
-MAX_LIBRARY_RULES = 20
-MAX_LIBRARY_RULE_CHARS = 500
-"""A library's rules: at most this many, each one line of at most this many characters."""
-MAX_SIMILARITY = 100
-MAX_RENAMES = 10_000
-IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"})
-"""The only types the catalog stores and serves (the importer sniffs, the catalog re-checks)."""
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ManifestImage:
     """One image of a manifest: the repository path articles reference, and the blob it holds."""
@@ -539,9 +529,6 @@ class GarbageCollected:
     manifests: int
     contents: int
     images: int = 0
-
-
-MAX_CLOSE_MATCHES = 5
 
 
 def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHES) -> list[str]:

@@ -15,10 +15,11 @@ from sqlalchemy import text
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.known_hosts import PINNED, seed_known_hosts
+from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
+from exactdocs.ingestion.constants import PINNED
 from exactdocs.ingestion.errors import CredentialsRequiredError
 from exactdocs.ingestion.models import AccessToken, DeployKey
 from exactdocs.ingestion.ports import CredentialVault

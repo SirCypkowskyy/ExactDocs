@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
+from exactdocs.catalog.constants import _ASSET_HEADERS, _SVG
 from exactdocs.catalog.dtos import (
     Article,
     ArticleList,
@@ -42,22 +43,6 @@ from exactdocs.catalog.ports.driving import (
     UpdateLibrary,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
-
-# Repository content is untrusted. These headers make an image safe to open directly, too:
-# nothing may load or run in its document (`default-src 'none'`, `sandbox`: no scripts even in an
-# SVG), the browser must not guess another type, and no other site may embed it.
-_ASSET_HEADERS = {
-    "Content-Security-Policy": (
-        "default-src 'none'; style-src 'unsafe-inline'; sandbox; "
-        "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-    ),
-    "X-Content-Type-Options": "nosniff",
-    "Cross-Origin-Resource-Policy": "same-origin",
-    # The URL names a path of a ref, which can move; the bytes are named by the blob SHA (ETag).
-    # `private`: for the signed-in caller only. `no-cache`: revalidate, 304 while the SHA is equal.
-    "Cache-Control": "private, no-cache",
-}
-_SVG = "image/svg+xml"
 
 
 def build_router(

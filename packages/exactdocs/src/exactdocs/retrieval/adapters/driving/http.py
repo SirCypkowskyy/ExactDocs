@@ -1,6 +1,5 @@
 """REST adapter for retrieval."""
 
-import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -11,11 +10,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.alias_generators import to_camel
 
 from exactdocs.retrieval.adapters.driving.mcp import format_docs
-from exactdocs.retrieval.dtos import (
-    MAX_NAME,
+from exactdocs.retrieval.constants import (
+    _AT_VERSION,
+    CHARS_PER_TOKEN,
+    MAX_LIBRARY_ID,
     MAX_QUERY,
     MAX_TAG,
     MAX_TAGS,
+    NOTICE_HEADER,
+    POINTER_TEXT,
+)
+from exactdocs.retrieval.dtos import (
+    MAX_NAME,
     ChunkOut,
     LibraryMatchOut,
     QueryDocsQuery,
@@ -27,7 +33,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     SearchDocsResult,
 )
-from exactdocs.retrieval.models import CHARS_PER_TOKEN, POINTER_TEXT, TagMatch
+from exactdocs.retrieval.models import TagMatch
 from exactdocs.retrieval.ports.driving import (
     QueryDocs,
     ReadChunk,
@@ -36,13 +42,6 @@ from exactdocs.retrieval.ports.driving import (
     SearchDocs,
 )
 from exactdocs_kernel import NOTICE
-
-NOTICE_HEADER = "X-ExactDocs-Notice"
-MAX_LIBRARY_ID = 500  # context7's cap on `libraryId`
-
-
-# context7 also writes a pinned version as `/owner/repo@ref`; ours is `/owner/repo/ref`.
-_AT_VERSION = re.compile(r"^(/[^/@]+/[^/@]+)@(.+)$")
 
 
 class _Camel(BaseModel):

@@ -9,7 +9,7 @@ from behave import given, then, when
 from behave.runner import Context
 
 from exactdocs.bootstrap import cli
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 
 INITIALIZE = {
     "jsonrpc": "2.0",

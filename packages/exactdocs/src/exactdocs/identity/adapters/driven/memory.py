@@ -2,20 +2,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
-from exactdocs.identity.models import (
+from exactdocs.identity.constants import (
     FREE_FAILURES,
+    MAX_FAILED_SIGN_IN_KEYS,
     REMEMBER_SIGN_INS_FOR,
-    Account,
-    AccountId,
-    ApiToken,
-    FailedSignIns,
-    Session,
-    Username,
 )
-
-# Enough for every address and username a busy instance sees in an hour, and small in memory
-# (~200 bytes a record): a flood of made-up usernames cannot grow the log without bound.
-MAX_FAILED_SIGN_IN_KEYS = 10_000
+from exactdocs.identity.models import Account, AccountId, ApiToken, FailedSignIns, Session, Username
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

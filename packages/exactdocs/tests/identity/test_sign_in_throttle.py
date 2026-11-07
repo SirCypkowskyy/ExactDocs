@@ -15,21 +15,20 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
+from exactdocs.identity.constants import (
+    FIRST_WAIT,
+    FORGET_FAILURES_AFTER,
+    FREE_FAILURES,
+    LONGEST_WAIT,
+    REMEMBER_SIGN_INS_FOR,
+)
 from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     LoginForTokenCommand,
 )
 from exactdocs.identity.errors import InvalidCredentialsError, SignInThrottledError
-from exactdocs.identity.models import (
-    FIRST_WAIT,
-    FORGET_FAILURES_AFTER,
-    FREE_FAILURES,
-    LONGEST_WAIT,
-    REMEMBER_SIGN_INS_FOR,
-    FailedSignIns,
-    address_key,
-)
+from exactdocs.identity.models import FailedSignIns, address_key
 from exactdocs.identity.module import IdentityModule
 
 HORSE = "correct horse battery staple"

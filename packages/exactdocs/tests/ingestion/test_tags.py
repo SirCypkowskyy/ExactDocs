@@ -1,11 +1,10 @@
 import pytest
 
 from exactdocs.ingestion import models
+from exactdocs.ingestion.constants import MAX_TAG_RULES, PARSER_VERSION
 from exactdocs.ingestion.errors import InvalidPathPatternError, InvalidTagError
 from exactdocs.ingestion.models import (
-    MAX_TAG_RULES,
     MAX_TAGS,
-    PARSER_VERSION,
     ChunkingConfig,
     TagRule,
     article_tags,

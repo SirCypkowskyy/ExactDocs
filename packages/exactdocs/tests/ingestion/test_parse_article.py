@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.models import (
-    PARSER_VERSION,
     StoredArticle,
     git_blob_sha,
     parse_article,

@@ -14,9 +14,18 @@ from pydantic import (
     model_validator,
 )
 
-from exactdocs.catalog.models import (
+from exactdocs.catalog.constants import (
+    _PINNED,
+    DEFAULT_GRACE_SECONDS,
+    MAX_DESCRIPTION,
     MAX_LIBRARY_RULE_CHARS,
     MAX_LIBRARY_RULES,
+    MAX_STORED_ARTICLE_FILES,
+    MAX_SUMMARY_REFS,
+    MAX_TAG_RULES,
+    MAX_TITLE,
+)
+from exactdocs.catalog.models import (
     GarbageCollected,
     HostKind,
     Library,
@@ -127,13 +136,6 @@ class ResolvedVersion(VersionOut):
         """Map the library and the chosen version."""
         found = VersionOut.from_model(version, is_default=version == library.default_version())
         return cls(library=str(library.id), **found.model_dump())
-
-
-MAX_SUMMARY_REFS = 50
-_PINNED = (
-    "True when an owner pinned `default_version`; false when it follows the default-version rule "
-    "(highest stable semver tag, else the default branch, else the newest import)."
-)
 
 
 class LibrarySummary(_Dto):
@@ -385,9 +387,6 @@ class DiscardedManifests(_Dto):
     """How many pending manifests were deleted."""
 
     count: int
-
-
-DEFAULT_GRACE_SECONDS = 7 * 24 * 3600
 
 
 class CollectGarbageCommand(_Dto):
@@ -827,9 +826,6 @@ class ManifestStates(_Dto):
     states: dict[str, ManifestState]
 
 
-MAX_TAG_RULES = 64
-
-
 class TagRuleIn(_Dto):
     """Articles whose path matches `pattern` get `tag` (already normalized by the importer)."""
 
@@ -850,8 +846,6 @@ class CreateLibraryCommand(_Dto):
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
 
 
-MAX_TITLE = 200
-MAX_DESCRIPTION = 1000
 _Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
 _Description = Annotated[str, Field(max_length=MAX_DESCRIPTION)]
 _Rule = Annotated[str, Field(min_length=1, max_length=MAX_LIBRARY_RULE_CHARS)]
@@ -1024,9 +1018,6 @@ class SetImportedTagsCommand(_Dto):
 
     manifest_id: str = Field(min_length=1)
     articles: list[ArticleTags]
-
-
-MAX_STORED_ARTICLE_FILES = 1000
 
 
 class StoredFileIn(_Dto):

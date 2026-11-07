@@ -19,8 +19,8 @@ from app_lifespan import serving
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.constants import MAX_TOKENS_PER_ACCOUNT
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.identity.use_cases import MAX_TOKENS_PER_ACCOUNT
 
 HORSE = "correct horse battery staple"
 LOGIN = {"username": "ada", "password": HORSE}

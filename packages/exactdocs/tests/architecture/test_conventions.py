@@ -75,6 +75,8 @@ class Violation:
     """Rule name, as listed in the module docstring."""
     message: str
     """What is wrong and how to fix it."""
+    subject: str = ""
+    """Qualified name of what is wrong (``Class.method``, ``Class.field``); the baseline key."""
 
     def __str__(self) -> str:
         """Render as ``path:line: rule: message``.
@@ -338,7 +340,11 @@ def _parameters(function: ast.FunctionDef | ast.AsyncFunctionDef, *, method: boo
 
 
 def _check_function(
-    path: PurePosixPath, function: ast.FunctionDef | ast.AsyncFunctionDef, *, method: bool
+    path: PurePosixPath,
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    method: bool,
+    qualname: str,
 ) -> Iterator[Violation]:
     """A function has a docstring that documents its parameters and its result.
 
@@ -346,6 +352,7 @@ def _check_function(
         path: The module's path.
         function: The function definition.
         method: Whether it is defined directly in a class body.
+        qualname: Its qualified name in the module (``Class.method``, ``outer.inner``).
 
     Yields:
         Every broken docstring rule.
@@ -353,7 +360,7 @@ def _check_function(
     decorators = _decorators(function)
     if "overload" in decorators:
         return
-    where = {"path": str(path), "line": function.lineno}
+    where = {"path": str(path), "line": function.lineno, "subject": qualname}
     docstring = ast.get_docstring(function)
     if docstring is None:
         yield Violation(
@@ -490,12 +497,13 @@ def _sets_attribute_docstrings(node: ast.ClassDef) -> bool:
     return False
 
 
-def _check_fields(path: PurePosixPath, node: ast.ClassDef) -> Iterator[Violation]:
+def _check_fields(path: PurePosixPath, node: ast.ClassDef, qualname: str) -> Iterator[Violation]:
     """Every field of a dataclass or pydantic model has an attribute docstring.
 
     Args:
         path: The module's path.
         node: The class definition.
+        qualname: The class's qualified name in the module.
 
     Yields:
         One violation per undocumented field.
@@ -510,6 +518,7 @@ def _check_fields(path: PurePosixPath, node: ast.ClassDef) -> Iterator[Violation
                     line=statement.lineno,
                     rule="field-without-docstring",
                     message=f'`{node.name}.{name}`: add a """docstring""" on the line after it',
+                    subject=f"{qualname}.{name}",
                 )
 
 
@@ -649,18 +658,16 @@ def check(modules: list[_Module]) -> list[Violation]:
     for module in modules:
         lines = module.source.splitlines()
         found.extend(_check_constants(module.path, module.tree))
-        for function, method in _functions(module.tree, in_class=False):
-            found.extend(_check_function(module.path, function, method=method))
+        for function, method, qualname in _functions(module.tree, in_class=False, prefix=""):
+            found.extend(_check_function(module.path, function, method=method, qualname=qualname))
         dotted = _dotted(module.path)
-        for node in ast.walk(module.tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
+        for node, qualname in _classes(module.tree, prefix=""):
             key = (dotted, node.name)
             decorator = _dataclass_decorator(node)
             if decorator is not None:
                 found.extend(_check_dataclass(module.path, lines, node, decorator))
             if decorator is not None or key in models:
-                found.extend(_check_fields(module.path, node))
+                found.extend(_check_fields(module.path, node, qualname))
             if key in models and key not in configured:
                 found.append(
                     Violation(
@@ -677,23 +684,46 @@ def check(modules: list[_Module]) -> list[Violation]:
 
 
 def _functions(
-    node: ast.AST, *, in_class: bool
-) -> Iterator[tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool]]:
+    node: ast.AST, *, in_class: bool, prefix: str
+) -> Iterator[tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool, str]]:
     """Every function defined under a node, at any depth.
 
     Args:
         node: A module, class, function or statement.
         in_class: Whether ``node`` is (inside the statements of) a class body.
+        prefix: Qualified name of ``node``'s scope plus ``.`` (empty for the module).
 
     Yields:
-        Each function and whether it is a method (defined in a class body).
+        Each function, whether it is a method (defined in a class body) and its qualified name.
     """
     for child in ast.iter_child_nodes(node):
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            yield child, in_class
-            yield from _functions(child, in_class=False)
+            yield child, in_class, prefix + child.name
+            yield from _functions(child, in_class=False, prefix=f"{prefix}{child.name}.")
+        elif isinstance(child, ast.ClassDef):
+            yield from _functions(child, in_class=True, prefix=f"{prefix}{child.name}.")
         else:
-            yield from _functions(child, in_class=isinstance(child, ast.ClassDef) or in_class)
+            yield from _functions(child, in_class=in_class, prefix=prefix)
+
+
+def _classes(node: ast.AST, *, prefix: str) -> Iterator[tuple[ast.ClassDef, str]]:
+    """Every class defined under a node, at any depth.
+
+    Args:
+        node: A module, class, function or statement.
+        prefix: Qualified name of ``node``'s scope plus ``.`` (empty for the module).
+
+    Yields:
+        Each class and its qualified name.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.ClassDef):
+            yield child, prefix + child.name
+            yield from _classes(child, prefix=f"{prefix}{child.name}.")
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield from _classes(child, prefix=f"{prefix}{child.name}.")
+        else:
+            yield from _classes(child, prefix=prefix)
 
 
 def parse(path: PurePosixPath, source: str) -> _Module:
@@ -725,11 +755,11 @@ def _sources() -> Iterable[Path]:
 # ---------------------------------------------------------------- the code base
 
 
-# Rules the existing code is still being brought into compliance with; emptied by this change.
-PENDING = {
-    "constant-outside-constants",
-    "constant-not-final",
-    "constant-without-docstring",
+# Docstrings that existing code still lacks, one `<path> <qualified name> <rule>` per line. New
+# code gets no entry: the list only shrinks (an entry that no longer fails must be deleted), and
+# only the docstring rules may appear in it. Emptying it is tracked in its own issue.
+BASELINE = Path(__file__).parent / "conventions_baseline.txt"
+BASELINE_RULES = {
     "function-without-docstring",
     "docstring-missing-args",
     "docstring-missing-returns",
@@ -737,17 +767,56 @@ PENDING = {
 }
 
 
-def test_the_code_base_follows_the_conventions() -> None:
+def _key(violation: Violation) -> str:
+    """Baseline key of a violation: independent of line numbers.
+
+    Args:
+        violation: The violation.
+
+    Returns:
+        ``<path> <qualified name> <rule>``.
+    """
+    return f"{violation.path} {violation.subject} {violation.rule}"
+
+
+def _baseline() -> set[str]:
+    """Read the baseline.
+
+    Returns:
+        Its keys (comments and blank lines skipped).
+    """
+    lines = BASELINE.read_text().splitlines() if BASELINE.exists() else []
+    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+
+
+def _code_base() -> list[Violation]:
+    """Check every source file under ``packages/*/src``.
+
+    Returns:
+        The violations.
+    """
     modules = [
         parse(PurePosixPath(file.relative_to(PACKAGES.parent).as_posix()), file.read_text())
         for file in _sources()
     ]
     assert len(modules) > 50, "the checker found no sources; is PACKAGES right?"
-    violations = [v for v in check(modules) if v.rule not in PENDING]
+    return check(modules)
+
+
+def test_the_code_base_follows_the_conventions() -> None:
+    known = _baseline()
+    violations = [v for v in _code_base() if _key(v) not in known]
     assert not violations, (
         f"{len(violations)} convention violation(s) (docs/architecture.md, Python conventions):\n"
         + "\n".join(map(str, violations))
     )
+
+
+def test_the_baseline_only_shrinks() -> None:
+    known = _baseline()
+    assert {key.rsplit(" ", 1)[-1] for key in known} <= BASELINE_RULES
+    stale = known - {_key(v) for v in _code_base()}
+    assert not stale, f"fixed, now remove them from {BASELINE.name}: {sorted(stale)}"
 
 
 # ---------------------------------------------------------------- each rule, on fixtures

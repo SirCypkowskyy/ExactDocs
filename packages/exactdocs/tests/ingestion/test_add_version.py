@@ -6,6 +6,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import IMPORT_JOB
 from exactdocs.ingestion.dtos import AddVersionCommand
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
@@ -15,7 +16,6 @@ from exactdocs.ingestion.errors import (
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
     Credential,
     ImportedRef,
     ImportSource,

@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from steps.http_steps import DEMO_COOKIE, store_demo_catalog
 from steps.import_steps import LIBRARY, wait_for_job
 

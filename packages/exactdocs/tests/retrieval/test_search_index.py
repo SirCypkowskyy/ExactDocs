@@ -22,7 +22,8 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_fts import _SEARCH, SqliteSearchIndex, _statements
+from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex, _statements
+from exactdocs.retrieval.constants import _SEARCH
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,

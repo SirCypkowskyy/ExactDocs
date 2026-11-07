@@ -4,10 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self, cast
 
+from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS
 from exactdocs.ingestion.errors import CredentialsRequiredError, VersionImportingError
 from exactdocs.ingestion.models import (
-    ACTIVE_JOB_STATES,
-    IMPORT_KINDS,
     ArticleChunk,
     AutoSync,
     CopiedVersion,

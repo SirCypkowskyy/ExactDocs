@@ -12,8 +12,9 @@ from exactdocs.bootstrap.database import migrate
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.dtos import GetJobQuery
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
+from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")  # also ends the setup state
 

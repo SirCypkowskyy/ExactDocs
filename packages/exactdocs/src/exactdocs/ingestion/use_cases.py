@@ -1,7 +1,6 @@
 """Ingestion use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
 import asyncio
-import codecs
 import logging
 import os
 import stat
@@ -16,6 +15,38 @@ from functools import partial
 from pathlib import Path
 from typing import BinaryIO, Self
 
+from exactdocs.ingestion.constants import (
+    ACTIVE_JOB_STATES,
+    CHANGE_JOBS,
+    CHECKED_KINDS,
+    COLLECT_JOB,
+    CONTEXT7_FILE,
+    CONTEXT7_MAX_BYTES,
+    DEFAULT_GRACE_SECONDS,
+    DEFAULT_IMPORT_BATCH_FILES,
+    DEFAULT_MAX_ARTICLE_BYTES,
+    DEFAULT_MAX_IMAGE_BYTES,
+    DEFAULT_MAX_IMAGES_BYTES,
+    DEFAULT_MAX_IMPORT_BYTES,
+    IMPORT_JOB,
+    IMPORT_KINDS,
+    KNOWN_BATCH,
+    LIBRARY_KINDS,
+    MAX_CONTROL_RATIO,
+    MAX_IMAGES,
+    MAX_LISTED_REFS,
+    MAX_PREVIEW_FILES,
+    MAX_WANTED_IMAGES,
+    PARSER_VERSION,
+    PERMANENT_IMPORT_FAILURES,
+    REFRESH_JOB,
+    SAVE_EVERY_FILES,
+    SAVE_EVERY_SECONDS,
+    UNEXPECTED_BACKOFF_CAP,
+    UNEXPECTED_ERROR,
+    JobKind,
+)
+from exactdocs.ingestion.constants._use_cases import _BOMS, _MAX_DOUBLINGS, _NOT_TEXT
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
     AddedVersion,
@@ -87,28 +118,6 @@ from exactdocs.ingestion.errors import (
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
-    ACTIVE_JOB_STATES,
-    COLLECT_JOB,
-    CONTEXT7_FILE,
-    CONTEXT7_MAX_BYTES,
-    DEFAULT_GRACE_SECONDS,
-    DEFAULT_IMPORT_BATCH_FILES,
-    DEFAULT_MAX_ARTICLE_BYTES,
-    DEFAULT_MAX_IMAGE_BYTES,
-    DEFAULT_MAX_IMAGES_BYTES,
-    DEFAULT_MAX_IMPORT_BYTES,
-    IMPORT_JOB,
-    IMPORT_KINDS,
-    LIBRARY_KINDS,
-    MAX_IMAGES,
-    PARSER_VERSION,
-    PERMANENT_IMPORT_FAILURES,
-    RECHUNK_JOB,
-    REFRESH_JOB,
-    REPROCESS_JOB,
-    RETAG_JOB,
-    UNEXPECTED_BACKOFF_CAP,
-    UNEXPECTED_ERROR,
     ArticleChunk,
     AutoSync,
     ChunkingConfig,
@@ -125,7 +134,6 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
-    JobKind,
     JobState,
     NewLibrary,
     ParsedArticle,
@@ -190,9 +198,6 @@ from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLib
 from exactdocs_kernel import Clock, DomainError, NotFoundError, paginate
 
 log = logging.getLogger(__name__)
-
-MAX_LISTED_REFS = 1000
-MAX_PREVIEW_FILES = 1000
 
 
 def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
@@ -445,10 +450,6 @@ async def _run(
         raise
 
 
-SAVE_EVERY_FILES = 100
-SAVE_EVERY_SECONDS = 0.25
-
-
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- job counters
 class _Progress:
     """Implements ``ports.driven.JobProgress``: keeps the latest job, stores it every so often.
@@ -497,16 +498,6 @@ def _describe(error: Exception) -> str:
     return str(error) if isinstance(error, DomainError) else f"unexpected {type(error).__name__}"
 
 
-# Upstream failures, by what users can do about them; the git adapter's finer errors stay the
-# HTTP answer of the request that met them (adding a library), a job records the coarse code.
-_UPSTREAM_CODES: tuple[tuple[type[DomainError], SyncErrorCode], ...] = (
-    (NotAGitRepositoryError, SyncErrorCode.REPO_UNREACHABLE),
-    (RepositoryUnreachableError, SyncErrorCode.REPO_UNREACHABLE),
-    (RepositoryAuthRequiredError, SyncErrorCode.AUTH_FAILED),
-    (CredentialsRequiredError, SyncErrorCode.AUTH_FAILED),
-)
-
-
 def failure_code(error: Exception) -> str:
     """Return the stable code a failed job records for ``error``.
 
@@ -515,9 +506,13 @@ def failure_code(error: Exception) -> str:
     ``NotAGitRepositoryError`` first, see ``_anonymous``); any other domain error keeps its own
     code (``no_articles``, ``host_key_changed``...), anything else is ``unexpected``.
     """
-    for kind, code in _UPSTREAM_CODES:
-        if isinstance(error, kind):
-            return code
+    # Upstream failures, by what users can do about them; the git adapter's finer errors stay the
+    # HTTP answer of the request that met them (adding a library), a job records the coarse code.
+    match error:
+        case NotAGitRepositoryError() | RepositoryUnreachableError():
+            return SyncErrorCode.REPO_UNREACHABLE
+        case RepositoryAuthRequiredError() | CredentialsRequiredError():
+            return SyncErrorCode.AUTH_FAILED
     return error.code if isinstance(error, DomainError) else UNEXPECTED_ERROR
 
 
@@ -783,10 +778,6 @@ def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
     }
 
 
-_CHECKED_KINDS = frozenset({RefKind.BRANCH, RefKind.TAG})
-"""What a sync asks the remote about: a commit names itself and cannot move or go."""
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SyncLibraryUseCase:
     """Implements ``ports.driving.SyncLibrary``."""
@@ -822,7 +813,7 @@ class SyncLibraryUseCase:
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
-        checked = [v for v in versions if v.kind in _CHECKED_KINDS]
+        checked = [v for v in versions if v.kind in CHECKED_KINDS]
         jobs = await self.jobs.list_for_library(library)  # newest first
         busy = _busy_refs(jobs)
         newest: dict[str, Job] = {}
@@ -879,7 +870,7 @@ class SyncLibraryUseCase:
                 update={"error_code": job.error_code, "error": job.error}
             )
 
-        if current.kind not in _CHECKED_KINDS:
+        if current.kind not in CHECKED_KINDS:
             return outcome(SyncStatus.PINNED, current.commit_sha)
         if current.ref in busy:
             return outcome(SyncStatus.IMPORTING, current.commit_sha, busy[current.ref].id)
@@ -1080,12 +1071,13 @@ def _settings_change(
     return None
 
 
-_CHANGE_JOBS = {
-    SettingsChange.PATHS: REPROCESS_JOB,
-    SettingsChange.CHUNKING: RECHUNK_JOB,
-    SettingsChange.TAGS: RETAG_JOB,
-}
-_JOB_CHANGES = {kind: change for change, kind in _CHANGE_JOBS.items()}
+def _job_changes() -> dict[JobKind, SettingsChange]:
+    """The settings change each re-processing job applies.
+
+    Returns:
+        ``CHANGE_JOBS`` the other way round.
+    """
+    return {kind: SettingsChange(change) for change, kind in CHANGE_JOBS.items()}
 
 
 def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
@@ -1098,7 +1090,7 @@ def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
     covered = 0
     worst: SettingsChange | None = None
     for job in jobs:
-        change = _JOB_CHANGES.get(job.kind)
+        change = _job_changes().get(job.kind)
         if change is None:
             continue
         if job.state is JobState.FAILED:
@@ -1207,12 +1199,12 @@ class UpdateLibrarySettingsUseCase:
         return change, refs, await self._queue(library, change, jobs)
 
     async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
-        reusable = {kind for kind, done in _JOB_CHANGES.items() if done.reach >= change.reach}
+        reusable = {kind for kind, done in _job_changes().items() if done.reach >= change.reach}
         for job in jobs:
             if job.kind in reusable and job.state is JobState.QUEUED:
                 return job.id
         queued = await self.enqueue_job(
-            EnqueueJobCommand(kind=_CHANGE_JOBS[change], library=library)
+            EnqueueJobCommand(kind=CHANGE_JOBS[change], library=library)
         )
         return queued.id
 
@@ -2144,8 +2136,6 @@ def _full_refs(kind: RefKind, name: str) -> list[str]:
     return [] if prefix is None else [prefix + name]
 
 
-KNOWN_BATCH = 500
-MAX_WANTED_IMAGES = 4 * MAX_IMAGES  # distinct image paths looked for per version
 _cleanups: set[asyncio.Future[None]] = set()  # the loop holds tasks weakly
 
 
@@ -2491,17 +2481,6 @@ def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:
     return git_blob_sha(data), text, len(data)
 
 
-# FF FE 00 00 is also a UTF-16-LE file starting with U+0000; UTF-32 is tried first, and a file
-# that then fails to decode is reported undecodable, which is right for such a file anyway.
-_BOMS = (
-    (codecs.BOM_UTF32_LE, "utf-32"),
-    (codecs.BOM_UTF32_BE, "utf-32"),
-    (codecs.BOM_UTF16_LE, "utf-16"),
-    (codecs.BOM_UTF16_BE, "utf-16"),
-)
-MAX_CONTROL_RATIO = 0.02
-
-
 def _decode(data: bytes) -> str | Skip:
     """UTF-8, else UTF-16/32 announced by a BOM, else Windows-1252; NUL bytes mean binary.
 
@@ -2527,9 +2506,6 @@ def _decode(data: bytes) -> str | Skip:
         if controls <= len(text) * MAX_CONTROL_RATIO:
             return text
     return Skip(code=ProblemCode.UNDECODABLE, reason=_NOT_TEXT)
-
-
-_NOT_TEXT = "not text in any supported encoding"
 
 
 def _read(file: Path, limit: int) -> bytes | Skip:
@@ -2948,9 +2924,6 @@ def _failed_tags(
         if last.error_code in PERMANENT_IMPORT_FAILURES or backing_off:
             held.add((ref, last.commit_sha))
     return held
-
-
-_MAX_DOUBLINGS = 16
 
 
 def _backoff(tried: Sequence[Job], interval: timedelta) -> timedelta:

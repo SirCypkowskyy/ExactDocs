@@ -16,7 +16,8 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import InMemoryDefaultVersions, InMemoryLibraries
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_fts import FORMAT, SqliteSearchIndex
+from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
+from exactdocs.retrieval.constants import FORMAT
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs.retrieval.models import DocTarget, SearchableVersion, TagFilter
 from exactdocs.retrieval.module import RetrievalModule

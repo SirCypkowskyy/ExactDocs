@@ -12,6 +12,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import IMPORT_JOB, REFRESH_JOB
 from exactdocs.ingestion.dtos import EnqueueJobCommand, ReimportVersionCommand, SyncLibraryCommand
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
@@ -26,8 +27,6 @@ from exactdocs.ingestion.errors import (
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    REFRESH_JOB,
     AccessToken,
     Credential,
     ImportedRef,

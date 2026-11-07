@@ -16,10 +16,11 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
 )
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
-from exactdocs.ingestion.models import Job, JobId, JobKind
+from exactdocs.ingestion.constants import JobKind
+from exactdocs.ingestion.models import Job, JobId
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 NOT_A_HASH = "not-a-hash"

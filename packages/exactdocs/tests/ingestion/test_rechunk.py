@@ -9,15 +9,13 @@ import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCheckpoints, InMemoryLibrarySources
+from exactdocs.ingestion.constants import PARSER_VERSION, RECHUNK_JOB, REFRESH_JOB
 from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
     ReprocessFailedError,
     StoredTextOutdatedError,
 )
 from exactdocs.ingestion.models import (
-    PARSER_VERSION,
-    RECHUNK_JOB,
-    REFRESH_JOB,
     ArticleChunk,
     ChunkingConfig,
     CopiedArticle,

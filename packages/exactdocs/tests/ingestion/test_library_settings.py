@@ -15,6 +15,13 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import (
+    IMPORT_JOB,
+    RECHUNK_JOB,
+    REFRESH_JOB,
+    REPROCESS_JOB,
+    RETAG_JOB,
+)
 from exactdocs.ingestion.dtos import (
     ChunkingIn,
     EnqueueJobCommand,
@@ -33,11 +40,6 @@ from exactdocs.ingestion.errors import (
     ReprocessFailedError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    RECHUNK_JOB,
-    REFRESH_JOB,
-    REPROCESS_JOB,
-    RETAG_JOB,
     ChunkingConfig,
     ImportedRef,
     ImportSource,

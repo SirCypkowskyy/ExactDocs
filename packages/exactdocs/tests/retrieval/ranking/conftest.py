@@ -21,7 +21,8 @@ from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
-from exactdocs.ingestion.models import IMPORT_JOB, Job, JobId, RefKind
+from exactdocs.ingestion.constants import IMPORT_JOB
+from exactdocs.ingestion.models import Job, JobId, RefKind
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
 from exactdocs_kernel import SystemClock

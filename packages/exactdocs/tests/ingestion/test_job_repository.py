@@ -11,8 +11,9 @@ from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.errors import VersionImportingError
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode, RefKind
+from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)

@@ -13,18 +13,19 @@ from fastmcp import Client, FastMCP
 from mcp.shared.exceptions import MCPError as McpError
 
 from exactdocs.bootstrap import cli
+from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
-from exactdocs.bootstrap.mcp import RESOURCE_NOT_FOUND, build_mcp, build_stdio_mcp
+from exactdocs.bootstrap.mcp import build_mcp, build_stdio_mcp
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
-from exactdocs.catalog.adapters.driving.mcp import (
+from exactdocs.catalog.adapters.driving.mcp import article_uri
+from exactdocs.catalog.constants import (
     ARTICLE_TEMPLATE,
     MAX_LISTED_RESOURCES,
+    MAX_SUMMARY_REFS,
     RESOURCE_PAGE_SIZE,
-    article_uri,
 )
 from exactdocs.catalog.dtos import (
-    MAX_SUMMARY_REFS,
     ActivateManifestCommand,
     ArticleIn,
     ArticleList,

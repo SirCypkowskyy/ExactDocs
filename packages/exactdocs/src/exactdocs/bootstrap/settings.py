@@ -7,8 +7,7 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
-# Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS.
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+from exactdocs.bootstrap.constants import LOCAL_HOSTS
 
 
 def _default_data_dir() -> Path:

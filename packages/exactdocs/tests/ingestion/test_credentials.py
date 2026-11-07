@@ -11,6 +11,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.dtos import (
     AccessTokenIn,
     AddLibraryCommand,
@@ -30,7 +31,6 @@ from exactdocs.ingestion.models import (
     Credential,
     DeployKey,
     ImportSource,
-    JobKind,
     NewLibrary,
     PathSelection,
     RemoteRef,

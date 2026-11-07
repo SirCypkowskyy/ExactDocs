@@ -24,20 +24,18 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, LEGACY_CODES, JobKind
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     InvalidCredentialError,
     VersionImportingError,
 )
 from exactdocs.ingestion.models import (
-    ACTIVE_JOB_STATES,
-    IMPORT_KINDS,
     AutoSync,
     Credential,
     FileProblem,
     Job,
     JobId,
-    JobKind,
     JobState,
     ProblemCode,
     RefKind,
@@ -224,14 +222,6 @@ def _values(job: Job) -> Mapping[str, Any]:
     }
 
 
-# Rows saved before problems had codes carry only the reason text.
-_LEGACY_CODES = {
-    "not valid UTF-8": ProblemCode.UNDECODABLE,
-    "not a regular file": ProblemCode.NOT_A_FILE,
-    "file name is not valid UTF-8": ProblemCode.BAD_FILE_NAME,
-}
-
-
 def _problem(raw: Mapping[str, str]) -> FileProblem:
     """Read a stored problem; a missing or unknown code (older or newer version) never fails."""
     path, reason = raw["path"], raw["reason"]
@@ -243,7 +233,7 @@ def _problem(raw: Mapping[str, str]) -> FileProblem:
         elif not path:
             code = ProblemCode.TRUNCATED
         else:
-            code = _LEGACY_CODES.get(reason, ProblemCode.UNREADABLE)
+            code = ProblemCode(LEGACY_CODES.get(reason, ProblemCode.UNREADABLE))
     return FileProblem(path=path, code=code, reason=reason)
 
 

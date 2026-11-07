@@ -10,13 +10,15 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from exactdocs.bootstrap.container import KNOWN_HOSTS_FILE, Container
+from exactdocs.bootstrap.constants import KNOWN_HOSTS_FILE
+from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
+from exactdocs.ingestion.adapters.driven.secret_box import FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
+from exactdocs.ingestion.constants import KEY_FILE, REFRESH_JOB
 from exactdocs.ingestion.dtos import EnqueueJobCommand
-from exactdocs.ingestion.models import REFRESH_JOB, AccessToken, RefKind
+from exactdocs.ingestion.models import AccessToken, RefKind
 from fixture_repo import DocsRepo
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")

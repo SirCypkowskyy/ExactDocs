@@ -13,7 +13,8 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState
+from exactdocs.ingestion.constants import JobKind
+from exactdocs.ingestion.models import Job, JobId, JobState
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
