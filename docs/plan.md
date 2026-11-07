@@ -6,13 +6,14 @@ grouped into **epics** and **milestones**. It is **filed on GitHub** (2026-11-04
 #1-#12) with the features as sub-issues (#13-#115), and "blocked by" links for the *Depends on*
 lines. GitHub is now the source of truth for status; this page keeps the rationale.
 
-It holds **103 feature issues** plus **12 epic tracking issues**:
+It holds **110 feature issues** plus **12 epic tracking issues**: 103 filed on 2026-11-04
+(#13-#115) and 7 added for *Next: AI retrieval* in 2026-11 (#241-#246, #248):
 
 | Milestone | Feature issues |
 |---|---|
 | MVP-1 | 46 |
 | MVP-2 | 27 |
-| Next: AI retrieval | 22 (14 planned, 6 added and 2 moved from Teams in 2026-11, see below) |
+| Next: AI retrieval | 23 (14 planned, 7 added and 2 moved from Teams in 2026-11, see below) |
 | Next: Teams & integrations | 11 |
 | Next: Operations | 4 |
 
@@ -2343,8 +2344,9 @@ Scenario: Metrics are exposed when enabled
     The [AI retrieval decisions](decisions/ai-retrieval.md) (#240) settle providers, vector
     storage, local models, image variants, configuration, budgets, telemetry, evals and the order
     of work, and supersede the hints below where they differ (vector storage, the
-    `OpenAICompatibleProvider` hint, the FastMCP rate-limit middleware). Six issues were added,
-    and E12-01 (#103) and E12-02 (#104) moved into this milestone:
+    `OpenAICompatibleProvider` hint, the FastMCP rate-limit middleware). Seven issues were added,
+    and E12-01 (#103) and E12-02 (#104) moved into this milestone; they stay sub-issues of epic
+    E12 (#12), whose stories they deliver:
 
     | Plan ID | Issue | Title | Depends on |
     |---|---|---|---|
@@ -2354,10 +2356,11 @@ Scenario: Metrics are exposed when enabled
     | E11-18 | #244 | ExactDocs runs on Supabase, with BM25 that works without pg_search | E12-02, E11-17 |
     | E11-19 | #245 | a local embedding model and reranker run fully offline | E11-03, E11-05 |
     | E11-20 | #246 | the image ships in three variants (base, -ai, -local), each with its own size budget | E11-15, E11-19 |
+    | E11-21 | #248 | the secret box moves to bootstrap so every domain can seal secrets through its own port | - |
 
     Changed dependencies: E11-03 now depends on E11-15 and E11-16; E11-05 on E11-15; E11-08
     (budgets) on E11-15 and E11-03 instead of E11-06, and E11-06 (HyDE) on E11-04 and E11-08, so
-    no LLM call ships unmetered; E11-14 also on E11-15; E12-02 no longer on E11-03. GitHub holds
+    no LLM call ships unmetered; E11-14 also on E11-15; E11-15 and E12-03 also on E11-21; E12-02 no longer on E11-03. GitHub holds
     the current bodies.
 
 All E11 issues: milestone **Next: AI retrieval**, labels `type: feature` `status: triage`

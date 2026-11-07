@@ -691,15 +691,18 @@ Not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#
 - **Wiring.** Bootstrap turns the configured provider profiles into pydantic-ai models and HTTP
   clients, and imports any of it only when a role is configured; with nothing configured the
   `exactdocs[ai]` and `exactdocs[local]` extras are never imported (the model-free test).
-  Retrieval declares its own secret-box port; bootstrap passes the Fernet adapter that already
-  seals repository credentials.
+  Bootstrap implements retrieval's `ModelFactory` port (a resolved provider profile in, a callable
+  model, embedder or reranker out), always with explicit URLs and keys, never the SDKs'
+  environment variables. Retrieval declares its own secret-box port; the Fernet adapter that seals
+  repository credentials moves from ingestion to `bootstrap` first (#248), so no domain depends
+  on another's adapter.
 - **Storage.** `retrieval_embedding_spaces` records each (model, dimensions, input format); its
   vectors sit in one adapter-managed table per space, keyed by `retrieval_chunks` row, searched
   exactly within the active manifest (sqlite-vec on SQLite, pgvector on PostgreSQL and Supabase).
 - **Jobs.** Embedding runs are an `embed` ingestion job kind with resumable steps, reaching
   retrieval through a bridge, like indexing.
-- **PostgreSQL** (#103) arrives with this milestone: psycopg 3, DBOS's system database on the same
-  server, a per-library advisory lock replacing `TagLocks`, and a third search adapter
+- **PostgreSQL** (#103) arrives with this milestone: psycopg 3, DBOS's tables in the same database
+  (`dbos_system_schema`), a per-library advisory lock replacing `TagLocks`, and a third search adapter
   (PostgreSQL full-text search) for databases without `pg_search`, such as Supabase.
 
 ## Python conventions

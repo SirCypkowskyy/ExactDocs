@@ -32,7 +32,7 @@ issue of the milestone points here instead of deciding these again. The short fo
 
 | Topic | Decision |
 |---|---|
-| Chat and agents | **pydantic-ai-slim 2.60.0** models and providers, one profile per endpoint; harness 0.60.0 for Code Mode, spend limits and guardrails |
+| Chat and agents | **pydantic-ai-slim 2.60.0** models and providers, one profile per endpoint, always given explicit URLs and keys (never the SDKs' environment variables); harness 0.60.0 for Code Mode, spend limits and guardrails |
 | Embeddings | Our own `Embeddings` port; adapters over `pydantic_ai.Embedder` (remote) and **fastembed** (local) |
 | Rerankers | Our own `Reranker` port; Cohere-compatible and TEI HTTP adapters, fastembed cross-encoder, or an LLM judge |
 | Vector store | One `VectorIndex` port; **sqlite-vec** on SQLite, **pgvector** on PostgreSQL and Supabase; one table per embedding space, exact search scoped to the manifest |
@@ -40,7 +40,7 @@ issue of the milestone points here instead of deciding these again. The short fo
 | Packaging | `exactdocs[ai]` and `exactdocs[local]` extras; images **base** (400 MB), **-ai** (560 MB), **-local** (950 MB, models included) |
 | Configuration | Named provider profiles and roles in env or a TOML file; UI-managed profiles with keys sealed by the existing secret box; per-library overrides except the embedding model |
 | Offline | Nothing configured: nothing imported, nothing sent. `-local`: no network needed at all |
-| Cost | Token and USD budgets per instance, library and user, daily and monthly, in a database-backed harness `SpendStore`; rate limits inside retrieval; a limit degrades search, never fails it |
+| Cost | Token and USD budgets per instance, library and user, daily and monthly, in one database table: harness `SpendLimits` (over a `BatchSpendStore`) for LLM agents, retrieval's own check for embeddings and rerankers; rate limits inside retrieval; a limit degrades search, never fails it |
 | Telemetry | pydantic-ai's OpenTelemetry instrumentation with `include_content=False`; `gen_ai.*` metrics without library, user or query labels |
 | Evals | Pydantic Evals on the fixture libraries; wrong-version rate 0 is a hard gate; real local models in CI, LLMs only with test models or by hand |
 | Sign-in (Teams) | Several named providers: `oidc` (ADFS included), `oauth2`, `github` (GHE base URL, org and team membership via the GitHub API) |
@@ -50,8 +50,11 @@ issue of the milestone points here instead of deciding these again. The short fo
 - **SQLite** stays the default: one file in the data directory, vectors in it too (one backup).
 - **PostgreSQL** (#103) moves into this milestone. Driver: **psycopg 3** async
   (`postgresql+psycopg://`), already in the image as a DBOS dependency, so it costs nothing;
-  asyncpg would add about 32 MB and a second driver. DBOS keeps its system database on the same
-  PostgreSQL, which is what makes several server processes safe.
+  asyncpg would add about 32 MB and a second driver. DBOS keeps its system tables in the **same
+  database**, in their own schema (`DBOSConfig.dbos_system_schema`, e.g. `dbos`), which is what
+  makes several server processes safe. It must not use DBOS's default of a separate system
+  database: DBOS 3.3 then connects to `postgres` and runs `CREATE DATABASE`, which managed services
+  such as Supabase usually forbid.
 - **BM25 on PostgreSQL** is ParadeDB `pg_search` (#104), as decided before. The CI image
   (`paradedb/paradedb`) also bundles pgvector.
 - **Supabase** (#244) is supported as a PostgreSQL database, nothing more: no Supabase SDK, Auth or
@@ -59,9 +62,10 @@ issue of the milestone points here instead of deciding these again. The short fo
   the search port uses PostgreSQL full-text search (`tsvector` with the `simple` configuration on
   the same identifier-expanded column, ranked with `ts_rank_cd`) whenever `pg_search` is missing.
   It is not true BM25: the shared ranking suite runs on it and lists any expected-order
-  difference. Connections need `sslmode=require` and a session (direct, or the pooler in session
-  mode on port 5432); the transaction-mode pooler breaks prepared statements and DBOS, so it is
-  refused at start.
+  difference. Connections need `sslmode=require` and a session: a direct connection (IPv6 only
+  on most Supabase plans, unless the IPv4 add-on is bought) or the pooler in session mode on port
+  5432. The transaction-mode pooler breaks prepared statements and DBOS's `LISTEN` connection, so
+  it is refused at start. #244's CI runs DBOS on `supabase/postgres` with `dbos_system_schema`.
 
 ## Provider abstraction
 
@@ -77,20 +81,31 @@ Mode, `SpendLimits` and guardrails. A profile has a `kind`:
 | `openai-compatible` (custom: base URL, optional key) | `OpenAIProvider(base_url=…, api_key=…)` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
 | `openai` | `OpenAIProvider` | `OpenAIResponsesModel` | `OpenAIEmbeddingModel` | `openai` |
 | `openrouter` | `OpenRouterProvider` | `OpenRouterModel` | `OpenAIEmbeddingModel` on the same provider | `openai` |
-| `anthropic` | `AnthropicProvider` (optional `base_url` for gateways) | `AnthropicModel` | none: Anthropic has no embedding API | `anthropic` |
-| `azure` (Azure OpenAI) | `AzureProvider(azure_endpoint, api_version, api_key)`; the model name is the deployment | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
+| `anthropic` | `AnthropicProvider`; `platform = "api"` (default, optional `base_url` for gateways), `"vertex"` (Claude on Vertex AI: `anthropic_client=AsyncAnthropicVertex(project, region, credentials)`), `"foundry"` (Claude on Azure AI Foundry: `AsyncAnthropicFoundry`) or `"bedrock"` (`AsyncAnthropicBedrock`, needs boto3: not in the images) | `AnthropicModel` | none: Anthropic has no embedding API | `anthropic` (Vertex auth through `google-auth`, already there via google-genai) |
+| `azure` (Azure OpenAI) | `AzureProvider(azure_endpoint, api_version, api_key)`; with `auth = "entra"` (no key): `AzureProvider(openai_client=AsyncAzureOpenAI(azure_ad_token_provider=…))` from `azure-identity` (managed identity, workload identity or a client secret); the model name is the deployment | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai`, `azure-identity` (about 5 MB) |
 | `google-vertex` (Vertex AI) | `GoogleCloudProvider(project, location, credentials)`: a service-account file, workload identity / ADC, or an Express-mode key | `GoogleModel` | `GoogleEmbeddingModel` | `google-genai` |
 | `google` (Gemini API) | `GoogleProvider(api_key)` | `GoogleModel` | `GoogleEmbeddingModel` | `google-genai` |
-| `ollama` | `OllamaProvider(base_url)` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
+| `ollama`, `vllm` | `OllamaProvider(base_url)`, `VLLMProvider(base_url)` | `OllamaModel` (a subclass of `OpenAIChatModel`), `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
 | `litellm` (gateway) | `LiteLLMProvider` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
-| `deepseek`, `together`, `fireworks`, `cerebras`, `github` (Models), `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba` | pydantic-ai's provider of that name | `OpenAIChatModel` | where the platform has them | `openai` |
+| `deepseek`, `together`, `fireworks`, `cerebras`, `github` (Models), `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba` | pydantic-ai's provider of that name | `OpenAIChatModel` (`CerebrasModel` for `cerebras`, also a subclass) | where the platform has them | `openai` |
 | `bedrock`, `groq`, `mistral`, `cohere`, `xai`, `huggingface` | pydantic-ai's provider of that name | its own model class | per platform | **not included**: each needs its own SDK |
 | `local` | none | none (use `ollama` for a local LLM) | fastembed (#245) | `[local]` extra |
 
+- **Explicit values only, never the SDKs' environment.** The provider factory always passes an
+  explicit `base_url` and `api_key` (or a client built with them) to every provider, using the
+  fixed placeholder `"unused"` for a keyless profile, and explicit project, location and
+  credentials to Vertex. It never builds a model from a `"<provider>:<model>"` string (which
+  infers the provider from the environment). Otherwise the SDKs fall back to `OPENAI_API_KEY`,
+  `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`,
+  `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and the like: a keyless
+  custom gateway would receive the host's OpenAI key, and `OPENAI_BASE_URL` would redirect the
+  `openai` kind. ADC for Vertex is used only when the profile says `credentials = "adc"`. #241's
+  socket-guard test runs with those variables set and proves none of them is used.
 - **Custom endpoints** use `OpenAIProvider(base_url=…, api_key=…)` with `OpenAIChatModel` (Chat
   Completions, the most widely implemented API). pydantic-ai's `OpenAICompatibleProvider`,
   named in the first plan, is an internal base class in 2.60.0, not an entry point.
-- **Platforms whose SDK is not included** (Bedrock pulls boto3, the others their own clients)
+- **Platforms whose SDK is not included** (Bedrock, for Claude too, pulls boto3; the others their
+  own clients)
   are reached through their OpenAI-compatible endpoint as `openai-compatible`, through a LiteLLM
   gateway, or, with `uvx`, by adding the SDK: `uvx --from 'exactdocs[ai]' --with
   'pydantic-ai-slim[bedrock]==2.60.0' exactdocs serve`. The images do not include them.
@@ -128,8 +143,9 @@ dialect (Cohere, Jina, Voyage, vLLM, LiteLLM, Azure AI Foundry) or the TEI `/rer
   `Xenova/ms-marco-MiniLM-L-6-v2` (91 MB). Other fastembed models can be configured; the eval
   suite decides whether the defaults change.
 - **No download at run time.** `exactdocs models pull` is the only command that contacts the
-  Hugging Face Hub; it stores models under `<data dir>/models`. At run time models load from that
-  path with `HF_HUB_OFFLINE=1`; a missing model disables the role at start with a message, it is
+  Hugging Face Hub; it stores models in **`EXACTDOCS_MODELS_DIR`** (default `<data dir>/models`;
+  the `-local` image sets it to its read-only `/opt/exactdocs/models`). At run time models load
+  from that directory with `HF_HUB_OFFLINE=1`; a missing model disables the role at start with a message, it is
   never fetched.
 - A local **LLM** is out of scope for in-process inference: use the `ollama` kind (or vLLM,
   llama.cpp's server, LM Studio as `openai-compatible`).
@@ -141,8 +157,8 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
 | Variant | Contents | Estimated | Budget |
 |---|---|---|---|
 | `exactdocs:<v>` | as today: BM25, SQLite and PostgreSQL | 384 MB | **400 MB** (unchanged) |
-| `exactdocs:<v>-ai` | `exactdocs[ai]`: +141 MB (`anthropic` 17, `openai` 16, `pydantic_monty` 12, `pydantic_ai` 10, google-genai about 11, harness 6, ...) | 526 MB | **560 MB** |
-| `exactdocs:<v>-local` | `exactdocs[ai,local]`: +196 MB (`onnxruntime` 63, numpy 57, pillow 20, tokenizers 12, ...) and the two default models (158 MB) in `/opt/exactdocs/models` | 882 MB | **950 MB** |
+| `exactdocs:<v>-ai` | `exactdocs[ai]`: +141 MB (`anthropic` 17, `openai` 16, `pydantic_monty` 12, `pydantic_ai` 10, google-genai about 11, harness 6, ...), plus about 5 MB for `azure-identity` | 531 MB | **560 MB** |
+| `exactdocs:<v>-local` | `exactdocs[ai,local]`: +196 MB (`onnxruntime` 63, numpy 57, pillow 20, tokenizers 12, ...) and the two default models (158 MB) in `/opt/exactdocs/models` (`EXACTDOCS_MODELS_DIR`) | 887 MB | **950 MB** |
 
 - The base image and the wheel stay **model-free** (RUN-02): the `ML_PACKAGES` checks keep
   ignoring `extra ==` requirements, and also apply to the `-ai` image; only `-local` may hold
@@ -177,7 +193,8 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
 - **sqlite-vec 0.1.9** (2026-03-31, the latest stable; 0.1.10 is still alpha) is loaded per
   connection only once a space exists. It replaces the earlier "numpy brute force" decision:
   the distance runs in SQL, next to the manifest join, and numpy is not needed. Verified on uv's
-  Python 3.14 build (`enable_load_extension`, `vec_distance_cosine`, `vec0`). A Python built
+  Python 3.14 build (`enable_load_extension`, `vec_distance_cosine`, `vec0`); the image runs
+  `python:3.14-slim-trixie`, so #242 repeats the check in the built image. A Python built
   without loadable extensions reports hybrid as unavailable instead of failing.
 - **Model change.** Changing the embedding model, its dimensions or the input format creates a
   new space and queues `embed` jobs. Until a version is covered by the new space it answers BM25
@@ -251,8 +268,11 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   retrieval, with their keys **sealed by the existing Fernet secret box** (`EXACTDOCS_SECRET_KEY`,
   the one that seals repository credentials). A key is never returned; without a secret key the
   UI refuses to store one. Profiles from the environment or the file are shown read-only.
-  Retrieval declares its own small secret-box port; bootstrap wires the same adapter into it.
-- **Per-library overrides** (stored by retrieval, edited by the library owner, #102): AI on or
+  Retrieval declares its own small `SecretBox` port. The Fernet adapter itself **moves from
+  ingestion to `bootstrap`** first (#248): retrieval (#241) and identity (#105) would otherwise
+  depend on another domain's adapter module. The kernel cannot hold it (it needs `cryptography`).
+- **Per-library overrides** (stored by retrieval, #102; edited by admins until library roles
+  exist, E12-05/06, then by the library's owner and admins): AI on or
   off (off: nothing of the library is ever sent to a provider), retrieval mode, the `llm`, `judge`
   and `reranker` profile and model, rerank `top_n`, agentic limits, and budgets no higher than the
   instance's. **Not** the embedding model: one space per instance keeps cross-library search
@@ -265,9 +285,15 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 |---|---|---|
 | Nothing configured (any install) | No module of `[ai]` or `[local]` is imported, sqlite-vec is not loaded, no connection is opened except to git remotes | the model-free test, extended with a socket guard (#241) |
 | `[ai]` installed, nothing configured | Same as above | same test with the extra installed |
-| A provider configured | Connections only to that profile's base URL (and, for Vertex, Google's token endpoint); no telemetry to any vendor (no Logfire); `genai-prices` data is the bundled copy, never updated over the network | socket-guard test allowing only the mock endpoint (#241) |
+| A provider configured | Connections only to that profile's base URL, plus its identity endpoints: for Vertex with a service-account file `oauth2.googleapis.com`, with ADC or workload identity the GCE metadata server (`metadata.google.internal` / `169.254.169.254`); for Azure with Entra ID `login.microsoftonline.com` (or the managed-identity endpoint, `169.254.169.254` / `IDENTITY_ENDPOINT`). No telemetry to any vendor (no Logfire); `genai-prices` data is the bundled copy, never updated over the network; tiktoken is never used (below) | socket-guard test allowing only the mock endpoint, with the SDKs' `*_API_KEY` / `*_BASE_URL` variables set (#241) |
 | `local` roles | No connection at all; models load from disk with `HF_HUB_OFFLINE=1`; only `exactdocs models pull` contacts the Hub | test with sockets blocked (#245); `-local` smoke test with `--network none` (#246) |
 | A library with AI off | No chunk, query or instruction file of it reaches any provider; its searches answer BM25 | scenario in #241 and #91 |
+
+**No tiktoken.** The `openai` extra installs tiktoken, which downloads its encoding files from
+`openaipublic.blob.core.windows.net` on first use (pydantic-ai's
+`OpenAIEmbeddingModel.count_tokens` calls it). ExactDocs never calls `count_tokens`: accounting
+uses the `usage` the provider returns, and `exactdocs ai estimate` estimates from characters
+(4 per token) and says it is an estimate. A test asserts that tiktoken is not imported.
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
@@ -281,11 +307,19 @@ identities and tokens are never sent.
   (`[ai.prices]`). A USD budget on a model with no known price is refused at start; tokens are
   always counted. Local models cost nothing but their tokens are counted.
 - **Budgets** (#95): token and USD limits per instance, per library and per user (the token's
-  account; stdio MCP counts to instance and library), per UTC day and month, enforced with the
-  harness `SpendLimits` over a database-backed **`SpendStore`** (a `retrieval_ai_spend` table
-  with an atomic upsert per scope and window). The harness store is a `Protocol`, so our adapter
-  implements it structurally and works on SQLite and PostgreSQL, across processes. A check runs
-  before each call, so a burst can overshoot by at most the calls already in flight.
+  account; stdio MCP counts to instance and library), per UTC day and month, in one
+  `retrieval_ai_spend` table (an atomic upsert per scope key and window) that works on SQLite and
+  PostgreSQL, across processes.
+    - **LLM agents** (HyDE, judge, agentic) are limited by the harness `SpendLimits` capability.
+      Our store implements the harness **`BatchSpendStore`** protocol (`get_many` / `add_many`
+      over `SpendEntry`) structurally. Its older `SpendStore` protocol is deprecated in 0.60.0:
+      `SpendLimits` wraps it, warns, and loses the token-based deduplication of replays.
+    - **Embedding and rerank calls** (`Embedder`, the HTTP rerankers, fastembed) never run
+      through an agent, so `SpendLimits` cannot see them. Retrieval records and checks them
+      itself, against the same table with the same key scheme, before each batch (the embed job)
+      or call (rerank).
+    - A check runs before each call or batch, so a burst can overshoot by at most the calls
+      already in flight.
 - **Per-call limits:** pydantic-ai `UsageLimits` on every call; for the agent also
   `max_tool_calls` and Monty's resource limits.
 - **Rate limit:** LLM searches per minute per caller, enforced inside retrieval so it covers
@@ -334,11 +368,20 @@ identities and tokens are never sent.
 ## Where the code lives
 
 - Everything stays in the **retrieval** domain: ports `Embeddings`, `Reranker`, `VectorIndex`,
-  `SpendStore`-shaped usage ledger, HyDE writer, judge and agent explorer; pydantic-ai, fastembed,
+  the spend ledger (whose adapter also implements the harness `BatchSpendStore`), HyDE writer,
+  judge and agent explorer; pydantic-ai, fastembed,
   sqlite-vec and pgvector only in `retrieval/adapters/driven/`. The architecture test adds them
   to the list of frameworks the core may not import.
-- Building a pydantic-ai model from a profile is wiring, so it lives in `bootstrap` (a provider
-  factory), which imports it only when a role is configured.
+- **Profiles and models.** Retrieval owns the profiles (`ProviderProfiles`, a repository port:
+  UI-managed ones from its table, environment and file ones injected read-only by bootstrap) and
+  resolves which profile and model a role uses for a library. Turning a resolved profile into
+  something that can be called is the **`ModelFactory`** driven port, declared by retrieval
+  (`chat_model(profile, model)`, `embedder(profile, model)`, `reranker(profile, model)`) and
+  implemented in `bootstrap` with pydantic-ai, httpx2 and fastembed (it unseals the key through
+  the `SecretBox` port, passes explicit values only, and imports the SDKs only when called). The
+  core sees opaque handles; the AI adapters that receive them (HyDE writer, judge, explorer,
+  embeddings, reranker) narrow them to the pydantic-ai types. So a profile edited in the UI takes
+  effect at the next call without a restart, through an allowed call path.
 - Embedding runs are an `embed` ingestion job kind (resumable steps per batch), reaching
   retrieval through a bridge, like indexing does today. No new domain: a separate package
   (`packages/exactdocs-retrieval-ai`) is the fallback if the extras ever need their own release
@@ -352,13 +395,13 @@ issues hold the authoritative `Depends on` lines.
 | Wave | Issues | Depends on |
 |---|---|---|
 | 0 | #240 this record | - |
-| 1 | #89 modes and the `[ai]` extra; #97 `article_outline`; #103 PostgreSQL | merged MVP issues |
-| 2 | #241 AI providers; #242 vector store on SQLite; #90 eval suite; #104 ParadeDB BM25 | #89; #89; #89; #103 |
+| 1 | #89 modes and the `[ai]` extra; #97 `article_outline`; #103 PostgreSQL; #248 secret box to bootstrap | merged MVP issues |
+| 2 | #241 AI providers; #242 vector store on SQLite; #90 eval suite; #104 ParadeDB BM25 | #89 + #248; #89; #89; #103 |
 | 3 | #91 embeddings; #93 reranker; #243 pgvector | #241 + #242; #241; #242 + #103 |
 | 4 | #92 hybrid; #95 budgets; #245 local models; #244 Supabase | #91; #241 + #91; #91 + #93; #104 + #243 |
 | 5 | #94 HyDE; #98 agentic; #102 UI; #246 image variants | #92 + #95; #97 + #95; #89 + #95 + #241; #241 + #245 |
 | 6 | #96 judge; #99 guardrails; #100 cache; #101 repo guidance | #93 + #94 + #95; #98; #98 (+ #92); #98 |
-| Teams | #105 sign-in after #103; #106 MCP OAuth after #105 | |
+| Teams | #105 sign-in after #103 and #248; #106 MCP OAuth after #105 | |
 
 The longest chain is #89 → #241 → #91 → #95 → #94 → #96 (and #89 → #242 → #91). Budgets (#95)
 now come **before** HyDE, so no LLM call ships unmetered.
@@ -392,6 +435,9 @@ flowchart LR
     i98 --> i100["#100 cache"]
     i98 --> i101["#101 repo guidance"]
     i95 --> i102["#102 UI"]
+    i89 --> i102
+    i241 --> i102
+    i248["#248 secret box"] --> i241
 ```
 
 ## Sign-in for the Teams milestone
@@ -409,18 +455,33 @@ and #106.
       issuance transform rule must emit (documented).
     - **`oauth2`**: for providers without OIDC; authorize, token and userinfo URLs and claim paths
       for subject, username, email and groups.
-    - **`github`**: an OAuth App at a configurable base URL, `https://github.com` or a **GHE**
-      host (API at `<base>/api/v3`), scopes `read:user read:org`. Access requires an `active`
-      membership in an allowed organization (`GET /user/memberships/orgs/{org}`) and, when teams
-      are listed, in an allowed team (`GET /orgs/{org}/teams/{team_slug}/memberships/{username}`).
+    - **`github`**: an OAuth App at a configurable `base_url`: `https://github.com`, a **GitHub
+      Enterprise Server** host (API derived as `<base>/api/v3`) or GitHub Enterprise Cloud with data
+      residency (`https://<subdomain>.ghe.com`, whose API is `https://api.<subdomain>.ghe.com`); an
+      optional `api_url` overrides the derived one. Scopes `read:user read:org`. Access requires an
+      `active` membership in an allowed organization (`GET /user/memberships/orgs/{org}`) and,
+      when teams are listed, in an allowed team. Teams are read with one paginated
+      `GET /user/teams` and matched against the allowed list (the per-team
+      `GET /orgs/{org}/teams/{team_slug}/memberships/{username}` is the fallback for one team).
       Each allowed team becomes the ExactDocs group `github:<org>/<team>`.
+    - **GitHub 403s are not "not a member".** An organization with OAuth App access restrictions
+      must approve the OAuth App, and a SAML-enforced organization needs the token authorized for
+      SSO; otherwise the membership call answers 403. Those answers are refused as "organization
+      *acme* has not approved this app" or "authorize SSO for *acme*", with the setup documented,
+      never as "not a member".
 - **Membership follows the provider.** Groups and memberships are refreshed at every sign-in and
   every `revalidate_minutes` (default 60) with the user's provider token, sealed by the secret
-  box. A revoked token or a lost membership ends the session. When the provider cannot be
+  box (#248). A revoked token or a lost membership ends the session. When the provider cannot be
   reached, the session lasts at most `revalidate_grace_minutes` (default 1,440), then access is
   refused (fail closed).
-- **Libraries:** Authlib for the web sign-in (already in the lock through FastMCP; floor
-  `authlib>=1.9.1`, released 2026-10-14). For MCP (#106), one provider is chosen
+    - `github`: OAuth App tokens do not expire, so the stored access token is enough.
+    - `oidc`, `oauth2` and ADFS need a **refresh token** to fetch fresh groups: ExactDocs asks for
+      `offline_access` (ADFS: refresh tokens enabled on the application group) and refreshes,
+      then re-reads the ID token or userinfo claims. A provider that issues **no refresh token**
+      cannot be revalidated: such a session is limited to `revalidate_grace_minutes` after sign-in,
+      then the user signs in again (and groups are refreshed then). The UI and the docs say so.
+- **Libraries:** Authlib for the web sign-in (already in the lock through FastMCP, at 1.9.3 from
+  2026-11-03; the floor `authlib>=1.9.1` is the version released 2026-10-14). For MCP (#106), one provider is chosen
   (`EXACTDOCS_MCP_OAUTH_PROVIDER`): FastMCP `OIDCProxy` for `oidc` (ADFS included), `OAuthProxy`
   with the provider's endpoints for `oauth2` and `github` (FastMCP's `GitHubProvider` hard-codes
   github.com), each with our token verifier applying the same membership checks, combined with
@@ -444,7 +505,8 @@ install together with the current lock (`httpx2` 2.16, `fastmcp` 4.1.6, `opentel
 | `onnxruntime` | 1.31.0 | 2026-10-09 | `[local]` |
 | `pydantic-evals` | 2.60.0 | 2026-10-23 | dev group |
 | `psycopg[binary]` | 3.3.6 (already locked through DBOS) | 2026-09-18 | default |
-| `authlib` | >= 1.9.1 (locked 1.9.3 through FastMCP) | 2026-10-14 | default (Teams) |
+| `azure-identity` | 1.26.0 | 2026-10-01 | `[ai]` (Azure OpenAI with Entra ID) |
+| `authlib` | >= 1.9.1 (locked 1.9.3 through FastMCP, released 2026-11-03) | 2026-10-14 (the floor's date) | default (Teams) |
 
 Transitive pins of note: `genai-prices` 0.1.13 (pydantic-ai's floor, 2026-10-15), `numpy` 2.5.4
 (2026-10-10) and `huggingface-hub` 1.33.0 (2026-09-24, fastembed requires < 2.0) under `[local]`.
