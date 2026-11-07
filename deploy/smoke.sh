@@ -14,10 +14,19 @@ json='content-type: application/json'
 field() { grep -o "\"$1\":\"[^\"]*\"" | head -n1 | sed 's/^[^:]*:"\(.*\)"$/\1/'; } # first string field "$1" of a JSON body
 step() { echo "--- $*"; }
 
-step "wait for the server"
-for _ in $(seq 1 60); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; sleep 1; done
-curl -fsS "$base/api/health" || { echo "server did not start"; exit 1; }
+step "wait for the server to be ready (its database answers)"
+for _ in $(seq 1 60); do curl -fsS "$base/readyz" >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS "$base/readyz" | grep -q '"status":"ready"' || { echo "server did not get ready"; exit 1; }
 echo
+
+step "liveness and its alias, without sign-in"
+# Liveness gives the database ~0.3 s for its details: a slow first answer is asked again.
+for _ in $(seq 1 10); do
+  curl -fsS "$base/healthz" | grep -q '"database_reachable":true' && break
+  sleep 1
+done
+curl -fsS "$base/healthz" | grep -q '"database_reachable":true'
+curl -fsS "$base/api/health"; echo
 
 step "setup, sign in"
 # a fresh instance offers only the setup; setup does not sign in

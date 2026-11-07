@@ -32,6 +32,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Generator
+from http import HTTPStatus
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,7 @@ import fixture_repo  # ruff: ignore[module-import-not-at-top-of-file]  (test sup
 LIBRARY = "/fixture/docs-repo"
 REFS = ("v1.3.0", "v1.4.0")
 QUERIES = ("token", "retry_policy")
+HEALTH_RETRIES = 5  # a null reindex_required (database slow to answer) is asked again
 HEAD = (
     "from alembic.script import ScriptDirectory;"
     "from exactdocs.bootstrap.database import alembic_config;"
@@ -125,16 +127,33 @@ class Api:
 
 
 def wait_healthy(api: Api, server: subprocess.Popen[bytes]) -> dict:
+    """Wait until the server is ready (its database answers), then return its health details."""
     for _ in range(240):
         if server.poll() is not None:
             sys.exit(f"the server exited early with {server.returncode}")
-        with (
-            contextlib.suppress(OSError, ValueError),
-            urllib.request.urlopen(f"{api.url}/api/health", timeout=2) as response,  # ruff: ignore[suspicious-url-open-usage]
-        ):
-            return json.load(response)
+        # Liveness answers before the database does; only readiness means it can serve.
+        if _ready(api.url):
+            with (
+                contextlib.suppress(OSError, ValueError),
+                urllib.request.urlopen(f"{api.url}/api/health", timeout=2) as response,  # ruff: ignore[suspicious-url-open-usage]
+            ):
+                health = json.load(response)
+                # Releases before the probes have no `database_reachable` (they 500 until ready).
+                if health.get("database_reachable", True):
+                    return health
         time.sleep(0.5)
     sys.exit("the server did not become healthy in 120 s")
+
+
+def _ready(url: str) -> bool:
+    """Ask /readyz; a release from before the probes (404) is ready once /api/health answers."""
+    try:
+        with urllib.request.urlopen(f"{url}/readyz", timeout=3):  # ruff: ignore[suspicious-url-open-usage]
+            return True
+    except urllib.error.HTTPError as exc:
+        return exc.code == HTTPStatus.NOT_FOUND
+    except OSError:  # unreachable, refused, timed out (a URLError)
+        return False
 
 
 @contextlib.contextmanager
@@ -260,8 +279,16 @@ def check_reindex(api: Api, cmd: list[str], env: dict[str, str]) -> None:
     print(out.strip(), f"({answered} searches answered meanwhile)")
     if reindex.returncode or differences(expected, search(api, REFS[1], QUERIES[1])):
         sys.exit(f"reindex failed ({reindex.returncode}) or changed the answer")
-    if api.call("GET", "/api/health", auth="none")["reindex_required"]:
-        sys.exit("the health check still asks for a reindex")
+    # null means the server could not tell (liveness gives the database ~0.3 s): ask again, and
+    # never take it for a pass.
+    health = api.call("GET", "/api/health", auth="none")
+    for _ in range(HEALTH_RETRIES):
+        if health["reindex_required"] is not None:
+            break
+        time.sleep(1)
+        health = api.call("GET", "/api/health", auth="none")
+    if health["reindex_required"] is not False:
+        sys.exit(f"the health check still asks for a reindex, or cannot tell: {health}")
 
 
 def main() -> int:

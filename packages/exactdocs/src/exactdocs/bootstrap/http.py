@@ -7,16 +7,19 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
-from exactdocs.bootstrap.constants import _UNSAFE_METHODS, MCP_PATH, OPENAPI_PATH, WEB_DIST
+from exactdocs.bootstrap.constants import (
+    _UNSAFE_METHODS,
+    MCP_PATH,
+    OPENAPI_PATH,
+    WEB_DIST,
+)
 from exactdocs.bootstrap.container import Container
-from exactdocs.bootstrap.database import current_revision
 from exactdocs.bootstrap.mcp import build_mcp
+from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probe_router
 from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.bootstrap.telemetry import is_untraced, start_telemetry
 from exactdocs.catalog.adapters.driving import http as catalog_http
@@ -24,20 +27,6 @@ from exactdocs.identity.adapters.driving import http as identity_http
 from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
-
-
-class Health(BaseModel):
-    """Liveness payload."""
-
-    model_config = ConfigDict(use_attribute_docstrings=True)
-
-    status: str
-    version: str
-    schema_revision: str | None
-    search_index_format: int | None
-    """Format the stored search index was built in; null when none is recorded."""
-    reindex_required: bool
-    """The index is in an older or unrecorded format: run `exactdocs reindex` (it keeps serving)."""
 
 
 def create_app(container: Container) -> FastAPI:
@@ -83,21 +72,12 @@ def create_app(container: Container) -> FastAPI:
         trusted_hosts=settings.trusted_hosts,
         allowed_origins=settings.allowed_origins,
     )
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
+    # The probes answer any Host (with no details for an untrusted one); everything else checks it.
+    app.add_middleware(ProbeAwareHostCheck.wrap, trusted_hosts=settings.trusted_hosts)
 
     api = APIRouter(prefix="/api")
 
-    @api.get("/health", tags=["system"])
-    async def health() -> Health:
-        revision = await current_revision(container.engine)
-        index = await container.retrieval.get_search_index_state()
-        return Health(
-            status="ok",
-            version=__version__,
-            schema_revision=revision,
-            search_index_format=index.stored_format,
-            reindex_required=index.needs_rebuild,
-        )
+    app.include_router(build_probe_router(container))
 
     v1 = APIRouter(prefix="/v1", responses=error_responses())
     # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.

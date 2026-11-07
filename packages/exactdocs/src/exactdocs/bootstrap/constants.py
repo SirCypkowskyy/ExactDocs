@@ -113,6 +113,28 @@ MCP_PATH: Final[str] = "/mcp"
 _UNSAFE_METHODS: Final[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 """Methods that change state, so a browser request with them must come from a trusted origin."""
 
+# ---------------------------------------------------------------- probes
+LIVENESS_PATH: Final[str] = "/healthz"
+"""Liveness probe: 200 while the process answers, whatever the database does."""
+HEALTH_ALIAS_PATH: Final[str] = "/api/health"
+"""The liveness probe's older path, kept for existing clients."""
+READINESS_PATH: Final[str] = "/readyz"
+"""Readiness probe: 200 when the database answers, 503 otherwise."""
+PROBE_PATHS: Final[frozenset[str]] = frozenset({LIVENESS_PATH, HEALTH_ALIAS_PATH, READINESS_PATH})
+"""Paths orchestrators poll: never traced or metered (telemetry, when added, must skip them)."""
+PROBE_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD"})
+"""Methods the probes answer; only these skip the Host check, and only on ``PROBE_PATHS``."""
+READINESS_TIMEOUT_SECONDS: Final[float] = 2.0
+"""How long readiness waits for the database before it reports it unreachable."""
+LIVENESS_DATABASE_SECONDS: Final[float] = 0.3
+"""How long liveness waits for the database's details: it must answer fast whatever the database
+does (Kubernetes' default probe timeout is 1 s), so after this it answers without them.
+"""
+UNTRUSTED_HOST: Final[str] = "untrusted_host"
+"""Request state key set on a probe request whose ``Host`` is not trusted: it gets no details."""
+HOST_TRUSTED: Final[str] = "exactdocs.host_trusted"
+"""ASGI scope key the Host check's probe sets when Starlette's own check accepts the Host."""
+
 # ---------------------------------------------------------------- mcp
 RESOURCE_NOT_FOUND: Final[int] = -32002
 """JSON-RPC error code MCP uses for a resource that does not exist."""
