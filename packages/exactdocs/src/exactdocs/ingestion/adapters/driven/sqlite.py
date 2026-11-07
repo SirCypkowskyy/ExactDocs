@@ -44,6 +44,7 @@ from exactdocs.ingestion.models import (
     load_credential,
 )
 from exactdocs.ingestion.ports.driven import SecretBox
+from exactdocs_kernel import SealedTextUnreadableError
 
 # The ingestion's tables, prefixed `ingestion_`. The schema itself is created by an Alembic
 # revision in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -314,7 +315,13 @@ class SqliteCredentialVault:
             return None
         try:
             return load_credential(library, scope, self.box.open(row.sealed))
-        except ValueError, KeyError, TypeError, InvalidCredentialError:
+        except (
+            SealedTextUnreadableError,
+            ValueError,
+            KeyError,
+            TypeError,
+            InvalidCredentialError,
+        ):
             raise CredentialsRequiredError from None
 
     async def delete(self, library: str) -> None:

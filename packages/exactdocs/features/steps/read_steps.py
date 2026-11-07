@@ -140,3 +140,96 @@ def step_rest_chunk_body(context: Context) -> None:
     assert body["commit_sha"] == hit["commit_sha"], body
     assert body["source_url"] == hit["source_url"], body
     assert body["notice"] == NOTICE, body
+
+
+# The heading tree of docs/guide/install.md at v1.4.0: every heading is a chunk of its own.
+INSTALL_OUTLINE = [
+    (
+        "Guide",
+        [
+            (
+                "Install",
+                [("Docker", [("Troubleshooting", [])]), ("From source", [("Troubleshooting", [])])],
+            )
+        ],
+    )
+]
+
+
+def _shape(sections: list[dict[str, Any]]) -> list[tuple[str, Any]]:
+    """The headings of an outline as nested ``(heading, children)`` pairs."""
+    return [(s["heading"], _shape(s["children"])) for s in sections]
+
+
+def _nodes(
+    sections: list[dict[str, Any]], above: tuple[str, ...] = ()
+) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
+    """Every section of an outline with its heading path, in document order."""
+    found = []
+    for section in sections:
+        path = (*above, section["heading"])
+        found.append((path, section))
+        found += _nodes(section["children"], path)
+    return found
+
+
+@when('an agent calls "{tool}" for "{path}" of "{target}"')
+def step_call_for_article(context: Context, tool: str, path: str, target: str) -> None:
+    library, ref = _split(target)
+    context.read_path, context.read_ref = path, ref
+    _call(context, tool, {"library": library, "ref": ref, "path": path})
+
+
+@then("it gets the heading tree with chunk IDs and no body text")
+def step_outline(context: Context) -> None:
+    result = context.mcp_result
+    assert not result.is_error, result.content
+    data = result.structured_content
+    assert data["notice"] == NOTICE, data
+    assert (data["library"], data["version"], data["article_path"]) == (
+        "/fixture/docs-repo",
+        context.read_ref,
+        context.read_path,
+    ), data
+    assert _shape(data["sections"]) == INSTALL_OUTLINE, data["sections"]
+    ids = [section["chunk_id"] for _, section in _nodes(data["sections"])]
+    assert all(ids), ids
+    assert len(set(ids)) == len(ids), ids
+    _, files = read_version(context, context.read_ref)
+    body = parse_article(context.read_path, dict(files)[context.read_path]).body
+    prose = [line for line in body.splitlines() if line.strip() and not line.startswith("#")]
+    sent = "".join(getattr(block, "text", "") for block in result.content)
+    assert prose, "the article has body text to leave out"
+    for line in prose:
+        assert line not in sent, line
+
+
+@then("every chunk ID of the outline reads that section of the article")
+def step_outline_ids(context: Context) -> None:
+    for path, section in _nodes(context.mcp_result.structured_content["sections"]):
+        response = context.client.get(f"/api/v1/chunks/{section['chunk_id']}")
+        assert response.status_code == HTTPStatus.OK, response.text
+        chunk = response.json()
+        assert chunk["article_path"] == context.read_path, chunk
+        assert tuple(chunk["heading_path"]) == path, chunk
+        assert chunk["anchor"] == section["anchor"], chunk
+
+
+@when('a client reads the outline of "{path}" of "{target}" over REST')
+def step_rest_outline(context: Context, path: str, target: str) -> None:
+    library, ref = _split(target)
+    context.read_path, context.read_ref = path, ref
+    context.response = context.client.get(
+        f"/api/v1/libraries{library}/outline", params={"path": path, "ref": ref}
+    )
+
+
+@then("the outline is the heading tree of the article with its commit SHA")
+def step_rest_outline_body(context: Context) -> None:
+    body = context.response.json()
+    assert _shape(body["sections"]) == INSTALL_OUTLINE, body
+    assert body["commit_sha"] == context.commits[context.read_ref], body
+    assert body["source_url"] == (
+        f"{REPOSITORY}/blob/{body['commit_sha']}/{quote(context.read_path)}"
+    ), body
+    assert body["notice"] == NOTICE, body

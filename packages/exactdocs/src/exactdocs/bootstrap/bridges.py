@@ -21,6 +21,7 @@ from exactdocs.catalog.dtos import (
     DiscardPendingManifestsCommand,
     FindStoredArticlesQuery,
     GetActiveManifestQuery,
+    GetArticleQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
@@ -55,6 +56,7 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.dtos import (
     VersionOrigin as CatalogVersionOrigin,
 )
+from exactdocs.catalog.errors import ArticleNotFoundError as CatalogArticleNotFoundError
 from exactdocs.catalog.errors import StoredContentOutdatedError
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
@@ -67,6 +69,7 @@ from exactdocs.catalog.ports.driving import (
     DiscardPendingManifests,
     FindStoredArticles,
     GetActiveManifest,
+    GetArticle,
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
@@ -295,6 +298,34 @@ class CatalogRenamedPaths:
         except NotFoundError:
             return None
         return None if found is None else found.new_path
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogArticleSuggestions:
+    """Implements ``retrieval.ports.driven.ArticleSuggestions`` with ``read_article``'s matches."""
+
+    get_article: GetArticle
+    """The catalog's article read; its miss carries the close paths."""
+
+    async def close_to(self, target: DocTarget, path: str) -> Sequence[str]:
+        """Ask the catalog for the article and keep the close matches of its miss.
+
+        Args:
+            target: The exact library version.
+            path: The path retrieval has no chunks for.
+
+        Returns:
+            The catalog's close matches; empty when it finds the article or knows nothing.
+        """
+        try:
+            await self.get_article(
+                GetArticleQuery(library=target.library, ref=target.version, path=path)
+            )
+        except CatalogArticleNotFoundError as missing:
+            return missing.close_matches
+        except NotFoundError:
+            return ()
+        return ()  # the catalog has it but retrieval has no chunks: no path to suggest
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

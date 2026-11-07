@@ -195,6 +195,20 @@ def test_dbos_lives_only_in_ingestion_adapters_and_bootstrap(domain: str) -> Non
 
 
 @pytest.mark.parametrize("domain", DOMAINS)
+def test_no_domain_imports_cryptography(domain: str) -> None:
+    # One secret box serves every domain; each reaches it through its own `SecretBox` port.
+    assert_passes(
+        project_files(SRC)
+        .in_path(_path(domain))
+        .should_not()
+        .depend_on_external_modules()
+        .matching("cryptography*")
+        .because("the secret box lives in bootstrap; domains declare a SecretBox port"),
+        _ALLOW_EMPTY,
+    )
+
+
+@pytest.mark.parametrize("domain", DOMAINS)
 @pytest.mark.parametrize("layer", ["models", "errors"])
 def test_domain_model_does_not_depend_on_pydantic(domain: str, layer: str) -> None:
     for source in _layer(domain, layer):

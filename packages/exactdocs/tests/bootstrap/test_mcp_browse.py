@@ -171,6 +171,7 @@ TOOL_CALLS = [
     ("search_all_docs", {"query": "x"}),
     ("read_article", {"library": "/acme/payments", "path": "guide/a.md"}),
     ("read_chunk", {"chunk_id": CHUNK_ID}),
+    ("article_outline", {"library": "/acme/payments", "path": "guide/a.md"}),
     ("resolve-library-id", {"libraryName": "payments", "query": "x"}),
     ("query-docs", {"libraryId": "/acme/payments/v1.4.0", "query": "H"}),
 ]
@@ -293,6 +294,12 @@ async def test_list_articles_input_is_capped(
             "invalid_tag_filter",
         ),
         ("list_libraries", {"cursor": "not-a-cursor"}, "invalid_cursor"),
+        ("article_outline", {"library": "/acme/payments", "path": "guide/zz.md"}, "not_found"),
+        (
+            "article_outline",
+            {"library": "/acme/payments", "ref": "v9.9.9", "path": "guide/a.md"},
+            "not_found",
+        ),
     ],
 )
 async def test_domain_errors_pass_as_tool_errors_with_their_message(

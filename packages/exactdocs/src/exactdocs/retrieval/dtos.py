@@ -17,6 +17,8 @@ from exactdocs.retrieval.models import (
     Candidate,
     FallbackReason,
     ModelRole,
+    Outline,
+    OutlineNode,
     RebuiltIndex,
     Removed,
     RetrievalMode,
@@ -450,6 +452,116 @@ class ChunkOut(_Dto):
             next_chunk_id=row.next_chunk_id,
             tags=list(row.tags),
             code_languages=list(chunk.code_languages),
+        )
+
+
+class ArticleOutlineQuery(_Dto):
+    """The outline of one article of exactly one library version; no ``ref`` means the default."""
+
+    library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
+    """`/owner/repo`, any letter case; the version goes in `ref`."""
+    ref: str | None = Field(default=None, max_length=MAX_NAME)
+    """Exact imported ref; default version if empty."""
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    """Article path, as `list_articles` and search results give it."""
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        """Treat a blank ref as no ref (the default version).
+
+        Args:
+            value: The ref as sent.
+
+        Returns:
+            ``None`` for a blank string, else the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class OutlineSectionOut(_Dto):
+    """One heading of the outline, with the chunk it starts and the headings under it."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    heading: str
+    """Heading text (untrusted repository text)."""
+    chunk_id: str | None
+    """The chunk this heading starts, for `read_chunk`; null when only deeper headings start one."""
+    anchor: str | None
+    """The heading's anchor in the article; null when `chunk_id` is."""
+    children: list[OutlineSectionOut]
+    """The headings directly under it, in document order."""
+
+    @classmethod
+    def from_model(cls, node: OutlineNode) -> Self:
+        """Map an outline node and everything under it.
+
+        Args:
+            node: The node to map.
+
+        Returns:
+            The node as a DTO.
+        """
+        return cls(
+            heading=node.heading,
+            chunk_id=node.section.chunk_id if node.section else None,
+            anchor=node.section.anchor if node.section else None,
+            children=[cls.from_model(child) for child in node.children],
+        )
+
+
+class ArticleOutlineOut(_Dto):
+    """An article's heading tree with a chunk ID per heading, and no body text."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice; read it before the fields below."""
+    library: str
+    """Library ID, `/owner/repo`."""
+    version: str
+    """The exact ref that answered (the default version when none was asked)."""
+    commit_sha: str
+    """The commit the version was imported at."""
+    manifest_id: str
+    """The version's active manifest, the one `read_article` reads at the same moment."""
+    article_path: str
+    """The article's path in the version."""
+    source_url: str | None
+    """Link to the article at the commit; null when the host is unknown."""
+    chunks: int
+    """How many chunks the article has, the preamble's included."""
+    preamble_chunk_id: str | None
+    """The chunk of the text before the first heading, if it is one; null otherwise."""
+    sections: list[OutlineSectionOut]
+    """The top-level headings, in document order."""
+
+    @classmethod
+    def from_model(
+        cls, version: SearchableVersion, article_path: str, found: Outline, chunks: int
+    ) -> Self:
+        """Map the outline of an article of the active manifest of ``version``.
+
+        Args:
+            version: The version that answered.
+            article_path: The article's path.
+            found: Its heading tree.
+            chunks: How many chunks the article has.
+
+        Returns:
+            The outline as a DTO.
+        """
+        return cls(
+            library=version.library,
+            version=version.version,
+            commit_sha=version.commit_sha,
+            manifest_id=version.manifest_id,
+            article_path=article_path,
+            source_url=source_link(version, article_path, ""),
+            chunks=chunks,
+            preamble_chunk_id=found.preamble.chunk_id if found.preamble else None,
+            sections=[OutlineSectionOut.from_model(node) for node in found.sections],
         )
 
 

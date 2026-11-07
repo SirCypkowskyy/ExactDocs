@@ -104,6 +104,22 @@ class RenamedPaths(Protocol):
         ...
 
 
+class ArticleSuggestions(Protocol):
+    """Paths of a version an agent may have meant by one it does not have (the catalog answers)."""
+
+    async def close_to(self, target: DocTarget, path: str) -> Sequence[str]:
+        """Return at most five paths of the target version close to ``path``, best first.
+
+        Args:
+            target: The exact library version.
+            path: The path the version does not have.
+
+        Returns:
+            Close paths; empty when nothing is close or nothing is known (never an error).
+        """
+        ...
+
+
 class ChunkRepository(Protocol):
     """Chunk sets (shared by content) and the per-manifest chunk rows that point at them."""
 

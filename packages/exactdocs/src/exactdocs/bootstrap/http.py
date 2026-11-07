@@ -135,6 +135,7 @@ def create_app(container: Container) -> FastAPI:
             search_docs=container.retrieval.search_docs,
             search_all_libraries=container.retrieval.search_all_libraries,
             read_chunk=container.retrieval.read_chunk,
+            article_outline=container.retrieval.article_outline,
             resolve_library_id=container.retrieval.resolve_library_id,
             query_docs=container.retrieval.query_docs,
         )

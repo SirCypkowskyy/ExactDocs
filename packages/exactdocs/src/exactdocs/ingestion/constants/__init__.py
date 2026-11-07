@@ -94,7 +94,7 @@ from exactdocs.ingestion.constants._models import (
     ChunkerName,
     JobKind,
 )
-from exactdocs.ingestion.constants._secrets import KEY_FILE, MIN_SECRET_KEY_LENGTH, OPENSSH_MAGIC
+from exactdocs.ingestion.constants._secrets import OPENSSH_MAGIC
 from exactdocs.ingestion.constants._use_cases import (
     KNOWN_BATCH,
     MAX_CONTROL_RATIO,
@@ -135,7 +135,6 @@ __all__ = [
     "IMAGE_TYPES",
     "IMPORT_JOB",
     "IMPORT_KINDS",
-    "KEY_FILE",
     "KNOWN_BATCH",
     "KNOWN_HOSTS",
     "LEGACY_CODES",
@@ -169,7 +168,6 @@ __all__ = [
     "MAX_TAG_RULES",
     "MAX_WANTED_IMAGES",
     "MIN_INTERVAL_MINUTES",
-    "MIN_SECRET_KEY_LENGTH",
     "ONE",
     "OPENSSH_MAGIC",
     "PARSER_VERSION",
