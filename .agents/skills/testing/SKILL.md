@@ -15,6 +15,7 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Adapter contract | pytest, parametrized over adapters | `packages/exactdocs/tests/<domain>/` | every driven adapter (memory, sqlite, postgres) behaves the same | slower for DBs |
 | Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture.md` | fast |
 | Web | vitest + Testing Library | `web/src/**/*.test.tsx` | components and query logic of a feature | fast |
+| Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md | seconds |
 
 ## Rules of thumb
 
@@ -25,6 +26,10 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   for ports and no inheritance (see `FakeVersions` in `tests/retrieval/`).
 - **Assert outcomes, not calls.** Check returned DTOs and raised errors, not which methods were called.
 - **Version is a hard filter**: anything touching retrieval gets a "wrong version gets nothing" test.
+- **Retrieval ranking or a new mode**: run `just eval`; the wrong-version rate must stay 0 and BM25's
+  recall@5 within 2 points of `evals/retrieval_eval/baseline.json` (refresh it with
+  `--write-baseline` when ranking improves). A query added to `expected-queries.yaml` is added to
+  the eval dataset too.
 - **Import and search tests use the fixture docs repository** (`packages/exactdocs/tests/fixtures/docs-repo/`):
   pytest fixture `docs_repo`, behave `context.fixture_repo`; read its README before changing content.
 - **A bug fix starts with a failing test** that reproduces the issue.

@@ -9,6 +9,7 @@ import base64
 import contextlib
 import http.server
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -102,6 +103,22 @@ def build(dest: Path) -> Path:
         git("update-ref", f"refs/heads/{branch}", sha, cwd=dest)
     git("reset", "-q", "--hard", "main", cwd=dest)  # HEAD is main, a commit behind the build
     return dest
+
+
+def headings(markdown: str) -> set[tuple[str, ...]]:
+    """Every heading path (H1 first) of ``markdown``, ignoring front matter and fenced code."""
+    markdown = re.sub(r"\A---\n.*?\n---\n", "", markdown, flags=re.DOTALL)
+    stack: list[str] = []
+    paths: set[tuple[str, ...]] = set()
+    fenced = False
+    for line in markdown.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced and (match := re.match(r"(#{1,6}) (.+)", line)):
+            del stack[len(match[1]) - 1 :]
+            stack.append(match[2].strip())
+            paths.add(tuple(stack))
+    return paths
 
 
 TOKEN = "s3cr3t-fixture-token-4f1d9a"

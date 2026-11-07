@@ -10,37 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from exactdocs.bootstrap.bridges import (
-    CatalogLibrarySources,
-    CatalogVersionPublisher,
-    RetrievalChunkIndex,
-)
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
-from exactdocs.ingestion.adapters.driven.git_cli import GitCli
-from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
-from exactdocs.ingestion.constants import IMPORT_JOB
-from exactdocs.ingestion.models import Job, JobId, RefKind
-from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
-from exactdocs_kernel import SystemClock
-from fixture_repo import DocsRepo, git
+from fixture_import import import_fixture
+from fixture_repo import DocsRepo
 
-LIBRARY = "/fixture/docs-repo"
-VERSIONS = {"v1.3.0": RefKind.TAG, "v1.4.0": RefKind.TAG, "next": RefKind.BRANCH}
 ENGINES = ["fts5"]
-
-
-class _Progress:
-    async def report(self, *, done: int, total: int) -> None: ...
-
-    async def problem(self, path: str, code: object, reason: str) -> None: ...
-
-    async def chunking(self, *, chunked: int, reused: int) -> None: ...
-
-    async def parsing(self, *, parsed: int, taken: int) -> None: ...
 
 
 def open_container(engine: str, data_dir: Path) -> Container:
@@ -52,51 +28,7 @@ def open_container(engine: str, data_dir: Path) -> Container:
 async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):
-        await container.catalog.create_library(
-            CreateLibraryCommand(
-                id=LIBRARY,
-                title="Docs",
-                source_url=docs_repo.file_url,
-                host=HostKind.GIT,
-                default_branch="main",
-                include_paths=["docs/"],
-            )
-        )
-        importer = ImportVersionUseCase(
-            gateway=GitCli.locate(),
-            chunker=MarkdownChunker(),
-            sources=CatalogLibrarySources(
-                get_library=container.catalog.get_library,
-                list_renames=container.catalog.list_renames,
-            ),
-            versions=CatalogVersionPublisher(
-                store_manifest=container.catalog.store_manifest,
-                activate_manifest=container.catalog.activate_manifest,
-                discard_pending_manifests=container.catalog.discard_pending_manifests,
-                apply_readme=container.catalog.apply_readme,
-                apply_manual_tags_to=container.catalog.apply_manual_tags,
-                replace_renames_of=container.catalog.replace_renames,
-            ),
-            index=RetrievalChunkIndex(
-                index_manifest=container.retrieval.index_manifest,
-                get_chunk_sets=container.retrieval.get_chunk_sets,
-                discard_pending_chunks=container.retrieval.discard_pending_chunks,
-                remove_chunks=container.retrieval.remove_chunks,
-                retag_articles=container.retrieval.retag_articles,
-            ),
-            vault=InMemoryCredentialVault(),
-        )
-        for ref, kind in VERSIONS.items():
-            job = Job.queued(
-                job_id=JobId(f"import-{ref}"),
-                kind=IMPORT_JOB,
-                library=LIBRARY,
-                version=ref,
-                commit_sha=git("rev-parse", f"{ref}^{{commit}}", cwd=docs_repo.path),
-                ref_kind=kind,
-                now=SystemClock().now(),
-            )
-            await importer(job, _Progress())
+        await import_fixture(container, docs_repo)
 
 
 @pytest.fixture(scope="session", params=ENGINES)

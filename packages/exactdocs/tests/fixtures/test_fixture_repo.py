@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from fixture_repo import FIXTURE, DocsRepo, build, git, git_bytes
+from fixture_repo import FIXTURE, DocsRepo, build, git, git_bytes, headings
 
 # Changing a file under docs-repo/ or history.toml changes these: see docs-repo/README.md.
 GOLDEN_SHAS = {
@@ -170,22 +170,6 @@ def test_oversized_file_is_above_the_default_cap(docs_repo: DocsRepo) -> None:
     sizes = git("ls-tree", "-r", "-l", "v1.3.0", cwd=docs_repo.path).splitlines()
     big = [line.split("\t")[1] for line in sizes if int(line.split()[3]) > MAX_ARTICLE_BYTES]
     assert big == ["docs/reference/oversized.md"]
-
-
-def headings(markdown: str) -> set[tuple[str, ...]]:
-    """Every heading path (H1 first) of ``markdown``, ignoring front matter and fenced code."""
-    markdown = re.sub(r"\A---\n.*?\n---\n", "", markdown, flags=re.DOTALL)
-    stack: list[str] = []
-    paths: set[tuple[str, ...]] = set()
-    fenced = False
-    for line in markdown.splitlines():
-        if line.startswith("```"):
-            fenced = not fenced
-        elif not fenced and (match := re.match(r"(#{1,6}) (.+)", line)):
-            del stack[len(match[1]) - 1 :]
-            stack.append(match[2].strip())
-            paths.add(tuple(stack))
-    return paths
 
 
 def expected_queries() -> list[tuple[str, str, dict[str, str] | None]]:
