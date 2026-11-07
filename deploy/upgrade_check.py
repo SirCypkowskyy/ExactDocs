@@ -32,6 +32,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Generator
+from http import HTTPStatus
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,16 +127,33 @@ class Api:
 
 
 def wait_healthy(api: Api, server: subprocess.Popen[bytes]) -> dict:
+    """Wait until the server is ready (its database answers), then return its health details."""
     for _ in range(240):
         if server.poll() is not None:
             sys.exit(f"the server exited early with {server.returncode}")
-        with (
-            contextlib.suppress(OSError, ValueError),
-            urllib.request.urlopen(f"{api.url}/api/health", timeout=2) as response,  # ruff: ignore[suspicious-url-open-usage]
-        ):
-            return json.load(response)
+        # Liveness answers before the database does; only readiness means it can serve.
+        if _ready(api.url):
+            with (
+                contextlib.suppress(OSError, ValueError),
+                urllib.request.urlopen(f"{api.url}/api/health", timeout=2) as response,  # ruff: ignore[suspicious-url-open-usage]
+            ):
+                health = json.load(response)
+                # Releases before the probes have no `database_reachable` (they 500 until ready).
+                if health.get("database_reachable", True):
+                    return health
         time.sleep(0.5)
     sys.exit("the server did not become healthy in 120 s")
+
+
+def _ready(url: str) -> bool:
+    """Ask /readyz; a release from before the probes (404) is ready once /api/health answers."""
+    try:
+        with urllib.request.urlopen(f"{url}/readyz", timeout=3):  # ruff: ignore[suspicious-url-open-usage]
+            return True
+    except urllib.error.HTTPError as exc:
+        return exc.code == HTTPStatus.NOT_FOUND
+    except OSError, ValueError:
+        return False
 
 
 @contextlib.contextmanager

@@ -572,7 +572,8 @@ Docker, Kubernetes or a load balancer:
 | `/readyz` | `200 {"status": "ready"}` when the database file exists, answers within 2 s and is at this version's schema, else `503 {"status": "not_ready", "reason": ...}` | readiness: send traffic only while it is ready |
 
 `/api/health` is an alias of `/healthz`, kept for existing clients. Neither probe creates a
-missing database file.
+missing database file (an existing empty one gets SQLite's header and WAL files on connect). To
+wait for a starting instance, poll `/readyz`: liveness answers before the database does.
 
 The probes answer whatever the `Host` header says, so a Kubernetes `httpGet` probe (which sends
 the pod IP) needs no extra header. Only exact `GET`/`HEAD` requests on these three paths skip the

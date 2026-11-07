@@ -272,9 +272,28 @@ async def test_a_trusted_host_gets_the_details(anonymous: httpx.AsyncClient, pat
     assert response.json()["database_reachable"] is True
 
 
-async def test_only_probe_requests_skip_the_host_check(anonymous: httpx.AsyncClient) -> None:
-    untrusted = {"host": "10.1.2.3:3000"}
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/session"),
+        ("POST", LIVENESS_PATH),
+        ("OPTIONS", LIVENESS_PATH),
+        ("GET", f"{READINESS_PATH}/"),
+        ("GET", f"/{LIVENESS_PATH}"),
+    ],
+)
+async def test_only_exact_probe_requests_skip_the_host_check(
+    anonymous: httpx.AsyncClient, method: str, path: str
+) -> None:
+    # A raw path: httpx would read a leading `//` as a host name.
+    url = httpx.URL("http://localhost").copy_with(raw_path=path.encode())
+    response = await anonymous.request(method, url, headers={"host": "10.1.2.3:3000"})
 
-    assert (await anonymous.get("/api/v1/session", headers=untrusted)).status_code == 400
-    assert (await anonymous.post(LIVENESS_PATH, headers=untrusted)).status_code == 400
-    assert (await anonymous.get(f"{READINESS_PATH}/", headers=untrusted)).status_code == 400
+    assert response.status_code == 400
+
+
+async def test_a_query_string_is_still_a_probe(anonymous: httpx.AsyncClient) -> None:
+    response = await anonymous.get(LIVENESS_PATH, params={"x": ""}, headers={"host": "10.1.2.3"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
