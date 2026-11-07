@@ -51,10 +51,14 @@ issue of the milestone points here instead of deciding these again. The short fo
 - **PostgreSQL** (#103) moves into this milestone. Driver: **psycopg 3** async
   (`postgresql+psycopg://`), already in the image as a DBOS dependency, so it costs nothing;
   asyncpg would add about 32 MB and a second driver. DBOS keeps its system tables in the **same
-  database**, in their own schema (`DBOSConfig.dbos_system_schema`, e.g. `dbos`), which is what
-  makes several server processes safe. It must not use DBOS's default of a separate system
-  database: DBOS 3.3 then connects to `postgres` and runs `CREATE DATABASE`, which managed services
-  such as Supabase usually forbid.
+  database**: bootstrap sets `DBOSConfig.system_database_url` to the app's PostgreSQL URL and
+  `dbos_system_schema` (default `dbos`) to a schema of their own. That is what makes several server
+  processes safe. (DBOS 3.3's default system database is a local SQLite file, today's
+  `jobs.sqlite`; given a PostgreSQL system database that does not exist, it connects to the
+  `postgres` database and runs `CREATE DATABASE`, which managed services such as Supabase usually
+  forbid. Pointing it at the existing app database avoids that; DBOS still first connects to
+  `postgres` to check that the database exists and only logs a warning when it may not, which
+  #103 and #244 verify with a role that cannot create databases.)
 - **BM25 on PostgreSQL** is ParadeDB `pg_search` (#104), as decided before. The CI image
   (`paradedb/paradedb`) also bundles pgvector.
 - **Supabase** (#244) is supported as a PostgreSQL database, nothing more: no Supabase SDK, Auth or
@@ -81,8 +85,8 @@ Mode, `SpendLimits` and guardrails. A profile has a `kind`:
 | `openai-compatible` (custom: base URL, optional key) | `OpenAIProvider(base_url=…, api_key=…)` | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
 | `openai` | `OpenAIProvider` | `OpenAIResponsesModel` | `OpenAIEmbeddingModel` | `openai` |
 | `openrouter` | `OpenRouterProvider` | `OpenRouterModel` | `OpenAIEmbeddingModel` on the same provider | `openai` |
-| `anthropic` | `AnthropicProvider`; `platform = "api"` (default, optional `base_url` for gateways), `"vertex"` (Claude on Vertex AI: `anthropic_client=AsyncAnthropicVertex(project, region, credentials)`), `"foundry"` (Claude on Azure AI Foundry: `AsyncAnthropicFoundry`) or `"bedrock"` (`AsyncAnthropicBedrock`, needs boto3: not in the images) | `AnthropicModel` | none: Anthropic has no embedding API | `anthropic` (Vertex auth through `google-auth`, already there via google-genai) |
-| `azure` (Azure OpenAI) | `AzureProvider(azure_endpoint, api_version, api_key)`; with `auth = "entra"` (no key): `AzureProvider(openai_client=AsyncAzureOpenAI(azure_ad_token_provider=…))` from `azure-identity` (managed identity, workload identity or a client secret); the model name is the deployment | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai`, `azure-identity` (about 5 MB) |
+| `anthropic` | `AnthropicProvider`; `platform = "api"` (default, optional `base_url` for gateways), `"vertex"` (Claude on Vertex AI: `anthropic_client=AsyncAnthropicVertex(project_id=…, region=…, base_url=…, credentials=…)`), `"foundry"` (Claude on Azure AI Foundry: `AsyncAnthropicFoundry(base_url=… or resource=…, api_key=… or azure_ad_token_provider=…)`) or `"bedrock"` (`AsyncAnthropicBedrock`, needs boto3: not in the images) | `AnthropicModel` | none: Anthropic has no embedding API | `anthropic` (Vertex auth through `google-auth`, already there via google-genai) |
+| `azure` (Azure OpenAI) | `AzureProvider(azure_endpoint, api_version, api_key)`; with `auth = "entra"` (no key): `AzureProvider(openai_client=AsyncAzureOpenAI(azure_endpoint=…, api_version=…, azure_ad_token_provider=…))` with the **sync** `azure.identity.get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")` (managed identity, workload identity or a client secret). The sync credential blocks only when the cached token is refreshed, about once an hour; `azure.identity.aio` would need `azure-core[aio]` and so aiohttp, which is not in the lock or the budget; the model name is the deployment | `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai`, `azure-identity` (about 5 MB) |
 | `google-vertex` (Vertex AI) | `GoogleCloudProvider(project, location, credentials)`: a service-account file, workload identity / ADC, or an Express-mode key | `GoogleModel` | `GoogleEmbeddingModel` | `google-genai` |
 | `google` (Gemini API) | `GoogleProvider(api_key)` | `GoogleModel` | `GoogleEmbeddingModel` | `google-genai` |
 | `ollama`, `vllm` | `OllamaProvider(base_url)`, `VLLMProvider(base_url)` | `OllamaModel` (a subclass of `OpenAIChatModel`), `OpenAIChatModel` | `OpenAIEmbeddingModel` | `openai` |
@@ -93,13 +97,18 @@ Mode, `SpendLimits` and guardrails. A profile has a `kind`:
 
 - **Explicit values only, never the SDKs' environment.** The provider factory always passes an
   explicit `base_url` and `api_key` (or a client built with them) to every provider, using the
-  fixed placeholder `"unused"` for a keyless profile, and explicit project, location and
-  credentials to Vertex. It never builds a model from a `"<provider>:<model>"` string (which
-  infers the provider from the environment). Otherwise the SDKs fall back to `OPENAI_API_KEY`,
-  `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`,
+  fixed placeholder `"unused"` for a keyless profile, explicit project, location and
+  credentials to Vertex, explicit `base_url`, `region` and `project_id` to `AsyncAnthropicVertex`,
+  explicit `base_url` (or `resource`) to `AsyncAnthropicFoundry`, and explicit `azure_endpoint`
+  and `api_version` to `AsyncAzureOpenAI`. It never builds a model from a `"<provider>:<model>"`
+  string (which infers the provider from the environment). Otherwise the SDKs fall back to
+  `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_VERSION`, `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_VERTEX_BASE_URL`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`,
+  `ANTHROPIC_FOUNDRY_BASE_URL`, `ANTHROPIC_FOUNDRY_RESOURCE`, `ANTHROPIC_FOUNDRY_API_KEY`,
+  `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`,
   `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and the like: a keyless
-  custom gateway would receive the host's OpenAI key, and `OPENAI_BASE_URL` would redirect the
-  `openai` kind. ADC for Vertex is used only when the profile says `credentials = "adc"`. #241's
+  custom gateway would receive the host's OpenAI key, and every `*_BASE_URL` / `*_ENDPOINT` would
+  redirect traffic. ADC for Vertex is used only when the profile says `credentials = "adc"`. #241's
   socket-guard test runs with those variables set and proves none of them is used.
 - **Custom endpoints** use `OpenAIProvider(base_url=…, api_key=…)` with `OpenAIChatModel` (Chat
   Completions, the most widely implemented API). pydantic-ai's `OpenAICompatibleProvider`,
@@ -316,8 +325,14 @@ identities and tokens are never sent.
       `SpendLimits` wraps it, warns, and loses the token-based deduplication of replays.
     - **Embedding and rerank calls** (`Embedder`, the HTTP rerankers, fastembed) never run
       through an agent, so `SpendLimits` cannot see them. Retrieval records and checks them
-      itself, against the same table with the same key scheme, before each batch (the embed job)
-      or call (rerank).
+      itself, against the same table and the same rows, before each batch (the embed job) or
+      call (rerank).
+    - **We own the key format.** A ledger row is keyed by (scope kind, scope id, window, window
+      start), in our own format. The harness builds its `SpendEntry.key` with private helpers
+      (`store_key`, `bucket` in `pydantic_ai_harness/spend/_budget.py`, not exported), so our
+      `BatchSpendStore` adapter parses each key the harness hands it into our row key, and never
+      imports the private module. A contract test pins the harness 0.60.0 key format: a harness
+      bump that changes it fails the test instead of splitting the spend over two sets of rows.
     - A check runs before each call or batch, so a burst can overshoot by at most the calls
       already in flight.
 - **Per-call limits:** pydantic-ai `UsageLimits` on every call; for the agent also
@@ -459,10 +474,12 @@ and #106.
       Enterprise Server** host (API derived as `<base>/api/v3`) or GitHub Enterprise Cloud with data
       residency (`https://<subdomain>.ghe.com`, whose API is `https://api.<subdomain>.ghe.com`); an
       optional `api_url` overrides the derived one. Scopes `read:user read:org`. Access requires an
-      `active` membership in an allowed organization (`GET /user/memberships/orgs/{org}`) and,
-      when teams are listed, in an allowed team. Teams are read with one paginated
-      `GET /user/teams` and matched against the allowed list (the per-team
-      `GET /orgs/{org}/teams/{team_slug}/memberships/{username}` is the fallback for one team).
+      `active` membership in an allowed organization (`GET /user/memberships/orgs/{org}`, checked
+      **first**, per organization) and, when teams are listed, in an allowed team. Teams are then
+      read with one paginated `GET /user/teams` and matched against the allowed list (it silently
+      omits teams of organizations that restrict the app or need SSO, so only the per-org check
+      can produce the 403 messages below). The per-team
+      `GET /orgs/{org}/teams/{team_slug}/memberships/{username}` is the fallback for one team.
       Each allowed team becomes the ExactDocs group `github:<org>/<team>`.
     - **GitHub 403s are not "not a member".** An organization with OAuth App access restrictions
       must approve the OAuth App, and a SAML-enforced organization needs the token authorized for

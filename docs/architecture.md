@@ -702,7 +702,7 @@ Not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#
 - **Jobs.** Embedding runs are an `embed` ingestion job kind with resumable steps, reaching
   retrieval through a bridge, like indexing.
 - **PostgreSQL** (#103) arrives with this milestone: psycopg 3, DBOS's tables in the same database
-  (`dbos_system_schema`), a per-library advisory lock replacing `TagLocks`, and a third search adapter
+  (`system_database_url` plus `dbos_system_schema`), a per-library advisory lock replacing `TagLocks`, and a third search adapter
   (PostgreSQL full-text search) for databases without `pg_search`, such as Supabase.
 
 ## Python conventions
