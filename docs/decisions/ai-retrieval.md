@@ -302,7 +302,10 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 `openaipublic.blob.core.windows.net` on first use (pydantic-ai's
 `OpenAIEmbeddingModel.count_tokens` calls it). ExactDocs never calls `count_tokens`: accounting
 uses the `usage` the provider returns, and `exactdocs ai estimate` estimates from characters
-(4 per token) and says it is an estimate. A test asserts that tiktoken is not imported.
+(4 per token) and says it is an estimate. A test asserts that tiktoken is never used: a chat role
+does not import it, and no encoding is ever loaded. (pydantic-ai 2.60.0's
+`pydantic_ai.embeddings.openai` imports tiktoken when it loads, so an OpenAI-API embedding role
+imports the module, but never calls it; found in #241.)
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;

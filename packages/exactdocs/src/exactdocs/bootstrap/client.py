@@ -5,7 +5,7 @@ database: they go through ``ApiClient``, so they work against any instance. Noth
 the container, the settings of the server or a domain.
 
 Where the server and the token come from, strongest first: command-line flag, then
-``EXACTDOCS_URL`` / ``EXACTDOCS_TOKEN``, then the config file (``EXACTDOCS_CONFIG_FILE``, else
+``EXACTDOCS_URL`` / ``EXACTDOCS_TOKEN``, then the config file (``EXACTDOCS_CLIENT_CONFIG``, else
 ``config.json`` in the platform config directory, mode 0600). The only host ever contacted is the
 resolved server URL.
 """
@@ -42,7 +42,7 @@ class ClientError(Exception):
 
 
 def config_path(env: Mapping[str, str] = os.environ) -> Path:
-    """Return the credentials file: ``EXACTDOCS_CONFIG_FILE`` or the user config dir's file."""
+    """Return the credentials file: ``EXACTDOCS_CLIENT_CONFIG`` or the user config dir's file."""
     if override := env.get(CONFIG_FILE_VARIABLE):
         return Path(override)
     return user_config_path("exactdocs", appauthor=False) / "config.json"

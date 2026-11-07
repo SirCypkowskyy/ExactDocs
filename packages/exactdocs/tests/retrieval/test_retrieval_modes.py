@@ -33,6 +33,7 @@ from exactdocs.retrieval.models import (
     CatalogLibrary,
     DocTarget,
     FallbackReason,
+    LibraryAi,
     ManifestStatus,
     ModelRole,
     ModeRegistry,
@@ -110,16 +111,17 @@ class FakePipeline:
 
 @dataclass(slots=True)
 class MutableRoles:
-    """Roles the test changes while the module runs, as #241's configuration will.
+    """Roles the test changes while the module runs, as the provider configuration does.
 
-    A library in ``ai_off`` gets no role at all, as #102's per-library "AI off" will.
+    A library in ``ai_off`` gets no role at all, as a library with AI off does.
     """
 
     roles: set[ModelRole]
     ai_off: set[str] = field(default_factory=set)
 
-    async def configured(self, library: str) -> frozenset[ModelRole]:
-        return frozenset() if library.casefold() in self.ai_off else frozenset(self.roles)
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
+        off = library.casefold() in self.ai_off or (ai is not None and not ai.enabled)
+        return frozenset() if off else frozenset(self.roles)
 
 
 @dataclass(slots=True)
@@ -449,18 +451,18 @@ async def library_modes(request: pytest.FixtureRequest) -> AsyncIterator[Library
 
 
 async def test_a_stored_mode_is_found_in_any_letter_case(library_modes: LibraryModes) -> None:
-    await library_modes.set_mode("/Acme/Payments", HYBRID)
+    await library_modes.save("/Acme/Payments", HYBRID, LibraryAi())
 
     assert await library_modes.mode_of("/acme/PAYMENTS") is HYBRID
     assert await library_modes.mode_of("/acme/other") is None
 
 
 async def test_a_stored_mode_is_replaced_and_removed(library_modes: LibraryModes) -> None:
-    await library_modes.set_mode(LIB, HYBRID)
-    await library_modes.set_mode(LIB, AGENTIC)
+    await library_modes.save(LIB, HYBRID, LibraryAi())
+    await library_modes.save(LIB, AGENTIC, LibraryAi())
     assert await library_modes.mode_of(LIB) is AGENTIC
 
-    await library_modes.set_mode(LIB, None)
+    await library_modes.save(LIB, None, LibraryAi())
 
     assert await library_modes.mode_of(LIB) is None
 
@@ -470,8 +472,8 @@ async def test_the_static_roles_are_what_the_test_set() -> None:
 
 
 async def test_a_forgotten_library_has_no_mode(library_modes: LibraryModes) -> None:
-    await library_modes.set_mode("/Acme/Payments", HYBRID)
-    await library_modes.set_mode("/acme/other", AGENTIC)
+    await library_modes.save("/Acme/Payments", HYBRID, LibraryAi())
+    await library_modes.save("/acme/other", AGENTIC, LibraryAi())
 
     await library_modes.forget("/acme/PAYMENTS")
     await library_modes.forget("/acme/never-set")  # nothing stored: nothing happens

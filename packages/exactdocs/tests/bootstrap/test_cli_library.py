@@ -453,7 +453,7 @@ def server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
         return real(url, token, transport=httpx2.MockTransport(recorder))
 
     monkeypatch.setattr(cli, "ApiClient", build)
-    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(tmp_path / "none.json"))
+    monkeypatch.setenv("EXACTDOCS_CLIENT_CONFIG", str(tmp_path / "none.json"))
     monkeypatch.setenv("EXACTDOCS_URL", "http://localhost:3000")
     monkeypatch.setenv("EXACTDOCS_TOKEN", "exd_apitoken")
     return recorder

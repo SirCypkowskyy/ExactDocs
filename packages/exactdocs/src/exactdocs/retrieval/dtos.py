@@ -1,27 +1,48 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     StringConstraints,
     field_validator,
     model_validator,
 )
 
-from exactdocs.retrieval.constants import DEFAULT_GRACE_SECONDS, MAX_QUERY, MAX_TAG, MAX_TAGS
+from exactdocs.retrieval.constants import (
+    DEFAULT_GRACE_SECONDS,
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_RETRIES,
+    MAX_KEY,
+    MAX_MODEL_NAME,
+    MAX_MODEL_REF,
+    MAX_QUERY,
+    MAX_TAG,
+    MAX_TAGS,
+    MAX_URL,
+    PROFILE_NAME_PATTERN,
+)
 from exactdocs.retrieval.models import (
+    AnthropicPlatform,
+    AzureAuth,
     Candidate,
     FallbackReason,
+    KeySource,
+    ModelCheck,
     ModelRole,
     Outline,
     OutlineNode,
+    ProfileOrigin,
+    ProviderKind,
+    ProviderProfile,
     RebuiltIndex,
     Removed,
     RetrievalMode,
+    RoleSource,
     SearchableVersion,
     SearchHit,
     SearchIndexState,
@@ -720,13 +741,22 @@ class SetLibraryRetrievalCommand(_Dto):
     instance's mode.
     """
 
-    @field_validator("mode", mode="before")
+    ai_enabled: bool = True
+    """False: nothing of the library is ever sent to an AI provider, and its searches are BM25."""
+    llm: str | None = Field(default=None, max_length=MAX_MODEL_REF)
+    """The library's own LLM, `<profile>:<model>`; empty: the instance's `llm` role."""
+    judge: str | None = Field(default=None, max_length=MAX_MODEL_REF)
+    """The library's own judge, `<profile>:<model>`; empty: the instance's (else the LLM)."""
+    reranker: str | None = Field(default=None, max_length=MAX_MODEL_REF)
+    """The library's own reranker, `<profile>:<model>`; empty: the instance's `reranker` role."""
+
+    @field_validator("mode", "llm", "judge", "reranker", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
-        """Treat a blank mode as none.
+        """Treat a blank mode or model as none.
 
         Args:
-            value: The raw mode.
+            value: The raw mode or model.
 
         Returns:
             ``None`` for blank text, otherwise the value unchanged.
@@ -752,11 +782,285 @@ class LibraryRetrievalOut(_Dto):
     available_modes: list[RetrievalMode]
     """The modes a call or a setting may name now."""
     configured_roles: list[ModelRole]
-    """The model roles configured on this instance (`embedding`, `reranker`, `llm`)."""
+    """The model roles this library's searches may use now (none with AI off)."""
+    ai_enabled: bool = True
+    """False: nothing of the library is sent to an AI provider; its searches are BM25."""
+    llm: str | None = None
+    """The library's own LLM (`<profile>:<model>`); null: the instance's."""
+    judge: str | None = None
+    """The library's own judge (`<profile>:<model>`); null: the instance's, else the LLM."""
+    reranker: str | None = None
+    """The library's own reranker (`<profile>:<model>`); null: the instance's."""
 
 
 class ForgetLibraryCommand(_Dto):
-    """A library was removed: drop what retrieval stores for it (its retrieval mode)."""
+    """A library was removed: drop what retrieval stores for it (its mode and AI overrides)."""
 
     library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
     """`/owner/repo`, any letter case."""
+
+
+class ProviderNameQuery(_Dto):
+    """Which provider profile."""
+
+    name: str = Field(pattern=PROFILE_NAME_PATTERN)
+    """The profile's name: lower case, digits, `_` and `-`."""
+
+
+class SaveProviderCommand(_Dto):
+    """Create (``create``) or replace a provider profile managed over the REST API."""
+
+    name: str = Field(pattern=PROFILE_NAME_PATTERN)
+    """The profile's name, used in roles as `<name>:<model>`: lower case, digits, `_`, `-`."""
+    create: bool = False
+    """True: fail with `provider_exists` when it exists; false: replace it (or create it)."""
+    kind: str = Field(max_length=MAX_NAME)
+    """`openai-compatible`, `openai`, `openrouter`, `anthropic`, `azure`, `google-vertex`,
+    `google`, `ollama`, `vllm`, `litellm`, `local`, or one of pydantic-ai's OpenAI-API providers
+    (`deepseek`, `together`, `fireworks`, `cerebras`, `github`, `vercel`, `moonshotai`, `heroku`,
+    `nebius`, `ovhcloud`, `sambanova`, `alibaba`).
+    """
+    base_url: str | None = Field(default=None, max_length=MAX_URL)
+    """The endpoint; required for `openai-compatible`, `ollama`, `vllm`, `litellm` and `azure`."""
+    api_key: SecretStr | None = Field(default=None, max_length=MAX_KEY)
+    """The key, sealed with the instance's secret key and never returned. Omitted: keep the stored
+    key (see `keep_key`); a profile without a key sends the placeholder `unused`.
+    """
+    keep_key: bool = True
+    """When `api_key` is omitted, keep the key stored before; false removes it."""
+    headers: dict[str, str] = Field(default_factory=dict)
+    """Extra headers of every call; their values are never returned or logged."""
+    proxy: str | None = Field(default=None, max_length=MAX_URL)
+    """An HTTP(S) proxy for this profile only."""
+    request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+    """Overall timeout of one call, in seconds."""
+    max_retries: int = DEFAULT_RETRIES
+    """Retries of one call."""
+    api_version: str | None = Field(default=None, max_length=MAX_NAME)
+    """Azure OpenAI's API version."""
+    project: str | None = Field(default=None, max_length=MAX_NAME)
+    """Google Cloud project (`google-vertex`, `anthropic` on `vertex`)."""
+    location: str | None = Field(default=None, max_length=MAX_NAME)
+    """Google Cloud location, or the AWS region of Claude on Bedrock."""
+    credentials_file: str | None = Field(default=None, max_length=MAX_PATH)
+    """A Google service-account file on the server."""
+    credentials: Literal["adc"] | None = None
+    """`adc`: Google Application Default Credentials (workload identity, the metadata server)."""
+    platform: AnthropicPlatform | None = None
+    """`anthropic` only: `api` (default), `vertex`, `foundry` or `bedrock` (needs boto3)."""
+    auth: AzureAuth | None = None
+    """`azure`, and `anthropic` on `foundry`: `key` (default) or `entra` (Entra ID)."""
+    resource: str | None = Field(default=None, max_length=MAX_NAME)
+    """Claude on Azure AI Foundry: the resource name, instead of `base_url`."""
+
+    @field_validator("base_url", "proxy", "api_version", "project", "location", mode="before")
+    @classmethod
+    def _blank_text_is_none(cls, value: object) -> object:
+        """Treat blank text as unset.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class ProviderOut(_Dto):
+    """A provider profile as the REST API shows it: never its key or its header values."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    name: str
+    """Used in roles as `<name>:<model>`."""
+    kind: ProviderKind
+    """What it talks to."""
+    origin: ProfileOrigin
+    """`configuration` (the environment or the TOML file: read-only here) or `api`."""
+    read_only: bool
+    """Changed only where it is configured."""
+    base_url: str | None
+    """The endpoint; null: the platform's own."""
+    key: KeySource
+    """Where its key comes from (`none`, `sealed`, `file`, `environment`); never the key."""
+    header_names: list[str]
+    """The extra headers it sends; their values are never shown."""
+    proxy: str | None
+    """Its proxy, any password masked."""
+    request_timeout: float
+    """Overall timeout of one call, in seconds."""
+    max_retries: int
+    """Retries of one call."""
+    api_version: str | None
+    """Azure OpenAI's API version."""
+    project: str | None
+    """Google Cloud project."""
+    location: str | None
+    """Google Cloud location or AWS region."""
+    credentials_file: str | None
+    """Google service-account file."""
+    credentials: Literal["adc"] | None
+    """`adc` when Application Default Credentials are used."""
+    platform: AnthropicPlatform | None
+    """Where an `anthropic` profile reaches Claude."""
+    auth: AzureAuth | None
+    """How an Azure profile signs its calls."""
+    resource: str | None
+    """Azure AI Foundry resource."""
+    roles: list[ModelRole]
+    """The instance roles set to one of its models."""
+    unsupported: str | None
+    """Why this installation cannot call it (an extra or an SDK to install); null when it can."""
+
+    @classmethod
+    def from_model(
+        cls, profile: ProviderProfile, roles: list[ModelRole], unsupported: str | None
+    ) -> Self:
+        """Describe a profile.
+
+        Args:
+            profile: The profile.
+            roles: The instance roles that use it.
+            unsupported: Why it cannot be called here, if it cannot.
+
+        Returns:
+            The description, without secrets.
+        """
+        return cls(
+            name=profile.name,
+            kind=profile.kind,
+            origin=profile.origin,
+            read_only=profile.read_only,
+            base_url=profile.base_url,
+            key=profile.key,
+            header_names=list(profile.header_names),
+            proxy=profile.shown_proxy,
+            request_timeout=profile.request_timeout,
+            max_retries=profile.max_retries,
+            api_version=profile.api_version,
+            project=profile.project,
+            location=profile.location,
+            credentials_file=profile.credentials_file,
+            credentials="adc" if profile.adc else None,
+            platform=profile.platform,
+            auth=profile.auth,
+            resource=profile.resource,
+            roles=roles,
+            unsupported=unsupported,
+        )
+
+
+class ProviderListOut(_Dto):
+    """Every provider profile: the configured ones first, then those stored over the API."""
+
+    providers: list[ProviderOut]
+    """The profiles."""
+
+
+class RoleOut(_Dto):
+    """One instance role and the model it uses."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    role: ModelRole
+    """`embedding`, `reranker`, `llm` or `judge`."""
+    model: str | None
+    """`<profile>:<model>`; null when the role is not set."""
+    source: RoleSource | None
+    """`instance`, or `llm` for a judge that defaults to the LLM; null when not set."""
+    profile_exists: bool
+    """False when the role names a profile that does not exist (the role is then not usable)."""
+
+
+class RoleListOut(_Dto):
+    """The instance's roles (set in the environment or the TOML file)."""
+
+    roles: list[RoleOut]
+    """One per role."""
+
+
+class CheckProviderCommand(_Dto):
+    """Check one profile: the roles that use it, or a model named here."""
+
+    name: str = Field(pattern=PROFILE_NAME_PATTERN)
+    """The profile."""
+    role: ModelRole | None = None
+    """How to call `model`: `llm`/`judge` (a chat turn), `embedding` or `reranker`."""
+    model: str | None = Field(default=None, max_length=MAX_MODEL_NAME)
+    """A model to check instead of the roles' (needs `role`)."""
+
+    @model_validator(mode="after")
+    def _model_with_role(self) -> Self:
+        """A model is checked as some role.
+
+        Returns:
+            The command.
+
+        Raises:
+            ValueError: ``model`` without ``role``, or the reverse.
+        """
+        if (self.model is None) != (self.role is None):
+            message = "name both a role and a model, or neither"
+            raise ValueError(message)
+        return self
+
+
+class ModelCheckOut(_Dto):
+    """One minimal call to a model: whether it answered, how fast, and what."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    role: ModelRole | None
+    """The role checked; null for a model named by hand."""
+    profile: str
+    """The profile called."""
+    model: str
+    """The model asked for."""
+    status: Literal["ok", "error"]
+    """`ok` when the call answered as expected."""
+    latency_ms: float
+    """How long the call took, in milliseconds."""
+    served_model: str | None
+    """The model the provider says answered."""
+    dimensions: int | None
+    """An embedding model's vector size."""
+    error: str | None
+    """Why the call failed; never holds a key."""
+
+    @classmethod
+    def from_model(cls, check: ModelCheck) -> Self:
+        """Describe a check.
+
+        Args:
+            check: The outcome.
+
+        Returns:
+            The description.
+        """
+        return cls(
+            role=check.role,
+            profile=check.profile,
+            model=check.model,
+            status="ok" if check.ok else "error",
+            latency_ms=round(check.latency_ms, 1),
+            served_model=check.served_model,
+            dimensions=check.dimensions,
+            error=check.error,
+        )
+
+
+class ModelChecksOut(_Dto):
+    """The checks of a profile, or of every role (`exactdocs ai check`)."""
+
+    checks: list[ModelCheckOut]
+    """One per role (or the model named)."""
+
+    @property
+    def ok(self) -> bool:
+        """Say whether every check passed.
+
+        Returns:
+            True when all are `ok` (and there is at least one).
+        """
+        return bool(self.checks) and all(c.status == "ok" for c in self.checks)

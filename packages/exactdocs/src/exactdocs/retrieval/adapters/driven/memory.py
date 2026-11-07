@@ -12,9 +12,11 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     IndexedManifest,
+    LibraryAi,
     ManifestChunk,
     ManifestHit,
     ModelRole,
+    ProviderProfile,
     RebuiltIndex,
     Removed,
     RetrievalMode,
@@ -272,30 +274,33 @@ class InMemoryLibraries:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StaticModelRoles:
-    """Implements ``ports.driven.ModelRoles`` with a fixed set (tests, until #241 reads config)."""
+    """Implements ``ports.driven.ModelRoles`` with a fixed set (tests)."""
 
     roles: frozenset[ModelRole] = frozenset()
     """The roles that count as configured."""
 
-    async def configured(self, library: str) -> frozenset[ModelRole]:
-        """Say which roles are set; the same for every library.
+    async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:
+        """Say which roles are set; the same for every library that has AI on.
 
         Args:
             library: The library searched.
+            ai: The library's overrides, when they are about to change.
 
         Returns:
-            The fixed set.
+            The fixed set; empty when ``ai`` turns AI off.
         """
         del library
-        return self.roles
+        return self.roles if ai is None or ai.enabled else frozenset()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryLibraryModes:
-    """Implements ``ports.driven.LibraryModes`` in a dict keyed by the case-folded library ID."""
+    """Implements ``ports.driven.LibraryModes`` in dicts keyed by the case-folded library ID."""
 
     modes: dict[str, RetrievalMode] = field(default_factory=dict)
     """Mode by case-folded library ID."""
+    overrides: dict[str, LibraryAi] = field(default_factory=dict)
+    """AI overrides by case-folded library ID."""
 
     async def mode_of(self, library: str) -> RetrievalMode | None:
         """Read the library's mode.
@@ -308,22 +313,86 @@ class InMemoryLibraryModes:
         """
         return self.modes.get(library.casefold())
 
+    async def ai_of(self, library: str) -> LibraryAi:
+        """Read the library's AI overrides.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its overrides, or the defaults.
+        """
+        return self.overrides.get(library.casefold(), LibraryAi())
+
     async def forget(self, library: str) -> None:
-        """Drop the library's mode.
+        """Drop the library's settings.
 
         Args:
             library: The library ID, any letter case.
         """
         self.modes.pop(library.casefold(), None)
+        self.overrides.pop(library.casefold(), None)
 
-    async def set_mode(self, library: str, mode: RetrievalMode | None) -> None:
-        """Store or remove the library's mode.
+    async def save(self, library: str, mode: RetrievalMode | None, ai: LibraryAi) -> None:
+        """Replace the library's settings.
 
         Args:
             library: The library ID, any letter case.
             mode: The mode; ``None`` removes it.
+            ai: The AI overrides; the defaults remove them.
         """
+        key = library.casefold()
         if mode is None:
-            self.modes.pop(library.casefold(), None)
+            self.modes.pop(key, None)
         else:
-            self.modes[library.casefold()] = mode
+            self.modes[key] = mode
+        if ai.is_default:
+            self.overrides.pop(key, None)
+        else:
+            self.overrides[key] = ai
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryProviderProfiles:
+    """Implements ``ports.driven.ProviderProfiles`` in a dict keyed by name."""
+
+    profiles: dict[str, ProviderProfile] = field(default_factory=dict)
+    """Profile by name."""
+
+    async def all(self) -> Sequence[ProviderProfile]:
+        """List the profiles.
+
+        Returns:
+            Them, by name.
+        """
+        return [self.profiles[name] for name in sorted(self.profiles)]
+
+    async def get(self, name: str) -> ProviderProfile | None:
+        """Read one profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            The profile, or ``None``.
+        """
+        return self.profiles.get(name)
+
+    async def save(self, profile: ProviderProfile) -> None:
+        """Create or replace a profile.
+
+        Args:
+            profile: The profile.
+        """
+        self.profiles[profile.name] = profile
+
+    async def delete(self, name: str) -> bool:
+        """Delete a profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            Whether there was one.
+        """
+        return self.profiles.pop(name, None) is not None

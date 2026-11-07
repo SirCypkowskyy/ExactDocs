@@ -111,6 +111,8 @@ ignore = [
 "deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
+# Runs the app behind a socket guard in a fresh interpreter, with the SDKs' variables set.
+"**/tests/fixtures/socket_guard.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 
 [tool.ruff.lint.pydocstyle]
 # Google style: `Args:`, `Returns:`, `Raises:`. ruff skips private functions and has no rules for
@@ -156,7 +158,12 @@ addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importli
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # google-genai 2.33 (the [ai] extra) touches typing's private _UnionGenericAlias on import,
+    # deprecated in Python 3.14; third-party, harmless until 3.17.
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai.types",
+]
 
 # ---------------------------------------------------------------- behave (BDD acceptance)
 [tool.behave]

@@ -65,7 +65,8 @@ uvx exactdocs logout                            # forget the stored credentials
 ```
 
 `login` creates an API token named after your machine and stores the server URL and token in
-`config.json` in your user config directory (mode 0600; the token is never printed). The new token
+`config.json` in your user config directory (mode 0600; the token is never printed;
+`EXACTDOCS_CLIENT_CONFIG` names another file). The new token
 **expires after 90 days**; change that with `--expires-in DAYS`, or use `--no-expiry` for a token
 that lives until you revoke it in the web UI. Prefer `--token-stdin` or `EXACTDOCS_TOKEN` over
 `--token`, which ends up in your shell history and in `ps`. `logout` only forgets the credentials
@@ -415,6 +416,8 @@ chunks until the new ones are in place.
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
+| `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` section above); the environment wins over it. It may not hold keys or `secret_key`: those come from the environment or `api_key_file` |
+| `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best mode the configured models allow (BM25 while none is). An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
@@ -490,10 +493,61 @@ PostgreSQL (planned with TEAM-01) is backed up with its own tools: `pg_dump -Fc`
 plus `jobs.sqlite`, `known_hosts` and the key from the data directory; `exactdocs backup` refuses a
 non-SQLite `EXACTDOCS_DATABASE_URL`.
 
-**Planned, not read by this version:** the model endpoints and roles (`EXACTDOCS_AI__...` and a
-TOML file, see [AI retrieval decisions](https://sircypkowskyy.github.io/ExactDocs/decisions/ai-retrieval/)). The optional
-`exactdocs[ai]` extra (`uvx --from 'exactdocs[ai]' exactdocs serve`) already installs their
-dependencies; nothing of it is imported while no model is configured.
+### AI providers and model roles
+
+Model endpoints are **provider profiles**, named once and used by every role as
+`<profile>:<model>`. Configure them in the environment or in a TOML file named by
+`EXACTDOCS_CONFIG_FILE` (the environment wins, field by field); they need the `exactdocs[ai]` extra
+(`uvx --from 'exactdocs[ai]' exactdocs serve`). Nothing of it is imported, and nothing is sent
+anywhere, while no profile is configured.
+
+```toml
+# EXACTDOCS_CONFIG_FILE=/etc/exactdocs/exactdocs.toml
+[ai.providers.corp]                     # a company gateway speaking the OpenAI API
+kind = "openai-compatible"
+base_url = "https://llm.example.com/v1"
+api_key_file = "/run/secrets/corp_llm_key"   # never api_key in the file
+headers = { "X-Team" = "docs" }
+proxy = "http://proxy.example.com:3128"
+request_timeout = 30
+
+[ai.llm]
+model = "corp:gpt-4.1-mini"
+
+[ai.embedding]
+model = "corp:text-embedding-3-small"   # instance-wide only
+```
+
+The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compatible`,
+`EXACTDOCS_AI__PROVIDERS__CORP__API_KEY=...`, `EXACTDOCS_AI__LLM__MODEL=corp:gpt-4.1-mini`.
+
+- **Kinds:** `openai-compatible` (any gateway: a base URL, an optional key), `openai`,
+  `openrouter`, `anthropic` (`platform = "api"`, `"vertex"`, `"foundry"`, or `"bedrock"` with
+  boto3, not in the images), `azure` (Azure OpenAI: `base_url`, `api_version`, a key or
+  `auth = "entra"`), `google-vertex` (`project`, `location` and `credentials_file`, or
+  `credentials = "adc"`, or an Express-mode key), `google` (Gemini API), `ollama`, `vllm`,
+  `litellm`, pydantic-ai's OpenAI-API providers (`deepseek`, `together`, `fireworks`, `cerebras`,
+  `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`), and
+  `local` (#245). Groq, Mistral, Cohere, xAI and Bedrock are reached through their
+  OpenAI-compatible endpoint or LiteLLM.
+- **Roles:** `embedding`, `reranker`, `llm`, `judge` (defaults to `llm`).
+- **Explicit values only.** Every SDK client gets its endpoint, key (`unused` for a profile
+  without one), project, region and API version from the profile; `OPENAI_API_KEY`,
+  `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `AZURE_OPENAI_*`, `GOOGLE_*` and the like are never read,
+  and each profile's HTTP client refuses any host but its endpoint. Google ADC is used only with
+  `credentials = "adc"`, Entra ID only with `auth = "entra"`.
+- **Over REST** (`/api/v1/ai/providers`, admins): profiles can be created, changed, deleted and
+  checked; their keys are sealed with the secret key (`EXACTDOCS_SECRET_KEY` or `secret.key`,
+  under their own key derivation) and never returned. Profiles of the environment or the file are
+  read-only there. A stored key is dropped, not reused, when the profile's endpoint changes.
+- **Per library** (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`): AI on or off (off: nothing
+  of the library is ever sent to a provider, searches are BM25), and its own `llm`, `judge` and
+  `reranker`. The embedding model is instance-wide only.
+- **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
+  prints the latency, the model that answered and an embedding's dimensions, never a key;
+  `POST /api/v1/ai/providers/{name}/check` does the same for one profile.
+
+No mode uses the roles yet: the hybrid, HyDE and agentic pipelines arrive with #91 onwards.
 
 ### Private repositories
 

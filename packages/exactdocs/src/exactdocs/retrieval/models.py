@@ -5,21 +5,39 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum, StrEnum
 from itertools import groupby
-from typing import NewType
+from typing import NewType, NoReturn
+from urllib.parse import urlsplit, urlunsplit
 
 from exactdocs.retrieval.constants import (
+    _EXCLUDED_KINDS,
+    _HOSTED_KINDS,
+    _KIND_FIELDS,
     _LANGUAGE_ALIASES,
+    _OPTIONAL_KIND_FIELDS,
+    _SELF_HOSTED_KINDS,
     _WORD,
     DEFAULT_MODE_ORDER,
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_RETRIES,
+    HEADER_NAME,
+    MASK,
+    MAX_HEADER_VALUE,
+    MAX_HEADERS,
+    MAX_MODEL_NAME,
+    MAX_REQUEST_TIMEOUT,
+    MAX_RETRIES,
+    PROFILE_NAME,
     STOP_WORDS,
 )
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
     EmptySearchTextError,
+    InvalidModelRefError,
+    InvalidProviderError,
     UnavailableModeError,
 )
 from exactdocs_kernel import section_link
@@ -439,16 +457,18 @@ class TagFilter:
 class ModelRole(StrEnum):
     """A model an operator can configure; which ones are set decides the modes on offer.
 
-    The decision record's fourth role, ``judge`` (an LLM that reranks, defaulting to ``llm``),
-    is not here yet: no mode needs it to run. The LLM judge (#96) adds it as a way to rerank.
+    No mode needs ``judge`` to run; the LLM judge (#96) uses it to rerank. It defaults to the
+    ``llm`` role.
     """
 
     EMBEDDING = "embedding"
-    """Turns chunks and queries into vectors (hybrid search)."""
+    """Turns chunks and queries into vectors (hybrid search). Instance-wide only."""
     RERANKER = "reranker"
     """Reorders the best candidates of any mode (reranking is a flag on top of a mode)."""
     LLM = "llm"
     """Writes hypothetical answers (HyDE) and drives the agentic explorer."""
+    JUDGE = "judge"
+    """An LLM that grades candidates (#96); the ``llm`` role when it is not set."""
 
 
 class RetrievalMode(StrEnum):
@@ -806,3 +826,589 @@ def language_first[T](
     """Put the items with code in ``wanted`` first; each group keeps its order (sort is stable)."""
     want = canonical_language(wanted)
     return sorted(items, key=lambda i: want not in {canonical_language(x) for x in languages(i)})
+
+
+# ---------------------------------------------------------------- AI provider profiles (#241)
+class ProviderKind(StrEnum):
+    """What a provider profile talks to; each maps to one pydantic-ai provider and model class.
+
+    See the table in docs/decisions/ai-retrieval.md (*Provider abstraction*). Kinds whose SDK is
+    not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached as
+    ``openai-compatible`` or through ``litellm``.
+    """
+
+    OPENAI_COMPATIBLE = "openai-compatible"
+    """Any gateway speaking the OpenAI Chat Completions API: a base URL, an optional key."""
+    OPENAI = "openai"
+    OPENROUTER = "openrouter"
+    ANTHROPIC = "anthropic"
+    """Claude: the Anthropic API, or Claude on Vertex AI, Azure AI Foundry or Bedrock."""
+    AZURE = "azure"
+    """Azure OpenAI, with a key or Entra ID; the model name is the deployment."""
+    GOOGLE_VERTEX = "google-vertex"
+    GOOGLE = "google"
+    """The Gemini API."""
+    OLLAMA = "ollama"
+    VLLM = "vllm"
+    LITELLM = "litellm"
+    DEEPSEEK = "deepseek"
+    TOGETHER = "together"
+    FIREWORKS = "fireworks"
+    CEREBRAS = "cerebras"
+    GITHUB = "github"
+    """GitHub Models."""
+    VERCEL = "vercel"
+    MOONSHOTAI = "moonshotai"
+    HEROKU = "heroku"
+    NEBIUS = "nebius"
+    OVHCLOUD = "ovhcloud"
+    SAMBANOVA = "sambanova"
+    ALIBABA = "alibaba"
+    LOCAL = "local"
+    """Models in this process (fastembed, the ``[local]`` extra, #245): no endpoint at all."""
+
+    @classmethod
+    def parse(cls, name: str, text: str) -> ProviderKind:
+        """Read a kind as written in a profile.
+
+        Args:
+            name: The profile, for the error message.
+            text: The kind, any letter case.
+
+        Returns:
+            The kind.
+
+        Raises:
+            InvalidProviderError: The kind is unknown, or its SDK is not included.
+        """
+        wanted = text.strip().lower()
+        try:
+            return cls(wanted)
+        except ValueError:
+            pass
+        if wanted in _EXCLUDED_KINDS:
+            reason = (
+                f"kind {wanted!r} needs an SDK that exactdocs[ai] does not include; reach it "
+                "through its OpenAI-compatible endpoint (kind openai-compatible) or LiteLLM"
+            )
+        else:
+            reason = f"unknown kind; one of {', '.join(k.value for k in cls)}"
+        raise InvalidProviderError(name, reason)
+
+    @property
+    def needs_base_url(self) -> bool:
+        """Say whether the kind has no endpoint of its own (a gateway, a server, Azure).
+
+        Returns:
+            True when a profile of this kind must give ``base_url``.
+        """
+        return self.value in _SELF_HOSTED_KINDS
+
+    @property
+    def needs_key(self) -> bool:
+        """Say whether every call of the kind needs a key (a hosted platform).
+
+        Returns:
+            True when a profile of this kind must have a key.
+        """
+        return self.value in _HOSTED_KINDS
+
+    @property
+    def has_embeddings(self) -> bool:
+        """Say whether the kind can serve the embedding role.
+
+        Returns:
+            False for Anthropic (no embedding API).
+        """
+        return self is not ProviderKind.ANTHROPIC
+
+
+class AnthropicPlatform(StrEnum):
+    """Where an ``anthropic`` profile reaches Claude."""
+
+    API = "api"
+    """The Anthropic API (or a gateway at ``base_url``)."""
+    VERTEX = "vertex"
+    """Claude on Google Vertex AI: ``project``, ``location`` and Google credentials."""
+    FOUNDRY = "foundry"
+    """Claude on Azure AI Foundry: ``base_url`` or ``resource``, a key or Entra ID."""
+    BEDROCK = "bedrock"
+    """Claude on Amazon Bedrock: ``location`` is the AWS region; needs boto3 (not in images)."""
+
+
+class AzureAuth(StrEnum):
+    """How an Azure profile (Azure OpenAI, Claude on Foundry) signs its calls."""
+
+    KEY = "key"
+    """The profile's key."""
+    ENTRA = "entra"
+    """Entra ID: managed identity, workload identity or a client secret from the environment."""
+
+
+class KeySource(StrEnum):
+    """Where a profile's key comes from. The key itself never enters retrieval's models."""
+
+    NONE = "none"
+    """No key: the placeholder ``unused`` is sent, never an SDK's environment variable."""
+    SEALED = "sealed"
+    """Stored over the REST API, sealed by the secret box."""
+    FILE = "file"
+    """``api_key_file``: read at every call, so a rotated Docker or Kubernetes secret counts."""
+    ENVIRONMENT = "environment"
+    """``EXACTDOCS_AI__PROVIDERS__<NAME>__API_KEY``, held by bootstrap only."""
+
+
+class ProfileOrigin(StrEnum):
+    """Who manages a profile."""
+
+    CONFIGURATION = "configuration"
+    """The environment or the TOML file: read-only over the REST API."""
+    API = "api"
+    """The REST API (and the UI, #102): stored by retrieval."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderProfile:
+    """One named model endpoint, configured once and used by any role (``<name>:<model>``).
+
+    It never holds a plaintext key: a stored key is sealed, a file is named, an environment key
+    stays in bootstrap. Header values and the proxy are left out of the repr.
+    """
+
+    name: str
+    """Lower case, digits, ``_`` and ``-``."""
+    kind: ProviderKind
+    """What it talks to."""
+    origin: ProfileOrigin = ProfileOrigin.API
+    """Configuration (read-only here) or the REST API."""
+    base_url: str | None = None
+    """The endpoint; required for gateways, servers and Azure, the platform's own otherwise."""
+    key: KeySource = KeySource.NONE
+    """Where the key comes from."""
+    sealed_key: str | None = field(default=None, repr=False)
+    """The key sealed by the secret box (``KeySource.SEALED``)."""
+    key_file: str | None = None
+    """The file holding the key (``KeySource.FILE``)."""
+    headers: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    """Extra headers of every call; their values never appear in logs or the REST API."""
+    proxy: str | None = field(default=None, repr=False)
+    """An HTTP(S) proxy for this profile's calls only."""
+    request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+    """Overall timeout of one call, in seconds."""
+    max_retries: int = DEFAULT_RETRIES
+    """Retries of one call (the SDK's: the one retry layer)."""
+    api_version: str | None = None
+    """Azure OpenAI's API version."""
+    project: str | None = None
+    """The Google Cloud project (Vertex AI, Claude on Vertex)."""
+    location: str | None = None
+    """The Google Cloud location, or the AWS region for Claude on Bedrock."""
+    credentials_file: str | None = None
+    """A Google service-account file."""
+    adc: bool = False
+    """Google Application Default Credentials (``credentials = "adc"``), only when said so."""
+    platform: AnthropicPlatform | None = None
+    """Where an ``anthropic`` profile reaches Claude; ``api`` when unset."""
+    auth: AzureAuth | None = None
+    """How an Azure profile signs its calls; ``key`` when unset."""
+    resource: str | None = None
+    """The Azure AI Foundry resource name (instead of ``base_url``)."""
+
+    def __post_init__(self) -> None:
+        """Check the fields against the kind.
+
+        Raises:
+            InvalidProviderError: A field is missing, malformed, or does not apply to the kind.
+        """
+        if not PROFILE_NAME.fullmatch(self.name):
+            raise InvalidProviderError(
+                self.name, "the name may hold only a-z, 0-9, '_' and '-' (64 at most)"
+            )
+        self._check_common()
+        self._check_kind_fields()
+        match self.kind:
+            case ProviderKind.AZURE:
+                self._check_azure()
+            case ProviderKind.GOOGLE_VERTEX:
+                self._check_google_credentials(express=True)
+            case ProviderKind.ANTHROPIC:
+                self._check_anthropic()
+            case ProviderKind.LOCAL:
+                if self.base_url or self.key is not KeySource.NONE or self.headers or self.proxy:
+                    self._fail("a local profile has no endpoint, key, headers or proxy")
+            case _:
+                pass
+        if self.kind.needs_base_url and not self.base_url:
+            self._fail(f"kind {self.kind.value} needs base_url")
+        if self.kind.needs_key and self.key is KeySource.NONE:
+            self._fail(f"kind {self.kind.value} needs a key")
+
+    def _fail(self, reason: str) -> NoReturn:
+        """Raise the profile's validation error.
+
+        Args:
+            reason: A fixed text.
+
+        Raises:
+            InvalidProviderError: Always.
+        """
+        raise InvalidProviderError(self.name, reason)
+
+    def _check_common(self) -> None:
+        """Check the fields every kind has: key, URLs, limits and headers."""
+        if (self.key is KeySource.SEALED) != (self.sealed_key is not None):
+            self._fail("a sealed key needs its sealed text, and only then")
+        if (self.key is KeySource.FILE) != bool(self.key_file):
+            self._fail("api_key_file needs a path, and only then")
+        if self.base_url is not None and not _is_url(self.base_url, {"http", "https"}):
+            self._fail("base_url must be an http:// or https:// URL")
+        if self.proxy is not None and not _is_url(self.proxy, {"http", "https", "socks5"}):
+            self._fail("proxy must be an http://, https:// or socks5:// URL")
+        if not 0 < self.request_timeout <= MAX_REQUEST_TIMEOUT:
+            self._fail(f"request_timeout must be above 0 and at most {MAX_REQUEST_TIMEOUT:g}")
+        if not 0 <= self.max_retries <= MAX_RETRIES:
+            self._fail(f"max_retries must be between 0 and {MAX_RETRIES}")
+        self._check_headers()
+
+    def _check_headers(self) -> None:
+        """At most ``MAX_HEADERS`` extra headers, with token names and one-line values."""
+        if len(self.headers) > MAX_HEADERS:
+            self._fail(f"at most {MAX_HEADERS} headers")
+        for header, value in self.headers:
+            if not HEADER_NAME.fullmatch(header):
+                self._fail("a header name must be an HTTP token")
+            if len(value) > MAX_HEADER_VALUE or any(c in value for c in "\r\n\0"):
+                self._fail(f"the value of header {header} is too long or holds a line break")
+
+    def _check_kind_fields(self) -> None:
+        """Refuse fields that do not apply to the kind (and the Anthropic platform)."""
+        if self.platform is not None and self.kind is not ProviderKind.ANTHROPIC:
+            self._fail("platform applies to kind anthropic only")
+        if self.kind is ProviderKind.ANTHROPIC:
+            scope = f"anthropic/{self.anthropic_platform.value}"
+            where = f"platform {self.anthropic_platform.value}"
+        else:
+            scope = where = self.kind.value
+        allowed = _KIND_FIELDS.get(scope, frozenset())
+        for name in _OPTIONAL_KIND_FIELDS:
+            if name not in allowed and getattr(self, name) not in {None, False}:
+                self._fail(f"{name} does not apply to {where}")
+
+    def _check_azure(self) -> None:
+        """Azure OpenAI: an API version, and a key or Entra ID (not both)."""
+        if not self.api_version:
+            self._fail("Azure OpenAI needs api_version")
+        self._check_azure_auth()
+
+    def _check_azure_auth(self) -> None:
+        """A key with ``auth = "key"`` (the default), none with ``auth = "entra"``."""
+        if self.auth is AzureAuth.ENTRA and self.key is not KeySource.NONE:
+            self._fail('auth = "entra" takes no key')
+        if self.auth is not AzureAuth.ENTRA and self.key is KeySource.NONE:
+            self._fail('needs a key, or auth = "entra"')
+
+    def _check_google_credentials(self, *, express: bool) -> None:
+        """Vertex AI: a service-account file, ``adc``, or (Vertex Express mode) a key; one only.
+
+        Args:
+            express: Whether a key alone (Express mode) is allowed.
+        """
+        ways = [bool(self.credentials_file), self.adc, self.key is not KeySource.NONE]
+        if sum(ways) != 1 or (self.key is not KeySource.NONE and not express):
+            what = 'credentials_file, credentials = "adc"' + (" or a key" if express else "")
+            self._fail(f"needs exactly one of {what}")
+        if self.key is KeySource.NONE and not (self.project and self.location):
+            self._fail("needs project and location")
+
+    def _check_anthropic(self) -> None:
+        """Claude: what each platform needs."""
+        match self.anthropic_platform:
+            case AnthropicPlatform.API:
+                if self.key is KeySource.NONE and not self.base_url:
+                    self._fail("the Anthropic API needs a key (only a gateway at base_url may not)")
+            case AnthropicPlatform.VERTEX:
+                if self.base_url:
+                    self._fail("Claude on Vertex AI takes project and location, not base_url")
+                self._check_google_credentials(express=False)
+            case AnthropicPlatform.FOUNDRY:
+                if bool(self.base_url) == bool(self.resource):
+                    self._fail("Claude on Azure AI Foundry needs base_url or resource, not both")
+                self._check_azure_auth()
+            case AnthropicPlatform.BEDROCK:
+                if not self.location or self.key is not KeySource.NONE:
+                    self._fail("Claude on Bedrock needs location (the AWS region) and no key")
+
+    @property
+    def anthropic_platform(self) -> AnthropicPlatform:
+        """Where an ``anthropic`` profile reaches Claude.
+
+        Returns:
+            ``platform``, or ``api`` when unset.
+        """
+        return self.platform or AnthropicPlatform.API
+
+    def same_endpoint(self, other: ProviderProfile) -> bool:
+        """Tell whether two profiles send their calls (and so their key) to the same place.
+
+        Args:
+            other: The other profile.
+
+        Returns:
+            True when kind, platform, endpoint, project, location and proxy are all equal.
+        """
+        fields = ("kind", "platform", "base_url", "resource", "project", "location", "proxy")
+        return all(getattr(self, f) == getattr(other, f) for f in fields)
+
+    @property
+    def read_only(self) -> bool:
+        """Say whether the REST API may not change it.
+
+        Returns:
+            True for a profile of the environment or the configuration file.
+        """
+        return self.origin is ProfileOrigin.CONFIGURATION
+
+    @property
+    def header_names(self) -> tuple[str, ...]:
+        """Name the extra headers, never their values.
+
+        Returns:
+            The header names, in order.
+        """
+        return tuple(header for header, _ in self.headers)
+
+    @property
+    def shown_proxy(self) -> str | None:
+        """Show the proxy without its password.
+
+        Returns:
+            The proxy URL with any password masked, or ``None``.
+        """
+        if self.proxy is None:
+            return None
+        parts = urlsplit(self.proxy)
+        if parts.password is None:
+            return self.proxy
+        host = parts.netloc.rpartition("@")[2]
+        return urlunsplit(parts._replace(netloc=f"{parts.username}:{MASK}@{host}"))
+
+
+def _is_url(text: str, schemes: set[str]) -> bool:
+    """Tell whether ``text`` is an absolute URL with a host in one of ``schemes``.
+
+    Args:
+        text: The URL.
+        schemes: The schemes allowed.
+
+    Returns:
+        True when it is.
+    """
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return False
+    return parts.scheme in schemes and bool(parts.hostname) and not any(c.isspace() for c in text)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelRef:
+    """A role's model: ``<profile>:<model>`` (the model may hold colons, as Ollama's do)."""
+
+    profile: str
+    """The provider profile's name."""
+    model: str
+    """The model (or Azure deployment) name, as the provider spells it."""
+
+    def __post_init__(self) -> None:
+        """Check both parts.
+
+        Raises:
+            InvalidModelRefError: A part is empty or malformed.
+        """
+        text = f"{self.profile}:{self.model}"
+        if not PROFILE_NAME.fullmatch(self.profile):
+            raise InvalidModelRefError(text)
+        model = self.model
+        if (
+            not model
+            or len(model) > MAX_MODEL_NAME
+            or not model.isprintable()
+            or model != model.strip()
+        ):
+            raise InvalidModelRefError(text)
+
+    @classmethod
+    def parse(cls, text: str) -> ModelRef:
+        """Read ``<profile>:<model>``.
+
+        Args:
+            text: The role as written (the profile part in any letter case).
+
+        Returns:
+            The reference.
+
+        Raises:
+            InvalidModelRefError: It is not ``<profile>:<model>``.
+        """
+        profile, colon, model = text.strip().partition(":")
+        if not colon:
+            raise InvalidModelRefError(text)
+        return cls(profile=profile.strip().lower(), model=model.strip())
+
+    def __str__(self) -> str:
+        """Write it back as ``<profile>:<model>``.
+
+        Returns:
+            The text form.
+        """
+        return f"{self.profile}:{self.model}"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InstanceRoles:
+    """The roles the operator set for the whole instance (environment or TOML file)."""
+
+    embedding: ModelRef | None = None
+    """Embeds chunks and queries; instance-wide only (one vector space per instance)."""
+    reranker: ModelRef | None = None
+    """Reorders candidates."""
+    llm: ModelRef | None = None
+    """HyDE and the agentic explorer."""
+    judge: ModelRef | None = None
+    """The LLM judge; the ``llm`` role when unset."""
+
+    def explicit(self, role: ModelRole) -> ModelRef | None:
+        """Read the model set for ``role`` itself (no default).
+
+        Args:
+            role: The role.
+
+        Returns:
+            Its model, or ``None``.
+        """
+        match role:
+            case ModelRole.EMBEDDING:
+                return self.embedding
+            case ModelRole.RERANKER:
+                return self.reranker
+            case ModelRole.LLM:
+                return self.llm
+            case ModelRole.JUDGE:
+                return self.judge
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryAi:
+    """A library's AI overrides (RET-06). Never the embedding model: it is instance-wide."""
+
+    enabled: bool = True
+    """Off: nothing of the library is ever sent to a provider, and its searches are BM25."""
+    llm: ModelRef | None = None
+    """Its own LLM instead of the instance's."""
+    judge: ModelRef | None = None
+    """Its own judge instead of the instance's."""
+    reranker: ModelRef | None = None
+    """Its own reranker instead of the instance's."""
+
+    def override(self, role: ModelRole) -> ModelRef | None:
+        """Read the library's own model for ``role``.
+
+        Args:
+            role: The role.
+
+        Returns:
+            Its model; always ``None`` for the embedding role.
+        """
+        match role:
+            case ModelRole.EMBEDDING:
+                return None
+            case ModelRole.RERANKER:
+                return self.reranker
+            case ModelRole.LLM:
+                return self.llm
+            case ModelRole.JUDGE:
+                return self.judge
+
+    @property
+    def is_default(self) -> bool:
+        """Say whether the library overrides nothing.
+
+        Returns:
+            True when AI is on and no role is overridden.
+        """
+        return self.enabled and not (self.llm or self.judge or self.reranker)
+
+    def profiles(self) -> frozenset[str]:
+        """Name the profiles the overrides use.
+
+        Returns:
+            The profile names.
+        """
+        return frozenset(r.profile for r in (self.llm, self.judge, self.reranker) if r)
+
+
+class RoleSource(StrEnum):
+    """Where a role's model came from."""
+
+    INSTANCE = "instance"
+    """The instance's setting."""
+    LIBRARY = "library"
+    """The library's override."""
+    LLM = "llm"
+    """The judge defaults to the ``llm`` role."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoleBinding:
+    """The model one role uses for one library, and where that came from."""
+
+    role: ModelRole
+    """The role."""
+    ref: ModelRef
+    """Its model."""
+    source: RoleSource
+    """Instance, library override, or the judge's ``llm`` default."""
+
+
+def bind_role(role: ModelRole, instance: InstanceRoles, library: LibraryAi) -> RoleBinding | None:
+    """Resolve the model a role uses: the library's, else the instance's (the judge: else ``llm``).
+
+    Args:
+        role: The role.
+        instance: The instance's roles.
+        library: The library's overrides (the default ones outside any library).
+
+    Returns:
+        The binding, or ``None`` when the role is not set or the library has AI off.
+    """
+    if not library.enabled:
+        return None
+    if (own := library.override(role)) is not None:
+        return RoleBinding(role=role, ref=own, source=RoleSource.LIBRARY)
+    if (set_ := instance.explicit(role)) is not None:
+        return RoleBinding(role=role, ref=set_, source=RoleSource.INSTANCE)
+    if role is ModelRole.JUDGE and (llm := bind_role(ModelRole.LLM, instance, library)):
+        return RoleBinding(role=role, ref=llm.ref, source=RoleSource.LLM)
+    return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelCheck:
+    """The outcome of one minimal call to a model (``exactdocs ai check``)."""
+
+    role: ModelRole | None
+    """The role checked; ``None`` for a model named by hand."""
+    profile: str
+    """The profile called."""
+    model: str
+    """The model asked for."""
+    ok: bool
+    """The call answered as expected."""
+    latency_ms: float = 0.0
+    """How long the call took."""
+    served_model: str | None = None
+    """The model name the provider reported."""
+    dimensions: int | None = None
+    """An embedding model's vector size."""
+    error: str | None = None
+    """Why it failed; never holds a key."""

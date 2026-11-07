@@ -1,9 +1,9 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
 
 from exactdocs.retrieval.constants import DEFAULT_QUERY_DOCS_TOKEN_BUDGET
-from exactdocs.retrieval.models import RetrievalMode
+from exactdocs.retrieval.models import InstanceRoles, ProviderProfile, RetrievalMode
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ArticleSuggestions,
@@ -11,44 +11,63 @@ from exactdocs.retrieval.ports.driven import (
     DefaultVersions,
     Libraries,
     LibraryModes,
+    ModelFactory,
     ModelRoles,
+    ProviderProfiles,
     RenamedPaths,
     RetrievalPipeline,
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
     SearchTracer,
+    SecretBox,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
+    CheckProvider,
+    CheckRoles,
     CollectChunks,
+    DeleteProvider,
     DiscardPendingChunks,
     ForgetLibrary,
     GetChunkSets,
     GetLibraryRetrieval,
+    GetProvider,
     GetSearchIndexState,
     IndexManifest,
+    ListProviders,
+    ListRoles,
     QueryDocs,
     ReadChunk,
     RebuildSearchIndex,
     RemoveChunks,
     ResolveLibraryId,
     RetagArticles,
+    SaveProvider,
     SearchAllLibraries,
     SearchDocs,
     SetLibraryRetrieval,
 )
 from exactdocs.retrieval.use_cases import (
+    AiProviders,
     ArticleOutlineUseCase,
     Bm25Pipeline,
+    CheckProviderUseCase,
+    CheckRolesUseCase,
     CollectChunksUseCase,
+    DeleteProviderUseCase,
     DiscardPendingChunksUseCase,
     ForgetLibraryUseCase,
     GetChunkSetsUseCase,
     GetLibraryRetrievalUseCase,
+    GetProviderUseCase,
     GetSearchIndexStateUseCase,
     IndexManifestUseCase,
-    NoModelRoles,
+    ListProvidersUseCase,
+    ListRolesUseCase,
+    NoModelFactory,
+    NoStoredProfiles,
+    ProfileModelRoles,
     QueryDocsUseCase,
     ReadChunkUseCase,
     RebuildSearchIndexUseCase,
@@ -56,6 +75,7 @@ from exactdocs.retrieval.use_cases import (
     ResolveLibraryIdUseCase,
     RetagArticlesUseCase,
     RetrievalModes,
+    SaveProviderUseCase,
     SearchAllLibrariesUseCase,
     SearchDocsUseCase,
     SetLibraryRetrievalUseCase,
@@ -89,6 +109,20 @@ class RetrievalModule:
     """Sets or clears a library's retrieval mode."""
     forget_library: ForgetLibrary
     """Drops what retrieval keeps for a removed library."""
+    list_providers: ListProviders
+    """Every AI provider profile, without secrets."""
+    get_provider: GetProvider
+    """One AI provider profile."""
+    save_provider: SaveProvider
+    """Creates or replaces a profile over the REST API, its key sealed."""
+    delete_provider: DeleteProvider
+    """Deletes a stored profile."""
+    check_provider: CheckProvider
+    """One minimal call per role that uses a profile."""
+    check_roles: CheckRoles
+    """One minimal call per instance role (``exactdocs ai check``)."""
+    list_roles: ListRoles
+    """The instance's roles."""
 
     @classmethod
     def build(
@@ -103,6 +137,11 @@ class RetrievalModule:
         maintenance: SearchIndexMaintenance,
         library_modes: LibraryModes,
         roles: ModelRoles | None = None,
+        configured_profiles: Sequence[ProviderProfile] = (),
+        stored_profiles: ProviderProfiles | None = None,
+        instance_roles: InstanceRoles | None = None,
+        models: ModelFactory | None = None,
+        secret_box: SecretBox | None = None,
         instance_mode: RetrievalMode | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         renames: RenamedPaths | None = None,
@@ -114,15 +153,27 @@ class RetrievalModule:
         """Assemble the use cases around the given driven adapters.
 
         ``tracer`` observes every search and its stages; without it nothing is recorded.
-        ``roles`` says which model roles are configured (none without it); ``pipelines`` adds
-        retrieval modes beside ``bm25``, which is always there. A mode can run when it has a
-        pipeline and its roles are configured.
+        The AI configuration: ``configured_profiles`` (the environment's and the file's,
+        read-only), ``stored_profiles`` (the REST API's; none without it), ``instance_roles``,
+        ``models`` (builds callable models; nothing can be called without it) and
+        ``secret_box`` (seals keys sent over the REST API; they are refused without it).
+        ``roles`` replaces the role resolution over them (tests). ``pipelines`` adds retrieval
+        modes beside ``bm25``, which is always there. A mode can run when it has a pipeline and
+        its roles are configured.
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
+        providers = AiProviders(
+            configured=tuple(configured_profiles),
+            stored=stored_profiles or NoStoredProfiles(),
+            roles=instance_roles or InstanceRoles(),
+            library_modes=library_modes,
+            factory=models or NoModelFactory(),
+            box=secret_box,
+        )
         modes = RetrievalModes(
             pipelines={RetrievalMode.BM25: Bm25Pipeline(search=search), **(pipelines or {})},
-            roles=roles or NoModelRoles(),
+            roles=roles or ProfileModelRoles(providers=providers),
             library_modes=library_modes,
             instance_mode=instance_mode,
         )
@@ -164,6 +215,15 @@ class RetrievalModule:
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
             get_library_retrieval=GetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
-            set_library_retrieval=SetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
+            set_library_retrieval=SetLibraryRetrievalUseCase(
+                libraries=libraries, modes=modes, providers=providers
+            ),
             forget_library=ForgetLibraryUseCase(library_modes=library_modes),
+            list_providers=ListProvidersUseCase(providers=providers),
+            get_provider=GetProviderUseCase(providers=providers),
+            save_provider=SaveProviderUseCase(providers=providers),
+            delete_provider=DeleteProviderUseCase(providers=providers),
+            check_provider=CheckProviderUseCase(providers=providers),
+            check_roles=CheckRolesUseCase(providers=providers),
+            list_roles=ListRolesUseCase(providers=providers),
         )
