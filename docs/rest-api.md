@@ -193,6 +193,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   exclusion always wins. The library has no versions until its import has run; the job records the
   pinned ref and commit. `GET /repositories/refs?url=` lists `default_branch`, `branches` and `tags`
   (name and `commit_sha`, sorted), 1000 of each at most, with `truncated` set when more exist.
+  `POST /repositories/refs` (`url`, optional `credential`) gives the same answer for a private
+  repository: the credential travels in the body, never in a URL, and is not stored.
   `POST /repositories/preview` (`url`, optional `ref`, `include_paths`, `exclude_paths`, `credential`)
   is a dry run: it fetches the commit and its trees only (`--filter=blob:none`, depth 1, no
   checkout; git's process limits, and the fetch deadline and size watchdog, apply), plus the
@@ -299,9 +301,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
   library's jobs, newest first.
 - **Private repositories**: a `credential` (`{"kind": "token", ...}` or `{"kind": "ssh_key", ...}`)
-  is accepted by `POST /repositories/check`, `POST /repositories/preview`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
+  is accepted by `POST /repositories/check`, `POST /repositories/refs`, `POST /repositories/preview`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
   and only on a signed-in session: an API token gets 401. It is stored encrypted for that library
-  and its host, and never returned. `GET /libraries/{owner}/{repo}/access` answers
+  and its host, and never returned. A deploy key keeps its line breaks (`\n` in JSON); one sent
+  on a single line, or with a passphrase, is 422 `invalid_credential` with a sentence saying so. `GET /libraries/{owner}/{repo}/access` answers
   `{"private": true | false}`: whether the library has a stored credential.
 - **Health**: `GET /api/health` (outside `/api/v1`) returns `status`, `version`, the database's
   `schema_revision`, the `search_index_format` the search index was built in (`null` if none is

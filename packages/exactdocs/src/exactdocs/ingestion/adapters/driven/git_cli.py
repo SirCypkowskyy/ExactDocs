@@ -218,6 +218,27 @@ class _Output:
     code: int
 
 
+def _pick_fingerprint(output: str) -> str | None:
+    """Pick the ``SHA256:`` fingerprint ``ssh-keygen -l -F`` printed, an ED25519 key's first.
+
+    ``-F`` prints ``host TYPE SHA256:... `` per key (OpenSSH 9); older ones print the ``-l``
+    layout, ``bits SHA256:... comment (TYPE)``. Either way the fingerprint is the field that
+    starts with ``SHA256:``, and the type is the field before it or the one in parentheses.
+    """
+    prints: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        parts = line.split()
+        if not parts or parts[0].startswith("#"):
+            continue
+        index = next((i for i, p in enumerate(parts) if p.startswith("SHA256:")), None)
+        if index is None:
+            continue
+        kind = parts[-1].strip("()") if parts[-1].startswith("(") else parts[index - 1]
+        prints.append((kind.upper(), parts[index]))
+    prints.sort(key=lambda p: p[0] != "ED25519")
+    return prints[0][1] if prints else None
+
+
 @dataclass(frozen=True, slots=True)
 class GitCli:
     """Implements ``ports.driven.GitRemote`` with ``git ls-remote``."""
@@ -310,14 +331,7 @@ class GitCli:
                 with suppress(ProcessLookupError):
                     process.kill()
             await _settle(process)
-        found = [
-            line.split()
-            for line in out.decode(errors="replace").splitlines()
-            if line and not line.startswith("#")
-        ]
-        prints = [(parts[1], parts[-1]) for parts in found if len(parts) >= 3]  # ruff: ignore[magic-value-comparison]
-        prints.sort(key=lambda p: p[1] != "(ED25519)")
-        return prints[0][0] if prints and prints[0][0].startswith("SHA256:") else None
+        return _pick_fingerprint(out.decode(errors="replace"))
 
     @asynccontextmanager
     async def fetch(

@@ -481,11 +481,21 @@ export interface paths {
         };
         /**
          * List Refs
-         * @description List the tags and branches of a repository (the URL is never echoed back).
+         * @description List the tags and branches of a public repository (the URL is never echoed back).
+         *
+         *     A private repository uses `POST /repositories/refs`: a credential never goes in a URL.
          */
         readonly get: operations["ingestion-list_refs"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * List Refs With Credential
+         * @description List the tags and branches of a repository, private ones with a `credential`.
+         *
+         *     The same answer as `GET /repositories/refs`; the body keeps the credential out of URLs
+         *     and logs, and nothing is stored. A `credential` needs a signed-in session, not an API
+         *     token.
+         */
+        readonly post: operations["ingestion-list_refs_with_credential"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1795,6 +1805,22 @@ export interface components {
              * @description When any version was last imported; null while none is.
              */
             readonly last_imported_at: string | null;
+        };
+        /**
+         * ListRepositoryRefsQuery
+         * @description Ask a repository for its tags and branches (a private one with a credential).
+         */
+        readonly ListRepositoryRefsQuery: {
+            /**
+             * Url
+             * @description https, http, ssh (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             */
+            readonly url: string;
+            /**
+             * Credential
+             * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
+             */
+            readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
         };
         /**
          * LoginForTokenCommand
@@ -5015,6 +5041,84 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RepositoryRefs"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-list_refs_with_credential": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ListRepositoryRefsQuery"];
+            };
+        };
         readonly responses: {
             /** @description Successful Response */
             readonly 200: {

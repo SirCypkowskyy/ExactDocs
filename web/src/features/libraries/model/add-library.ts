@@ -1,4 +1,10 @@
 import type { components } from "@/shared/lib/api-schema";
+import {
+  type CredentialKind,
+  explainInvalidCredential,
+  HOST_KEY_CHANGED,
+  refusedCredential,
+} from "@/shared/lib/credentials";
 import { HttpError } from "@/shared/lib/http";
 import {
   filledRules,
@@ -20,7 +26,7 @@ export type PreviewCommand = components["schemas"]["PreviewRepositoryCommand"];
 export type AddedVersion = components["schemas"]["AddedVersion"];
 
 /** Where a failed request belongs in the form: next to the field it is about, else the alert. */
-export type AddField = "url" | "id" | "ref" | "paths" | "tags";
+export type AddField = "url" | "credential" | "id" | "ref" | "paths" | "tags";
 export interface AddProblem {
   field?: AddField;
   message: string;
@@ -38,7 +44,7 @@ export function validateUrl(raw: string): string | undefined {
     return "That address is too long. Addresses can be up to 2048 characters.";
   if (/\s/.test(url)) return "An address has no spaces. Paste it again.";
   if (/^[a-z][a-z0-9+.-]*:\/\/[^/@]*@/i.test(url) && !/^ssh:\/\/git@/i.test(url)) {
-    return "Remove the username and password from the address. Private repositories are not supported yet.";
+    return "Remove the username and password from the address. For a private repository, give its token under “This repository is private”.";
   }
   if (!/^(https?:\/\/|ssh:\/\/|file:\/\/|[\w.-]+@[\w.-]+:)/i.test(url)) {
     return "That isn't a repository address yet. Start with https://, like https://github.com/acme/payments.";
@@ -76,8 +82,11 @@ const OFFLINE: AddProblem = {
   message: "Can't reach the server. Check your connection and try again.",
 };
 
-/** The address step: what to tell a person who pasted a URL that does not work. */
-export function explainCheckError(error: unknown): AddProblem {
+/**
+ * The address step: what to tell a person who pasted a URL that does not work. `sent` is the
+ * kind of credential the request carried, if any: a refused login means something else then.
+ */
+export function explainCheckError(error: unknown, sent?: CredentialKind): AddProblem {
   if (!(error instanceof HttpError)) return OFFLINE;
   const gone = session(error);
   if (gone) return gone;
@@ -94,11 +103,17 @@ export function explainCheckError(error: unknown): AddProblem {
         message: "No git repository there. Check the address; a private repository looks the same.",
       };
     case "repository_auth_required":
-      return {
-        field: "url",
-        message:
-          "That repository asks for a login. ExactDocs can only read public repositories for now.",
-      };
+      return sent
+        ? { field: "credential", message: refusedCredential(sent) }
+        : {
+            field: "credential",
+            message:
+              "That repository asks for a login. If it is private, give a token or deploy key that can read it.",
+          };
+    case "invalid_credential":
+      return { field: "credential", message: explainInvalidCredential(error.message) };
+    case "host_key_changed":
+      return { message: HOST_KEY_CHANGED };
     case "repository_unreachable":
       return {
         field: "url",
@@ -121,7 +136,11 @@ const busy = (error: HttpError, what: string): AddProblem => ({
 });
 
 /** The submit step. */
-export function explainAddError(error: unknown, ref: string | null): AddProblem {
+export function explainAddError(
+  error: unknown,
+  ref: string | null,
+  sent?: CredentialKind,
+): AddProblem {
   if (!(error instanceof HttpError)) return OFFLINE;
   const gone = session(error);
   if (gone) return gone;
@@ -161,9 +180,12 @@ export function explainAddError(error: unknown, ref: string | null): AddProblem 
       };
     case "invalid_repository_url":
     case "not_a_git_repository":
-    case "repository_auth_required":
     case "repository_unreachable":
       return { ...explainCheckError(error), field: "url" };
+    case "repository_auth_required":
+    case "invalid_credential":
+    case "host_key_changed":
+      return explainCheckError(error, sent);
     case "no_articles":
       return {
         field: "paths",
@@ -256,11 +278,15 @@ export const skippedLabel = (summary: ProblemSummary) =>
   summary.truncated ? `${summary.skipped}+` : String(summary.skipped);
 
 /** The preview step: the same refusals as an add (minus the ID), and a busy server. */
-export function explainPreviewError(error: unknown, ref: string | null): AddProblem {
+export function explainPreviewError(
+  error: unknown,
+  ref: string | null,
+  sent?: CredentialKind,
+): AddProblem {
   if (error instanceof HttpError && error.code === "preview_busy") {
     return busy(error, "previewing other repositories");
   }
-  return explainAddError(error, ref);
+  return explainAddError(error, ref, sent);
 }
 
 /** Why an older version ticked in the preview was not queued, and whether trying again can help. */

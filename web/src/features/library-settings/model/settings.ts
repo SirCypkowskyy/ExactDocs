@@ -1,5 +1,11 @@
 import type { ComponentType, ReactNode } from "react";
 import type { components } from "@/shared/lib/api-schema";
+import {
+  type CredentialKind,
+  explainInvalidCredential,
+  HOST_KEY_CHANGED,
+  refusedCredential,
+} from "@/shared/lib/credentials";
 import { HttpError } from "@/shared/lib/http";
 import {
   filledRules,
@@ -29,7 +35,7 @@ export const MAX_DESCRIPTION = 1000;
 
 /** What went wrong, and where it belongs: next to a field, or in the section's alert. */
 export interface Problem {
-  field?: "title" | "description" | "ref" | "paths" | "tags";
+  field?: "title" | "description" | "ref" | "paths" | "tags" | "credential";
   message: string;
   /** A wait state, not a mistake: shown neutral instead of red. */
   tone?: "info";
@@ -112,7 +118,8 @@ export function explainSave(error: unknown): Problem {
 const sentence = (text: string) =>
   `${text.replace(/\.$/, "")}, so a second version would hold the same text.`;
 
-export function explainAddVersion(error: unknown, ref: string): Problem {
+/** `sent`: the kind of token or key the request carried to replace the stored one, if any. */
+export function explainAddVersion(error: unknown, ref: string, sent?: CredentialKind): Problem {
   if (!(error instanceof HttpError)) return OFFLINE;
   const gone = session(error);
   if (gone) return gone;
@@ -148,9 +155,21 @@ export function explainAddVersion(error: unknown, ref: string): Problem {
       };
     case "credentials_required":
       return {
+        field: "credential",
         message:
-          "This repository is private and needs credentials. Adding them from the web UI is not available yet.",
+          "The token or key stored for this library can't be read any more (the server's secret key changed). Enter it again to add this version: it replaces the stored one.",
       };
+    case "repository_auth_required":
+      return {
+        field: "credential",
+        message: sent
+          ? refusedCredential(sent)
+          : "The repository asks for a login that this library doesn't have, or no longer works. Enter a token or deploy key that can read it: it replaces the stored one.",
+      };
+    case "invalid_credential":
+      return { field: "credential", message: explainInvalidCredential(error.message) };
+    case "host_key_changed":
+      return { message: HOST_KEY_CHANGED };
     default:
       return error.status === 422
         ? { message: "The server refused that version. Check it and try again." }
