@@ -22,7 +22,7 @@ from exactdocs.retrieval.models import (
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
 from retrieval_eval.cli import main
-from retrieval_eval.dataset import Answer, Hit, Question, fingerprint, load_dataset
+from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import model_free_container, run_on_fixture
 from retrieval_eval.suite import (
     BASELINE_FILE,
@@ -615,7 +615,7 @@ def test_the_command_fails_when_the_branch_lowers_the_baseline(tmp_path: Path) -
 
 
 def test_the_command_resets_the_baseline_when_develop_measured_another_dataset(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     develop = tmp_path / "develop.json"
     data = {"dataset": "sha256:older", "modes": {"bm25": {"recall_at_5": 0.99}}}
@@ -629,11 +629,80 @@ def test_the_command_resets_the_baseline_when_develop_measured_another_dataset(
 
     assert code == 0
     report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
-    assert report["baseline"] == str(BASELINE_FILE)
+    assert report["baseline"] == "packages/exactdocs/evals/retrieval_eval/baseline.json"
     assert report["fingerprint"] == fingerprint(load_dataset())
     assert "**Baseline reset:** the dataset changed (sha256:older to " in summary.read_text(
         encoding="utf-8"
     )
+    # A warning annotation, so the reset shows on the pull request's checks too.
+    assert "::warning title=Eval baseline reset::the dataset changed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("develop_recall", "code"), [(0.92, 0), (0.99, 1)])
+def test_on_a_reset_the_reference_dataset_is_still_gated_against_the_reference_baseline(
+    tmp_path: Path, develop_recall: float, code: int
+) -> None:
+    develop = tmp_path / "develop.json"
+    data = {"dataset": "sha256:older", "modes": {"bm25": {"recall_at_5": develop_recall}}}
+    develop.write_text(json.dumps(data), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+
+    result = main([
+        "--modes", "bm25", "--baseline", str(develop), "--ratchet",
+        "--reference-dataset", str(DATASET_FILE),
+        "--report", str(tmp_path / "r.json"), "--summary", str(summary),
+    ])  # fmt: skip
+
+    assert result == code
+    assert json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))["passed"] is True
+    reference = json.loads((tmp_path / "r-reference.json").read_text(encoding="utf-8"))
+    assert reference["passed"] is (code == 0)
+    assert reference["baseline_reset"] is None
+    verdict = "passed" if code == 0 else "failed"
+    assert f"## Retrieval eval on the reference dataset: {verdict}" in summary.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_command_refuses_a_reference_dataset_that_does_not_exist(tmp_path: Path) -> None:
+    assert main(["--reference-dataset", str(tmp_path / "typo.yaml")]) == 2
+
+
+async def test_a_case_the_fixture_cannot_answer_fails_loudly(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    old = tmp_path / "dataset.yaml"
+    old.write_text(
+        """name: retrieval
+cases:
+- name: gone version
+  inputs: {query: snake_case, version: v0.9.0}
+  expected_output: {hits: []}
+- name: gone section
+  inputs: {query: snake_case, version: v1.4.0}
+  expected_output:
+    hits:
+    - {version: v1.4.0, article: docs/reference/naming.md, heading_path: [Naming conventions, x]}
+- name: gone article
+  inputs: {query: snake_case, version: v1.4.0}
+  expected_output:
+    hits:
+    - {version: v1.4.0, article: docs/gone.md, heading_path: [Gone]}
+""",
+        encoding="utf-8",
+    )
+
+    report = await run_on_fixture(docs_repo, tmp_path / "data", dataset_file=old)
+
+    assert not report.passed
+    assert report.problems[:3] == [
+        "gone version: the fixture has no version v0.9.0",
+        (
+            "gone section: the fixture has no section v1.4.0:docs/reference/naming.md "
+            "Naming conventions > x"
+        ),
+        "gone article: the fixture has no section v1.4.0:docs/gone.md Gone",
+    ]
 
 
 # ---------------------------------------------------------------- the dataset's fingerprint
@@ -659,6 +728,49 @@ def test_the_fingerprint_follows_questions_and_expectations_not_names_or_order()
     no_answer = replace(first, expected_output=Answer(hits=[]))
     dataset.cases = [no_answer, second, *rest]
     assert fingerprint(dataset) != before
+
+
+def test_the_fingerprint_ignores_defaults_and_fields_the_dataset_does_not_state(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dataset.yaml"
+    path.write_text(
+        """name: retrieval
+cases:
+- name: one
+  inputs: {query: snake_case, version: v1.4.0}
+  expected_output:
+    hits:
+    - {version: v1.4.0, article: docs/reference/naming.md, heading_path: [Naming conventions]}
+- name: two
+  inputs: {query: nothing, version: next, tags: [a]}
+  expected_output: {hits: []}
+""",
+        encoding="utf-8",
+    )
+    dataset = load_dataset(path)
+    pinned = fingerprint(dataset)
+    one, two = dataset.cases
+    assert one.expected_output is not None
+
+    # Pinned: a field added to Question, Answer or Hit with a default must not move it.
+    assert pinned == "sha256:5d2cb488a370fc1e"
+    dataset.cases = [
+        replace(
+            one,
+            inputs=one.inputs.model_copy(update={"tags_match": "any"}),
+            expected_output=one.expected_output.model_copy(
+                update={
+                    "pinned_commit": "abc",
+                    "answered_by": "bm25",
+                    "search_ms": 1.0,
+                    "hits": [one.expected_output.hits[0].model_copy(update={"commit_sha": "abc"})],
+                }
+            ),
+        ),
+        two,
+    ]
+    assert fingerprint(dataset) == pinned
 
 
 def _stored(recall: float, dataset: str, source: str) -> StoredBaseline:
@@ -694,8 +806,8 @@ def test_a_changed_dataset_compares_with_the_branchs_baseline_and_says_so() -> N
     assert report.baseline == "branch"
     assert report.modes[0].baseline_recall_at_5 == pytest.approx(0.5)
     assert report.baseline_reset == (
-        "the dataset changed (sha256:a to sha256:b), so recall@5 is compared with `branch` "
-        "instead of `develop`, and the ratchet starts again from it"
+        "the dataset changed (sha256:a to sha256:b): recall@5 is compared with the branch's "
+        "`branch` instead of the reference baseline, and the ratchet starts again from it"
     )
     assert "- **Baseline reset:** the dataset changed" in markdown(report)
     assert "(`sha256:b`)" in markdown(report)
@@ -709,7 +821,10 @@ def test_a_reference_without_a_fingerprint_counts_as_another_dataset() -> None:
 
     assert comparison.baseline == {"bm25": 0.5}
     assert comparison.reset is not None
-    assert "no fingerprint to sha256:b" in comparison.reset
+    assert comparison.reset.startswith(
+        "the reference baseline has no dataset fingerprint yet (it was written before "
+        "fingerprints), so it may measure another dataset than this one (sha256:b)"
+    )
 
 
 def test_the_branch_baseline_must_be_recorded_for_the_dataset_it_is_measured_on() -> None:
@@ -726,10 +841,13 @@ def test_the_branch_baseline_must_be_recorded_for_the_dataset_it_is_measured_on(
             "`just eval --write-baseline`"
         )
     ]
-    assert report.warnings[0] == (
-        "no baseline was recorded for this dataset (sha256:c), so recall@5 is not gated: run "
-        "`just eval --write-baseline`"
-    )
+    # Once: no per-mode "no baseline to compare with" on top of it.
+    assert report.warnings == [
+        (
+            "no baseline was recorded for this dataset (sha256:c), so recall@5 is not gated: run "
+            "`just eval --write-baseline`"
+        )
+    ]
 
 
 def test_without_the_ratchet_a_stale_baseline_only_warns() -> None:
@@ -738,29 +856,38 @@ def test_without_the_ratchet_a_stale_baseline_only_warns() -> None:
                                                                 ratchet=False))  # fmt: skip
 
     assert report.passed
+    assert len(report.warnings) == 1
     assert report.warnings[0].startswith("no baseline was recorded for this dataset (sha256:b)")
 
 
 @pytest.mark.parametrize(
-    ("develop", "dataset", "passed"),
-    [(0.95, "sha256:a", True), (0.80, "sha256:a", False), (0.95, "sha256:old", False)],
+    ("develop", "dataset", "stored", "measured", "problem"),
+    [
+        (0.95, "sha256:a", 0.95, 0.94, None),  # kept from develop: the drop gate allows it
+        (0.80, "sha256:a", 0.95, 0.94, "above the 94.0"),  # raised: must be measured
+        (0.95, "sha256:old", 0.95, 0.94, "above the 94.0"),  # reset: must be measured
+        (0.92, "sha256:old", 0.50, 0.70, "below the 70.0"),  # reset: the next bar, not lower
+        (0.92, "sha256:old", 0.70, 0.70, None),
+    ],
 )
-def test_a_stored_recall_above_the_measured_one_on_the_same_dataset_fails(
-    develop: float, dataset: str, passed: bool
+def test_a_stored_recall_the_run_does_not_back_up_fails(
+    develop: float, dataset: str, stored: float, measured: float, problem: str | None
 ) -> None:
-    # The branch stores 0.95 and measures 0.94, within the drop gate. Kept from develop, that is
-    # fine; raised from 0.80, or reset on a changed dataset, the bar must be what the run measures.
     comparison = compare(
-        "sha256:a", _stored(develop, dataset, "develop"), _stored(0.95, "sha256:a", "branch"),
+        "sha256:a", _stored(develop, dataset, "develop"), _stored(stored, "sha256:a", "branch"),
         ratchet=True,
     )  # fmt: skip
-    report = judge("retrieval", 10, [_ran(BM25, 0.94)], comparison)
+    report = judge("retrieval", 10, [_ran(BM25, measured)], comparison)
 
-    assert report.passed is passed, report.problems
-    if not passed:
+    assert report.passed is (problem is None), report.problems
+    if problem is not None:
         assert report.problems == [
             (
-                "bm25: the branch's baseline.json stores recall@5 95.0, above the 94.0 measured on "
-                "the same dataset: run `just eval --write-baseline`"
+                f"bm25: the branch's baseline.json stores recall@5 {stored * 100:.1f}, {problem} "
+                "measured on the same dataset: run `just eval --write-baseline`"
             )
         ]
+
+
+def test_a_mode_without_any_baseline_gets_no_per_mode_warning() -> None:
+    assert judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison()).warnings == []

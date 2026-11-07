@@ -45,6 +45,8 @@ DEFAULT_MARGIN_POINTS: Final[float] = 5.0
 """How far a mode's recall@5 must beat BM25's, in points, before it may become a default."""
 BASELINE_FILE: Final[Path] = Path(__file__).with_name("baseline.json")
 """The stored baseline; CI compares with the copy on ``develop``."""
+_REPO: Final[Path] = BASELINE_FILE.parents[4]
+"""The repository root, so paths in a summary read the same on every machine."""
 _EPSILON: Final[float] = 1e-9
 """Float noise tolerated when comparing points."""
 _DIGITS: Final[int] = 4
@@ -412,6 +414,8 @@ class Comparison:
     """The branch's stored recall@5, which may not be below ``baseline`` (None: no ratchet)."""
     claimed: Mapping[str, float] = field(default_factory=dict)
     """Stored recall@5 that this run must back up: a gating mode may not measure lower."""
+    exact: bool = False
+    """``claimed`` must be what the run measures, not only no more (a reset baseline)."""
     reset: str | None = None
     """Why the branch's baseline replaced the reference one."""
     problems: tuple[str, ...] = ()
@@ -433,8 +437,23 @@ def read_baseline(path: Path) -> StoredBaseline:
     return StoredBaseline(
         recall_at_5={mode: float(values["recall_at_5"]) for mode, values in data["modes"].items()},
         dataset=data.get("dataset"),
-        source=str(path),
+        source=shown(path),
     )
+
+
+def shown(path: Path) -> str:
+    """A path as a summary shows it: repo-relative when it is in the repository.
+
+    Args:
+        path: Any path.
+
+    Returns:
+        The path relative to the repository root, else as given.
+    """
+    try:
+        return str(path.resolve().relative_to(_REPO))
+    except ValueError:
+        return str(path)
 
 
 def compare(
@@ -485,15 +504,21 @@ def compare(
             "gated: run `just eval --write-baseline`"
         )
         return Comparison(problems=tuple(problems), warnings=(warning,))
+    changed = (
+        "the reference baseline has no dataset fingerprint yet (it was written before "
+        f"fingerprints), so it may measure another dataset than this one ({fingerprint})"
+        if reference.dataset is None
+        else f"the dataset changed ({reference.dataset} to {fingerprint})"
+    )
     reset = (
-        f"the dataset changed ({reference.dataset or 'no fingerprint'} to {fingerprint}), so "
-        f"recall@5 is compared with `{branch.source}` instead of "
-        f"`{reference.source or 'no baseline'}`, and the ratchet starts again from it"
+        f"{changed}: recall@5 is compared with the branch's `{branch.source}` instead of the "
+        "reference baseline, and the ratchet starts again from it"
     )
     return Comparison(
         baseline=branch.recall_at_5,
         source=branch.source,
         claimed=branch.recall_at_5,
+        exact=True,
         reset=reset,
         problems=tuple(problems),
     )
@@ -555,7 +580,7 @@ def judge(
     warnings = list(comparison.warnings)
     if comparison.ratchet is not None:
         problems.extend(_lowered(outcomes, baseline, comparison.ratchet))
-    problems.extend(_unbacked(outcomes, comparison.claimed))
+    problems.extend(_unbacked(outcomes, comparison.claimed, exact=comparison.exact))
     bm25 = next((o.metrics for o in outcomes if o.mode is RetrievalMode.BM25 and o.metrics), None)
     judged = []
     for outcome in outcomes:
@@ -572,7 +597,7 @@ def judge(
         if outcome.errors:
             problems.append(f"{name}: {len(outcome.errors)} question(s) failed to run")
         base = baseline.get(name)
-        if base is None and outcome.gating:
+        if base is None and outcome.gating and baseline:  # no baseline at all: compare() says so
             warnings.append(f"{name}: no baseline to compare with, so its recall@5 is not gated")
         delta = None if base is None else _points(metrics.recall_at_5 - base)
         if delta is not None and delta < -MAX_RECALL_DROP_POINTS - _EPSILON:
@@ -630,18 +655,27 @@ def _lowered(
     return problems
 
 
-def _unbacked(outcomes: Sequence[ModeOutcome], claimed: Mapping[str, float]) -> list[str]:
-    """Problems for each gating mode whose stored recall@5 is above what this run measured."""
+def _unbacked(
+    outcomes: Sequence[ModeOutcome], claimed: Mapping[str, float], *, exact: bool
+) -> list[str]:
+    """Problems for each gating mode whose stored recall@5 is not backed by this run.
+
+    A stored value above the measured one always fails; with ``exact`` (a reset baseline, which
+    becomes the next bar), one below it fails too.
+    """
     problems = []
     for outcome in outcomes:
         name = outcome.mode.value
         stored = claimed.get(name)
         if not outcome.gating or outcome.metrics is None or stored is None:
             continue
-        if stored > outcome.metrics.recall_at_5 + _EPSILON:
+        measured = outcome.metrics.recall_at_5
+        above = stored > measured + _EPSILON
+        if above or (exact and stored < measured - _EPSILON):
+            where = "above" if above else "below"
             problems.append(
-                f"{name}: the branch's baseline.json stores recall@5 {_points(stored)}, above the "
-                f"{_points(outcome.metrics.recall_at_5)} measured on the same dataset: run "
+                f"{name}: the branch's baseline.json stores recall@5 {_points(stored)}, {where} "
+                f"the {_points(measured)} measured on the same dataset: run "
                 "`just eval --write-baseline`"
             )
     return problems
@@ -653,11 +687,12 @@ def _cell(value: float | None, *, points: bool = False, digits: int = 3) -> str:
     return f"{_points(value):g}" if points else f"{value:.{digits}f}"
 
 
-def markdown(report: SuiteReport) -> str:
+def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
     """Render the report as a CI job summary.
 
     Args:
         report: The run.
+        title: The heading, before the verdict.
 
     Returns:
         A Markdown table per mode, then the verdict and its reasons.
@@ -666,13 +701,12 @@ def markdown(report: SuiteReport) -> str:
     against = f"in `{report.baseline}`" if report.baseline else "given (none)"
     dataset_id = f" (`{report.fingerprint}`)" if report.fingerprint else ""
     lines = [
-        f"## Retrieval eval: {verdict}",
+        f"## {title}: {verdict}",
         "",
         (
             f"{report.cases} questions of the `{report.dataset}` dataset{dataset_id}, per mode. "
-            "Recall and MRR "
-            "are over the questions whose version has an answer; recall@5 delta is against the "
-            f"baseline {against}."
+            "Recall and MRR are over the questions whose version has an answer; recall@5 delta "
+            f"is against the baseline {against}."
         ),
         "",
         (

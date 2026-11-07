@@ -83,11 +83,12 @@ def load_dataset(path: Path = DATASET_FILE) -> RetrievalDataset:
 
 
 def fingerprint(dataset: RetrievalDataset) -> str:
-    """Hash what the dataset asks and expects, so a baseline knows which dataset it measured.
+    """Hash what the dataset states, so a baseline knows which dataset it measured.
 
-    Only the questions and their expected answers count: renaming, reordering or commenting
-    cases keeps the fingerprint, while adding, removing or changing a question or an expected
-    section changes it (and resets the baseline, docs/evals.md).
+    Only each question (its inputs, defaults left out) and the sections it expects (version,
+    article, heading path) count: renaming, reordering or commenting cases keeps the fingerprint,
+    and so does a field added to the models with a default. Adding, removing or changing a
+    question or an expected section changes it (and resets the baseline, docs/evals.md).
 
     Args:
         dataset: The cases.
@@ -98,8 +99,11 @@ def fingerprint(dataset: RetrievalDataset) -> str:
     cases = sorted(
         json.dumps(
             [
-                case.inputs.model_dump(mode="json"),
-                case.expected_output.model_dump(mode="json") if case.expected_output else None,
+                case.inputs.model_dump(mode="json", exclude_defaults=True),
+                [
+                    [hit.version, hit.article, hit.heading_path]
+                    for hit in (case.expected_output.hits if case.expected_output else [])
+                ],
             ],
             sort_keys=True,
         )
