@@ -12,11 +12,10 @@ from behave.runner import Context
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings
 from exactdocs.retrieval.adapters.driven.memory import StaticModelRoles
-from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.dtos import OpenEmbeddingSpaceCommand
 from exactdocs.retrieval.errors import VectorDimensionError
 from exactdocs.retrieval.models import (
@@ -61,7 +60,7 @@ async def _chunks(container: Container, ref: str) -> list[tuple[str, ChunkKey, s
 async def _fill(
     container: Container, space: EmbeddingSpaceId, refs: list[str], dimensions: int
 ) -> None:
-    vectors = SqliteVectorIndex(engine=container.engine)
+    vectors = vector_index(container.engine)
     for ref in refs:
         rows = await _chunks(container, ref)
         await vectors.upsert(space, {k: made_up_vector(c, dimensions) for _, k, c in rows})
@@ -95,7 +94,7 @@ def _nearest(
                     text("SELECT manifest_id FROM retrieval_manifests WHERE version_id = :v"),
                     {"v": f"{LIBRARY}/{ref}"},
                 )
-            vectors = SqliteVectorIndex(engine=container.engine)
+            vectors = vector_index(container.engine)
             hits = await vectors.nearest(space, manifest, query, TagFilter(), limit)
             return list(hits), {i for i, _, _ in await _chunks(container, ref)}
 
@@ -155,7 +154,7 @@ def step_new_space(context: Context, name: str, model: str) -> None:
     context.spaces[name] = context.new_space
 
     async def spaces(container: Container) -> list[tuple[int, str, str]]:
-        found = await SqliteVectorIndex(engine=container.engine).spaces()
+        found = await vector_index(container.engine).spaces()
         return [(s.id, s.spec.model, s.state.value) for s in found]
 
     listed = asyncio.run(_with_container(context, spaces))

@@ -379,8 +379,9 @@ Which mode answers a search: the call's `mode`, else the **library's** mode
 configured. A call that asks for a mode that cannot run fails with `mode_unavailable`, naming the
 missing model role; a library or instance mode that cannot run (its model was removed) never fails
 a search: the next one answers, with `fallback_reason: mode_unavailable` (or
-`vector_store_unavailable` when the hybrid modes cannot run because sqlite-vec cannot be loaded by
-this Python; BM25 keeps answering). Setting a library's mode
+`vector_store_unavailable` when the hybrid modes cannot run because the vector store's extension
+cannot be loaded: sqlite-vec on SQLite, pgvector's `vector` on PostgreSQL; `/healthz` names it in
+`vector_store_missing`; BM25 keeps answering). Setting a library's mode
 is refused the same way when its model is not configured. Searching across libraries
 (`search_all_docs`, `GET /api/v1/search`) and `resolve-library-id` stay BM25 whatever the library
 and instance modes are: their scores must compare across libraries.
@@ -587,8 +588,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   month, for the instance and for the library, in the `retrieval_ai_spend` table, which budgets
   will read (#95). Saving the embedding role's profile over REST re-queues what it changes; a
   batch the provider does not answer for now (a timeout, a 429) is tried again a few times.
-  On PostgreSQL there is no vector store yet (pgvector, #243): nothing is embedded or queued, and
-  the estimate answers `vector_store_unavailable`.
+  On PostgreSQL the vectors go to pgvector (see *PostgreSQL*); without its `vector` extension
+  each embed job is skipped with `vector_store_unavailable`.
 - **Estimate first:** `exactdocs ai estimate` (where the server runs) prints the chunks still to
   embed, an estimate of their tokens (4 characters per token, never a tokenizer) and of the US
   dollars from the bundled price list, without calling any model;
@@ -669,6 +670,17 @@ crashed one left (it logs why).
   faster. A writer that waits more than 30 s for its turn gives up with an error, as SQLite does
   after its own wait.
 - Sign-in throttling counts failures per process (#253).
+- Hybrid search keeps its vectors in the same database with **pgvector** (#243): one table per
+  embedding model, with a `vector(<dimensions>)` column, searched exactly (cosine distance, no
+  index), so any dimensions up to pgvector's 16,000 work, including those above the 2,000 an
+  index would allow. ExactDocs looks for the `vector` extension once per process, when an
+  embedding model is configured, and creates it if it is not in the database yet. Creating it
+  needs a superuser (pgvector is not a trusted extension): the ParadeDB image of the example
+  already has it in every new database; elsewhere run `CREATE EXTENSION vector;` as a superuser
+  in the ExactDocs database (managed services such as Supabase or RDS offer it as well), then
+  restart ExactDocs. Without it hybrid search answers with BM25 (`fallback_reason:
+  vector_store_unavailable`), the server logs why, and `/healthz` names the missing extension in
+  `vector_store_missing`.
 
 Several processes on one PostgreSQL database, verified in CI (`deploy/compose.postgres.yaml`):
 
@@ -852,7 +864,7 @@ Docker, Kubernetes or a load balancer:
 
 | Path | Answers | Use it for |
 |---|---|---|
-| `/healthz` | `200` while the process runs, whatever the database does, within about 0.3 s: `status`, `version`, `database_reachable`, and (when the database answered in time) `schema_revision`, `search_index_format`, `reindex_required` (`null` when unknown) | liveness: restart the process when it stops answering |
+| `/healthz` | `200` while the process runs, whatever the database does, within about 0.3 s: `status`, `version`, `database_reachable`, and (when the database answered in time) `schema_revision`, `search_index_format`, `reindex_required` (`null` when unknown), `vector_store_missing` (the extension hybrid search needs and cannot load, once an embedding model is configured: `sqlite-vec` or `vector`; `null` otherwise) | liveness: restart the process when it stops answering |
 | `/readyz` | `200 {"status": "ready"}` when the database file exists, answers within 2 s and is at this version's schema, else `503 {"status": "not_ready", "reason": ...}` | readiness: send traffic only while it is ready |
 
 `/api/health` is an alias of `/healthz`, kept for existing clients. Neither probe creates a

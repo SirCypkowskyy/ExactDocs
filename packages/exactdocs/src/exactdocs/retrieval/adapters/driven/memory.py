@@ -469,6 +469,14 @@ class InMemoryVectorIndex:
     )
     """The vectors of each space that is not retired, with the chunk set each was stored for."""
 
+    def requirement(self) -> str:
+        """Name what the store needs: nothing outside this process.
+
+        Returns:
+            ``memory``.
+        """
+        return "memory"
+
     async def available(self) -> bool:
         """Say whether searches can run.
 

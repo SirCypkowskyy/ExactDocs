@@ -21,6 +21,8 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import schema_head
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.retrieval.adapters.driven.memory import StaticModelRoles
+from exactdocs.retrieval.models import ModelRole
 
 LIVENESS = (LIVENESS_PATH, HEALTH_ALIAS_PATH)
 """The liveness probe and its alias."""
@@ -144,6 +146,7 @@ def _assert_unknown(body: dict[str, object]) -> None:
         None,
         None,
     )
+    assert body["vector_store_missing"] is None
 
 
 async def test_liveness_answers_without_sign_in_before_setup(
@@ -297,3 +300,45 @@ async def test_a_query_string_is_still_a_probe(anonymous: httpx.AsyncClient) -> 
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------- the vector store (#243)
+
+
+def _broken_sqlite_vec() -> str:
+    """Stand for a Python whose sqlite-vec does not load."""
+    return "/nowhere/vec0"
+
+
+async def _health_of(container: Container) -> dict[str, object]:
+    transport = httpx.ASGITransport(app=create_app(container))
+    async with (
+        container.running(),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
+    ):
+        return (await client.get(LIVENESS_PATH)).json()
+
+
+async def test_liveness_names_the_vector_extension_that_cannot_load(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(data_dir=tmp_path),
+        model_roles=StaticModelRoles(roles=frozenset({ModelRole.EMBEDDING})),
+        vector_extension=_broken_sqlite_vec,
+    )
+
+    assert (await _health_of(container))["vector_store_missing"] == "sqlite-vec"
+
+
+async def test_liveness_checks_no_vector_store_without_an_embedding_model(tmp_path: Path) -> None:
+    container = Container.build(Settings(data_dir=tmp_path), vector_extension=_broken_sqlite_vec)
+
+    assert (await _health_of(container))["vector_store_missing"] is None
+
+
+async def test_liveness_names_nothing_when_the_vector_store_loads(tmp_path: Path) -> None:
+    container = Container.build(
+        Settings(data_dir=tmp_path),
+        model_roles=StaticModelRoles(roles=frozenset({ModelRole.EMBEDDING})),
+    )
+
+    assert (await _health_of(container))["vector_store_missing"] is None

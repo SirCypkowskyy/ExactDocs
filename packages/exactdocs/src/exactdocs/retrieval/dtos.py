@@ -469,6 +469,25 @@ class SearchIndexStateOut(_Dto):
         )
 
 
+class VectorStoreStateOut(_Dto):
+    """Whether the vector store can search here, checked only once an embedding model is set."""
+
+    requirement: str | None
+    """What the store needs from the database: `sqlite-vec` or `vector` (pgvector); null when
+    the instance has no vector store."""
+    available: bool | None
+    """It can search; null when no embedding model is configured (nothing is loaded then)."""
+
+    @property
+    def missing(self) -> str | None:
+        """Name what the store needs and cannot load, or ``None`` when nothing is missing.
+
+        Returns:
+            ``requirement`` when the store was checked and cannot search.
+        """
+        return self.requirement if self.available is False else None
+
+
 class RebuiltIndexOut(_Dto):
     """The format the search index was rebuilt in and how many chunks it holds."""
 
