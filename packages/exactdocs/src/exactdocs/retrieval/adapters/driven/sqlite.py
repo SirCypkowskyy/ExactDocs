@@ -3,7 +3,7 @@ import logging
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from itertools import batched
 from typing import Any
 
@@ -26,6 +26,7 @@ from sqlalchemy import (
     exists,
     func,
     insert,
+    or_,
     select,
     tuple_,
     update,
@@ -37,7 +38,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.constants import (
-    REPLAY_RETAIN_DAYS,
     SPEND_COUNTERS,
     STORED_PROFILE_FIELDS,
     VECTOR_BATCH,
@@ -892,7 +892,13 @@ class SqliteSpendLedger:
             ],
             set_={name: ai_spend.c[name] + upsert.excluded[name] for name in SPEND_COUNTERS},
         )
-        claim = self._insert(ai_spend_replays).on_conflict_do_nothing()
+        # RETURNING says whether the row was inserted on both dialects; ``rowcount`` does not
+        # (psycopg reports a row for an insert ON CONFLICT DO NOTHING skipped).
+        claim = (
+            self._insert(ai_spend_replays)
+            .on_conflict_do_nothing()
+            .returning(ai_spend_replays.c.token)
+        )
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
             applied: list[SpendEntry] = []
             for entry in entries:
@@ -900,7 +906,7 @@ class SqliteSpendLedger:
                     claimed = await connection.execute(
                         claim, {"token": entry.token, **_spend_key(entry.key)}
                     )
-                    if claimed.rowcount == 0:
+                    if claimed.first() is None:
                         continue
                 applied.append(entry)
             if (
@@ -1011,28 +1017,22 @@ def _spend_row(row: Row[Any]) -> SpendEntry:
     )
 
 
-def _old_replays(today: date) -> Delete:
-    """Build the deletion of replay tokens whose window is over.
-
-    A day's tokens are kept ``REPLAY_RETAIN_DAYS`` days, a month's until the next month ends:
-    a response is replayed within the hour, never into a window that long gone.
+def _old_replays(latest: date) -> Delete:
+    """Build the deletion of replay tokens whose window is over (``SpendWindow.kept_since``).
 
     Args:
-        today: The latest window start of the entries being added (no wall clock: a replay of
+        latest: The latest window start of the entries being added (no wall clock: a replay of
             an old response never deletes the token that guards it).
 
     Returns:
         The statement.
     """
-    day_cutoff = (today - timedelta(days=REPLAY_RETAIN_DAYS)).isoformat()
-    month_cutoff = (today.replace(day=1) - timedelta(days=1)).replace(day=1).isoformat()
     return delete(ai_spend_replays).where(
-        (
-            (ai_spend_replays.c.window_kind == SpendWindow.DAY.value)
-            & (ai_spend_replays.c.window_start < day_cutoff)
-        )
-        | (
-            (ai_spend_replays.c.window_kind == SpendWindow.MONTH.value)
-            & (ai_spend_replays.c.window_start < month_cutoff)
+        or_(
+            *(
+                (ai_spend_replays.c.window_kind == window.value)
+                & (ai_spend_replays.c.window_start < window.kept_since(latest).isoformat())
+                for window in SpendWindow
+            )
         )
     )

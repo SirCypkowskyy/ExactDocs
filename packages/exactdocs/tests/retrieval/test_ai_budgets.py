@@ -52,6 +52,7 @@ from exactdocs.retrieval.models import (
     InstanceRoles,
     LibraryAi,
     ManifestStatus,
+    ModeChoice,
     ModelCheck,
     ModelPrice,
     ModelRef,
@@ -71,7 +72,13 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports.driven import RetrievalPipeline, SearchTracer
-from exactdocs.retrieval.use_cases import Bm25Pipeline, PriceBook, UntracedSearches
+from exactdocs.retrieval.use_cases import (
+    AiSpend,
+    Bm25Pipeline,
+    PriceBook,
+    RetrievalModes,
+    UntracedSearches,
+)
 
 LIB = "/acme/payments"
 OTHER = "/acme/other"
@@ -743,3 +750,54 @@ async def test_each_degraded_search_is_counted_by_mode_and_reason() -> None:
     await world.module.query_docs(QueryDocsQuery(library_id=LIB, query="token"), caller=ADA)
 
     assert tracer.fallbacks == [("bm25", "llm_rate_limited")]
+
+
+async def test_the_budget_is_applied_to_the_choice_itself_so_every_later_stage_sees_it() -> None:
+    # A rerank stage that reads the choice after the pipeline (#261) must see rerank off too.
+    ledger = InMemorySpendLedger()
+    clock = Clock()
+    modes = RetrievalModes(
+        pipelines={},
+        roles=Roles(frozenset({ModelRole.RERANKER, ModelRole.LLM})),
+        library_modes=InMemoryLibraryModes(),
+        spend=AiSpend(ledger=ledger, budgets=Budgets(limits=(_limit("library"),)), clock=clock),
+    )
+    choice = ModeChoice(mode=AGENTIC, rerank=True, cheaper=BM25)
+    assert await modes.within_budget(choice, library=LIB.upper(), caller=ADA) == choice
+    key = SpendKey(scope_kind="library", scope_id=LIB, window=DAY, window_start=clock.at.date())
+    await ledger.add([_entry(key, usd=USD)])
+
+    within = await modes.within_budget(choice, library=LIB.upper(), caller=ADA)
+
+    assert within == ModeChoice(
+        mode=BM25, rerank=False, cheaper=BM25, fallback_reason=FallbackReason.LLM_BUDGET_REACHED
+    )
+
+
+async def test_the_in_memory_ledger_forgets_replay_tokens_of_windows_that_are_over() -> None:
+    ledger = InMemorySpendLedger()
+
+    def response(day: date, token: str) -> list[SpendEntry]:
+        return [
+            SpendEntry(
+                scope_kind="instance",
+                scope_id="",
+                window=window,
+                window_start=window.start(datetime(day.year, day.month, day.day, tzinfo=UTC)),
+                input_tokens=1,
+                requests=1,
+                token=token,
+            )
+            for window in SpendWindow
+        ]
+
+    await ledger.add(response(date(2026, 10, 30), "old"))
+    await ledger.add(response(date(2026, 11, 30), "recent"))
+    await ledger.add(response(date(2026, 12, 2), "new"))
+
+    assert {(t, k.window, k.window_start) for t, k in ledger.replays} == {
+        ("recent", DAY, date(2026, 11, 30)),  # two days back: still within reach
+        ("recent", MONTH, date(2026, 11, 1)),
+        ("new", DAY, date(2026, 12, 2)),
+        ("new", MONTH, date(2026, 12, 1)),
+    }

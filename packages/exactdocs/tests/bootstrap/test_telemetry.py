@@ -34,7 +34,7 @@ from app_lifespan import serving
 from exactdocs.bootstrap.constants import SDK_MODULE
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.otel_sdk import redact_query, scrub
+from exactdocs.bootstrap.otel_sdk import redact_query, scrub, without_prompts
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import (
     TracedJobHandler,
@@ -119,6 +119,36 @@ def test_an_mcp_span_does_not_say_who_called() -> None:
 
     (span,) = recorded(exporter)
     assert dict(scrub(span).attributes or {}) == {"mcp.method.name": "tools/call"}
+
+
+PROMPTS = {
+    "gen_ai.input.messages": '[{"role":"user","parts":[{"type":"text","content":"secret"}]}]',
+    "gen_ai.output.messages": '[{"role":"assistant","parts":[{"type":"text","content":"x"}]}]',
+    "gen_ai.system_instructions": '[{"type":"text","content":"You are"}]',
+    "gen_ai.tool.call.arguments": '{"query": "secret"}',
+    "gen_ai.tool.call.result": '{"chunks": []}',
+}
+
+
+def test_a_model_span_never_carries_prompts_even_with_the_query_text_opted_in() -> None:
+    provider, exporter = provider_with()
+
+    attributes = {"gen_ai.request.model": "gpt", **PROMPTS}
+    provider.get_tracer("t").start_span("chat gpt", attributes=attributes).end()
+
+    (span,) = recorded(exporter)
+    assert dict(scrub(span).attributes or {}) == {"gen_ai.request.model": "gpt"}
+    assert dict(without_prompts(span).attributes or {}) == {"gen_ai.request.model": "gpt"}
+
+
+def test_the_opt_in_keeps_everything_but_prompts() -> None:
+    provider, exporter = provider_with()
+
+    attributes = {"url.query": f"q={QUERY}", "enduser.id": "acct-1"}
+    provider.get_tracer("t").start_span("GET", attributes=attributes).end()
+
+    (span,) = recorded(exporter)
+    assert without_prompts(span) is span
 
 
 def test_a_failed_span_keeps_the_exception_type_but_not_its_text() -> None:

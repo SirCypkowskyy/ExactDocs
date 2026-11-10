@@ -4,11 +4,23 @@ Retrieval may not call ingestion (bridges point the other way), so the compositi
 the embedding when something retrieval owns changes the embedding space.
 """
 
+import asyncio
 import logging
+import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
-from exactdocs.bootstrap.constants import WINDOW_RESET_GRACE_SECONDS
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from exactdocs.bootstrap.constants import (
+    REQUEUE_JITTER_SECONDS,
+    REQUEUE_LOCK_KEY,
+    REQUEUE_TRY_LOCK,
+    WINDOW_RESET_GRACE_SECONDS,
+)
+from exactdocs.bootstrap.database import is_postgres
 from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.ingestion.ports.driving import QueueEmbedding
 from exactdocs.retrieval.dtos import ProviderOut, SaveProviderCommand
@@ -69,3 +81,45 @@ def seconds_to_next_window(now: datetime) -> float:
     """
     reset = SpendWindow.DAY.resets_at(now)
     return (reset - now).total_seconds() + WINDOW_RESET_GRACE_SECONDS
+
+
+async def requeue_daily(
+    *,
+    engine: AsyncEngine,
+    queue: Callable[[], Awaitable[None]],
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    jitter: Callable[[], float] = lambda: secrets.SystemRandom().uniform(0, REQUEUE_JITTER_SECONDS),
+) -> None:
+    """Queue the missing embedding just after each UTC midnight, in one process only.
+
+    On SQLite one process runs jobs, so it does. On PostgreSQL every server process runs this
+    loop, but only the one holding a session advisory lock queues: ``EmbeddingQueue`` checks for
+    a queued job and then inserts, so processes waking together would each queue every version.
+    The lock is held for as long as the process runs (PostgreSQL drops it with the connection),
+    and another process takes it over at the next midnight. A random delay spreads the wake-ups.
+
+    Args:
+        engine: The database.
+        queue: Queues the embedding of the versions not fully embedded.
+        now: The current time (tests).
+        sleep: Waits (tests).
+        jitter: Seconds added after midnight (tests).
+    """
+    if not is_postgres(engine):
+        while True:
+            await sleep(seconds_to_next_window(now()) + jitter())
+            await queue()
+    async with engine.connect() as connection:
+        leads = False
+        while True:
+            await sleep(seconds_to_next_window(now()) + jitter())
+            if not leads:
+                leads = bool(
+                    (
+                        await connection.execute(text(REQUEUE_TRY_LOCK), {"key": REQUEUE_LOCK_KEY})
+                    ).scalar()
+                )
+                await connection.commit()  # the lock is the session's: no transaction stays open
+            if leads:
+                await queue()

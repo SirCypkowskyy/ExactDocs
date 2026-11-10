@@ -13,10 +13,11 @@ pydantic-ai.
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from pydantic_ai import RunContext
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.spend import Budget, SpendLimits, Spent
 from pydantic_ai_harness.spend import SpendEntry as HarnessEntry
@@ -31,12 +32,14 @@ from exactdocs.retrieval.constants import (
     LLM_TOKEN_LIMIT,
     MICROS_PER_USD,
     SPEND_INSTANCE_ID,
+    TOKENS_PER_MILLION,
 )
 from exactdocs.retrieval.errors import UnknownSpendKeyError
 from exactdocs.retrieval.models import (
     AiCaller,
     BudgetLimit,
     Budgets,
+    ModelPrice,
     SpendEntry,
     SpendKey,
     SpendWindow,
@@ -226,6 +229,7 @@ def agent_limits(
     budgets: Budgets,
     caller: AiCaller,
     clock: Callable[[], datetime],
+    price: ModelPrice | None,
 ) -> AgentLimits:
     """Build the limits of one LLM step for a caller.
 
@@ -237,7 +241,11 @@ def agent_limits(
         ledger: The ``retrieval_ai_spend`` rows.
         budgets: The instance's limits.
         caller: The library and the account the step runs for.
-        clock: The current time (UTC windows).
+        clock: The current time; read in UTC, so the harness's day and month buckets are the
+            ledger's UTC windows whatever zone the clock answers in.
+        price: The step's model price as retrieval's price book has it (the operator's
+            ``[ai.prices]``, zero for ``local``); ``None`` leaves pricing to the bundled
+            genai-prices data, as the harness does by default.
 
     Returns:
         The capability for the agent and the usage limits for its run.
@@ -250,7 +258,58 @@ def agent_limits(
     ]
     return AgentLimits(
         spend=SpendLimits(
-            budgets=harness_budgets, store=LedgerSpendStore(ledger=ledger), clock=clock
+            budgets=harness_budgets,
+            store=LedgerSpendStore(ledger=ledger),
+            clock=_in_utc(clock),
+            price=None if price is None else _priced(price),
         ),
         usage=UsageLimits(request_limit=LLM_REQUEST_LIMIT, total_tokens_limit=LLM_TOKEN_LIMIT),
     )
+
+
+def _in_utc(clock: Callable[[], datetime]) -> Callable[[], datetime]:
+    """Read a clock in UTC.
+
+    Args:
+        clock: Any aware clock.
+
+    Returns:
+        The same instant, in UTC.
+    """
+
+    def now() -> datetime:
+        """Read the clock.
+
+        Returns:
+            Its time, in UTC.
+        """
+        return clock().astimezone(UTC)
+
+    return now
+
+
+def _priced(price: ModelPrice) -> Callable[[ModelResponse], Decimal]:
+    """Price a response at a known model price (the harness's ``price`` function).
+
+    Args:
+        price: US dollars per million input and output tokens.
+
+    Returns:
+        The function: the response's reported tokens at that price, exact in decimals.
+    """
+    per_input = Decimal(str(price.input_usd_per_million)) / TOKENS_PER_MILLION
+    per_output = Decimal(str(price.output_usd_per_million)) / TOKENS_PER_MILLION
+
+    def priced(response: ModelResponse) -> Decimal:
+        """Price one response.
+
+        Args:
+            response: The model's response, with the usage the provider reported.
+
+        Returns:
+            Its cost in US dollars.
+        """
+        usage = response.usage
+        return usage.input_tokens * per_input + usage.output_tokens * per_output
+
+    return priced

@@ -600,17 +600,25 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   only) and for embedding runs (`daily_embedding_...`, `monthly_embedding_...`).
   `llm_searches_per_minute` limits each caller's LLM searches, over REST, HTTP MCP and stdio
   alike (counted per server process). Every model call is counted from the provider's reported
-  usage, in one `retrieval_ai_spend` table shared by every process; LLM agents are held by the
+  usage, in one `retrieval_ai_spend` table shared by every server process (a stdio MCP process
+  opens the database read-only: it reads the shared spend, so the instance's and libraries'
+  budgets hold for it, but keeps its own spend in memory, unseen by the server's budgets and
+  usage and lost when it exits; #274). LLM agents are held by the
   harness `SpendLimits`, embedding and rerank calls by retrieval's own check before each batch or
   call, so a burst can overshoot by the calls already in flight. Reaching a limit degrades search,
   never breaks it: the LLM step is skipped and the result names the cheaper mode with
   `fallback_reason: llm_budget_reached` (or `llm_rate_limited`); a paid rerank is skipped
   (`reranked: false`); an `embed` job stops before its next batch with `ai_budget_reached` and is
-  queued again after the window resets (each UTC midnight), while BM25 keeps answering.
+  queued again after the window resets (each UTC midnight, by one server process, a few minutes
+  after at random), while BM25 keeps answering.
 - **Prices:** from the `genai-prices` data bundled with pydantic-ai (never fetched); a model it
   does not know gets `[ai.prices."<profile>:<model>"]` `input_usd_per_mtok` and
-  `output_usd_per_mtok`. `local` models cost nothing (their tokens still count). A US dollar
-  budget with a configured model that has no price is refused at start.
+  `output_usd_per_mtok`. `local` models cost nothing (their tokens still count). Self-hosted
+  endpoints (`ollama`, `vllm`, a TEI reranker) count as paid and are never priced from another
+  provider's list: with a US dollar budget, give them a price of 0
+  (`input_usd_per_mtok = 0`) if they cost nothing. A US dollar budget with a configured model
+  that has no price is refused at start. Spans never carry prompts or completions, even with
+  `EXACTDOCS_TELEMETRY_QUERY_TEXT` on.
 - **Usage:** `GET /api/v1/ai/usage` (admins) shows what the instance, embedding runs, each
   library and each account spent today and this month, and what is left of each budget;
   `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and `operation.cost` and

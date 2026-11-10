@@ -45,6 +45,7 @@ from exactdocs.retrieval.models import (
     SpaceState,
     SpendEntry,
     SpendKey,
+    SpendWindow,
     StoredChunk,
     TagFilter,
     VectorCoverage,
@@ -929,6 +930,11 @@ class InMemorySpendLedger:
                 self.replays.add((entry.token, key))
             row = self.rows.get(key)
             self.rows[key] = (SpendEntry.empty(key) if row is None else row).plus(entry)
+        if (latest := max((e.window_start for e in entries if e.token), default=None)) is not None:
+            # A long-lived process (stdio) keeps only the tokens of windows a replay can reach.
+            kept = {window: window.kept_since(latest) for window in SpendWindow}
+            stale = {r for r in self.replays if r[1].window_start < kept[r[1].window]}
+            self.replays.difference_update(stale)
 
     async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
         """Read the rows that exist.

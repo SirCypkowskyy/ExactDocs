@@ -341,7 +341,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   no known price. Before each batch `AiSpend.embedding_batch` checks the embedding, instance and
   library budgets and raises `AiBudgetReachedError` (`ai_budget_reached`), which fails the job;
   `ListUnembeddedVersions` leaves such a library out, and bootstrap queues the missing embedding
-  again just after each UTC midnight, when the windows reset. `exactdocs ai estimate` counts the distinct chunks without a vector
+  again just after each UTC midnight, when the windows reset (`requeue_daily`: a random delay of
+  up to five minutes; on PostgreSQL only the process holding a session advisory lock queues,
+  since `EmbeddingQueue` checks and inserts without one atomic step). `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
   `genai-prices` data (a model the instance runs itself, `ollama`, `vllm` or `local`, is never
   priced from another provider's list). An instance without a vector store plans, queues and
@@ -352,18 +354,23 @@ only holds each process's git work folders and `known_hosts`. What changes:
   scope kind and window, in millionths of a US dollar and in tokens) and a `CallRates` port (an
   in-memory sliding minute per caller, per process). The ledger owns its key format,
   `SpendKey` (scope kind, scope ID, window, window start); scopes are `instance`, `library`,
-  `user` (an account ID) and `embedding`. `RetrievalModes.run` takes the caller (REST passes the
+  `user` (an account ID) and `embedding`. The search use cases call
+  `RetrievalModes.within_budget` right after `choose`, with the caller (REST passes the
   session's or token's account through a FastAPI dependency, HTTP MCP the token's `client_id`,
-  stdio `None`) and, before the pipeline runs, skips an LLM step (`llm_budget_reached`,
+  stdio `None`), so every later stage sees the same choice; it skips an LLM step (`llm_budget_reached`,
   `llm_rate_limited`, answering in `ModeChoice.cheaper`, the best mode without an LLM) or a paid
   rerank (any reranker profile but `local`). LLM agents get `agent_limits(...)`
   (`adapters/driven/harness_spend.py`): the harness `SpendLimits` with one budget per caller
   scope and window (a ceiling, or a plain counter) over `LedgerSpendStore`, which implements the
   harness `BatchSpendStore` structurally and parses each harness key
   (`<name>|<window>|<scope>|<bucket>`, pinned by a contract test) into a `SpendKey`; plus
-  pydantic-ai `UsageLimits` per step. Replay tokens of the harness are kept in
+  pydantic-ai `UsageLimits` per step. The step's price comes from the caller's `PriceBook`
+  lookup (a `price` function for the harness; `None` falls back to genai-prices), and the clock
+  is read in UTC. Replay tokens of the harness are kept in
   `retrieval_ai_spend_replays`, claimed in the same transaction as the addition. A read-only
-  stdio process reads the shared rows and keeps its own spend in memory (`ReadOnlySpendLedger`).
+  stdio process reads the shared rows and keeps its own spend in memory (`ReadOnlySpendLedger`):
+  the server never sees it and it is lost on exit (#274). In memory, replay tokens of windows a
+  replay can no longer reach are dropped (`SpendWindow.kept_since`), as on SQL.
   Prices: `PriceBook` (the operator's `[ai.prices]`, then free kinds, then the bundled list);
   bootstrap refuses a US dollar budget at start when a configured role's model has no price.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
@@ -886,7 +893,10 @@ room for its 9 MB.)
   their way out: the query-text values in `url.query` become `REDACTED`, and exception events and
   error statuses lose their message and stack trace (a pydantic `ValidationError` quotes its
   `input_value`), keeping the exception type; FastMCP's `enduser.id` and `enduser.scope` (who
-  called) are dropped. Health and readiness probes (`PROBE_PATHS`) get no request span.
+  called) are dropped. Model spans always lose `PROMPT_SPAN_ATTRIBUTES` (`gen_ai.input.messages`,
+  `gen_ai.output.messages`, `gen_ai.system_instructions`, tool-call arguments and results), even
+  with the query text opted in (`without_prompts`): the second guard after pydantic-ai's
+  `include_content=False`. Health and readiness probes (`PROBE_PATHS`) get no request span.
 - **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
   for the search and one per stage (`version`, `rank`, `chunks`), in its mode. The query text is a
   separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without

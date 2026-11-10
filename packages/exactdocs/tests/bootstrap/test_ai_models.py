@@ -22,6 +22,8 @@ from azure.identity import (
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from google.oauth2.credentials import Credentials
+from pydantic_ai import Embedder
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 from exactdocs.bootstrap import ai_sdk
 from exactdocs.bootstrap.ai_endpoint import Endpoint
@@ -688,3 +690,18 @@ def test_the_profiles_proxy_goes_only_to_the_credentials_that_call_entra_id() ->
     ]
     # A user-assigned managed identity is chosen by AZURE_CLIENT_ID, as DefaultAzureCredential did.
     assert user_assigned[-1] == (ManagedIdentityCredential, {"client_id": "1111-2222"})
+
+
+async def test_the_factorys_models_are_instrumented_without_content(fake: FakeGateway) -> None:
+    # Prompts never reach a span: include_content=False is the first guard (*Telemetry*).
+    profile = ProviderProfile(name="corp", kind=ProviderKind.OPENAI_COMPATIBLE, base_url=fake.v1)
+    models = PydanticAiModels()
+
+    chat = await models.chat_model(profile, "gpt-4.1-mini")
+    embedder = await models.embedder(profile, "text-embedding-3-small")
+
+    assert isinstance(chat, InstrumentedModel)
+    assert chat.instrumentation_settings.include_content is False
+    assert isinstance(embedder, Embedder)
+    assert isinstance(embedder.instrument, InstrumentationSettings)
+    assert embedder.instrument.include_content is False

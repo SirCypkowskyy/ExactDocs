@@ -673,8 +673,6 @@ class RetrievalModes:
         query: str,
         tag_filter: TagFilter,
         limit: int,
-        *,
-        caller: str | None = None,
     ) -> PipelineAnswer:
         """Run the chosen mode's pipeline on one version.
 
@@ -684,17 +682,14 @@ class RetrievalModes:
             query: The query text.
             tag_filter: Which chunks may be returned.
             limit: How many hits to return at most.
-            caller: The account searching; ``None`` for a stdio MCP process.
 
         Returns:
-            The pipeline's answer; the choice's fallback reason unless the pipeline gave one.
-            A mode with an LLM step answers in the cheaper mode with ``llm_budget_reached`` or
-            ``llm_rate_limited`` when a budget or the rate limit skips the step; a paid rerank
-            over budget is skipped with ``llm_budget_reached``. A mode that searches vectors
+            The pipeline's answer; the choice's fallback reason unless the pipeline gave one
+            (``within_budget`` sets ``llm_budget_reached`` or ``llm_rate_limited`` on it when a
+            limit skipped the LLM step or the rerank). A mode that searches vectors
             answers BM25 with ``embedding_in_progress`` while the configured model has not
             embedded every chunk of the version (never two models' vectors in one search).
         """
-        choice = await self._within_budget(choice, AiCaller(library=version.library, user=caller))
         request = PipelineRequest(
             version=version,
             query=query,
@@ -713,12 +708,18 @@ class RetrievalModes:
             return replace(answer, fallback_reason=choice.fallback_reason)
         return answer
 
-    async def _within_budget(self, choice: ModeChoice, caller: AiCaller) -> ModeChoice:
+    async def within_budget(
+        self, choice: ModeChoice, *, library: str, caller: str | None
+    ) -> ModeChoice:
         """Skip the LLM step or the paid rerank a budget or the rate limit does not allow now.
+
+        Called by the search use cases right after ``choose``, so every later stage (the
+        pipeline, a rerank) sees the same choice.
 
         Args:
             choice: The mode picked by ``choose``.
-            caller: The library and the account searching.
+            library: The library searched, any letter case.
+            caller: The account searching; ``None`` for a stdio MCP process.
 
         Returns:
             The choice, or the cheaper one without the LLM step, or the same without reranking,
@@ -726,13 +727,14 @@ class RetrievalModes:
         """
         if self.spend is None:
             return choice
-        if choice.mode.needs_llm and (reason := await self.spend.llm_step(caller)) is not None:
+        who = AiCaller(library=library.casefold(), user=caller)
+        if choice.mode.needs_llm and (reason := await self.spend.llm_step(who)) is not None:
             choice = choice.without_llm(reason)
         if (
             choice.rerank
             and self.spend.budgets.limits  # no limit: no need to read the reranker's profile
-            and await self._paid_rerank(caller.library)
-            and (reason := await self.spend.paid_call(caller)) is not None
+            and await self._paid_rerank(who.library)
+            and (reason := await self.spend.paid_call(who)) is not None
         ):
             choice = replace(choice, rerank=False, fallback_reason=choice.fallback_reason or reason)
         return choice
@@ -778,6 +780,7 @@ class SearchDocsUseCase:
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
         choice = await self.modes.choose(asked=query.mode, library=query.library)
+        choice = await self.modes.within_budget(choice, library=query.library, caller=caller)
         with self.tracer.span(
             "search_docs",
             mode=choice.mode.value,
@@ -785,7 +788,7 @@ class SearchDocsUseCase:
             library=query.library,
             ref=query.ref,
         ) as whole:
-            return await self._search(query, text, choice, whole, caller)
+            return await self._search(query, text, choice, whole)
 
     async def _search(
         self,
@@ -793,7 +796,6 @@ class SearchDocsUseCase:
         text: SearchText,
         choice: ModeChoice,
         whole: SearchSpan,
-        caller: str | None,
     ) -> SearchDocsResult:
         """Resolve the version, rank its chunks and load the shown ones, one span per stage.
 
@@ -802,7 +804,6 @@ class SearchDocsUseCase:
             text: Its validated query text.
             choice: The retrieval mode it runs in.
             whole: The search's span, told which mode answered.
-            caller: The account searching.
 
         Returns:
             The results of the one version searched.
@@ -814,9 +815,7 @@ class SearchDocsUseCase:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span("search_docs.rank", mode=mode) as rank:
-            answer = await self.modes.run(
-                choice, version, text.value, tag_filter, query.limit, caller=caller
-            )
+            answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
         if answer.fallback_reason is not None:
@@ -1490,10 +1489,11 @@ class QueryDocsUseCase:
         library = f"/{owner}/{repo}"
         # context7's tool has no mode argument: the library's mode, else the instance's (C7-02).
         choice = await self.modes.choose(asked=None, library=library)
+        choice = await self.modes.within_budget(choice, library=library, caller=caller)
         with self.tracer.span(
             "query_docs", mode=choice.mode.value, query=text.value, library=library, ref=ref
         ) as whole:
-            return await self._answer(query, text, library, ref, choice, whole, caller)
+            return await self._answer(query, text, library, ref, choice, whole)
 
     async def _answer(
         self,
@@ -1503,7 +1503,6 @@ class QueryDocsUseCase:
         ref: str | None,
         choice: ModeChoice,
         whole: SearchSpan,
-        caller: str | None,
     ) -> QueryDocsResult:
         """Resolve the version, rank, load the chunks and pack them, one span per stage.
 
@@ -1514,7 +1513,6 @@ class QueryDocsUseCase:
             ref: The version it names; ``None`` for the default version.
             choice: The retrieval mode it runs in.
             whole: The search's span, told which mode answered.
-            caller: The account asking.
 
         Returns:
             The packed sections of the one version searched.
@@ -1531,7 +1529,6 @@ class QueryDocsUseCase:
                 text.value,
                 TagFilter(tags=(), match=TagMatch.ANY),
                 QUERY_DOCS_CANDIDATES,
-                caller=caller,
             )
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)

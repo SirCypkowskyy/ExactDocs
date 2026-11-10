@@ -5,6 +5,7 @@ the API token's over REST, the token's over HTTP MCP. A US dollar budget needs a
 configured model, or the server refuses to start.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -18,10 +19,11 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 
 from app_lifespan import serving
+from databases import ADMIN_URL
 from exactdocs.bootstrap.ai_models import budgets
 from exactdocs.bootstrap.container import Container
-from exactdocs.bootstrap.database import StartupError
-from exactdocs.bootstrap.embedding import seconds_to_next_window
+from exactdocs.bootstrap.database import StartupError, open_database
+from exactdocs.bootstrap.embedding import requeue_daily, seconds_to_next_window
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings, BudgetSettings, Settings
 from exactdocs.identity.dtos import CreateFirstAdminCommand
@@ -254,3 +256,67 @@ def test_embedding_is_queued_again_just_after_each_utc_midnight() -> None:
     assert seconds_to_next_window(datetime(2026, 11, 7, 23, 59, tzinfo=UTC)) == pytest.approx(65)
     late = datetime(2026, 12, 31, 23, 0, tzinfo=UTC) - timedelta(seconds=1)
     assert seconds_to_next_window(late) == pytest.approx(3606)
+
+
+# ---------------------------------------------------------------- the midnight re-queue
+
+
+class NightsOverError(Exception):
+    """Ends a re-queue loop after a few nights."""
+
+
+def _nights(count: int, waits: list[float]) -> Any:
+    """A fake ``sleep`` that lets ``count`` nights pass, then stops the loop."""
+
+    async def sleep(seconds: float) -> None:
+        if len(waits) == count:
+            raise NightsOverError
+        waits.append(seconds)
+        await asyncio.sleep(0)
+
+    return sleep
+
+
+async def test_embedding_is_queued_after_each_midnight_with_jitter() -> None:
+    engine = open_database(Settings())
+    queued: list[int] = []
+    waits: list[float] = []
+
+    async def queue() -> None:
+        queued.append(1)
+
+    with pytest.raises(NightsOverError):
+        await requeue_daily(
+            engine=engine,
+            queue=queue,
+            now=lambda: datetime(2026, 11, 7, 23, 59, tzinfo=UTC),
+            sleep=_nights(2, waits),
+            jitter=lambda: 42.0,
+        )
+    await engine.dispose()
+
+    assert waits == [65 + 42.0, 65 + 42.0]
+    assert len(queued) == 2
+
+
+@pytest.mark.skipif(ADMIN_URL is None, reason="needs a PostgreSQL server")
+async def test_only_one_process_requeues_on_postgresql(on_postgres: object) -> None:
+    del on_postgres
+    engines = [open_database(Settings()) for _ in range(3)]
+    queued: list[int] = []
+
+    def process(index: int) -> Any:
+        async def queue() -> None:
+            queued.append(index)
+
+        return requeue_daily(
+            engine=engines[index], queue=queue, sleep=_nights(2, []), jitter=lambda: 0.0
+        )
+
+    results = await asyncio.gather(*(process(i) for i in range(3)), return_exceptions=True)
+    for engine in engines:
+        await engine.dispose()
+
+    assert all(isinstance(r, NightsOverError) for r in results), results
+    assert len(queued) == 2  # two nights, one process each night
+    assert len(set(queued)) == 1  # the same one: it keeps the lock

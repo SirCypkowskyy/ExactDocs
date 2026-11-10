@@ -45,6 +45,7 @@ from exactdocs.retrieval.constants import (
     MONTHS_PER_YEAR,
     PROFILE_NAME,
     RATE_LIMIT_BELOW_ONE,
+    REPLAY_RETAIN_DAYS,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
@@ -1998,6 +1999,22 @@ class SpendWindow(StrEnum):
         """
         day = at.astimezone(UTC).date()
         return day if self is SpendWindow.DAY else day.replace(day=1)
+
+    def kept_since(self, latest: date) -> date:
+        """Find the oldest window start whose replay tokens are still kept.
+
+        A response is replayed within the hour: a day's tokens are kept ``REPLAY_RETAIN_DAYS``
+        days, a month's until the month after it ends.
+
+        Args:
+            latest: The newest window start being written.
+
+        Returns:
+            Tokens of windows starting before it can be dropped.
+        """
+        if self is SpendWindow.DAY:
+            return latest - timedelta(days=REPLAY_RETAIN_DAYS)
+        return (latest.replace(day=1) - timedelta(days=1)).replace(day=1)
 
     def resets_at(self, at: datetime) -> datetime:
         """Find when the window that holds ``at`` ends: the next UTC midnight or first of month.

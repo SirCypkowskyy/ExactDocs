@@ -6,7 +6,6 @@ import threading
 from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self
 
@@ -52,7 +51,7 @@ from exactdocs.bootstrap.database import (
     migrate,
     open_database,
 )
-from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, seconds_to_next_window
+from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
@@ -685,10 +684,9 @@ class Container:
                 await queueing
 
     async def _queue_embedding_daily(self) -> None:
-        """Queue the missing embedding now, then after every UTC midnight, until cancelled."""
-        while True:
-            await self.queue_embedding()
-            await asyncio.sleep(seconds_to_next_window(datetime.now(UTC)))
+        """Queue the missing embedding now, then after every UTC midnight (one process does)."""
+        await self.queue_embedding()
+        await requeue_daily(engine=self.engine, queue=self.queue_embedding)
 
     async def queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.

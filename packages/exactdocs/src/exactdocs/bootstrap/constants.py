@@ -332,9 +332,23 @@ QUERY_TEXT_PARAMETERS: Final[frozenset[str]] = frozenset({"q", "query", "library
 """URL query parameters whose value is search input (or a repository URL that may carry a token):
 redacted from request spans unless the operator opted in to query text.
 """
-SCRUBBED_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset({"enduser.id", "enduser.scope"})
-"""Who called (FastMCP puts the token's client ID and scopes on every MCP span): left out unless
-the operator opted in, like the query text they would tie to a person.
+PROMPT_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset(
+    {
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.system_instructions",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+    }
+)
+"""What a model was sent and answered (pydantic-ai's instrumentation): always left out, even with
+the query text opted in. ``include_content=False`` is the first guard, this the second
+(docs/decisions/ai-retrieval.md, *Telemetry*)."""
+SCRUBBED_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset(
+    {"enduser.id", "enduser.scope", *PROMPT_SPAN_ATTRIBUTES}
+)
+"""Who called (FastMCP puts the token's client ID and scopes on every MCP span), left out unless
+the operator opted in, like the query text they would tie to a person; and the prompts, always.
 """
 SCRUBBED_EXCEPTION_ATTRIBUTES: Final[frozenset[str]] = frozenset(
     {"exception.message", "exception.stacktrace"}
@@ -428,3 +442,11 @@ CHECK_TEXT: Final[str] = "ExactDocs connectivity check"
 """What a check embeds, and reranks against itself."""
 WINDOW_RESET_GRACE_SECONDS: Final[float] = 5.0
 """Embedding is queued again this long after each UTC midnight, once the spend windows reset."""
+
+REQUEUE_JITTER_SECONDS: Final[float] = 300.0
+"""At most this many seconds more, at random, before the midnight re-queue: processes and
+instances sharing a provider do not all wake together."""
+REQUEUE_LOCK_KEY: Final[str] = "exactdocs:embedding:requeue"
+"""The PostgreSQL advisory lock whose holder runs the midnight re-queue of embedding."""
+REQUEUE_TRY_LOCK: Final[str] = "SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"
+"""Takes the re-queue's session lock if no other process holds it, without waiting."""
