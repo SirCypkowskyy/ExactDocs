@@ -158,10 +158,13 @@ class ConceptEmbeddings:
 
     async def embed_query(self, text: str) -> EmbeddedTexts:
         self.owner.queries.append(text)
+        self.owner.asked.set()
         if self.owner.behaviour == "fail":
             raise EmbeddingFailedError(self.name, "APIConnectionError")
         if self.owner.behaviour == "hang":
             await asyncio.sleep(10)
+        if self.owner.behaviour == "boom":
+            raise IndexError(text)  # an adapter bug; its message must not escape
         if self.owner.behaviour == "unsupported":
             reason = "it built no embedding model"
             raise ProviderUnsupportedError(CORP.name, reason)
@@ -174,6 +177,7 @@ class ConceptModels:
 
     behaviour: str = "ok"
     queries: list[str] = field(default_factory=list)
+    asked: asyncio.Event = field(default_factory=asyncio.Event)
 
     def bind(
         self, handle: object, *, name: str, dimensions: int | None, batch_size: int
@@ -182,8 +186,18 @@ class ConceptModels:
         return ConceptEmbeddings(owner=self, name=name)
 
 
+class SealedKeyError(Exception):
+    """What a secret box raises for a key it cannot open (not a domain error)."""
+
+
+@dataclass(slots=True)
 class Factory:
-    """``ModelFactory`` whose embedder handle is a marker (the bound models ignore it)."""
+    """``ModelFactory`` whose embedder handle is a marker (the bound models ignore it).
+
+    With ``unsealable`` the profile's key cannot be opened, as after a secret key change.
+    """
+
+    unsealable: bool = False
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
@@ -193,6 +207,9 @@ class Factory:
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         del profile, model
+        if self.unsealable:
+            message = "sk-secret-in-the-message"
+            raise SealedKeyError(message)
         return object()
 
     async def reranker(self, profile: ProviderProfile, model: str) -> object:
@@ -248,6 +265,7 @@ class World:
     modes: InMemoryLibraryModes
     ledger: InMemorySpendLedger
     tracer: RecordingTracer
+    factory: Factory
 
 
 def _world(
@@ -264,6 +282,7 @@ def _world(
     modes = InMemoryLibraryModes()
     ledger = InMemorySpendLedger()
     tracer = RecordingTracer()
+    factory = Factory()
     module = RetrievalModule.build(
         searchable=catalog,
         libraries=InMemoryLibraries(),
@@ -277,7 +296,7 @@ def _world(
         instance_roles=InstanceRoles(
             embedding=None if embedding is None else ModelRef(profile="corp", model=embedding)
         ),
-        models=Factory(),
+        models=factory,
         instance_mode=instance,
         clock=Clock(),
         tracer=tracer,
@@ -295,6 +314,7 @@ def _world(
         modes=modes,
         ledger=ledger,
         tracer=tracer,
+        factory=factory,
     )
 
 
@@ -309,6 +329,7 @@ async def _import(world: World, ref: str, manifest: str, blobs: dict[str, list[s
                 ArticleChunksIn(
                     path=f"docs/{blob}.md",
                     blob_sha=f"{blob}-{ref}",
+                    tags=["security"] if blob == "auth" else [],
                     chunks=[
                         ChunkIn(
                             heading_path=[blob.title(), f"S{i}"],
@@ -436,14 +457,28 @@ async def test_no_chunk_of_another_version_is_returned() -> None:
     assert all(r.article_path != "docs/resilience-old.md" for r in result.results)
 
 
-async def test_an_identifier_the_version_lacks_stays_an_explicit_empty_answer() -> None:
+async def test_a_synonym_no_chunk_shares_a_word_with_is_found_by_the_vectors() -> None:
+    world = await _embedded_world()
+    assert (await _search(world, "repeat", mode="bm25")).results == []
+
+    result = await _search(world, "repeat")
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.HYBRID, None)
+    assert _texts(result)[:2] == ["Resilience/S0", "Resilience/S1"]
+    assert result.results[0].highlights == []  # nothing to mark: only the vectors matched
+    assert world.models.queries == ["repeat"]
+
+
+async def test_an_identifier_the_version_lacks_gets_only_chunks_of_the_version() -> None:
     world = await _embedded_world()
 
     result = await _search(world, "podman")
 
-    assert (result.retrieval_mode, result.results) == (RetrievalMode.HYBRID, [])
-    assert (result.coverage.candidates, result.coverage.complete) == (0, True)
-    assert world.models.queries == []
+    # No similarity floor: the nearest chunks come back, but only ever the version's.
+    assert result.retrieval_mode is RetrievalMode.HYBRID
+    assert result.results
+    assert {r.commit_sha for r in result.results} == {"2" * 40}
+    assert world.models.queries == ["podman"]
 
 
 async def test_coverage_counts_the_chunks_of_both_halves_once() -> None:
@@ -459,10 +494,20 @@ async def test_coverage_counts_the_chunks_of_both_halves_once() -> None:
 async def test_the_tag_filter_applies_to_both_halves() -> None:
     world = await _embedded_world()
 
+    result = await _search(world, "token", tags=["security"])
+
+    assert result.retrieval_mode is RetrievalMode.HYBRID
+    assert all(r.tags == ["security"] for r in result.results)
+    # "Store credentials in the vault" has no "token": only the vector half could return it.
+    assert _texts(result) == ["Auth/S0", "Auth/S1"]
+
+
+async def test_a_tag_no_chunk_has_answers_nothing_in_both_halves() -> None:
+    world = await _embedded_world()
+
     result = await _search(world, "retry", tags=["nothing-has-this"])
 
-    assert result.results == []
-    assert result.retrieval_mode is RetrievalMode.HYBRID
+    assert (result.retrieval_mode, result.results) == (RetrievalMode.HYBRID, [])
 
 
 async def test_query_docs_runs_the_same_pipeline() -> None:
@@ -498,7 +543,7 @@ async def test_the_query_embedding_is_recorded_in_the_spend_ledger() -> None:
     assert after - before == 7 * 4  # instance and library rows, per day and month
 
 
-@pytest.mark.parametrize("behaviour", ["fail", "hang", "unsupported"])
+@pytest.mark.parametrize("behaviour", ["fail", "hang", "unsupported", "boom"])
 async def test_a_failing_or_slow_embedding_answers_bm25_never_fails(behaviour: str) -> None:
     world = await _embedded_world(wait=0.05)
     world.models.behaviour = behaviour
@@ -508,6 +553,30 @@ async def test_a_failing_or_slow_embedding_answers_bm25_never_fails(behaviour: s
     assert result.retrieval_mode is RetrievalMode.BM25
     assert result.fallback_reason is FallbackReason.EMBEDDING_UNAVAILABLE
     assert _texts(result)[0] == "Resilience/S0"
+
+
+async def test_cancelling_a_search_while_the_query_is_embedded_cancels_it() -> None:
+    world = await _embedded_world(wait=30.0)
+    world.models.behaviour = "hang"
+    search = asyncio.create_task(_search(world, "RetryPolicy"))
+    await world.models.asked.wait()
+
+    search.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await search
+
+
+async def test_a_key_that_cannot_be_opened_answers_bm25() -> None:
+    world = await _embedded_world()
+    world.factory.unsealable = True
+
+    result = await _search(world, "RetryPolicy")
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.BM25,
+        FallbackReason.EMBEDDING_UNAVAILABLE,
+    )
 
 
 async def test_a_version_not_embedded_yet_answers_bm25_without_embedding_the_query() -> None:

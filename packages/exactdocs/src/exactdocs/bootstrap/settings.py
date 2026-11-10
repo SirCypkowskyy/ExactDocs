@@ -139,8 +139,8 @@ class AiSettings(BaseModel):
     mode: RetrievalMode | None = None
     """`EXACTDOCS_AI__MODE`: the retrieval mode of every search that names none, for libraries
     without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`. Unset (or `auto`): the best
-    default mode the configured models allow (BM25 with none; `hybrid` is no default until the
-    eval suite makes it one, docs/evals.md). A mode whose model is not configured falls back to
+    default mode the configured models allow: BM25 until the eval suite makes another mode a
+    default (docs/evals.md). A mode whose model is not configured falls back to
     the best one, and the results say so (`fallback_reason` `mode_unavailable`).
     """
 

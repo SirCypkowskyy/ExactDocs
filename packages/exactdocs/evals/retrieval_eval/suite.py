@@ -13,7 +13,7 @@ The gates (docs/decisions/ai-retrieval.md, *Evaluation*):
 
 import json
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -144,7 +144,10 @@ class ModeOutcome(_Model):
     recall_at_5_delta_points: float | None = None
     """recall@5 minus the baseline's, in points."""
     eligible_as_default: bool | None = None
-    """Beats BM25's recall@5 by the margin with no wrong version; None for BM25 itself."""
+    """Beats BM25's recall@5 by the margin with no wrong version; None for BM25 itself, and
+    when the run cannot tell (``not_judged``)."""
+    not_judged: str | None = None
+    """Why ``eligible_as_default`` was not judged (an offline embedding stood in for a model)."""
 
 
 class SuiteReport(_Model):
@@ -355,6 +358,7 @@ async def run_modes(
     modes: Sequence[EvalMode] = MODES,
     allow_providers: bool = False,
     local_roles: frozenset[ModelRole] = frozenset(),
+    spent: Callable[[], Awaitable[tuple[int, float]]] | None = None,
 ) -> list[ModeOutcome]:
     """Run every mode the app can run now; record the others as unavailable or skipped.
 
@@ -367,6 +371,7 @@ async def run_modes(
         allow_providers: Run modes that call a hosted model (never in CI's pull request jobs).
         local_roles: The configured roles whose model runs on this machine; any other role is
             taken to call a hosted provider.
+        spent: Reads the instance's spend so far (tokens, USD), for the cost per question.
 
     Returns:
         One outcome per mode, in order.
@@ -384,6 +389,7 @@ async def run_modes(
                 library=library,
                 mode=mode.mode.value,
                 commits=commits,
+                spent=spent,
             )
             outcome = await evaluate_mode(dataset, mode, retriever)
         outcomes.append(outcome)
@@ -559,6 +565,7 @@ def judge(
     comparison: Comparison,
     *,
     fingerprint: str | None = None,
+    not_judged: Mapping[RetrievalMode, str] | None = None,
 ) -> SuiteReport:
     """Apply the gates.
 
@@ -570,6 +577,8 @@ def judge(
             branch's stored baseline, which may not be below it (the bar only moves up) nor
             above what a gating mode measures.
         fingerprint: The dataset's fingerprint, kept in the report.
+        not_judged: Modes whose eligibility as a default this run cannot tell, and why (a
+            stand-in embedding): reported ``None`` with the reason, never yes or no.
 
     Returns:
         The report: passed only with no wrong version and no error in any mode, no recall@5
@@ -607,7 +616,8 @@ def judge(
             )
             (problems if outcome.gating else warnings).append(drop)
         eligible = None
-        if outcome.mode is not RetrievalMode.BM25 and bm25 is not None:
+        unjudged = (not_judged or {}).get(outcome.mode)
+        if outcome.mode is not RetrievalMode.BM25 and bm25 is not None and unjudged is None:
             margin = _points(metrics.recall_at_5 - bm25.recall_at_5)
             eligible = (
                 margin >= DEFAULT_MARGIN_POINTS - _EPSILON and not outcome.wrong_version_cases
@@ -618,6 +628,7 @@ def judge(
                     "baseline_recall_at_5": base,
                     "recall_at_5_delta_points": delta,
                     "eligible_as_default": eligible,
+                    "not_judged": unjudged,
                 }
             )
         )
@@ -722,6 +733,8 @@ def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
             continue
         delta = "-" if o.recall_at_5_delta_points is None else f"{o.recall_at_5_delta_points:+g}"
         eligible = {None: "-", True: "yes", False: "no"}[o.eligible_as_default]
+        if o.not_judged is not None:
+            eligible = f"not judged ({o.not_judged})"
         lines.append(
             f"| {o.mode} | {o.status} | {_cell(m.recall_at_1, points=True)} "
             f"| {_cell(m.recall_at_5, points=True)} | {_cell(m.recall_at_10, points=True)} "

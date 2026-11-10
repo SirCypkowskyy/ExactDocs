@@ -483,8 +483,7 @@ class Container:
         ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
         extension (tests: one that cannot load); ``model_factory`` and ``embedding_models``
         replace pydantic-ai (tests and the eval suite: an in-process embedding model). An invalid
-        AI configuration (or one this
-        installation cannot call) is a ``StartupError``. A missing
+        AI configuration (or one this installation cannot call) is a ``StartupError``. A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
         """

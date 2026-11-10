@@ -82,7 +82,7 @@ jobs:
       # gated against develop's baseline (docs/evals.md, Changing the dataset). Hosted models are
       # never called here (no secrets). Hybrid runs report-only on the in-process term-hash
       # embedding (--offline-embedding): its wrong-version rate must still be 0.
-      - name: Retrieval eval (BM25, gating)
+      - name: Retrieval eval (BM25 gating, hybrid on term-hash)
         run: |
           baseline=packages/exactdocs/evals/retrieval_eval/baseline.json
           dataset=packages/exactdocs/evals/retrieval_eval/dataset.yaml

@@ -4,8 +4,11 @@ To run the suite on another engine (hybrid retrieval, ParadeDB), add its name to
 build its ``Container`` in ``open_container``: the cases and the assertions do not change.
 ``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set, and
 ``postgres_fts_c`` runs it again on a database in the ``C`` locale. ``hybrid`` is FTS5 fused with
-vectors (RRF), every version embedded by the in-process term-hash stand-in (``offline_embedding``):
-the fusion must keep every expected section where BM25 puts it.
+sqlite-vec vectors (RRF), every version embedded by the in-process term-hash stand-in
+(``offline_embedding``): the fusion must keep every expected section where BM25 puts it.
+``hybrid_pg`` is the same on PostgreSQL (full-text search and pgvector), when the server is set.
+An engine in ``VECTOR_ENGINES`` always has a vector half, so a case that expects no answer only
+asks that nothing of another version comes back (the eval's rule for ``hits: []``).
 """
 
 import asyncio
@@ -23,28 +26,36 @@ from fixture_import import embed_fixture, import_fixture
 from fixture_repo import DocsRepo
 from offline_embedding import offline_container
 
-ENGINES = ["fts5", "hybrid", *(["postgres_fts", "postgres_fts_c"] if ADMIN_URL else [])]
+ENGINES = [
+    "fts5",
+    "hybrid",
+    *(["postgres_fts", "postgres_fts_c", "hybrid_pg"] if ADMIN_URL else []),
+]
+VECTOR_ENGINES = frozenset({"hybrid", "hybrid_pg"})
+"""Engines with a vector half: the nearest chunks come back even when no word matches."""
 _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
 
 
 def open_container(engine: str, data_dir: Path) -> Container:
     """The app's container for ``engine``; every engine shares the import and the search port."""
     assert engine in ENGINES, engine
-    if engine.startswith("postgres_fts"):
-        return Container.build(
-            Settings(data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY)
+    if engine in {"postgres_fts", "postgres_fts_c", "hybrid_pg"}:
+        settings = Settings(
+            data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY
         )
-    if engine == "hybrid":
-        return offline_container(Settings(data_dir=data_dir))
-    return Container.build(Settings(data_dir=data_dir))
+    else:
+        settings = Settings(data_dir=data_dir)
+    if engine in VECTOR_ENGINES:
+        return offline_container(settings)
+    return Container.build(settings)
 
 
 async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):
         await import_fixture(container, docs_repo)
-        if engine == "hybrid":
-            await embed_fixture(container)
+        if engine in VECTOR_ENGINES:
+            assert await embed_fixture(container) == 3, "every version is embedded"
 
 
 @pytest.fixture(scope="session", params=ENGINES)
@@ -58,7 +69,7 @@ def imported(
     """
     data_dir = tmp_path_factory.mktemp("ranking")
     with ExitStack() as stack:
-        if request.param.startswith("postgres_fts"):
+        if request.param in {"postgres_fts", "postgres_fts_c", "hybrid_pg"}:
             database = postgres_database(c_locale=request.param.endswith("_c"))
             _DATABASES[request.param] = stack.enter_context(database).url
         asyncio.run(_import_all(request.param, data_dir, docs_repo))
@@ -89,3 +100,13 @@ async def search_all(imported: tuple[str, Path]) -> AsyncIterator[SearchAllLibra
     container = open_container(engine, data_dir)
     async with container.running(jobs=False):
         yield container.retrieval.search_all_libraries
+
+
+@pytest.fixture
+def vector_half(imported: tuple[str, Path]) -> bool:
+    """Say whether the engine under test has a vector half (``VECTOR_ENGINES``).
+
+    Returns:
+        True for the hybrid engines.
+    """
+    return imported[0] in VECTOR_ENGINES

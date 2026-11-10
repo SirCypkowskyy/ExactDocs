@@ -306,7 +306,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best default mode configured, which is BM25 unless a
-  mode the eval suite made a default can run: `hybrid` is not one yet); it must be available with the
+  mode the eval suite made a default can run, and none is yet); it must be available with the
   settings sent: 422 `mode_unavailable` names the model role it needs that is not configured, or
   says the vector store is unavailable (its extension cannot be loaded: sqlite-vec on SQLite,
   pgvector's `vector` on PostgreSQL; `fallback_reason` `vector_store_unavailable` where a setting
@@ -321,7 +321,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
   one is a 422 `mode_unavailable` as well. A `hybrid` search fuses the version's 50 best BM25
   chunks with its 50 nearest by vector (reciprocal rank fusion, `k` = 60); its `coverage.candidates`
-  counts the chunks of both, once each. It never fails for its model: BM25 answers instead, with
+  counts the chunks of both, once each. The vector half always runs, so a word no chunk of the
+  version contains still gets the version's nearest chunks (never another version's). It never fails for its model: BM25 answers instead, with
   `fallback_reason` `embedding_in_progress` while the version is not embedded with the configured
   model, or `embedding_unavailable` when the model fails or times out on the query.
 

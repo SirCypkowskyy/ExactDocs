@@ -166,7 +166,7 @@ flowchart TD
     lib -->|yes| run
     lib -->|"none or not available"| inst{"instance mode<br/>available?"}
     inst -->|yes| run
-    inst -->|"none or not available"| best["best available default<br/>(HyDE, BM25)"]
+    inst -->|"none or not available"| best["best available default<br/>(BM25 until the eval suite makes another one)"]
     best --> run
     run["the mode's pipeline, on this one version"] --> out["verbatim chunks + retrieval_mode + reranked<br/>+ coverage + fallback_reason"]
 

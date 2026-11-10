@@ -5,12 +5,12 @@ import asyncio
 import os
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final
 
 from exactdocs.bootstrap.container import Container
-from exactdocs.retrieval.models import ModelRole
+from exactdocs.retrieval.models import ModelRole, RetrievalMode
 from fixture_repo import DocsRepo, build
 from offline_embedding import offline_data_container
 from retrieval_eval.dataset import DATASET_FILE, fingerprint, load_dataset
@@ -105,10 +105,14 @@ def _parser() -> argparse.ArgumentParser:
 
 OFFLINE_NOTE: Final[str] = (
     "`hybrid` ran on the in-process term-hash embedding (`--offline-embedding`), not a real "
-    "model: its numbers check the fusion and the wrong-version gate, not whether hybrid should "
-    "be a default."
+    "model: its numbers check the fusion and the wrong-version gate, so its eligibility as a "
+    "default is not judged."
 )
 """What the summary says of a run on the stand-in embedding."""
+
+
+OFFLINE_NOT_JUDGED: Final[Mapping[RetrievalMode, str]] = {RetrievalMode.HYBRID: "offline embedding"}
+"""Under ``--offline-embedding`` hybrid's eligibility as a default is not judged."""
 
 
 def _builder(args: argparse.Namespace) -> Callable[[Path], Container]:
@@ -207,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                     local_roles=frozenset(ModelRole(r) for r in roles),
                     comparison=against,
                     dataset_file=dataset_file,
+                    not_judged=OFFLINE_NOT_JUDGED if args.offline_embedding else None,
                 )
             )
             report_file.parent.mkdir(parents=True, exist_ok=True)

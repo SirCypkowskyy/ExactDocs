@@ -936,8 +936,8 @@ has none), builds a `ModeRegistry` (a mode can run when it
 has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
 port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best of
 `DEFAULT_MODE_ORDER`, which lists a mode only once the eval suite marks it `eligible_as_default`
-([Retrieval evals](evals.md#gates)): `hybrid` is not listed yet, so an operator, a library or a
-call chooses it.
+([Retrieval evals](evals.md#gates)): only `bm25` is listed yet, so an operator, a library or a
+call chooses `hybrid`.
 Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
 catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (create, activate and
 retire a space, upsert and delete vectors by `ChunkKey`, nearest within one manifest, a manifest's

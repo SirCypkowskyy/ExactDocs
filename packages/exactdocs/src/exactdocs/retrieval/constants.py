@@ -403,15 +403,16 @@ SEARCH_DURATION_BUCKETS: Final[tuple[float, ...]] = (
 """Bucket bounds of the search duration histogram, in seconds (a stage can take a millisecond)."""
 
 # ---------------------------------------------------------------- models (retrieval modes)
-DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "bm25")
-"""The default mode when neither the call, the library nor the instance names one: the first that
-can run. Agentic is never a default; a call, a library or the instance must choose it.
+DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("bm25",)
+"""The default modes when neither the call, the library nor the instance names one, best first:
+the first that can run. Agentic is never a default; a call, a library or the instance must choose
+it.
 
 A mode is listed only once the eval suite marks it ``eligible_as_default`` (its recall@5 beats
-BM25's by 5 points with a wrong-version rate of 0, docs/evals.md). ``hybrid`` is not listed: no
-real embedding model has been evaluated in CI yet (the local models are #245), so an operator
-chooses it (``EXACTDOCS_AI__MODE``, a library's mode or the call). ``hybrid_hyde`` has no pipeline
-yet; #94 applies the same rule before it can be a default.
+BM25's by 5 points with a wrong-version rate of 0, docs/evals.md). No mode is yet: ``hybrid`` has
+not been evaluated with a real embedding model in CI (the local models are #245), and
+``hybrid_hyde`` has no pipeline (#94 adds it with its eval result). Until then an operator
+chooses a mode (``EXACTDOCS_AI__MODE``, a library's mode or the call).
 """
 
 # ---------------------------------------------------------------- models (hybrid search, #92)

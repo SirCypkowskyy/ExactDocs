@@ -708,6 +708,8 @@ class ModeRegistry:
     """The modes this build has a pipeline for; BM25 always."""
     vector_store: bool = True
     """The vector store can search here; without it no mode that ``needs_vectors`` runs."""
+    defaults: tuple[RetrievalMode, ...] = tuple(RetrievalMode(m) for m in DEFAULT_MODE_ORDER)
+    """The modes a search may default to, best first (``DEFAULT_MODE_ORDER``); BM25 last."""
 
     def missing_roles(self, mode: RetrievalMode) -> tuple[ModelRole, ...]:
         """Name the roles ``mode`` needs that are not configured.
@@ -760,14 +762,15 @@ class ModeRegistry:
         return tuple(m for m in RetrievalMode if self.is_available(m))
 
     def best(self) -> RetrievalMode:
-        """Pick the default when nothing is set: HyDE, then hybrid, then BM25.
+        """Pick the default when nothing is set: the first of ``defaults`` that can run.
+
+        Only modes the eval suite made eligible are defaults (``DEFAULT_MODE_ORDER``): today
+        BM25 alone, so hybrid runs only when a call, a library or the instance chooses it.
 
         Returns:
-            The best available mode.
+            The best available default.
         """
-        return next(
-            RetrievalMode(m) for m in DEFAULT_MODE_ORDER if self.is_available(RetrievalMode(m))
-        )
+        return next(m for m in self.defaults if self.is_available(m))
 
     def check(self, name: str) -> RetrievalMode:
         """Turn a mode name (any letter case) into a mode that can run now.
@@ -839,7 +842,7 @@ class ModeRegistry:
             reason = reason or self._skipped(setting)
         best = self.best()
         if reason is None and not self.vector_store:
-            with_store = ModeRegistry(roles=self.roles, pipelines=self.pipelines)
+            with_store = replace(self, vector_store=True)
             if with_store.best() != best:
                 reason = FallbackReason.VECTOR_STORE_UNAVAILABLE
         return ModeChoice(mode=best, rerank=rerank, fallback_reason=reason)

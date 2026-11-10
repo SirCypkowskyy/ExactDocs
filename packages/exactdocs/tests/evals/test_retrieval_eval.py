@@ -23,7 +23,7 @@ from exactdocs.retrieval.models import (
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
 from offline_embedding import offline_data_container
-from retrieval_eval.cli import main
+from retrieval_eval.cli import OFFLINE_NOT_JUDGED, main
 from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import model_free_container, run_on_fixture
 from retrieval_eval.suite import (
@@ -908,6 +908,7 @@ async def test_hybrid_is_reported_against_bm25_on_the_offline_embedding(
         modes=[BM25, HYBRID],
         local_roles=frozenset({ModelRole.EMBEDDING}),
         comparison=Comparison(baseline=read_baseline(BASELINE_FILE).recall_at_5),
+        not_judged=OFFLINE_NOT_JUDGED,
     )
 
     assert report.passed, report.problems
@@ -920,7 +921,11 @@ async def test_hybrid_is_reported_against_bm25_on_the_offline_embedding(
     assert hybrid.errors == []
     # The fusion keeps what BM25 finds: the stand-in may not lower recall@5 below BM25's.
     assert hybrid.metrics.recall_at_5 >= bm25.metrics.recall_at_5
-    assert hybrid.eligible_as_default is not None  # judged against BM25 (the stand-in is no case)
+    # The stand-in cannot tell whether hybrid should be a default: never yes or no.
+    assert (hybrid.eligible_as_default, hybrid.not_judged) == (None, "offline embedding")
+    # Every hybrid question embedded its query; BM25 costs nothing.
+    assert hybrid.metrics.tokens_per_question > 0
+    assert bm25.metrics.tokens_per_question == 0
 
 
 def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Path) -> None:
@@ -937,7 +942,10 @@ def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Pat
         ("bm25", "ran"),
         ("hybrid", "ran"),
     ]
-    assert "term-hash embedding" in summary.read_text(encoding="utf-8")
+    text = summary.read_text(encoding="utf-8")
+    assert "term-hash embedding" in text
+    assert "| not judged (offline embedding) |" in text
+    assert report["modes"][1]["eligible_as_default"] is None
 
 
 @pytest.mark.parametrize("other", ["--configured-models", "--write-baseline"])

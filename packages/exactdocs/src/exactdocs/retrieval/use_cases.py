@@ -115,6 +115,7 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    EmbeddedTexts,
     EmbeddingSkip,
     EmbeddingSpace,
     EmbeddingSpaceId,
@@ -2187,15 +2188,17 @@ class HybridPipeline:
 
     The best ``RRF_DEPTH`` chunks of each half, both scoped to the version's manifest, are fused
     with reciprocal rank fusion (``k`` = ``RRF_K``), so exact identifiers BM25 finds stay first
-    and paraphrases only the vectors find come in. A query no chunk of the version matches a word
-    of (an identifier the version lacks) answers explicitly empty, as BM25 does, rather than with
-    the nearest unrelated chunks, and is not embedded. The vectors are those of ``request.space``,
+    and paraphrases only the vectors find come in. The vector half always runs, also when BM25
+    matches nothing (a synonym the docs never use): there is no similarity floor, so a hybrid
+    answer holds the nearest chunks of the version that pass the tag filter. The vectors are
+    those of ``request.space``,
     the space the gate checked covers the version, and the query is embedded by the configured
     model, which must be the one that made that space. When the vectors cannot be used the
     search still answers, with BM25 and a ``fallback_reason``: ``embedding_in_progress`` while
     the space does not match the configured model (a switch of models), ``embedding_unavailable``
-    when the model failed or timed out on the query, ``vector_store_unavailable`` when the store
-    cannot search. Nothing of a library with AI off is sent.
+    when the model failed, timed out or could not be built (an unopenable key), and
+    ``vector_store_unavailable`` when the store cannot search. Cancellation still propagates.
+    Nothing of a library with AI off is sent.
     """
 
     search: SearchIndex
@@ -2222,19 +2225,13 @@ class HybridPipeline:
             The best fused hits, or BM25's with the reason the vectors were not used.
         """
         manifest = request.version.manifest_id
-        depth = max(RRF_DEPTH, request.limit + 1)
+        # One more than is fused tells whether the BM25 half was cut short.
+        depth = max(RRF_DEPTH, request.limit) + 1
         found = await self.search.search(manifest, request.query, request.tag_filter, depth)
-        if not found:
-            # Nothing of the version matches a word of the query (an identifier it lacks): the
-            # answer stays explicitly empty rather than the nearest unrelated chunks, and the
-            # query is not sent.
-            return PipelineAnswer(
-                mode=RetrievalMode.HYBRID, hits=(), candidates=0, reranked=0, complete=True
-            )
         near = await self._nearest(request)
         if isinstance(near, FallbackReason):
             return _bm25_answer(found, request.limit, near)
-        return await self._fused(request, found, near, depth)
+        return await self._fused(request, found, near)
 
     async def _nearest(self, request: PipelineRequest) -> list[ChunkId] | FallbackReason:
         """Embed the query and rank the version's chunks by their vectors' distance to it.
@@ -2283,11 +2280,7 @@ class HybridPipeline:
         if not configured.target.matches(space.spec):
             return FallbackReason.EMBEDDING_IN_PROGRESS  # the model changed since the gate
         try:
-            stage = f"{request.search}.embed_query"
-            with self.tracer.span(stage, mode=RetrievalMode.HYBRID.value):
-                async with asyncio.timeout(self.timeout):
-                    model = await self.runs.model(configured)
-                    embedded = await model.embed_query(request.query)
+            embedded = await self._embedded(request, configured)
         except EmbeddingFailedError, ProviderUnsupportedError, TimeoutError:
             return FallbackReason.EMBEDDING_UNAVAILABLE
         if self.runs.spend is not None:
@@ -2300,29 +2293,57 @@ class HybridPipeline:
                     usd_per_million=self.runs.price(configured),
                 )
             )
-        if len(embedded.vectors) != 1:
-            return FallbackReason.EMBEDDING_UNAVAILABLE
-        return embedded.vectors[0]
+        return (
+            embedded.vectors[0]
+            if len(embedded.vectors) == 1
+            else FallbackReason.EMBEDDING_UNAVAILABLE
+        )
+
+    async def _embedded(self, request: PipelineRequest, configured: _Configured) -> EmbeddedTexts:
+        """Embed the query, in its span; ``TimeoutError`` after ``timeout`` seconds.
+
+        Args:
+            request: The search.
+            configured: The embedding role, which made the space searched.
+
+        Returns:
+            The query's vector and usage.
+
+        Raises:
+            EmbeddingFailedError: The model failed, or anything else went wrong building or
+                calling it (a key the secret box cannot open, an adapter bug); only the error's
+                type is kept, never its message, which may echo a request. ``CancelledError`` is
+                no ``Exception``, so cancelling a search still propagates.
+            ProviderUnsupportedError: This process cannot call the model.
+        """
+        stage = f"{request.search}.embed_query"
+        with self.tracer.span(stage, mode=RetrievalMode.HYBRID.value):
+            async with asyncio.timeout(self.timeout):
+                try:
+                    model = await self.runs.model(configured)
+                    return await model.embed_query(request.query)
+                except EmbeddingFailedError, ProviderUnsupportedError:
+                    raise
+                except Exception as error:  # never a failed search (RET-01)
+                    raise EmbeddingFailedError(str(configured.ref), type(error).__name__) from error
 
     async def _fused(
         self,
         request: PipelineRequest,
         found: Sequence[SearchHit],
         near: Sequence[ChunkId],
-        depth: int,
     ) -> PipelineAnswer:
-        """Fuse both halves and give each kept chunk its snippet.
+        """Fuse the top ``RRF_DEPTH`` of both halves and give each kept chunk its snippet.
 
         Args:
             request: The search.
-            found: The BM25 half, best first.
+            found: The BM25 half, best first; one more than ``RRF_DEPTH`` when it was cut short.
             near: The vector half, nearest first.
-            depth: How many BM25 hits were asked for.
 
         Returns:
             The ``hybrid`` answer; ``candidates`` counts the chunks of both halves, once each.
         """
-        fused = reciprocal_rank_fusion([h.chunk_id for h in found], near)
+        fused = reciprocal_rank_fusion([h.chunk_id for h in found[:RRF_DEPTH]], near)
         by_id = {h.chunk_id: h for h in found}
         kept = fused[: request.limit]
         only_vectors = [f.chunk_id for f in kept if f.chunk_id not in by_id]
@@ -2338,7 +2359,7 @@ class HybridPipeline:
                 hits.append(replace(bm25, score=rank.score))
             elif (chunk := stored.get(rank.chunk_id)) is not None:
                 hits.append(leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms))
-        cut = len(found) >= depth or len(near) >= RRF_DEPTH
+        cut = len(found) > RRF_DEPTH or len(near) >= RRF_DEPTH
         return PipelineAnswer(
             mode=RetrievalMode.HYBRID,
             hits=tuple(hits),
