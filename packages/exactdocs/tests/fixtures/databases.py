@@ -46,7 +46,10 @@ def _admin() -> psycopg.Connection:
 
 @contextmanager
 def postgres_database(
-    *, owner_without_createdb: bool = False, c_locale: bool = False
+    *,
+    owner_without_createdb: bool = False,
+    c_locale: bool = False,
+    without_extensions: tuple[str, ...] = (),
 ) -> Generator[PostgresDatabase]:
     """Create an empty database, yield it, then drop it (and its role) whatever happened.
 
@@ -54,6 +57,8 @@ def postgres_database(
     databases (``NOCREATEDB``), as on managed PostgreSQL, and connects as that role.
     ``c_locale`` creates it with ``LC_COLLATE``/``LC_CTYPE`` ``C`` (``initdb --locale=C``), where
     character classes such as ``[[:alnum:]]`` only know ASCII.
+    ``without_extensions`` drops these extensions from the new database (ParadeDB's template
+    database already has ``vector``), as on a server where they were never installed in it.
 
     Yields:
         The database's name and URL.
@@ -83,6 +88,13 @@ def postgres_database(
             )
         else:
             admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    if without_extensions:
+        plain = admin_url.set(drivername="postgresql", database=name)
+        with psycopg.connect(plain.render_as_string(hide_password=False), autocommit=True) as db:
+            for extension in without_extensions:
+                db.execute(
+                    sql.SQL("DROP EXTENSION IF EXISTS {} CASCADE").format(sql.Identifier(extension))
+                )
     url = admin_url.set(drivername="postgresql+psycopg", database=name)
     if role is not None:
         url = url.set(username=role, password=password)

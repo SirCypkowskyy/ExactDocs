@@ -3,7 +3,8 @@
 The shared guarantees: a space holds one model's vectors and is never compared with another,
 search is exact and scoped to one manifest (version is a hard filter), vectors are keyed by the
 stored chunk (so a blob shared by versions is embedded once) and die with it, and a space goes
-building, active, retired. The in-memory index is the reference; SQLite runs sqlite-vec.
+building, active, retired. The in-memory index is the reference; SQLite runs sqlite-vec, and
+PostgreSQL pgvector (when ``EXACTDOCS_TEST_POSTGRES_URL`` names a server).
 """
 
 import math
@@ -13,9 +14,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemoryVectorIndex
+from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.errors import (
@@ -117,16 +120,23 @@ class World:
         return list(await self.vectors.nearest(space.id, manifest_id, query, tag_filter, limit))
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     if request.param == "memory":
         chunks = InMemoryChunkRepository()
         yield World(chunks, InMemoryVectorIndex(chunks=chunks))
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
     async with container.running(jobs=False):
         engine = container.engine
-        yield World(SqliteChunkRepository(engine=engine), SqliteVectorIndex(engine=engine))
+        vectors = (
+            PostgresVectorIndex(engine=engine)
+            if request.param == "postgres"
+            else SqliteVectorIndex(engine=engine)
+        )
+        yield World(SqliteChunkRepository(engine=engine), vectors)
 
 
 def key(blob: str, position: int = 0) -> ChunkKey:

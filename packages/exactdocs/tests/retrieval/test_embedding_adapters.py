@@ -14,10 +14,9 @@ from pydantic_ai.exceptions import ModelHTTPError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from databases import ADMIN_URL, SQL_BACKENDS
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import AiSettings, Settings
-from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.memory import InMemorySpendLedger
@@ -29,17 +28,13 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
-    EmbedVersionCommand,
     IndexManifestCommand,
-    UnembeddedVersionsQuery,
 )
 from exactdocs.retrieval.errors import (
     EmbeddingFailedError,
     ProviderUnsupportedError,
-    VectorStoreUnavailableError,
 )
 from exactdocs.retrieval.models import (
-    EmbeddingSkip,
     EmbeddingSource,
     SpendWindow,
     embedding_spend,
@@ -251,30 +246,3 @@ async def test_embedding_sources_are_read_on_every_sql_database(container: Conta
             article_path="docs/a.md", heading_path=("Guide", "Retries"), content="Use retry_policy."
         )
     }
-
-
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs a PostgreSQL server (no vector store there)")
-async def test_without_a_vector_store_nothing_is_embedded_or_queued(
-    on_postgres: object,
-) -> None:
-    del on_postgres  # PostgreSQL has no vector store until #243
-    ai = AiSettings.model_validate(
-        {
-            "providers": {
-                "corp": {"kind": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"}
-            },
-            "embedding": {"model": "corp:e5"},
-        }
-    )
-    container = Container.build(Settings(ai=ai))
-    async with container.running(jobs=False):
-        plan = await container.retrieval.plan_embedding(
-            EmbedVersionCommand(library="/acme/x", ref="v1")
-        )
-        listed = await container.retrieval.list_unembedded_versions(UnembeddedVersionsQuery())
-        queued = await container.ingestion.queue_embedding(QueueEmbeddingCommand())
-        with pytest.raises(VectorStoreUnavailableError, match="pgvector"):
-            await container.retrieval.estimate_embedding()
-
-    assert plan.skipped is EmbeddingSkip.VECTOR_STORE_UNAVAILABLE
-    assert (listed.versions, queued.queued) == ([], 0)

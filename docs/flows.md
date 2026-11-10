@@ -150,7 +150,7 @@ default only once the eval suite shows it beats BM25 ([Retrieval evals](evals.md
 is not one yet, so it runs when an operator, a library or a call chooses it. A
 mode is available when it has a pipeline and its roles are configured (`hybrid`: embedding;
 `hybrid_hyde`: embedding and LLM; `agentic`: LLM) and, for the hybrid modes, the vector store can
-load (sqlite-vec); reranking is a flag on top. A mode the call asks for that is not available is an
+load (sqlite-vec on SQLite, pgvector on PostgreSQL); reranking is a flag on top. A mode the call asks for that is not available is an
 error naming the missing role; a library or instance mode that is not available is skipped, and the
 result says so (`fallback_reason: mode_unavailable`, or `vector_store_unavailable` when only the
 vector store is missing). A hybrid search never fails for its model either: a version its model has

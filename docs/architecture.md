@@ -293,7 +293,26 @@ only holds each process's git work folders and `known_hosts`. What changes:
   `PRAGMA mmap_size` (`VECTOR_MMAP_BYTES`, 1 GiB; the setting is per connection) and remembers
   in its `info` that it is loaded and the dimensions of the spaces it searched, so a search is
   one query. A revision that rebuilds `retrieval_chunks`
-  must keep its `id`s (or rebuild the vector tables too).
+  must keep its `id`s (or rebuild the vector tables too). The tables and row mapping both stores
+  share are in `adapters/driven/vector_tables.py`.
+- **Vector store on PostgreSQL (#243):** `PostgresVectorIndex` keeps the same layout with a
+  `vector(<dimensions>)` column (pgvector) set to `STORAGE MAIN`, so a vector that fits in a page
+  stays in its row instead of TOAST (2.5 times faster on #242's benchmark; larger ones still go to
+  TOAST). Search is exact, `<=>` over one manifest's chunks with the same join, tag conditions,
+  clamping and order as on SQLite, and no index, so the 2,000-dimension limit of pgvector's
+  indexes does not apply. When the store is first needed, a plain read finds the extension and
+  its schema (no write turn, so a probe or the first search does not queue behind writers); the
+  type and operator are qualified with that schema (`public`, `extensions` on Supabase), and the
+  answer is kept for the process's life. When it is missing, a process that may write creates it
+  in a write turn (`CREATE EXTENSION IF NOT EXISTS vector`; two processes never create it
+  together). When that fails (pgvector is not a trusted extension, so a role that is not
+  superuser cannot), the store reports unavailable with a sentence saying what to run, logs it,
+  keeps that answer, and `/healthz` names `vector` in `vector_store_missing`. A read-only process
+  (`serve --stdio`) never creates it: it reports "not created yet" and looks again at the next
+  check, as it does after a failure that may pass (the database unreachable, a write turn that
+  timed out). Activating a space runs `ANALYZE` on its table, so the first searches after an embed
+  are planned with statistics. pgvector's Python package (`[ai]` extra) is imported then, for its
+  SQLAlchemy type. `bootstrap.container.vector_index` picks the store by the database's dialect.
 - **Background embedding (RET-01, #91):** the embedding role (instance-wide) is resolved at each
   call into an `EmbeddingTarget` (profile kind, model, configured dimensions, input format 1); its
   space is the newest one it made that is not retired. An `embed` job of ingestion embeds one
@@ -322,8 +341,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   has no known price. `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
   `genai-prices` data (a model the instance runs itself, `ollama`, `vllm` or `local`, is never
-  priced from another provider's list). On a database without a vector store (PostgreSQL until
-  #243) nothing is planned, queued or estimated.
+  priced from another provider's list). An instance without a vector store plans, queues and
+  estimates nothing; one whose store cannot be loaded (sqlite-vec, or pgvector's `vector` not in
+  the PostgreSQL database) skips each `embed` job with `vector_store_unavailable`.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
@@ -923,28 +943,31 @@ catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (cre
 retire a space, upsert and delete vectors by `ChunkKey`, nearest within one manifest, a manifest's
 coverage and missing chunks) with an in-memory reference and the SQLite adapter (see *Vector
 store* under Persistence), one contract test for both (`tests/retrieval/test_vector_index.py`),
-which the pgvector adapter (#243) joins. `OpenEmbeddingSpace` finds the space of a model or
+which the pgvector adapter (#243) runs too. `OpenEmbeddingSpace` finds the space of a model or
 creates a new one when the model, its dimensions or the input format changed, so two models never
 share one. `RetrievalModes` asks `VectorIndex.available()` once an embedding role is configured:
-when sqlite-vec cannot load, the hybrid modes are unavailable and a setting that needs them falls
-back to BM25 with `fallback_reason: vector_store_unavailable`.
+when its extension cannot load (sqlite-vec, or pgvector's `vector`), the hybrid modes are
+unavailable and a setting that needs them falls back to BM25 with
+`fallback_reason: vector_store_unavailable`.
 
 **Hybrid search (#92).** `HybridPipeline` (in `use_cases`, registered for `hybrid` whenever a
-vector store exists) asks the `SearchIndex` for the version's best `RRF_DEPTH` (50) BM25 hits,
-embeds the query with the configured model (`Embeddings.embed_query`, in a `<search>.embed_query`
-span without the query text, within `QUERY_EMBEDDING_TIMEOUT` seconds, its tokens recorded in
-`retrieval_ai_spend`), asks `VectorIndex.nearest` for the 50 nearest chunks of the same manifest
-in `PipelineRequest.space`, and fuses the two rankings with reciprocal rank fusion
-(`reciprocal_rank_fusion`, `k` = 60; ties go to BM25's order, so an exact identifier stays first).
-Both halves are scoped to the version's manifest and filtered by tags before ranking, so no chunk
-of another version can come in. A chunk only the vectors found gets the first 24 words of its text
-as its snippet; `coverage.candidates` counts the chunks of both halves once. The pipeline never
-fails a search: BM25 answers with `embedding_in_progress` when the space no longer matches the
-configured model (a switch of models), `embedding_unavailable` when the model failed or timed out
-on the query (or answered an unusable vector), and `vector_store_unavailable` when the store
-cannot search. A query nothing of the version matches a word of (an identifier the version lacks)
-answers explicitly empty, as BM25 does, without embedding it. Later modes plug in as pipelines;
-their models come through the ports below. The `[ai]`
+vector store exists: SQLite with sqlite-vec, PostgreSQL with pgvector) asks the `SearchIndex` for
+the version's best `RRF_DEPTH` (50) BM25 hits, embeds the query with the configured model
+(`Embeddings.embed_query`, in a `<search>.embed_query` span without the query text, within
+`QUERY_EMBEDDING_TIMEOUT` seconds, its tokens recorded in `retrieval_ai_spend`), asks
+`VectorIndex.nearest` for the 50 nearest chunks of the same manifest in `PipelineRequest.space`,
+and fuses the two rankings with reciprocal rank fusion (`reciprocal_rank_fusion`, `k` = 60; ties
+go to BM25's order, so an exact identifier stays first). Both halves are scoped to the version's
+manifest and filtered by tags before ranking, so no chunk of another version can come in. The
+vector half always runs, also when BM25 matches nothing (a synonym the docs never use), so a
+hybrid answer has hits whenever the version has embedded chunks that pass the tag filter; there is
+no similarity floor. A chunk only the vectors found gets the first 24 words of its text as its
+snippet; `coverage.candidates` counts the chunks of both halves once. The pipeline never fails a
+search: BM25 answers with `embedding_in_progress` when the space no longer matches the configured
+model (a switch of models), `embedding_unavailable` when the model failed, timed out or answered
+an unusable vector (or the key could not be opened), and `vector_store_unavailable` when the store
+cannot search. Later modes plug in as pipelines; their models come through the ports below. The
+`[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 
