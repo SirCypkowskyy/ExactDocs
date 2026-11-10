@@ -7,6 +7,7 @@ The embedding model is the in-process ``HashEmbeddingModels``: no provider is ev
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from typing import Literal
 
 import pytest
 
@@ -32,7 +33,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     UnembeddedVersionsQuery,
 )
-from exactdocs.retrieval.errors import ProviderUnsupportedError
+from exactdocs.retrieval.errors import ProviderUnsupportedError, VectorStoreUnavailableError
 from exactdocs.retrieval.models import (
     DocTarget,
     EmbeddingSkip,
@@ -63,6 +64,7 @@ from exactdocs.retrieval.models import (
     embedding_text,
 )
 from exactdocs.retrieval.module import RetrievalModule
+from exactdocs.retrieval.ports import VectorIndex
 
 LIB = "/acme/payments"
 SECRET = "/acme/secret"
@@ -177,7 +179,12 @@ class Stores:
 
 
 def _module(
-    stores: Stores, model: str | None = "a", *, dimensions: int | None = None, batch: int = 2
+    stores: Stores,
+    model: str | None = "a",
+    *,
+    dimensions: int | None = None,
+    batch: int = 2,
+    vectors: VectorIndex | Literal["stores"] | None = "stores",
 ) -> RetrievalModule:
     index = InMemorySearchIndex(chunks=stores.chunks)
     return RetrievalModule.build(
@@ -196,7 +203,7 @@ def _module(
         models=Factory(),
         pipelines={RetrievalMode.HYBRID: stores.hybrid},
         clock=Clock(),
-        vectors=stores.vectors,
+        vectors=stores.vectors if vectors == "stores" else vectors,
         embedding_models=stores.models,
         article_titles=stores.catalog,
         spend=stores.ledger,
@@ -357,6 +364,37 @@ def test_spend_without_a_price_counts_tokens_and_marks_the_requests_unpriced() -
         ("library", LIB, date(2026, 11, 1)),
     ]
     assert {(e.input_tokens, e.usd_micros, e.unpriced) for e in entries} == {(10, 0, 2)}
+
+
+# ---------------------------------------------------------------- without a usable vector store
+
+
+async def test_without_a_vector_store_nothing_is_embedded_queued_or_estimated(
+    stores: Stores,
+) -> None:
+    module = _module(stores, vectors=None)
+    await _import(stores, module, LIB, "v1", {"b1": ["token one"]})
+
+    plan = await _embed(module, LIB, "v1")
+    listed = await module.list_unembedded_versions(UnembeddedVersionsQuery())
+
+    assert plan.skipped is EmbeddingSkip.VECTOR_STORE_UNAVAILABLE
+    assert (listed.versions, stores.models.sent) == ([], [])
+    with pytest.raises(VectorStoreUnavailableError, match="no vector store"):
+        await module.estimate_embedding()
+
+
+async def test_a_store_that_cannot_load_is_never_sent_to(stores: Stores) -> None:
+    # pgvector's `vector` is not in the PostgreSQL database (or sqlite-vec does not load).
+    module = _module(stores, vectors=InMemoryVectorIndex(chunks=stores.chunks, can_search=False))
+    await _import(stores, module, LIB, "v1", {"b1": ["token one"]})
+
+    plan = await _embed(module, LIB, "v1")
+    estimate = await module.estimate_embedding()
+
+    assert plan.skipped is EmbeddingSkip.VECTOR_STORE_UNAVAILABLE
+    assert stores.models.sent == []  # not even the dimensions probe
+    assert estimate.chunks == 1  # counting needs no extension
 
 
 # ---------------------------------------------------------------- opting out

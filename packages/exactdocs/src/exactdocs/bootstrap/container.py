@@ -107,6 +107,7 @@ from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddin
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
+from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteChunkRepository,
     SqliteLibraryModes,
@@ -190,6 +191,28 @@ def _existing_secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox 
     return None
 
 
+def vector_index(
+    engine: AsyncEngine, *, sqlite_extension: Callable[[], str] | None = None
+) -> PostgresVectorIndex | SqliteVectorIndex:
+    """Pick the vector store of the database: pgvector on PostgreSQL, sqlite-vec on SQLite.
+
+    Neither loads anything here: the store is asked whether it can search only once an embedding
+    model is configured.
+
+    Args:
+        engine: The database.
+        sqlite_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
+
+    Returns:
+        The store.
+    """
+    if is_postgres(engine):
+        return PostgresVectorIndex(engine=engine)
+    if sqlite_extension is None:
+        return SqliteVectorIndex(engine=engine)
+    return SqliteVectorIndex(engine=engine, extension=sqlite_extension)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _ReadSide:
     """The modules the read-only MCP tools use, and on PostgreSQL the search engine to choose."""
@@ -244,15 +267,7 @@ def _build_read_side(
             full_text=PostgresSearchIndex(engine=engine),
             bm25=PgSearchIndex(engine=engine, table=quiet),
         )
-    # On PostgreSQL there is no vector store yet (pgvector is #243): the hybrid modes report
-    # themselves unavailable and fall back to BM25, as without an embedding model.
-    vectors = (
-        None
-        if is_postgres(engine)
-        else SqliteVectorIndex(engine=engine)
-        if vector_extension is None
-        else SqliteVectorIndex(engine=engine, extension=vector_extension)
-    )
+    vectors = vector_index(engine, sqlite_extension=vector_extension)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest

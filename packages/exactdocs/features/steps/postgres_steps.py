@@ -119,10 +119,14 @@ def _query(url: str, statement: LiteralString, *params: object) -> list[tuple[ob
         return connection.execute(statement, params or None).fetchall()
 
 
-def _database(context: Context, **options: bool) -> str:
+def _database(
+    context: Context, *, owner_without_createdb: bool = False, pg_search: bool = False
+) -> str:
     stack = ExitStack()
     context.add_cleanup(stack.close)
-    database = stack.enter_context(postgres_database(**options))
+    database = stack.enter_context(
+        postgres_database(owner_without_createdb=owner_without_createdb, pg_search=pg_search)
+    )
     context.database_url = database.url
     return database.url
 

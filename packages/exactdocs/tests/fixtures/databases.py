@@ -60,7 +60,11 @@ search) and, where the server has it, on ``pg_search``."""
 
 @contextmanager
 def postgres_database(
-    *, owner_without_createdb: bool = False, c_locale: bool = False, pg_search: bool = False
+    *,
+    owner_without_createdb: bool = False,
+    c_locale: bool = False,
+    without_extensions: tuple[str, ...] = (),
+    pg_search: bool = False,
 ) -> Generator[PostgresDatabase]:
     """Create an empty database, yield it, then drop it (and its role) whatever happened.
 
@@ -68,6 +72,8 @@ def postgres_database(
     databases (``NOCREATEDB``), as on managed PostgreSQL, and connects as that role.
     ``c_locale`` creates it with ``LC_COLLATE``/``LC_CTYPE`` ``C`` (``initdb --locale=C``), where
     character classes such as ``[[:alnum:]]`` only know ASCII.
+    ``without_extensions`` drops these extensions from the new database (ParadeDB's template
+    database already has ``vector``), as on a server where they were never installed in it.
     ``pg_search`` installs ParadeDB's extension in it, so ExactDocs searches with BM25; without it
     the extension is removed even where the template has it (ParadeDB's ``template1``), so
     ExactDocs uses PostgreSQL full-text search.
@@ -100,6 +106,13 @@ def postgres_database(
             )
         else:
             admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    if without_extensions:
+        plain = admin_url.set(drivername="postgresql", database=name)
+        with psycopg.connect(plain.render_as_string(hide_password=False), autocommit=True) as db:
+            for extension in without_extensions:
+                db.execute(
+                    sql.SQL("DROP EXTENSION IF EXISTS {} CASCADE").format(sql.Identifier(extension))
+                )
     with _admin(name) as admin:
         admin.execute(
             "CREATE EXTENSION IF NOT EXISTS pg_search CASCADE"
