@@ -630,8 +630,9 @@ crashed one left (it logs why).
 - Search is chosen when a process starts, from what the database offers. With ParadeDB's
   `pg_search` extension installed in the database (the ParadeDB image below installs it), search
   is BM25, as on SQLite: the first start builds its index (`retrieval_search_bm25`, a while on a
-  large instance; `CONCURRENTLY`, so the instance keeps serving and importing meanwhile), later
-  ones find it. Without it, search uses PostgreSQL's full-text search (`tsvector`, the `simple`
+  large instance; `CONCURRENTLY`, so the instance keeps serving and importing meanwhile; if it
+  fails, the process logs a WARNING, uses full-text search and tries again at its next start),
+  later ones find it. Without it, search uses PostgreSQL's full-text search (`tsvector`, the `simple`
   configuration, ranked with `ts_rank_cd`, words cut as SQLite's index cuts them), and the log
   says why: at INFO on a server without `pg_search` (managed PostgreSQL such as Supabase), as a
   WARNING when the server has it but the database does not (`CREATE EXTENSION pg_search CASCADE`

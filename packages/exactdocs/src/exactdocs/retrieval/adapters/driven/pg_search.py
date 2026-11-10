@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from sqlalchemy import bindparam, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.constants import (
@@ -25,7 +26,6 @@ from exactdocs.retrieval.constants import (
     _PG_BM25_RENAME,
     _PG_COUNT_BM25,
     _PG_EXTENSION,
-    _PG_JOIN_SCANS_OFF,
     _PG_QUERY,
     _PG_SEARCH_BM25,
     _PG_SEARCH_MATCH,
@@ -33,6 +33,7 @@ from exactdocs.retrieval.constants import (
     _PG_WHOLE_IDENTIFIER,
     PG_BM25_POLL_SECONDS,
     PG_SEARCH_EXTENSION,
+    PG_SEARCH_QUIET_SCANS,
     POSTGRES_HEADLINE,
     POSTGRES_SNIPPET_WORDS,
     POSTGRES_TAG_CONDITIONS,
@@ -175,33 +176,78 @@ class PgSearchIndex:
                     reason="the BM25 index is missing and this read-only process may not build it",
                     misconfigured=True,
                 )
-            await self._build_once(connection)
-        return None
+            return await self._build_once(connection)
 
-    async def _build_once(self, connection: AsyncConnection) -> None:
+    async def _build_once(self, connection: AsyncConnection) -> Bm25Missing | None:
         """Build the BM25 index unless another process does, or did meanwhile.
+
+        A build that fails (a deadlock, a cancel, a full disk) does not stop the process: what it
+        left is dropped and the caller falls back to full-text search over the same rows; the next
+        start tries again.
 
         Args:
             connection: A connection of its own; its open transaction is ended first.
+
+        Returns:
+            ``None`` when a valid index exists, else why not.
         """
         await connection.commit()  # the checks above opened a transaction
         autocommit = await connection.execution_options(isolation_level="AUTOCOMMIT")
-        lock = {"key": _PG_BM25_LOCK}
-        while not await autocommit.scalar(text("SELECT pg_try_advisory_lock(:key)"), lock):
-            if await self._valid_index(autocommit):
-                return  # another process built it
-            await asyncio.sleep(PG_BM25_POLL_SECONDS)
+        if not await self._take_turn(autocommit, until_built=True):
+            return None  # another process built it
         try:
             indexes = (await autocommit.execute(text(_PG_BM25_INDEXES))).all()
             if any(index.valid for index in indexes):
-                return
-            for index in indexes:  # left invalid by a build that died
+                return None
+            await self._drop_invalid(autocommit)  # left by a build that died
+            try:
+                await autocommit.exec_driver_sql(_PG_BM25_INDEX)
+            except DBAPIError as error:
+                await self._drop_invalid(autocommit)
+                return Bm25Missing(
+                    reason=f"building the BM25 index failed ({type(error.orig).__name__}: "
+                    f"{str(error.orig).strip()}); the next start tries again",
+                    misconfigured=True,
+                )
+        finally:
+            await autocommit.execute(
+                text("SELECT pg_advisory_unlock(:key)"), {"key": _PG_BM25_LOCK}
+            )
+        return None
+
+    async def _take_turn(self, autocommit: AsyncConnection, *, until_built: bool) -> bool:
+        """Take ``_PG_BM25_LOCK`` for this session: the BM25 index's builds take turns.
+
+        Polled with ``pg_try_advisory_lock``: a statement waiting for the lock would hold a
+        snapshot that a ``CREATE INDEX CONCURRENTLY`` in the holder waits for.
+
+        Args:
+            autocommit: A connection in autocommit mode; the lock is held by its session.
+            until_built: Stop waiting, without the lock, once a valid index exists.
+
+        Returns:
+            Whether the lock was taken (the caller releases it).
+        """
+        while not await autocommit.scalar(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": _PG_BM25_LOCK}
+        ):
+            if until_built and await self._valid_index(autocommit):
+                return False
+            await asyncio.sleep(PG_BM25_POLL_SECONDS)
+        return True
+
+    @staticmethod
+    async def _drop_invalid(autocommit: AsyncConnection) -> None:
+        """Drop the invalid BM25 indexes a ``CONCURRENTLY`` build left behind.
+
+        Args:
+            autocommit: A connection in autocommit mode.
+        """
+        for index in (await autocommit.execute(text(_PG_BM25_INDEXES))).all():
+            if not index.valid:
                 await autocommit.exec_driver_sql(
                     f'DROP INDEX CONCURRENTLY IF EXISTS "{index.name}"'
                 )
-            await autocommit.exec_driver_sql(_PG_BM25_INDEX)
-        finally:
-            await autocommit.execute(text("SELECT pg_advisory_unlock(:key)"), lock)
 
     @staticmethod
     async def _valid_index(connection: AsyncConnection) -> bool:
@@ -264,7 +310,7 @@ class PgSearchIndex:
         }
         search = _searches[tag_filter.match if tag_filter.tags else None, bool(params["whole"])]
         async with self.engine.begin() as connection:
-            for statement in _PG_JOIN_SCANS_OFF:
+            for statement in PG_SEARCH_QUIET_SCANS:
                 await connection.exec_driver_sql(statement)
             found = (await connection.execute(search, params)).all()
         return [
@@ -299,7 +345,7 @@ class PgSearchIndex:
         params = self._params(terms, manifest_ids, tag_filter)
         count = _counts[tag_filter.match if tag_filter.tags else None, bool(params["whole"])]
         async with self.engine.begin() as connection:
-            for statement in _PG_JOIN_SCANS_OFF:
+            for statement in PG_SEARCH_QUIET_SCANS:
                 await connection.exec_driver_sql(statement)
             found = await connection.execute(count, params)
             return {row.manifest_id: row.matches for row in found}
@@ -315,19 +361,31 @@ class PgSearchIndex:
     async def rebuild(self) -> RebuiltIndex:
         """Rebuild the table beside the one that answers, index it with BM25, then swap it in.
 
+        It takes turns with a starting process's BM25 build (``_PG_BM25_LOCK``): run together,
+        that build would race the swap into a deadlock, or put a second BM25 index on the new
+        table.
+
         Returns:
             The format written and the number of rows.
         """
-        await self.table.build_next()
-        async with self.engine.begin() as connection:
-            # `retrieval_search_next` was just made anew, so an index of that name belongs to the
-            # live table: a rebuild that died between its swap and its rename left it. Rename it
-            # first, or its name would be taken.
-            await connection.exec_driver_sql(_PG_BM25_RENAME)
-            await connection.exec_driver_sql(_PG_BM25_INDEX_NEXT)
-        rebuilt = await self.table.swap()
-        async with self.engine.begin() as connection:
-            await connection.exec_driver_sql(_PG_BM25_RENAME)
+        async with self.engine.connect() as connection:
+            autocommit = await connection.execution_options(isolation_level="AUTOCOMMIT")
+            await self._take_turn(autocommit, until_built=False)
+            try:
+                await self.table.build_next()
+                async with self.engine.begin() as writing:
+                    # `retrieval_search_next` was just made anew, so an index of that name belongs
+                    # to the live table: a rebuild that died between its swap and its rename left
+                    # it. Rename it first, or its name would be taken.
+                    await writing.exec_driver_sql(_PG_BM25_RENAME)
+                    await writing.exec_driver_sql(_PG_BM25_INDEX_NEXT)
+                rebuilt = await self.table.swap()
+                async with self.engine.begin() as writing:
+                    await writing.exec_driver_sql(_PG_BM25_RENAME)
+            finally:
+                await autocommit.execute(
+                    text("SELECT pg_advisory_unlock(:key)"), {"key": _PG_BM25_LOCK}
+                )
         return rebuilt
 
     @staticmethod

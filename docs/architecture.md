@@ -195,7 +195,8 @@ only holds each process's git work folders and `known_hosts`. What changes:
   FTS5's raw 20 for a heading would let any word of a short heading win. The ranking suite and the
   retrieval eval's BM25 gates run on it in CI (the eval with `--expect-engine pg_search`). Each
   search turns pg_search's join and aggregate scans off (`SET LOCAL`): they never apply to these
-  joins and would log a warning per query. The adapter writes and rebuilds the rows through `postgres_fts` (structurally, as its
+  joins and would log a warning per query. Indexing a chunk set does the same for its anti-join
+  (`PostgresSearchIndex.write_settings`, set by bootstrap for the table pg_search reads). The adapter writes and rebuilds the rows through `postgres_fts` (structurally, as its
   `table`), and `exactdocs reindex` indexes `retrieval_search_next` with BM25 before the swap.
   Snippets are `ts_headline`'s, as without `pg_search`.
 - **The engine is chosen at start** (`bootstrap/search_engine.py`): once the schema is migrated,
@@ -203,8 +204,10 @@ only holds each process's git work folders and `known_hosts`. What changes:
   valid one exists: `CREATE INDEX CONCURRENTLY` on an autocommit connection, so writers carry on,
   under a session advisory lock that the other starting processes poll (`pg_try_advisory_lock`; a
   statement waiting for the lock would hold a snapshot the concurrent build waits for). An invalid
-  index a dead build left is dropped and built again. A read-only `serve --stdio` never builds it
-  and falls back. Without the extension, or without the index in a read-only process, full-text
+  index a dead build left is dropped and built again; a build that fails (a deadlock, a cancel, a
+  full disk) drops what it left and the process falls back with a WARNING instead of failing to
+  start. `exactdocs reindex` takes the same lock around its whole rebuild, so it never races a
+  starting process's build. A read-only `serve --stdio` never builds it and falls back. Without the extension, or without the index in a read-only process, full-text
   search answers and the log says why (a WARNING when the server could do better: the extension is
   available, or the index is only missing). The table and its `tsvector` stay in both cases, so
   the extension can come and go with a restart. `exactdocs reindex` first renames an index left

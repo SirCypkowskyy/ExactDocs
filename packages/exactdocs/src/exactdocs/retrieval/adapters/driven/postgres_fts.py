@@ -138,6 +138,9 @@ class PostgresSearchIndex:
     """The PostgreSQL database."""
     rebuild_batch: int = REBUILD_BATCH
     """Chunks per transaction while ``exactdocs reindex`` fills the new index."""
+    write_settings: tuple[str, ...] = ()
+    """``SET LOCAL`` statements run before indexing a chunk set: with `pg_search` answering, its
+    ``PG_SEARCH_QUIET_SCANS``, so the anti-join over the indexed table logs no warning."""
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Index the chunks of this set that have no row yet.
@@ -146,6 +149,8 @@ class PostgresSearchIndex:
             chunk_set: A stored chunk set.
         """
         async with self._writing() as connection:
+            for statement in self.write_settings:
+                await connection.exec_driver_sql(statement)
             missing = await connection.execute(
                 _missing, {"blob": chunk_set.blob_sha, "config": chunk_set.config_hash}
             )

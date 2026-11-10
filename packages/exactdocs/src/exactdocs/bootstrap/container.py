@@ -115,6 +115,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
+from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
 from exactdocs.retrieval.models import RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs.retrieval.ports.driving import SaveProvider
@@ -237,9 +238,11 @@ def _build_read_side(
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
     if is_postgres(engine):
-        full_text = PostgresSearchIndex(engine=engine)
+        # The same rows either way; under pg_search, indexing a chunk set asks for no join scan.
+        quiet = PostgresSearchIndex(engine=engine, write_settings=PG_SEARCH_QUIET_SCANS)
         choice = search = PostgresSearchChoice(
-            full_text=full_text, bm25=PgSearchIndex(engine=engine, table=full_text)
+            full_text=PostgresSearchIndex(engine=engine),
+            bm25=PgSearchIndex(engine=engine, table=quiet),
         )
     # On PostgreSQL there is no vector store yet (pgvector is #243): the hybrid modes report
     # themselves unavailable and fall back to BM25, as without an embedding model.

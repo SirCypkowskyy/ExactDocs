@@ -409,13 +409,14 @@ The others poll it (``pg_try_advisory_lock``) rather than wait in one statement:
 waits holds a snapshot, which ``CREATE INDEX CONCURRENTLY`` would wait for in turn."""
 PG_BM25_POLL_SECONDS: Final[float] = 0.5
 """How often a process waiting for another one's BM25 build looks again."""
-_PG_JOIN_SCANS_OFF: Final[tuple[str, ...]] = (
+PG_SEARCH_QUIET_SCANS: Final[tuple[str, ...]] = (
     "SET LOCAL paradedb.enable_join_custom_scan = off",
     "SET LOCAL paradedb.enable_aggregate_custom_scan = off",
 )
-"""Run before each search and count: they join tables that have no BM25 index, so pg_search's
-join and aggregate scans never apply, and asking for them writes a WARNING per query (`JoinScan
-not used`, `Aggregate Scan (DataFusion) not used`) to the server log and the client."""
+"""Run before each search and count, and before the anti-join that finds unindexed chunks: they
+join tables that have no BM25 index, so pg_search's join and aggregate scans never apply, and
+asking for them writes a WARNING per statement (`JoinScan not used`, `Aggregate Scan (DataFusion)
+not used`) to the server log and the client."""
 _PG_EXTENSION: Final[str] = """
     SELECT
         EXISTS (SELECT 1 FROM pg_extension WHERE extname = :extension) AS installed,
