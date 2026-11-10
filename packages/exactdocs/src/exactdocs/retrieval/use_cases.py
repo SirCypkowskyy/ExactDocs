@@ -79,6 +79,7 @@ from exactdocs.retrieval.dtos import (
     SetLibraryRetrievalCommand,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
+    VectorStoreStateOut,
     VersionRefOut,
 )
 from exactdocs.retrieval.errors import (
@@ -910,6 +911,31 @@ class GetSearchIndexStateUseCase:
     async def __call__(self) -> SearchIndexStateOut:
         """Report the stored format against the current one."""
         return SearchIndexStateOut.from_model(await self.maintenance.state())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetVectorStoreStateUseCase:
+    """Implements ``ports.driving.GetVectorStoreState``."""
+
+    modes: RetrievalModes
+    """The roles configured and the vector store the hybrid modes search."""
+
+    async def __call__(self) -> VectorStoreStateOut:
+        """Check the store only when the instance embeds (the embedding model is instance-wide).
+
+        Returns:
+            What the store needs, and whether it can search (``None``: not checked).
+        """
+        vectors = self.modes.vectors
+        if vectors is None:
+            return VectorStoreStateOut(requirement=None, available=None)
+        # A library without overrides: the instance's roles (no library overrides the embedder).
+        roles = await self.modes.roles.configured("", LibraryAi())
+        if ModelRole.EMBEDDING not in roles:
+            return VectorStoreStateOut(requirement=vectors.requirement(), available=None)
+        return VectorStoreStateOut(
+            requirement=vectors.requirement(), available=await vectors.available()
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2111,7 +2137,7 @@ class EmbeddingRuns:
             It.
 
         Raises:
-            VectorStoreUnavailableError: The instance has none (PostgreSQL until #243).
+            VectorStoreUnavailableError: The instance has none.
         """
         if self.vectors is None:
             raise VectorStoreUnavailableError(NO_VECTOR_STORE)
@@ -2141,7 +2167,9 @@ class PlanEmbeddingUseCase:
             return _skipped(EmbeddingSkip.NO_MODEL)
         if not (await self.runs.providers.library_modes.ai_of(command.library)).enabled:
             return _skipped(EmbeddingSkip.AI_OFF)
-        if self.runs.vectors is None:
+        if self.runs.vectors is None or not await self.runs.vectors.available():
+            # No store, or its extension cannot be loaded (pgvector's `vector` not in the
+            # PostgreSQL database): nothing could be stored, so nothing is sent.
             return _skipped(EmbeddingSkip.VECTOR_STORE_UNAVAILABLE)
         version = await self.versions.find(command.library, command.ref)
         if version is None:
@@ -2353,8 +2381,7 @@ class EstimateEmbeddingUseCase:
 
         Returns:
             The estimate; zeros and no model when no embedding model is configured. Fails with
-            ``VectorStoreUnavailableError`` when the database has no vector store (PostgreSQL
-            until #243).
+            ``VectorStoreUnavailableError`` when the instance has no vector store.
         """
         configured = await self.runs.configured()
         if configured is None:

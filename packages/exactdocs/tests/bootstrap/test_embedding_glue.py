@@ -5,10 +5,13 @@ make a new space: every version is queued at once, not at the next start or impo
 also tells ingestion which failed batches to try again.
 """
 
+import asyncio
+
 import pytest
 
+from databases import ADMIN_URL, SECRET_KEY, postgres_database
 from exactdocs.bootstrap.bridges import RetrievalVersionEmbedder
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
@@ -17,6 +20,7 @@ from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Vers
 from exactdocs.ingestion.dtos import ListLibraryJobsQuery, QueuedEmbedding, QueueEmbeddingCommand
 from exactdocs.ingestion.errors import EmbeddingUnavailableError
 from exactdocs.ingestion.models import EmbedPlan
+from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -33,11 +37,21 @@ from exactdocs.retrieval.dtos import (
     UnembeddedVersionsQuery,
 )
 from exactdocs.retrieval.errors import EmbeddingFailedError
-from exactdocs.retrieval.models import ModelRole, ProfileOrigin, ProviderKind, ProviderProfile
+from exactdocs.retrieval.models import (
+    EmbeddingSkip,
+    ModelRole,
+    ProfileOrigin,
+    ProviderKind,
+    ProviderProfile,
+    SpaceState,
+)
+from fake_llm import gateway
 
 LIBRARY = "/acme/docs"
 MODEL = "gw:e5"
 BLOB = "b" * 40
+EMBED_SECONDS = 60.0
+"""How long an embed job may take here (a fake gateway answers at once)."""
 GATEWAY = SaveProviderCommand(name="gw", kind="openai-compatible", base_url="http://127.0.0.1:9/v1")
 
 
@@ -192,3 +206,75 @@ async def test_the_bridge_marks_the_batches_worth_trying_again(
 
     with pytest.raises(raised):
         await bridge.embed_batch(LIBRARY, "v1", planned)
+
+
+# ---------------------------------------------------------------- PostgreSQL with pgvector (#243)
+
+
+@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+async def test_a_version_is_embedded_into_pgvector_by_its_job(on_postgres: object) -> None:
+    del on_postgres
+    with gateway() as endpoint:
+        ai = AiSettings.model_validate(
+            {
+                "providers": {"gw": {"kind": "openai-compatible", "base_url": endpoint.v1}},
+                "embedding": {"model": MODEL},
+            }
+        )
+        container = Container.build(Settings(ai=ai))
+        async with container.running():
+            await _import(container, "v1")
+            before = await container.retrieval.estimate_embedding()
+            queued = await container.ingestion.queue_embedding(QueueEmbeddingCommand())
+            jobs = await _wait_for_embed_jobs(container)
+            after = await container.retrieval.estimate_embedding()
+            spaces = await vector_index(container.engine).spaces()
+            left = await container.retrieval.list_unembedded_versions(UnembeddedVersionsQuery())
+
+    assert isinstance(vector_index(container.engine), PostgresVectorIndex)
+    assert (before.chunks, queued.queued) == (1, 1)
+    assert [j.state.value for j in jobs] == ["succeeded"]
+    assert [(s.spec.model, s.state) for s in spaces] == [("e5", SpaceState.ACTIVE)]
+    assert (after.chunks, after.space_id, left.versions) == (0, spaces[0].id, [])
+    assert any(s.path.endswith("/embeddings") for s in endpoint.seen)
+
+
+@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+async def test_without_pgvector_embed_jobs_send_nothing_and_the_estimate_still_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with (
+        postgres_database(owner_without_createdb=True, without_extensions=("vector",)) as db,
+        gateway() as endpoint,
+    ):
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", db.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        ai = AiSettings.model_validate(
+            {
+                "providers": {"gw": {"kind": "openai-compatible", "base_url": endpoint.v1}},
+                "embedding": {"model": MODEL},
+            }
+        )
+        container = Container.build(Settings(ai=ai))
+        async with container.running(jobs=False):
+            await _import(container, "v1")
+            plan = await container.retrieval.plan_embedding(
+                EmbedVersionCommand(library=LIBRARY, ref="v1")
+            )
+            estimate = await container.retrieval.estimate_embedding()
+
+    assert plan.skipped is EmbeddingSkip.VECTOR_STORE_UNAVAILABLE
+    assert (estimate.chunks, estimate.space_id) == (1, None)
+    assert not endpoint.seen  # not even the dimensions probe
+
+
+async def _wait_for_embed_jobs(container: Container) -> list:
+    """Wait until the library's embed jobs have all ended; return them."""
+    deadline = asyncio.get_running_loop().time() + EMBED_SECONDS
+    while True:
+        listed = await container.ingestion.list_library_jobs(ListLibraryJobsQuery(library=LIBRARY))
+        jobs = [j for j in listed.jobs if j.kind == "embed"]
+        ended = jobs and all(j.state.value not in {"queued", "running"} for j in jobs)
+        if ended or asyncio.get_running_loop().time() > deadline:
+            return jobs
+        await asyncio.sleep(0.1)

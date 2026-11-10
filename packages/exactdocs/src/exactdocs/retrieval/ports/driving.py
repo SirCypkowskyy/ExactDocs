@@ -49,6 +49,7 @@ from exactdocs.retrieval.dtos import (
     SetLibraryRetrievalCommand,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
+    VectorStoreStateOut,
 )
 
 
@@ -207,6 +208,18 @@ class GetSearchIndexState(Protocol):
 
     async def __call__(self) -> SearchIndexStateOut:
         """Run the use case."""
+        ...
+
+
+class GetVectorStoreState(Protocol):
+    """Say whether the vector store can search, once an embedding model is configured."""
+
+    async def __call__(self) -> VectorStoreStateOut:
+        """Run the use case.
+
+        Returns:
+            What the store needs, and whether it has it (not checked without an embedding model).
+        """
         ...
 
 
