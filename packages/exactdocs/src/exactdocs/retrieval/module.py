@@ -50,6 +50,7 @@ from exactdocs.retrieval.ports.driving import (
     GetLibraryRetrieval,
     GetProvider,
     GetSearchIndexState,
+    GetVectorStoreState,
     IndexManifest,
     ListProviders,
     ListRoles,
@@ -87,6 +88,7 @@ from exactdocs.retrieval.use_cases import (
     GetLibraryRetrievalUseCase,
     GetProviderUseCase,
     GetSearchIndexStateUseCase,
+    GetVectorStoreStateUseCase,
     IndexManifestUseCase,
     ListProvidersUseCase,
     ListRolesUseCase,
@@ -132,6 +134,8 @@ class RetrievalModule:
     remove_chunks: RemoveChunks
     retag_articles: RetagArticles
     get_search_index_state: GetSearchIndexState
+    get_vector_store_state: GetVectorStoreState
+    """Whether the vector store can search, once an embedding model is configured."""
     rebuild_search_index: RebuildSearchIndex
     get_library_retrieval: GetLibraryRetrieval
     """A library's retrieval mode and the one its searches use now."""
@@ -298,6 +302,7 @@ class RetrievalModule:
             remove_chunks=RemoveChunksUseCase(manifests=manifests, chunks=chunks),
             retag_articles=RetagArticlesUseCase(chunks=chunks),
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
+            get_vector_store_state=GetVectorStoreStateUseCase(modes=modes),
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
             get_library_retrieval=GetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
             set_library_retrieval=SetLibraryRetrievalUseCase(

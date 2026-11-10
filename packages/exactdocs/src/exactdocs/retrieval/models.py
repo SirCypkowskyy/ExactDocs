@@ -1865,7 +1865,7 @@ class EmbeddingSkip(StrEnum):
     NO_VERSION = "no_version"
     """The version has no active manifest (it was removed meanwhile)."""
     VECTOR_STORE_UNAVAILABLE = "vector_store_unavailable"
-    """The database has no vector store (PostgreSQL until #243): nothing could be stored."""
+    """No vector store, or it cannot be loaded (sqlite-vec, pgvector): nothing could be stored."""
     SPACE_CHANGED = "space_changed"
     """The embedding model changed meanwhile: the job of the new model embeds the version."""
 

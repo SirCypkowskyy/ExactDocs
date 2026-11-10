@@ -566,5 +566,5 @@ async def test_the_best_mode_says_when_the_vector_store_kept_hybrid_out() -> Non
 async def test_asking_for_hybrid_without_the_vector_store_fails_clearly() -> None:
     world = await _build(EMBEDDING, vector_store=False)
 
-    with pytest.raises(UnavailableModeError, match="sqlite-vec cannot be loaded"):
+    with pytest.raises(UnavailableModeError, match="extension, sqlite-vec or pgvector, cannot"):
         await _mode_of(world, "hybrid")

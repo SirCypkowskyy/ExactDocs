@@ -580,7 +580,7 @@ class RetrievalPipeline(Protocol):
 
 
 class VectorIndex(Protocol):
-    """Chunk vectors, one store per embedding space; sqlite-vec on SQLite, pgvector later.
+    """Chunk vectors, one store per embedding space; sqlite-vec on SQLite, pgvector on PostgreSQL.
 
     Every engine behaves the same: see ``tests/retrieval/test_vector_index.py``. A space holds
     the vectors of one ``EmbeddingSpec``; a query runs in one space, so vectors of two models are
@@ -590,11 +590,21 @@ class VectorIndex(Protocol):
     same step, in every space. Search is exact and scoped to one manifest (no ANN index).
     """
 
-    async def available(self) -> bool:
-        """Say whether ``nearest`` can run here (SQLite: whether sqlite-vec can be loaded).
+    def requirement(self) -> str:
+        """Name what the store needs from the database to search (its extension).
 
-        Asked only once an embedding model is configured: the answer may load the store.
-        Storing vectors needs nothing loaded, so the other methods work either way.
+        Returns:
+            ``sqlite-vec`` on SQLite, ``vector`` (pgvector) on PostgreSQL.
+        """
+        ...
+
+    async def available(self) -> bool:
+        """Say whether ``nearest`` can run here (whether ``requirement`` can be loaded).
+
+        Asked only once an embedding model is configured: the answer may load the store, or on
+        PostgreSQL create pgvector's extension. It is found out once per process. On SQLite
+        storing vectors needs nothing loaded; on PostgreSQL ``create_space``, ``upsert`` and
+        ``nearest`` need the extension and raise ``VectorStoreUnavailableError`` without it.
 
         Returns:
             True when the store can search.
