@@ -116,8 +116,12 @@ FROM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e
 # `dpkg --audit` fixes here. (Names are those of trixie: dpkg only warns when one is not
 # installed, so after a Debian bump check the image size in the CI log.)
 # ssh refuses to run for a uid without a passwd entry, hence the exactdocs user (10001).
+# zlib1g comes with the base image, so the install above would leave it at the base's +b1, which
+# has HIGH CVE-2026-76844 and CVE-2026-85091 (#275). No python:3.14-slim-trixie build ships the
+# fixed +deb13u1 (trixie-security) yet: upgrade it here, and drop this once a new base digest has it.
 RUN --mount=type=bind,from=apt-lists,source=/var/lib/apt/lists,target=/var/lib/apt/lists,rw \
     apt-get install -y --no-install-recommends ca-certificates git openssh-client tini \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
     && dpkg --purge --force-depends perl perl-modules-5.40 libperl5.40 liberror-perl \
     && rm -rf /usr/local/lib/python3.14/ensurepip /usr/local/lib/python3.14/site-packages/pip* \
       /usr/local/lib/python3.14/site-packages/setuptools* /usr/local/bin/pip* \
