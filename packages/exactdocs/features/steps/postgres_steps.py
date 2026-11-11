@@ -12,7 +12,7 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import tempfile
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import LiteralString
@@ -42,8 +42,11 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _serve(context: Context, url: str, name: str) -> str:
-    """Start ``exactdocs serve`` on the database; return its base URL once it is ready."""
+def serve(context: Context, url: str, name: str, env: Mapping[str, str] | None = None) -> str:
+    """Start ``exactdocs serve`` on the database; return its base URL once it is ready.
+
+    ``env`` adds settings (e.g. ``EXACTDOCS_DBOS_SYSTEM_SCHEMA``) to the process's environment.
+    """
     data = Path(tempfile.mkdtemp(prefix=f"exactdocs-{name}-"))
     context.add_cleanup(shutil.rmtree, data, ignore_errors=True)
     port = _free_port()
@@ -52,6 +55,7 @@ def _serve(context: Context, url: str, name: str) -> str:
         "EXACTDOCS_DATA_DIR": str(data / "data"),
         "EXACTDOCS_DATABASE_URL": url,
         "EXACTDOCS_SECRET_KEY": SECRET_KEY,
+        **(env or {}),
     }
     log = (data / "serve.log").open("w")
     context.add_cleanup(log.close)
@@ -87,7 +91,7 @@ def _serve(context: Context, url: str, name: str) -> str:
 
 
 @contextmanager
-def _signed_in(base: str) -> Generator[httpx.Client]:
+def signed_in(base: str) -> Generator[httpx.Client]:
     """Yield a client signed in as the admin, setting the instance up first if it needs it."""
     with httpx.Client(base_url=base, timeout=30) as client:
         client.post("/api/v1/setup", json=CREDENTIALS)  # 409 once another process set it up
@@ -95,7 +99,7 @@ def _signed_in(base: str) -> Generator[httpx.Client]:
         yield client
 
 
-def _import(context: Context, client: httpx.Client) -> None:
+def import_fixture(context: Context, client: httpx.Client) -> None:
     """Add the fixture library at ``REF`` and wait for its import to succeed."""
     added = client.post(
         "/api/v1/libraries",
@@ -112,7 +116,7 @@ def _import(context: Context, client: httpx.Client) -> None:
     context.job = job
 
 
-def _query(url: str, statement: LiteralString, *params: object) -> list[tuple[object, ...]]:
+def query_as(url: str, statement: LiteralString, *params: object) -> list[tuple[object, ...]]:
     """Run one statement on the database as the role in ``url``."""
     plain = make_url(url).set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(plain) as connection:
@@ -134,19 +138,19 @@ def _database(
 @given("two ExactDocs processes use the same PostgreSQL database")
 def step_two_processes(context: Context) -> None:
     url = _database(context)
-    context.first = _serve(context, url, "first")
-    context.second = _serve(context, url, "second")
+    context.first = serve(context, url, "first")
+    context.second = serve(context, url, "second")
 
 
 @when("a library is imported through the first")
 def step_import_through_first(context: Context) -> None:
-    with _signed_in(context.first) as client:
-        _import(context, client)
+    with signed_in(context.first) as client:
+        import_fixture(context, client)
 
 
 @then("the second serves it, and the import ran exactly once")
 def step_second_serves(context: Context) -> None:
-    with _signed_in(context.second) as client:
+    with signed_in(context.second) as client:
         articles = client.get(
             f"/api/v1/libraries{context.library}/articles", params={"ref": REF}
         ).json()
@@ -157,11 +161,11 @@ def step_second_serves(context: Context) -> None:
         assert hits["results"], hits
     # Once: one job, and one manifest stored and indexed (a second run would store another).
     url = context.database_url
-    assert _query(url, "SELECT count(*) FROM ingestion_jobs WHERE kind = 'import'") == [(1,)]
-    assert _query(url, "SELECT state FROM catalog_manifests") == [("active",)]
-    assert _query(url, "SELECT count(*) FROM retrieval_manifests") == [(1,)]
+    assert query_as(url, "SELECT count(*) FROM ingestion_jobs WHERE kind = 'import'") == [(1,)]
+    assert query_as(url, "SELECT state FROM catalog_manifests") == [("active",)]
+    assert query_as(url, "SELECT count(*) FROM retrieval_manifests") == [(1,)]
     # Each process holds an executor slot of its own (two-key advisory locks, slots 0 and 1).
-    slots = _query(
+    slots = query_as(
         url,
         "SELECT objid FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2"
         " AND classid = 1163412547 AND granted ORDER BY objid",
@@ -172,34 +176,34 @@ def step_second_serves(context: Context) -> None:
 @given("the database role may not create databases")
 def step_role_without_createdb(context: Context) -> None:
     url = _database(context, owner_without_createdb=True)
-    assert _query(url, "SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user") == [
+    assert query_as(url, "SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user") == [
         (False,)
     ]
-    context.databases_before = _query(url, "SELECT datname FROM pg_database ORDER BY datname")
+    context.databases_before = query_as(url, "SELECT datname FROM pg_database ORDER BY datname")
 
 
 @when("ExactDocs starts on PostgreSQL")
 def step_starts_on_postgres(context: Context) -> None:
-    context.first = _serve(context, context.database_url, "only")
+    context.first = serve(context, context.database_url, "only")
 
 
 @then('DBOS keeps its tables in schema "{schema}" of the same database and jobs run')
 def step_dbos_in_schema(context: Context, schema: str) -> None:
-    with _signed_in(context.first) as client:
-        _import(context, client)
+    with signed_in(context.first) as client:
+        import_fixture(context, client)
     url = context.database_url
-    tables = _query(
+    tables = query_as(
         url,
         "SELECT table_name FROM information_schema.tables"
         " WHERE table_schema = %s AND table_name = 'workflow_status'",
         schema,
     )
     assert tables == [("workflow_status",)], tables
-    after = _query(url, "SELECT datname FROM pg_database ORDER BY datname")
+    after = query_as(url, "SELECT datname FROM pg_database ORDER BY datname")
     assert after == context.databases_before, "DBOS created a database"
 
 
-def _ranked_on(
+def ranked_on(
     context: Context, settings: Settings, *, keep: bool
 ) -> list[tuple[str, str, object, list]]:
     """Serve the fixture library at both versions on ``settings``; search the expected queries.
@@ -228,28 +232,30 @@ def _ranked_on(
     ]
 
 
-def _rank_both(context: Context, *, pg_search: bool) -> None:
+def rank_both(context: Context, url: str, dbos_system_schema: str = "dbos") -> None:
+    """Rank the expected queries on SQLite, then on the PostgreSQL database at ``url``."""
     sqlite_dir = Path(tempfile.mkdtemp(prefix="exactdocs-sqlite-"))
     context.add_cleanup(shutil.rmtree, sqlite_dir, ignore_errors=True)
-    context.sqlite_ranked = _ranked_on(context, Settings(data_dir=sqlite_dir), keep=False)
+    context.sqlite_ranked = ranked_on(context, Settings(data_dir=sqlite_dir), keep=False)
     postgres_dir = Path(tempfile.mkdtemp(prefix="exactdocs-postgres-"))
     context.add_cleanup(shutil.rmtree, postgres_dir, ignore_errors=True)
-    url = _database(context, pg_search=pg_search)
-    context.postgres_ranked = _ranked_on(
-        context,
-        Settings(data_dir=postgres_dir, database_url=url, secret_key=SECRET_KEY),
-        keep=True,
+    settings = Settings(
+        data_dir=postgres_dir,
+        database_url=url,
+        secret_key=SECRET_KEY,
+        dbos_system_schema=dbos_system_schema,
     )
+    context.postgres_ranked = ranked_on(context, settings, keep=True)
 
 
 @when("the ranking suite runs on ParadeDB")
 def step_rank_on_paradedb(context: Context) -> None:
-    _rank_both(context, pg_search=True)
+    rank_both(context, _database(context, pg_search=True))
 
 
 @when('the ranking suite runs on PostgreSQL without "pg_search"')
 def step_rank_without_pg_search(context: Context) -> None:
-    _rank_both(context, pg_search=False)
+    rank_both(context, _database(context, pg_search=False))
 
 
 @then("every expected query ranks its section first, as on SQLite")
