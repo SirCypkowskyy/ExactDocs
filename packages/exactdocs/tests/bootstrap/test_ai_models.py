@@ -776,7 +776,7 @@ def test_the_reranker_top_n_and_timeout_are_read_with_their_defaults(
     reranker = Settings().ai.reranker
 
     assert (reranker.model, reranker.top_n, reranker.timeout) == ("rr:rerank-v3.5", 12, 0.5)
-    assert (AiSettings().reranker.top_n, AiSettings().reranker.timeout) == (32, 2.0)
+    assert (AiSettings().reranker.top_n, AiSettings().reranker.timeout) == (32, None)
 
 
 @pytest.mark.parametrize("role", [{"top_n": 0}, {"top_n": 201}, {"timeout": 0}, {"timeout": 61}])
