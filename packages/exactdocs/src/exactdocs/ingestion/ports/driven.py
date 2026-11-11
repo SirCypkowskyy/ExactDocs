@@ -21,6 +21,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     Job,
     JobId,
     NewLibrary,
@@ -408,6 +409,21 @@ class ImportedTagStore(Protocol):
         Only what differs is written; manual tags are kept. Returns every tag (imported and
         manual) of each given article the manifest has, changed or not: the chunk index must
         get the same.
+        """
+        ...
+
+
+class GuidancePolicy(Protocol):
+    """Whether a library keeps its instruction files (retrieval's repo guidance, RET-08)."""
+
+    async def instruction_policy(self, library: str) -> InstructionPolicy:
+        """Say whether imports of the library keep its ``AGENTS.md`` / ``CLAUDE.md`` files.
+
+        Args:
+            library: ``/owner/repo``, any letter case.
+
+        Returns:
+            ``KEEP`` when the library's repo guidance is on; ``DROP`` (the default) otherwise.
         """
         ...
 

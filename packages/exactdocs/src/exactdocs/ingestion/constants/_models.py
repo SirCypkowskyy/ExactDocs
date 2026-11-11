@@ -141,6 +141,13 @@ CONTEXT7_FILE: Final[str] = "context7.json"
 """The root file context7 reads a repository's docs settings from (LIB-06)."""
 CONTEXT7_MAX_BYTES: Final[int] = 64 * 2**10
 """A bigger ``context7.json`` is ignored with a warning, unread."""
+INSTRUCTION_FILE_NAMES: Final[tuple[str, ...]] = ("AGENTS.md", "CLAUDE.md")
+"""The instruction files kept per folder for agentic retrieval when repo guidance is on (RET-08)."""
+MAX_INSTRUCTION_DIRS: Final[int] = 32
+"""Folders looked in for instruction files: the root, then the selected files' folders, shallowest
+first (so at most twice as many files)."""
+MAX_INSTRUCTION_FILE_BYTES: Final[int] = 32 * 2**10
+"""A bigger instruction file is left out with a problem, unread."""
 MAX_CONTEXT7_RULES: Final[int] = 20
 """Rules read from a repository's ``context7.json``."""
 MAX_CONTEXT7_RULE_CHARS: Final[int] = 500

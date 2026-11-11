@@ -71,6 +71,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     Removed,
+    RepoGuidance,
     RetrievalMode,
     SectionRef,
     SpendEntry,
@@ -169,6 +170,8 @@ library_settings = Table(
     Column("monthly_usd_micros", BigInteger),
     Column("daily_tokens", BigInteger),
     Column("monthly_tokens", BigInteger),
+    # What its AGENTS.md / CLAUDE.md do for agentic retrieval (RET-08): RepoGuidance value.
+    Column("repo_guidance", Text, nullable=False, server_default="off"),
 )
 # Provider profiles managed over the REST API. The key is sealed by the secret box (its own HKDF
 # purpose); every other field is JSON in `settings`, as `ProviderProfile` names them.
@@ -696,6 +699,7 @@ class SqliteLibraryModes:
             reranker=_stored_ref(row.reranker),
             rerank_top_n=row.rerank_top_n,
             budgets=_stored_budgets(row),
+            repo_guidance=_stored_guidance(row.repo_guidance),
         )
 
     async def budgets(self) -> dict[str, tuple[BudgetLimit, ...]]:
@@ -751,6 +755,7 @@ class SqliteLibraryModes:
                         judge=_ref_text(ai.judge),
                         reranker=_ref_text(ai.reranker),
                         rerank_top_n=ai.rerank_top_n,
+                        repo_guidance=ai.repo_guidance.value,
                         **_budget_columns(ai),
                     )
                 )
@@ -767,6 +772,18 @@ class SqliteLibraryModes:
         async with self.engine.connect() as connection:
             texts = (await connection.execute(statement)).scalars().all()
         return frozenset(str(ref) for text in texts if (ref := _stored_ref(text)) is not None)
+
+
+def _stored_guidance(text: str | None) -> RepoGuidance:
+    """Read a library's repo guidance; a value this build does not know counts as off.
+
+    Args:
+        text: The stored ``RepoGuidance`` value.
+
+    Returns:
+        The setting.
+    """
+    return RepoGuidance(text) if text in RepoGuidance else RepoGuidance.OFF
 
 
 def _stored_budgets(row: Row[Any]) -> tuple[BudgetLimit, ...]:

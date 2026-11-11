@@ -41,13 +41,19 @@ from exactdocs.retrieval.constants import (
     DEFAULT_SANDBOX_SUSPENSIONS,
     DNS_LABEL,
     EMBEDDING_INPUT_FORMAT,
+    GUIDANCE_CUT,
+    GUIDANCE_TAG,
     HEADER_NAME,
     HEADING_SEPARATOR,
+    INSTRUCTION_FILE_NAMES,
     LIBRARY_BUDGET_NOT_LIBRARY,
     LIBRARY_BUDGET_TWICE,
     MASK,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_FLOAT32,
+    MAX_GUIDANCE_CHARS,
+    MAX_GUIDANCE_FILE_CHARS,
+    MAX_GUIDANCE_FILES,
     MAX_HEADER_VALUE,
     MAX_HEADERS,
     MAX_MODEL_NAME,
@@ -1788,6 +1794,22 @@ class InstanceRoles:
                 return self.judge
 
 
+class RepoGuidance(StrEnum):
+    """What a library's ``AGENTS.md`` / ``CLAUDE.md`` files do for agentic retrieval (RET-08).
+
+    The files are repository content, so untrusted: they become system instructions only when
+    the owner says the library is trusted.
+    """
+
+    OFF = "off"
+    """Imports keep none and the agent gets none (the default)."""
+    NOTES = "notes"
+    """Each version keeps them; a folder's file reaches the agent as a user-channel note when it
+    opens that folder (lists it, or reads an article in it)."""
+    TRUSTED = "trusted"
+    """As ``notes``, and the root's file is also part of the agent's system instructions."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LibraryAi:
     """A library's AI overrides (RET-06). Never the embedding model: it is instance-wide."""
@@ -1805,6 +1827,8 @@ class LibraryAi:
     budgets: tuple[BudgetLimit, ...] = ()
     """Its own spend limits (scope kind ``library``, at most one per window), within the
     instance's: the tighter of the two applies."""
+    repo_guidance: RepoGuidance = RepoGuidance.OFF
+    """What its ``AGENTS.md`` / ``CLAUDE.md`` files do for agentic retrieval; off by default."""
 
     def __post_init__(self) -> None:
         """Refuse own budgets that limit another scope kind, or two for one window.
@@ -1859,6 +1883,7 @@ class LibraryAi:
             and not (self.llm or self.judge or self.reranker)
             and self.rerank_top_n is None
             and not self.budgets
+            and self.repo_guidance is RepoGuidance.OFF
         )
 
     def profiles(self) -> frozenset[str]:
@@ -2943,6 +2968,87 @@ class AgentPick:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class InstructionFile:
+    """An ``AGENTS.md`` / ``CLAUDE.md`` file kept with the searched version's manifest."""
+
+    path: str
+    """Repository-relative, e.g. ``AGENTS.md`` or ``docs/guide/CLAUDE.md``."""
+    content: str = field(repr=False)
+    """Its text: untrusted repository content."""
+
+
+def _guidance_text(text: str) -> str:
+    """Make an instruction file safe to frame: no control characters, no block tags, bounded.
+
+    Args:
+        text: The file as the repository has it.
+
+    Returns:
+        The text without control or format characters (newlines and tabs stay), with the ``<``
+        of anything that could open or close a ``<context>`` block written as ``&lt;``, cut at
+        ``MAX_GUIDANCE_FILE_CHARS`` (``GUIDANCE_CUT`` then says so).
+    """
+    clean = "".join(c for c in text if c in "\n\t" or not unicodedata.category(c).startswith("C"))
+    clean = GUIDANCE_TAG.sub("&lt;", clean)
+    if len(clean) <= MAX_GUIDANCE_FILE_CHARS:
+        return clean
+    return clean[: MAX_GUIDANCE_FILE_CHARS - len(GUIDANCE_CUT)] + GUIDANCE_CUT
+
+
+def _guidance_path(path: str) -> bool:
+    """Say whether a stored path can name a file of the guidance workspace.
+
+    Args:
+        path: The repository-relative path.
+
+    Returns:
+        True for a plain relative path ending in an instruction file's name.
+    """
+    parts = path.split("/")
+    return (
+        bool(path)
+        and path.isprintable()
+        and all(p not in {"", ".", ".."} and p.lower() != ".git" for p in parts)
+        and parts[-1] in INSTRUCTION_FILE_NAMES
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GuidanceFiles:
+    """The instruction files one agentic run is given, already framed and bounded (RET-08)."""
+
+    files: tuple[InstructionFile, ...]
+    """At most ``MAX_GUIDANCE_FILES``, shallowest first, at most ``MAX_GUIDANCE_CHARS`` together."""
+    trusted: bool = False
+    """True: the root's file is also part of the system instructions (``RepoGuidance.TRUSTED``)."""
+
+    @classmethod
+    def of(cls, files: Sequence[InstructionFile], *, trusted: bool) -> GuidanceFiles | None:
+        """Bound and frame a version's instruction files for one run.
+
+        Args:
+            files: What the manifest keeps.
+            trusted: Whether the library is trusted.
+
+        Returns:
+            The files to give the agent, or ``None`` when none is left.
+        """
+        seen: set[str] = set()
+        kept: list[InstructionFile] = []
+        total = 0
+        for found in sorted(files, key=lambda f: (f.path.count("/"), f.path)):
+            if found.path in seen or not _guidance_path(found.path):
+                continue
+            seen.add(found.path)
+            text = _guidance_text(found.content)
+            if len(kept) >= MAX_GUIDANCE_FILES or total + len(text) > MAX_GUIDANCE_CHARS:
+                break
+            total += len(text)
+            kept.append(InstructionFile(path=found.path, content=text))
+        return cls(files=tuple(kept), trusted=trusted) if kept else None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AgentRun:
     """One agentic search as the explorer runs it: the question, its limits and who pays."""
 
@@ -2958,6 +3064,8 @@ class AgentRun:
     """The library and the account the run counts to."""
     price: ModelPrice | None = None
     """The model's price from the price book; ``None``: the bundled price data."""
+    guidance: GuidanceFiles | None = None
+    """The version's instruction files, when the library's repo guidance is on (RET-08)."""
 
 
 def normalized_query(query: str) -> str:

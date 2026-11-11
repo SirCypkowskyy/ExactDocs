@@ -9,11 +9,13 @@ import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
+    InMemoryInstructionFiles,
     InMemoryLibraryRepository,
     InMemoryManifestCopier,
     InMemoryManifestRepository,
     InMemoryStoredArticles,
 )
+from exactdocs.catalog.constants import MAX_INSTRUCTION_FILE_CHARS
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
@@ -21,7 +23,9 @@ from exactdocs.catalog.dtos import (
     DiscardPendingManifestsCommand,
     GetActiveManifestQuery,
     GetArticleQuery,
+    GetInstructionFilesQuery,
     GetLibraryQuery,
+    InstructionFileIn,
     ListArticlesQuery,
     ListRenamesQuery,
     RemoveLibraryCommand,
@@ -40,6 +44,7 @@ from exactdocs.catalog.errors import (
     InvalidArticlePathError,
     InvalidBlobShaError,
     InvalidCommitShaError,
+    InvalidInstructionFileError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     ManifestNotPendingError,
@@ -51,6 +56,9 @@ from exactdocs.catalog.models import (
     HostKind,
     Library,
     LibraryId,
+    Manifest,
+    ManifestId,
+    ManifestInstruction,
     ManifestState,
     RefKind,
     Version,
@@ -146,6 +154,7 @@ def world() -> World:
             imported_tags=InMemoryImportedTags(repository=manifests),
             copier=InMemoryManifestCopier(repository=manifests),
             stored_articles=InMemoryStoredArticles(repository=manifests),
+            instruction_files=InMemoryInstructionFiles(repository=manifests),
         ),
         manifests,
         clock,
@@ -626,3 +635,59 @@ async def test_impossible_renames_are_refused_when_stored(world: World) -> None:
         )
     with pytest.raises(ValueError, match="less than or equal to 100"):
         RenameIn(from_ref="v1", old_path="a.md", new_path="b.md", similarity=101)
+
+
+# ---------------------------------------------------------------- instruction files (RET-08)
+
+
+async def test_a_manifest_keeps_its_instruction_files_for_other_domains(world: World) -> None:
+    stored = await world.catalog.store_manifest(
+        command("main", "bbb222", article("guide/install.md")).model_copy(
+            update={
+                "instructions": [
+                    InstructionFileIn(path="guide/CLAUDE.md", content="One H1."),
+                    InstructionFileIn(path="AGENTS.md", content="Guides in guide/."),
+                ]
+            }
+        )
+    )
+
+    found = await world.catalog.get_instruction_files(
+        GetInstructionFilesQuery(manifest_id=stored.manifest_id)
+    )
+    other = await world.catalog.get_instruction_files(GetInstructionFilesQuery(manifest_id="x"))
+
+    assert [(f.path, f.content) for f in found.files] == [
+        ("AGENTS.md", "Guides in guide/."),
+        ("guide/CLAUDE.md", "One H1."),
+    ]
+    assert other.files == []
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [["AGENTS.md", "AGENTS.md"], [f"d{i}/AGENTS.md" for i in range(65)]],
+    ids=["twice", "too many"],
+)
+def test_a_manifest_refuses_instruction_files_it_cannot_keep(paths: list[str]) -> None:
+    with pytest.raises(InvalidInstructionFileError):
+        Manifest(
+            id=ManifestId("m"),
+            library=LibraryId("/acme/payments"),
+            ref=VersionRef("main"),
+            kind=RefKind.BRANCH,
+            commit_sha=sha("a"),
+            created_at=NOW,
+            instructions=tuple(ManifestInstruction(path=p, content="a") for p in paths),
+        )
+
+
+def test_an_instruction_file_has_a_bounded_text() -> None:
+    with pytest.raises(InvalidInstructionFileError):
+        ManifestInstruction(path="AGENTS.md", content="x" * (MAX_INSTRUCTION_FILE_CHARS + 1))
+
+
+@pytest.mark.parametrize("path", ["../AGENTS.md", ".git/AGENTS.md", "a//AGENTS.md", ""])
+def test_an_instruction_file_needs_a_plain_repository_path(path: str) -> None:
+    with pytest.raises(InvalidArticlePathError):
+        ManifestInstruction(path=path, content="a")

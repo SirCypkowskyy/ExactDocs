@@ -1176,6 +1176,24 @@ snippet caught the error. The browser applies the call's tag filter to every rea
 its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,
 without content.
 
+**Repo guidance (#101).** A library's `LibraryAi.repo_guidance` (`off`, `notes`, `trusted`) decides
+what its `AGENTS.md` / `CLAUDE.md` files do. Ingestion asks through its `GuidancePolicy` port
+(bootstrap's `RetrievalGuidancePolicy`, over `GetLibraryRetrieval`) in the import step "fetch the
+instruction files": with `KEEP`, the root's and every selected file's folder's files are fetched
+in a literal-path checkout (`instruction_candidates`, also outside the selection) and travel in
+`ImportedVersion.instructions` to the catalog, which keeps them per manifest
+(`catalog_manifest_instructions`, copied with a re-chunk, deleted with the manifest). The
+`AgenticPipeline` reads the searched manifest's files through the `InstructionFiles` port
+(bootstrap's `CatalogInstructionFiles`, over `GetInstructionFiles`), bounds and defuses them
+(`GuidanceFiles.of`: at most `MAX_GUIDANCE_FILES` / `MAX_GUIDANCE_CHARS`, `<context` tags and
+control characters neutralized) and passes them in `AgentRun.guidance`. `ai_guidance_sdk.py` gives
+the agent harness `RepoContext` over `GuidanceBackend`, an in-memory, read-only workspace backend
+holding only those files: nested traversal always (a folder's file as a user-channel note once the
+agent opens it; `Traversals` emits the harness's filesystem events after each read tool), walk-up
+autoload (the root's file in the system instructions) only for `trusted`. The tools, the browser
+and `AgentBounds` are set before the run, so a file can change none of them. RepoContext listens to
+the run's events, so a run with guidance streams its model requests.
+
 Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:

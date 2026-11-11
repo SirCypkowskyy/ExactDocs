@@ -48,6 +48,7 @@ const HYBRID: LibraryRetrieval = {
   effective_rerank_top_n: 32,
   budgets: NO_BUDGETS,
   budget_ceilings: { ...NO_BUDGETS, daily_usd: 2 },
+  repo_guidance: "off",
 };
 
 /** What the server answers once AI is off: BM25 only, no role. */
@@ -255,6 +256,38 @@ describe("library AI settings", () => {
   });
 });
 
+describe("repository guidance", () => {
+  it("lets the owner take the instruction files as untrusted notes, and says what each does", async () => {
+    const calls = serve(HYBRID);
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+
+    const guidance = ai.getByLabelText("Repository guidance (AGENTS.md / CLAUDE.md)");
+    expect(
+      within(guidance)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Off", "Untrusted notes", "Trusted instructions"]);
+    expect(ai.getByText(/Imports keep no instruction file/)).toBeInTheDocument();
+    await userEvent.selectOptions(guidance, "notes");
+    expect(ai.getByText(/never as instructions/)).toBeInTheDocument();
+    await userEvent.click(ai.getByRole("button", { name: "Save AI settings" }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({ repo_guidance: "notes" });
+  });
+
+  it("disables the choice while AI is off", async () => {
+    serve(OFF);
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+
+    expect(ai.getByLabelText("Repository guidance (AGENTS.md / CLAUDE.md)")).toBeDisabled();
+  });
+});
+
 describe("profiles while they load or fail", () => {
   const stored = { ...HYBRID, llm: "corp:gpt-4.1" };
 
@@ -349,6 +382,17 @@ describe("retrieval model", () => {
     expect(rolesInUse(r, ROLES as never).map((x) => x.role)).toEqual(["llm"]);
   });
 
+  it("names the repository's instruction files in the agentic pipeline when guidance is on", () => {
+    const r = { ...HYBRID, effective_mode: "agentic" as const, configured_roles: ["llm" as const] };
+    expect(pipelineSteps({ ...r, repo_guidance: "notes" })[1]).toBe(
+      "A folder's AGENTS.md / CLAUDE.md reaches it as an untrusted note when it opens the folder",
+    );
+    expect(pipelineSteps({ ...r, repo_guidance: "trusted" })[1]).toMatch(
+      /root AGENTS.md \/ CLAUDE.md is part of its instructions/,
+    );
+    expect(pipelineSteps({ ...HYBRID, repo_guidance: "notes" })).toEqual(pipelineSteps(HYBRID));
+  });
+
   it("keeps a stored mode that can't run visible but not choosable", () => {
     const r = { ...HYBRID, mode: "agentic" as const, fallback_reason: "mode_unavailable" as const };
     expect(modeOptions(r, retrievalDraftOf(r)).at(-1)).toEqual({
@@ -377,6 +421,7 @@ describe("retrieval model", () => {
       judge: null,
       reranker: "tei:bge:v2",
       rerank_top_n: 8,
+      repo_guidance: "off",
       budgets: { ...NO_BUDGETS, monthly_tokens: 1000 },
     });
     const bad = {

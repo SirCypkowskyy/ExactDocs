@@ -24,6 +24,8 @@ from exactdocs.ingestion.adapters.driven.memory import (
 )
 from exactdocs.ingestion.constants import (
     IMPORT_JOB,
+    MAX_INSTRUCTION_DIRS,
+    MAX_INSTRUCTION_FILE_BYTES,
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
     MAX_WANTED_IMAGES,
@@ -50,6 +52,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     Job,
     JobId,
     JobState,
@@ -63,10 +66,11 @@ from exactdocs.ingestion.models import (
     StoredArticle,
     TagRule,
     git_blob_sha,
+    instruction_candidates,
     parse_article,
 )
 from exactdocs.ingestion.module import TagLocks, import_job
-from exactdocs.ingestion.ports import RenameSource
+from exactdocs.ingestion.ports import GuidancePolicy, RenameSource
 from exactdocs.ingestion.use_cases import (
     ImportVersionUseCase,
     RunNextJobUseCase,
@@ -384,6 +388,7 @@ def build_world(
     imported: Sequence[ImportedRef] = (),
     earlier: Sequence[GitRename] = (),
     stored: Stored | None = None,
+    guidance: GuidancePolicy | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -406,6 +411,7 @@ def build_world(
         tag_locks=TagLocks(),
         imported_tags=NoStoredTags(),
         copier=NoCopier(),
+        guidance=guidance,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -1774,3 +1780,97 @@ async def test_stored_articles_are_asked_for_in_batches_not_per_file(tmp_path: P
 
     assert stored.asked == [500, 500, 100]
     assert world.progress.parses == [(1100, 0)]
+
+
+# ---------------------------------------------------------------- instruction files (RET-08)
+
+ROOT_NOTES = b"# Agent notes\n\nGuides live in docs/guide/.\n"
+GUIDE_NOTES = b"Each guide has one H1.\n"
+
+
+@dataclass(slots=True)
+class Policy:
+    """A ``GuidancePolicy`` double: the library's repo guidance, and who asked."""
+
+    keep: bool
+    asked: list[str] = field(default_factory=list)
+
+    async def instruction_policy(self, library: str) -> InstructionPolicy:
+        self.asked.append(library)
+        return InstructionPolicy.KEEP if self.keep else InstructionPolicy.DROP
+
+
+def _guided_world(tmp_path: Path, policy: Policy | None, **files: bytes) -> World:
+    return build_world(
+        tmp_path,
+        {"docs/guide/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()},
+        elsewhere={
+            "AGENTS.md": ROOT_NOTES,
+            "docs/guide/CLAUDE.md": GUIDE_NOTES,
+            "src/AGENTS.md": b"not a folder of a selected file",
+            **files,
+        },
+        guidance=policy,
+    )
+
+
+async def test_the_instruction_files_are_kept_with_the_version_even_outside_the_selection(
+    tmp_path: Path,
+) -> None:
+    world = _guided_world(tmp_path, Policy(keep=True))
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert [(i.path, i.content) for i in version.instructions] == [
+        ("AGENTS.md", ROOT_NOTES.decode()),
+        ("docs/guide/CLAUDE.md", GUIDE_NOTES.decode()),
+    ]
+    # One literal-path checkout of every candidate: the root and the selected files' folders.
+    (asked, _), *_ = [e for e in world.gateway.extra if "AGENTS.md" in e[0]]
+    assert asked == [
+        "AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md",
+        "docs/guide/AGENTS.md", "docs/guide/CLAUDE.md",
+    ]  # fmt: skip
+    assert "src/AGENTS.md" not in asked
+    assert [a.path for a in version.articles] == ["docs/guide/auth.md", "docs/install.md"]
+
+
+@pytest.mark.parametrize("policy", [None, Policy(keep=False)], ids=["no policy", "guidance off"])
+async def test_no_instruction_file_is_kept_or_fetched_with_repo_guidance_off(
+    tmp_path: Path, policy: Policy | None
+) -> None:
+    world = _guided_world(tmp_path, policy)
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.instructions == ()
+    assert not [e for e in world.gateway.extra if "AGENTS.md" in e[0]]
+
+
+async def test_an_oversized_or_binary_instruction_file_is_left_out_with_a_problem(
+    tmp_path: Path,
+) -> None:
+    big = b"x" * (MAX_INSTRUCTION_FILE_BYTES + 1)
+    world = _guided_world(
+        tmp_path, Policy(keep=True), **{"CLAUDE.md": big, "docs/AGENTS.md": b"\0"}
+    )
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert [i.path for i in version.instructions] == ["AGENTS.md", "docs/guide/CLAUDE.md"]
+    problems = {(path, code) for path, code, _ in world.progress.problems}
+    assert ("CLAUDE.md", ProblemCode.TOO_LARGE) in problems
+    assert ("docs/AGENTS.md", ProblemCode.BINARY) in problems
+
+
+def test_candidates_are_the_root_and_the_selected_folders_shallowest_first_and_bounded() -> None:
+    paths = [f"docs/f{i:02}/x.md" for i in range(MAX_INSTRUCTION_DIRS + 5)] + [".git/x.md"]
+
+    found = instruction_candidates(paths)
+
+    assert found[:4] == ["AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md"]
+    assert len(found) == 2 * MAX_INSTRUCTION_DIRS
+    assert not [p for p in found if ".git" in p]

@@ -26,6 +26,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogCollector,
     CatalogDefaultVersions,
     CatalogImportedTags,
+    CatalogInstructionFiles,
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySettings,
@@ -41,6 +42,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionPublisher,
     RetrievalChunkIndex,
     RetrievalCollector,
+    RetrievalGuidancePolicy,
     RetrievalVersionEmbedder,
 )
 from exactdocs.bootstrap.constants import (
@@ -73,6 +75,7 @@ from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteArticleTitles,
     SqliteImportedTags,
+    SqliteInstructionFiles,
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
@@ -468,6 +471,7 @@ def _build_read_side(
         stored_articles=SqliteStoredArticles(engine=engine),
         copier=SqliteManifestCopier(engine=engine),
         article_titles=SqliteArticleTitles(engine=engine),
+        instruction_files=SqliteInstructionFiles(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -534,6 +538,9 @@ def _build_read_side(
         hypothesis_cache=hypotheses,
         hyde_cache_key=hyde_key,
         hyde_cache_ttl=settings.ai.hyde.cache_ttl,
+        instruction_files=CatalogInstructionFiles(
+            get_instruction_files=catalog.get_instruction_files
+        ),
     )
     return _ReadSide(
         catalog=catalog,
@@ -830,6 +837,9 @@ class Container:
                 set_imported_tags_of=read.catalog.set_imported_tags,
             ),
             copier=CatalogVersionCopier(copy_manifest=read.catalog.copy_manifest),
+            guidance=RetrievalGuidancePolicy(
+                get_library_retrieval=read.retrieval.get_library_retrieval
+            ),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine=engine),

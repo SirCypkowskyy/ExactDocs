@@ -7,20 +7,30 @@ them, so a container built with it runs the real ``agentic`` pipeline end to end
 """
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 
 from exactdocs.retrieval.errors import ProviderUnsupportedError
 from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile
@@ -201,6 +211,128 @@ def sandbox_hog(code: str, requests: list[int] | None = None) -> FunctionModel:
         return run_code(code)
 
     return FunctionModel(script, model_name="scripted-hog")
+
+
+class Billed(WrapperModel):
+    """A scripted model that streams and bills its input, as a provider does (#101).
+
+    Harness ``RepoContext`` (repo guidance) listens to the run's events, so the agent then
+    streams every model request. A ``FunctionModel``'s stream reports output tokens only; this
+    one answers each streamed request with the wrapped model's complete response, whose usage
+    counts the request's text (instructions, notes, tool results) the way a provider bills it.
+    """
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        """Answer with the complete response, its parts replayed as stream events.
+
+        Args:
+            messages: The request.
+            model_settings: Its settings.
+            model_request_parameters: Its tools and output.
+            run_context: The run.
+
+        Yields:
+            The response as a stream.
+        """
+        del run_context
+        response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        yield CompletedStreamedResponse(
+            response, model_request_parameters=model_request_parameters, replay_events=True
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Request:
+    """What one model request of a run carried, as a provider would receive it."""
+
+    instructions: str
+    """The system instructions."""
+    system: list[str]
+    """Every system-prompt part of the messages."""
+    user: list[str]
+    """Every user-prompt part of the messages (the question, then any user-channel note)."""
+    tools: list[str]
+    """The tools the model may call (the output tool aside)."""
+
+
+def _texts(
+    messages: Sequence[ModelMessage], kind: type[UserPromptPart | SystemPromptPart]
+) -> list[str]:
+    """Collect the text of every request part of one kind.
+
+    Args:
+        messages: The run's messages so far.
+        kind: ``UserPromptPart`` or ``SystemPromptPart``.
+
+    Returns:
+        Their contents, in order.
+    """
+    found: list[str] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [p for p in message.parts if isinstance(p, kind)]
+            found.extend(p.content for p in parts if isinstance(p.content, str))
+    return found
+
+
+def guided(code: str, seen: list[Request], *, picks: int = 2, after: str | None = None) -> Billed:
+    """An agent that runs ``code`` (it opens folders), then answers with its search hits.
+
+    It records every request (``seen``), so a test can tell which channel an instruction
+    file reached it on. It streams, as runs with repo guidance need.
+
+    Args:
+        code: The first snippet; the value it ends with is a list of search hits.
+        seen: Gets each request appended.
+        picks: How many hits it answers with.
+        after: A second snippet it runs once it has seen the first one's result (as a model
+            that does what a note told it to would), before answering.
+
+    Returns:
+        The model.
+    """
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Run the snippets, then answer.
+
+        Args:
+            messages: The run so far.
+            info: The agent's tools.
+
+        Returns:
+            The next response.
+        """
+        seen.append(
+            Request(
+                instructions=info.instructions or "",
+                system=_texts(messages, SystemPromptPart),
+                user=_texts(messages, UserPromptPart),
+                tools=[tool.name for tool in info.function_tools],
+            )
+        )
+        results = code_results(messages)
+        if not results:
+            return run_code(code)
+        if after is not None and len(results) == 1:
+            return run_code(after)
+        hits = results[0] if isinstance(results[0], list) else []
+        chosen = [{"chunk_id": h["chunk_id"], "justification": "It answers it."} for h in hits]
+        followed = results[-1] if after is not None and isinstance(results[-1], list) else []
+        told = [
+            {"chunk_id": h["chunk_id"], "justification": "The note said so."}
+            for h in followed
+            if isinstance(h, dict) and "chunk_id" in h
+        ]
+        return answer(info, [*told, *chosen[:picks]])
+
+    return Billed(FunctionModel(script, model_name="scripted-guided"))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

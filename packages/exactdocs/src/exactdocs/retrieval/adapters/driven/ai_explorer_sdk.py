@@ -46,9 +46,14 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.spend import SpendLimitExceeded
 
+from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import (
+    guidance_capabilities,
+    guidance_workspace,
+)
 from exactdocs.retrieval.adapters.driven.harness_spend import agent_limits
 from exactdocs.retrieval.constants import (
     AGENT_SEARCH_LIMIT,
+    EXPLORER_GUIDANCE,
     EXPLORER_INSTRUCTIONS,
     EXPLORER_TOOLS,
     MAX_AGENT_PICKS,
@@ -497,18 +502,26 @@ async def explore(
         total_tokens_limit=bounds.max_tokens,
         tool_calls_limit=bounds.max_tool_calls,
     )
+    guidance = run.guidance
     agent = Agent(
         _instrumented(model),
         name="exactdocs-explorer",
         deps_type=Reads,
         output_type=_Answer,
-        instructions=EXPLORER_INSTRUCTIONS,
+        instructions=EXPLORER_INSTRUCTIONS + (EXPLORER_GUIDANCE if guidance else ""),
         tools=read_tools(),
-        capabilities=[_code_mode(bounds), limits.spend, _RunEnders()],
+        capabilities=[
+            _code_mode(bounds),
+            limits.spend,
+            _RunEnders(),
+            *(guidance_capabilities(guidance) if guidance else ()),
+        ],
     )
     reads = Reads(browser=browser)
+    # Repo guidance (RET-08): only this version's files, in a read-only workspace of their own.
+    workspace = guidance_workspace(guidance) if guidance else None
     try:
-        result = await agent.run(run.question, deps=reads, usage_limits=usage)
+        result = await agent.run(run.question, deps=reads, usage_limits=usage, workspace=workspace)
     except SpendLimitExceeded as error:  # a UsageLimitExceeded too: checked first
         reason, detail = FallbackReason.LLM_BUDGET_REACHED, "spend limit"
         raise AgentStoppedError(reason.value, detail) from error

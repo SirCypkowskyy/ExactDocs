@@ -62,6 +62,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestInstruction,
     ManifestRename,
     ManifestState,
     ManualTag,
@@ -172,6 +173,18 @@ manifest_renames = Table(
     Column("from_ref", Text, nullable=False),
     Column("new_path", Text, nullable=False),
     Column("similarity", Integer, nullable=False),
+)
+manifest_instructions = Table(
+    "catalog_manifest_instructions",
+    metadata,
+    Column(
+        "manifest_id",
+        Text,
+        ForeignKey("catalog_manifests.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("path", Text, primary_key=True),
+    Column("content", Text, nullable=False),
 )
 manual_tags = Table(
     "catalog_manual_tags",
@@ -576,6 +589,14 @@ class SqliteManifestRepository:
                     ],
                 )
 
+            if manifest.instructions:
+                await connection.execute(
+                    insert(manifest_instructions),
+                    [
+                        {"manifest_id": manifest.id, "path": i.path, "content": i.content}
+                        for i in manifest.instructions
+                    ],
+                )
             if manifest.renames:
                 await connection.execute(
                     insert(manifest_renames),
@@ -1137,6 +1158,31 @@ class SqliteArticleTitles:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteInstructionFiles:
+    """Implements ``ports.driven.InstructionFileReader`` on ``catalog_manifest_instructions``."""
+
+    engine: AsyncEngine
+    """The database."""
+
+    async def list_instructions(self, manifest_id: ManifestId) -> Sequence[ManifestInstruction]:
+        """Return the instruction files kept with the manifest, sorted by path.
+
+        Args:
+            manifest_id: The manifest (any state).
+
+        Returns:
+            Its files; none for an unknown manifest.
+        """
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(
+                select(manifest_instructions.c.path, manifest_instructions.c.content)
+                .where(manifest_instructions.c.manifest_id == manifest_id)
+                .order_by(manifest_instructions.c.path)
+            )
+            return tuple(ManifestInstruction(path=r.path, content=r.content) for r in rows)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on the catalog's SQLite tables."""
 
@@ -1330,7 +1376,12 @@ class SqliteManifestCopier:
                     origin=row.origin,
                 )
             )
-            for table in (manifest_entries, manifest_images, manifest_renames):
+            for table in (
+                manifest_entries,
+                manifest_images,
+                manifest_renames,
+                manifest_instructions,
+            ):
                 columns = [c for c in table.c if c.name != "manifest_id"]
                 await connection.execute(
                     insert(table).from_select(

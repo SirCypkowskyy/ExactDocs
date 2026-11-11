@@ -2270,6 +2270,16 @@ export interface components {
              *     the two applies. None by default.
              */
             readonly budgets?: components["schemas"]["LibraryBudgets"];
+            /**
+             * @description What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the
+             *     default): imports keep none. `notes`: each version imported from now on keeps the root's and
+             *     the selected folders' files, even outside the selected paths, and a folder's file reaches
+             *     the agent as an untrusted user-channel note when it opens that folder. `trusted`: as `notes`,
+             *     and the root's file is also part of the agent's system instructions; only for a repository
+             *     whose content you trust as much as your own instructions.
+             * @default off
+             */
+            readonly repo_guidance: components["schemas"]["RepoGuidance"];
         };
         /**
          * LibraryRetrievalOut
@@ -2337,6 +2347,14 @@ export interface components {
             readonly budgets: components["schemas"]["LibraryBudgets"];
             /** @description The most each of the library's own limits may be (the instance's limits); null: any. */
             readonly budget_ceilings: components["schemas"]["LibraryBudgets"];
+            /**
+             * @description What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by
+             *     no import), `notes` (each version keeps them; a folder's file reaches the agent as a
+             *     user-channel note when it opens the folder) or `trusted` (also the root's file as system
+             *     instructions). Imports from now on keep or drop them: re-import a version to apply it.
+             * @default off
+             */
+            readonly repo_guidance: components["schemas"]["RepoGuidance"];
         };
         /**
          * LibrarySearchResultOut
@@ -3112,6 +3130,15 @@ export interface components {
              */
             readonly similarity: number;
         };
+        /**
+         * RepoGuidance
+         * @description What a library's ``AGENTS.md`` / ``CLAUDE.md`` files do for agentic retrieval (RET-08).
+         *
+         *     The files are repository content, so untrusted: they become system instructions only when
+         *     the owner says the library is trusted.
+         * @enum {string}
+         */
+        readonly RepoGuidance: "off" | "notes" | "trusted";
         /**
          * RepositoryHost
          * @description Where a repository is hosted, by exact host name; ``git`` is any other server.

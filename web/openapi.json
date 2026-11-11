@@ -9194,6 +9194,11 @@
           "budgets": {
             "$ref": "#/components/schemas/LibraryBudgets",
             "description": "The library's own spend limits per UTC day and month. Each may be at most the instance's\n(`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of\nthe two applies. None by default."
+          },
+          "repo_guidance": {
+            "$ref": "#/components/schemas/RepoGuidance",
+            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the\ndefault): imports keep none. `notes`: each version imported from now on keeps the root's and\nthe selected folders' files, even outside the selected paths, and a folder's file reaches\nthe agent as an untrusted user-channel note when it opens that folder. `trusted`: as `notes`,\nand the root's file is also part of the agent's system instructions; only for a repository\nwhose content you trust as much as your own instructions.",
+            "default": "off"
           }
         },
         "additionalProperties": false,
@@ -9327,6 +9332,11 @@
           "budget_ceilings": {
             "$ref": "#/components/schemas/LibraryBudgets",
             "description": "The most each of the library's own limits may be (the instance's limits); null: any."
+          },
+          "repo_guidance": {
+            "$ref": "#/components/schemas/RepoGuidance",
+            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by\nno import), `notes` (each version keeps them; a folder's file reaches the agent as a\nuser-channel note when it opens the folder) or `trusted` (also the root's file as system\ninstructions). Imports from now on keep or drop them: re-import a version to apply it.",
+            "default": "off"
           }
         },
         "additionalProperties": false,
@@ -9346,7 +9356,8 @@
           "rerank_top_n",
           "effective_rerank_top_n",
           "budgets",
-          "budget_ceilings"
+          "budget_ceilings",
+          "repo_guidance"
         ],
         "title": "LibraryRetrievalOut",
         "description": "A library's retrieval setting and the mode its searches use now when a call names none."
@@ -10968,6 +10979,16 @@
         ],
         "title": "RenamedPath",
         "description": "`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."
+      },
+      "RepoGuidance": {
+        "type": "string",
+        "enum": [
+          "off",
+          "notes",
+          "trusted"
+        ],
+        "title": "RepoGuidance",
+        "description": "What a library's ``AGENTS.md`` / ``CLAUDE.md`` files do for agentic retrieval (RET-08).\n\nThe files are repository content, so untrusted: they become system instructions only when\nthe owner says the library is trusted."
       },
       "RepositoryHost": {
         "type": "string",

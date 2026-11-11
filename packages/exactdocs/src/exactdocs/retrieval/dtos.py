@@ -52,6 +52,7 @@ from exactdocs.retrieval.models import (
     ProviderProfile,
     RebuiltIndex,
     Removed,
+    RepoGuidance,
     RetrievalMode,
     RoleSource,
     SearchableVersion,
@@ -945,6 +946,9 @@ class SetLibraryRetrievalCommand(_Dto):
     """How many of its best candidates the reranker reorders; empty: the instance's (32)."""
     budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
     """The library's own spend limits, no higher than the instance's; none by default."""
+    repo_guidance: RepoGuidance = RepoGuidance.OFF
+    """What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off`, `notes`
+    (user-channel notes) or `trusted` (the root's file also becomes system instructions)."""
 
     @field_validator("mode", "llm", "judge", "reranker", mode="before")
     @classmethod
@@ -996,6 +1000,11 @@ class LibraryRetrievalOut(_Dto):
     """The library's own spend limits; the tighter of these and the instance's applies."""
     budget_ceilings: LibraryBudgets = Field(default_factory=LibraryBudgets)
     """The most each of the library's own limits may be (the instance's limits); null: any."""
+    repo_guidance: RepoGuidance = RepoGuidance.OFF
+    """What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by
+    no import), `notes` (each version keeps them; a folder's file reaches the agent as a
+    user-channel note when it opens the folder) or `trusted` (also the root's file as system
+    instructions). Imports from now on keep or drop them: re-import a version to apply it."""
 
 
 class ForgetLibraryCommand(_Dto):

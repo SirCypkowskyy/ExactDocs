@@ -30,6 +30,7 @@ from exactdocs.retrieval.ports.driven import (
     Explorer,
     HypotheticalAnswerCache,
     HypotheticalAnswers,
+    InstructionFiles,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -243,6 +244,7 @@ class RetrievalModule:
         hyde_timeout: float = HYDE_TIMEOUT,
         hyde_cache_key: bytes | None = None,
         hyde_cache_ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS),
+        instruction_files: InstructionFiles | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -271,8 +273,10 @@ class RetrievalModule:
         the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
         caller (without it they are not rate limited).
         Agentic search: with an ``explorer``, ``agentic`` runs ``AgenticPipeline`` within
-        ``agent_bounds``, its agent listing and reading articles through ``version_articles``;
-        an ``agentic`` entry of ``pipelines`` replaces it (tests).
+        ``agent_bounds``, its agent listing and reading articles through ``version_articles``
+        and, for a library with repo guidance on, given the ``AGENTS.md`` / ``CLAUDE.md`` files
+        ``instruction_files`` reads for the searched manifest (RET-08); an ``agentic`` entry of
+        ``pipelines`` replaces it (tests).
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -343,6 +347,7 @@ class RetrievalModule:
                 articles=version_articles,
                 bounds=agent_bounds or AgentBounds(),
                 tracer=tracer,
+                instructions=instruction_files,
             )
         modes = RetrievalModes(
             pipelines={**built, **(pipelines or {})},

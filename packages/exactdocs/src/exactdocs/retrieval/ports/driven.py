@@ -25,6 +25,7 @@ from exactdocs.retrieval.models import (
     HydeKey,
     HypotheticalAnswer,
     IndexedManifest,
+    InstructionFile,
     LibraryAi,
     LlmStep,
     ManifestChunk,
@@ -1248,5 +1249,24 @@ class HypotheticalAnswerCache(Protocol):
 
         Returns:
             How many answers were deleted.
+        """
+        ...
+
+
+class InstructionFiles(Protocol):
+    """The ``AGENTS.md`` / ``CLAUDE.md`` files kept with a manifest (RET-08), by its ID.
+
+    Bootstrap implements it with the catalog, which stores them with the manifest the importer
+    published: only the files of that one manifest, so a run never sees another version's.
+    """
+
+    async def of(self, manifest_id: str) -> Sequence[InstructionFile]:
+        """Read the files kept with the manifest.
+
+        Args:
+            manifest_id: The searched version's manifest.
+
+        Returns:
+            Its files, sorted by path; none when it keeps none.
         """
         ...

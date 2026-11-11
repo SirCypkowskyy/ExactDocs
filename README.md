@@ -590,8 +590,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   read-only there. A stored key is dropped, not reused, when the profile's endpoint changes.
 - **Per library** (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`): AI on or off (off: nothing
   of the library is ever sent to a provider, searches are BM25), its own `llm`, `judge` and
-  `reranker`, its own `rerank_top_n`, and its own spend limits per day and month (`budgets`), no
-  higher than the instance's. The embedding model is instance-wide only. The library's settings
+  `reranker`, its own `rerank_top_n`, its own spend limits per day and month (`budgets`), no
+  higher than the instance's, and its `repo_guidance` (see [Agentic search](#agentic-search)). The embedding model is instance-wide only. The library's settings
   page (*Retrieval and AI*) shows the pipeline its searches run now and edits all of these.
 - **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
   prints the latency, the model that answered and an embedding's dimensions, never a key;
@@ -743,6 +743,26 @@ are logged by kind, never with the question or the error's text. Traces
 show the run as the `agent` stage, with one span per model request and per tool call (the read
 calls nested in `run_code`), never with prompts, answers or tool arguments; `/metrics` shows its
 tokens (`gen_ai.client.token.usage`).
+
+**Repo guidance** (`AGENTS.md` / `CLAUDE.md`, off by default). Many repositories describe how
+their docs are organized in these files; a library can let the agent use them with
+`repo_guidance` in its retrieval settings (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`):
+
+| `repo_guidance` | What imports keep | What the agent gets |
+|---|---|---|
+| `off` (default) | nothing | nothing |
+| `notes` | each version's root `AGENTS.md` / `CLAUDE.md` and those of every folder holding a selected file, also outside the selected paths (at most 32 folders, 32 KiB a file) | a folder's file, once it opens that folder (lists it, or reads an article or a chunk in it), as an untrusted **user-channel** note in a `<context-file>` block, never as system instructions |
+| `trusted` | the same | as `notes`, and the root's file is also part of its **system instructions**: only for a repository you trust as much as your own instructions |
+
+The files are repository content, so untrusted: they reach the agent through harness [Repo
+Context](https://pydantic.dev/docs/ai/harness/repo-context/) over a read-only workspace that holds
+only the searched version's files (read from the database, never a checkout), with every
+`<context>` tag and control character defused and at most 16 files / 24,000 characters per search.
+They cannot add a tool, reach another library or version, or lift a limit: the read tools, the
+pinned version and `[ai.agentic]` are fixed before the run, and every pick is still checked
+against the version. Their text counts toward the run's `max_tokens` and budgets like everything
+else sent to the model, and is never logged or put on a span. A changed setting applies to the
+versions imported from then on: re-import (or re-sync) a version to keep or drop its files.
 
 #### Local models
 

@@ -25,11 +25,13 @@ from exactdocs.catalog.dtos import (
     GetActiveManifestQuery,
     GetArticleQuery,
     GetArticleTitlesQuery,
+    GetInstructionFilesQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
     HostKind,
     ImageIn,
+    InstructionFileIn,
     ListArticlesQuery,
     ListLibrariesQuery,
     ListRenamesQuery,
@@ -81,6 +83,7 @@ from exactdocs.catalog.ports.driving import (
     GetActiveManifest,
     GetArticle,
     GetArticleTitles,
+    GetInstructionFiles,
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
@@ -112,6 +115,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     NewLibrary,
     PathSelection,
     ProposedId,
@@ -138,16 +142,19 @@ from exactdocs.retrieval.dtos import (
     FinishEmbeddingCommand,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
+    GetLibraryRetrievalQuery,
     IndexManifestCommand,
     RemoveChunksCommand,
     RetagArticlesCommand,
     UnembeddedVersionsQuery,
 )
+from exactdocs.retrieval.dtos import RepoGuidance as RetrievalRepoGuidance
 from exactdocs.retrieval.errors import EmbeddingFailedError
 from exactdocs.retrieval.models import (
     ArticleEntry,
     CatalogLibrary,
     DocTarget,
+    InstructionFile,
     ManifestPaths,
     ManifestStatus,
     SearchableVersion,
@@ -161,6 +168,7 @@ from exactdocs.retrieval.ports.driving import (
     FinishEmbedding,
     ForgetLibrary,
     GetChunkSets,
+    GetLibraryRetrieval,
     IndexManifest,
     ListUnembeddedVersions,
     PlanEmbedding,
@@ -916,6 +924,9 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
             ImageIn(path=i.path, blob_sha=i.blob_sha, content_type=i.content_type, data=i.data)  # ty: ignore[invalid-argument-type]
             for i in version.images
         ],
+        instructions=[
+            InstructionFileIn(path=i.path, content=i.content) for i in version.instructions
+        ],
     )
 
 
@@ -1041,3 +1052,51 @@ class CatalogVersionArticles:
         except NotFoundError, ValidationError, PydanticValidationError:
             return None
         return article.content if article.manifest_id == version.manifest_id else None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogInstructionFiles:
+    """Implements ``retrieval.ports.driven.InstructionFiles`` with the catalog (RET-08).
+
+    The catalog keeps them per manifest, so the files are those of the one manifest searched.
+    """
+
+    get_instruction_files: GetInstructionFiles
+    """The catalog's read of a manifest's instruction files."""
+
+    async def of(self, manifest_id: str) -> Sequence[InstructionFile]:
+        """Read the files kept with the manifest.
+
+        Args:
+            manifest_id: The searched version's manifest.
+
+        Returns:
+            Its files, sorted by path.
+        """
+        found = await self.get_instruction_files(GetInstructionFilesQuery(manifest_id=manifest_id))
+        return [InstructionFile(path=f.path, content=f.content) for f in found.files]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RetrievalGuidancePolicy:
+    """Implements ``ingestion.ports.driven.GuidancePolicy`` with retrieval's library settings."""
+
+    get_library_retrieval: GetLibraryRetrieval
+    """Retrieval's settings of a library, its repo guidance among them."""
+
+    async def instruction_policy(self, library: str) -> InstructionPolicy:
+        """Keep the files when the library's repo guidance is on.
+
+        Args:
+            library: ``/owner/repo``, any letter case.
+
+        Returns:
+            ``KEEP`` for ``notes`` and ``trusted``; ``DROP`` for ``off`` and an unknown library.
+        """
+        try:
+            found = await self.get_library_retrieval(GetLibraryRetrievalQuery(library=library))
+        except NotFoundError, ValidationError, PydanticValidationError:
+            return InstructionPolicy.DROP
+        if found.repo_guidance is RetrievalRepoGuidance.OFF:
+            return InstructionPolicy.DROP
+        return InstructionPolicy.KEEP

@@ -50,6 +50,7 @@ from exactdocs.ingestion.ports.driven import (
     CredentialVault,
     GitGateway,
     GitRemote,
+    GuidancePolicy,
     ImportedTagStore,
     JobHandler,
     JobRepository,
@@ -468,6 +469,7 @@ def import_job(
     copier: VersionCopier,
     checkpoints: Checkpoints | None = None,
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
+    guidance: GuidancePolicy | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
@@ -477,7 +479,8 @@ def import_job(
     version serves; ``retag`` re-tags them from what ``imported_tags`` has stored.
     ``stored`` lets an import take the files earlier imports stored instead of parsing them.
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
-    chunked); without it an interrupted import starts over.
+    chunked); without it an interrupted import starts over. ``guidance`` says which libraries
+    keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08); without it none do.
     """
     importer = ImportVersionUseCase(
         gateway=gateway,
@@ -494,6 +497,7 @@ def import_job(
         max_images_bytes=max_images_bytes,
         batch_files=batch_files,
         tag_locks=tag_locks,
+        guidance=guidance,
     )
     if checkpoints is not None:
         importer = replace(importer, checkpoints=checkpoints)

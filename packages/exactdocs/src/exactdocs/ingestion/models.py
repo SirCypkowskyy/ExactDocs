@@ -39,6 +39,7 @@ from exactdocs.ingestion.constants import (
     FLAT_HOSTS,
     GLOB_CHARS,
     HEADS,
+    INSTRUCTION_FILE_NAMES,
     KNOWN_HOSTS,
     MAX_CHECK_ERROR,
     MAX_CHUNK_CHARS,
@@ -46,6 +47,7 @@ from exactdocs.ingestion.constants import (
     MAX_CONTEXT7_RULES,
     MAX_HEADING_LEVEL,
     MAX_IMAGES_PER_ARTICLE,
+    MAX_INSTRUCTION_DIRS,
     MAX_INTERVAL_MINUTES,
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
@@ -1582,6 +1584,53 @@ class ImportedImage:
     data: bytes = field(repr=False)
 
 
+class InstructionPolicy(StrEnum):
+    """Whether a library's imports keep its ``AGENTS.md`` / ``CLAUDE.md`` files (RET-08)."""
+
+    DROP = "drop"
+    """Keep none (repo guidance off, the default)."""
+    KEEP = "keep"
+    """Keep the root's and the selected files' folders' files with each version."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedInstruction:
+    """An instruction file (``AGENTS.md`` / ``CLAUDE.md``) of the commit (RET-08).
+
+    Kept for agentic retrieval when the library's repo guidance is on. Untrusted repository text.
+    """
+
+    path: str
+    """Repository-relative: the root's or a selected file's folder's."""
+    content: str = field(repr=False)
+    """Its decoded text."""
+
+
+def instruction_candidates(paths: Sequence[str]) -> list[str]:
+    """Name the instruction files to look for: the root's and the selected files' folders'.
+
+    Folders go shallowest first (then by name), at most ``MAX_INSTRUCTION_DIRS`` of them, each
+    with every name of ``INSTRUCTION_FILE_NAMES``; a folder named ``.git`` is never one.
+
+    Args:
+        paths: The selected files, repository-relative.
+
+    Returns:
+        The repository paths, in that order.
+    """
+    folders = {""}
+    for path in paths:
+        parts = path.split("/")[:-1]
+        folders.update("/".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+    kept = sorted(
+        (f for f in folders if ".git" not in f.lower().split("/")),
+        key=lambda f: (f.count("/") + bool(f), f),
+    )[:MAX_INSTRUCTION_DIRS]
+    return [
+        f"{folder}/{name}" if folder else name for folder in kept for name in INSTRUCTION_FILE_NAMES
+    ]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GitRename:
     """A file git sees as moved between two commits: ``old_path`` became ``new_path``."""
@@ -1615,6 +1664,8 @@ class ImportedVersion:
     renames: tuple[GitRename, ...] = ()
     origin: VersionOrigin = VersionOrigin.MANUAL
     """Given to the version when this creates it; a version that exists keeps its own."""
+    instructions: tuple[ImportedInstruction, ...] = ()
+    """The commit's instruction files, kept with the manifest (only with repo guidance on)."""
 
 
 def git_blob_sha(data: bytes) -> str:

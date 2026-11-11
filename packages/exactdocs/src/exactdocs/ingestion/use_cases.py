@@ -37,6 +37,7 @@ from exactdocs.ingestion.constants import (
     LIBRARY_KINDS,
     MAX_CONTROL_RATIO,
     MAX_IMAGES,
+    MAX_INSTRUCTION_FILE_BYTES,
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
     MAX_WANTED_IMAGES,
@@ -137,9 +138,11 @@ from exactdocs.ingestion.models import (
     GitRename,
     ImportedArticle,
     ImportedImage,
+    ImportedInstruction,
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     Job,
     JobId,
     JobState,
@@ -164,6 +167,7 @@ from exactdocs.ingestion.models import (
     check_credential_fits,
     compose_renames,
     git_blob_sha,
+    instruction_candidates,
     is_unordered,
     parse_article,
     parse_context7,
@@ -183,6 +187,7 @@ from exactdocs.ingestion.ports.driven import (
     CredentialVault,
     GitGateway,
     GitRemote,
+    GuidancePolicy,
     ImportedTagStore,
     JobHandler,
     JobProgress,
@@ -1641,6 +1646,8 @@ class ImportVersionUseCase:
     """Files parsed and chunked per durable step."""
     tag_locks: LibraryLocks = field(default_factory=TagLocks)
     """Shared with ``TagArticleUseCase``: see there."""
+    guidance: GuidancePolicy | None = None
+    """Says whether the library keeps its instruction files (RET-08); without it none are kept."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -1713,6 +1720,8 @@ class ImportVersionUseCase:
                     renamed_from=renamed_from,
                     renames=renames,
                     origin=job.origin,
+                    # After "detect renames": a step of its own, run before "publish".
+                    instructions=await self._instructions(job, source, credential, paths, progress),
                 ),
             ),
         )
@@ -1916,6 +1925,81 @@ class ImportVersionUseCase:
                 skip.path.encode(errors="replace").decode(), skip.code, skip.reason
             )
         return (*taken.images, *outside.images)
+
+    async def _instructions(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        paths: Sequence[str],
+        progress: JobProgress,
+    ) -> tuple[ImportedInstruction, ...]:
+        """Keep the commit's instruction files when the library's repo guidance is on (a step).
+
+        The root's and every selected file's folder's ``AGENTS.md`` / ``CLAUDE.md``, also
+        outside the selected paths, fetched in a literal-path checkout of their own; the ones
+        left out are listed as problems. Reading the setting is part of the step, so a resumed
+        import keeps what its first run decided.
+
+        Args:
+            job: The import.
+            source: The library's repository and selection.
+            credential: Its credential, if any.
+            paths: The selected files.
+            progress: Where problems are listed.
+
+        Returns:
+            The files kept; none with repo guidance off.
+        """
+        found = await self.checkpoints.step(
+            "fetch the instruction files",
+            lambda: self._fetch_instructions(job, source, credential, paths),
+        )
+        for skip in found.skipped:
+            await progress.problem(skip.path, skip.code, skip.reason)
+        return found.files
+
+    async def _fetch_instructions(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        paths: Sequence[str],
+    ) -> _Instructions:
+        """Fetch and read the instruction files, if the library keeps them; never raises.
+
+        They are a nicety for agentic retrieval: a fetch that fails is logged (by class) and
+        the version is imported without them, never failed.
+
+        Args:
+            job: The import.
+            source: The library's repository and selection.
+            credential: Its credential, if any.
+            paths: The selected files.
+
+        Returns:
+            The files read and the ones turned away.
+        """
+        if self.guidance is None or job.commit_sha is None or job.version is None:
+            return _Instructions()
+        if await self.guidance.instruction_policy(job.library) is not InstructionPolicy.KEEP:
+            return _Instructions()
+        wanted = instruction_candidates(paths)
+        try:
+            async with self.gateway.fetch_files(
+                source.url,
+                job.commit_sha,
+                wanted,
+                max_bytes=len(wanted) * MAX_INSTRUCTION_FILE_BYTES,
+                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
+                credential=credential,
+            ) as folder:
+                return await asyncio.to_thread(_read_instructions, folder, wanted)
+        except DomainError as error:  # expected: unreachable, auth, too large, ...
+            log.warning("no instruction files for %s: %s", job.library, type(error).__name__)
+        except Exception:  # never a reason to fail an import
+            log.exception("no instruction files for %s", job.library)
+        return _Instructions()
 
     async def _outside_images(
         self,
@@ -2292,6 +2376,53 @@ class _ImageBudget:
     images: list[ImportedImage] = field(default_factory=list)
     skipped: list[Skip | _Missing] = field(default_factory=list)
     absent: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Instructions:
+    """What the instruction-file step found: the files kept, the ones turned away."""
+
+    files: tuple[ImportedInstruction, ...] = ()
+    """The files read, in the order looked for."""
+    skipped: tuple[Skip, ...] = ()
+    """The files that exist but cannot be kept, with why."""
+
+
+def _read_instructions(folder: Path, paths: Sequence[str]) -> _Instructions:
+    """Read the instruction files ``folder`` holds; a missing one is not a problem.
+
+    A file that is not a plain file (or lies behind a symlinked folder), is bigger than
+    ``MAX_INSTRUCTION_FILE_BYTES`` or is not text is turned away. The text is decoded as an
+    article's is and kept verbatim: it is untrusted, and retrieval frames it as such.
+
+    Args:
+        folder: The literal-path checkout.
+        paths: The repository paths looked for.
+
+    Returns:
+        What was read and what was turned away.
+    """
+    files: list[ImportedInstruction] = []
+    skipped: list[Skip] = []
+    for path in paths:
+        if _through_a_link(folder, path):
+            skipped.append(
+                Skip(code=ProblemCode.NOT_A_FILE, reason="not a regular file", path=path)
+            )
+            continue
+        try:
+            data = _read(folder / path, MAX_INSTRUCTION_FILE_BYTES)
+        except FileNotFoundError, NotADirectoryError:
+            continue
+        except OSError:
+            skipped.append(Skip(code=ProblemCode.UNREADABLE, reason="unreadable", path=path))
+            continue
+        text = data if isinstance(data, Skip) else _decode(data)
+        if isinstance(text, Skip):
+            skipped.append(replace(text, path=path))
+        else:
+            files.append(ImportedInstruction(path=path, content=text))
+    return _Instructions(files=tuple(files), skipped=tuple(skipped))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
