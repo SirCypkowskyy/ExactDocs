@@ -14,6 +14,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
+import { Route as AppAiRouteImport } from './routes/_app.ai'
 import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
@@ -43,6 +44,11 @@ const AppAccountRoute = AppAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAiRoute = AppAiRouteImport.update({
+  id: '/ai',
+  path: '/ai',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSearchRoute = AppSearchRouteImport.update({
   id: '/search',
   path: '/search',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
+  '/ai': typeof AppAiRoute
   '/search': typeof AppSearchRoute
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
@@ -79,6 +86,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
+  '/ai': typeof AppAiRoute
   '/search': typeof AppSearchRoute
   '/': typeof AppIndexRoute
   '/libraries/new': typeof AppLibrariesNewRoute
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/_app/account': typeof AppAccountRoute
+  '/_app/ai': typeof AppAiRoute
   '/_app/search': typeof AppSearchRoute
   '/_app/': typeof AppIndexRoute
   '/_app/libraries/new': typeof AppLibrariesNewRoute
@@ -104,6 +113,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in'
     | '/account'
+    | '/ai'
     | '/search'
     | '/libraries/new'
     | '/libraries/$owner/$repo'
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in'
     | '/account'
+    | '/ai'
     | '/search'
     | '/'
     | '/libraries/new'
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in'
     | '/_app/account'
+    | '/_app/ai'
     | '/_app/search'
     | '/_app/'
     | '/_app/libraries/new'
@@ -174,6 +186,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/ai': {
+      id: '/_app/ai'
+      path: '/ai'
+      fullPath: '/ai'
+      preLoaderRoute: typeof AppAiRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/search': {
       id: '/_app/search'
       path: '/search'
@@ -207,6 +226,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
+  AppAiRoute: typeof AppAiRoute
   AppSearchRoute: typeof AppSearchRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
@@ -216,6 +236,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountRoute: AppAccountRoute,
+  AppAiRoute: AppAiRoute,
   AppSearchRoute: AppSearchRoute,
   AppIndexRoute: AppIndexRoute,
   AppLibrariesNewRoute: AppLibrariesNewRoute,

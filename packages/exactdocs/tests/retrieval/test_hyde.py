@@ -781,6 +781,61 @@ async def test_a_cache_hit_is_not_counted_against_the_rate_limit() -> None:
     assert limited.fallback_reason is FallbackReason.LLM_RATE_LIMITED
 
 
+async def test_a_librarys_own_tighter_budget_stops_the_llm_step() -> None:
+    world = await _ready(embedding_profile="box")  # no instance budget at all
+    own = BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=10)
+    await world.modes.save(LIB, None, LibraryAi(budgets=(own,)))
+    await world.ledger.add(
+        [
+            SpendEntry(
+                scope_kind="library",
+                scope_id=LIB,
+                window=SpendWindow.DAY,
+                window_start=T0.date(),
+                input_tokens=10,
+            )
+        ]
+    )
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.HYBRID,
+        FallbackReason.LLM_BUDGET_REACHED,
+    )
+    assert world.llm.prompts == []
+
+
+@dataclass(slots=True)
+class RecordingWriter:
+    """A ``HypotheticalAnswers`` that keeps the step it was given."""
+
+    steps: list[LlmStep] = field(default_factory=list)
+
+    async def write(self, model: object, query: str, *, step: LlmStep) -> HypotheticalAnswer:
+        del model, query
+        self.steps.append(step)
+        return HypotheticalAnswer(text=HYPOTHESIS)
+
+
+async def test_the_agent_runs_within_the_librarys_merged_budgets() -> None:
+    instance = BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=1_000_000)
+    own = BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=500)
+    writer = RecordingWriter()
+    world = await _ready(writer=writer, budgets=Budgets(limits=(instance,)))
+    await world.modes.save(LIB, None, LibraryAi(budgets=(own,)))
+
+    await _search(world)
+
+    (step,) = writer.steps
+    library_day = [
+        limit
+        for limit in step.budgets.limits
+        if limit.scope_kind == "library" and limit.window is SpendWindow.DAY
+    ]
+    assert [limit.tokens for limit in library_day] == [500]  # the tighter one
+
+
 async def test_a_budget_refusing_the_request_itself_answers_hybrid() -> None:
     world = await _ready(writer=RefusingWriter())
 

@@ -66,7 +66,7 @@ class StandInAgentic:
         )
 
 
-def _serve(
+def serve_budgets(
     context: Context,
     ai: dict[str, Any],
     *,
@@ -102,7 +102,7 @@ def _serve(
     )
 
 
-def _spent(context: Context, kind: str, scope_id: str, window: SpendWindow, usd: int) -> None:
+def record_spend(context: Context, kind: str, scope_id: str, window: SpendWindow, usd: int) -> None:
     """Record spend as earlier calls would have, in the current window.
 
     Args:
@@ -146,14 +146,14 @@ def step_daily_budget_used_up(context: Context) -> None:
     if getattr(context, "hyde", False):  # hyde.feature: the instance is configured already
         use_up_the_daily_budget(context)
         return
-    _serve(
+    serve_budgets(
         context,
         {"budgets": {"daily_usd": 1}},
         roles=frozenset({ModelRole.LLM}),
         pipelines={RetrievalMode.AGENTIC: StandInAgentic()},
     )
     assert _search(context, "agentic")["retrieval_mode"] == "agentic"  # within budget: LLM step
-    _spent(context, "instance", "", SpendWindow.DAY, ONE_USD)
+    record_spend(context, "instance", "", SpendWindow.DAY, ONE_USD)
 
 
 @when("a search needs an LLM step")
@@ -170,7 +170,7 @@ def step_skipped_for_budget(context: Context, reason: str) -> None:
 
 @given("a caller is limited to {limit:d} LLM searches per minute")
 def step_rate_limited(context: Context, limit: int) -> None:
-    _serve(
+    serve_budgets(
         context,
         {"budgets": {"llm_searches_per_minute": limit}},
         roles=frozenset({ModelRole.LLM}),
@@ -219,12 +219,12 @@ def step_embedding_budget_used_up(context: Context) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     context.endpoint = stack.enter_context(gateway())
-    _serve(
+    serve_budgets(
         context,
         _embedding_ai(context.endpoint),
         pipelines={RetrievalMode.HYBRID: AnswersHybrid()},
     )
-    _spent(context, "embedding", "", SpendWindow.MONTH, ONE_USD)
+    record_spend(context, "embedding", "", SpendWindow.MONTH, ONE_USD)
 
 
 @when("an embed job runs")
@@ -271,7 +271,7 @@ def step_library_budget_used_up(context: Context) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     context.endpoint = stack.enter_context(gateway())
-    _serve(
+    serve_budgets(
         context,
         {
             "providers": {"rr": {"kind": "openai-compatible", "base_url": context.endpoint.v1}},
@@ -283,7 +283,7 @@ def step_library_budget_used_up(context: Context) -> None:
     assert _search(context)["reranked"] is True  # within budget: the endpoint reranked
     context.rerank_calls = _rerank_calls(context)
     assert context.rerank_calls == 1
-    _spent(context, "library", LIBRARY, SpendWindow.DAY, ONE_USD)
+    record_spend(context, "library", LIBRARY, SpendWindow.DAY, ONE_USD)
 
 
 def _rerank_calls(context: Context) -> int:

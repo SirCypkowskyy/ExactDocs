@@ -538,6 +538,21 @@ class InvalidBudgetError(ValidationError):
         super().__init__(f"invalid AI budget: {reason}")
 
 
+class LibraryBudgetAboveInstanceError(ValidationError):
+    """A library's own budget is higher than what the instance allows a library to spend."""
+
+    code = "budget_above_instance"
+
+    def __init__(self, what: str, ceiling: str) -> None:
+        """Say which ceiling the budget goes over.
+
+        Args:
+            what: The budget, e.g. ``daily_usd``.
+            ceiling: The instance's ceiling for it, as text.
+        """
+        super().__init__(f"the library's {what} may be at most the instance's {ceiling}")
+
+
 class RerankerError(DomainError):
     """A reranker call failed: the endpoint answered with an error, or with something unusable.
 

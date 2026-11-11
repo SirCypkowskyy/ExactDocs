@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
+    BudgetLimit,
     CatalogLibrary,
     ChunkId,
     ChunkKey,
@@ -386,6 +387,14 @@ class LibraryModes(Protocol):
 
         Returns:
             Its overrides; the defaults (AI on, nothing overridden) when it has none.
+        """
+        ...
+
+    async def budgets(self) -> Mapping[str, tuple[BudgetLimit, ...]]:
+        """Read the own budgets of every library that has some, in one read.
+
+        Returns:
+            Each such library's budgets, by case-folded library ID.
         """
         ...
 
@@ -778,6 +787,24 @@ class VectorIndex(Protocol):
 
         Returns:
             The counts.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+    async def coverage_many(
+        self, space_id: EmbeddingSpaceId, manifest_ids: Collection[str]
+    ) -> Mapping[str, VectorCoverage]:
+        """Count, for each of these manifests, its chunks and those with a vector, at once.
+
+        Args:
+            space_id: The space.
+            manifest_ids: The versions' manifests.
+
+        Returns:
+            The counts per manifest; one without chunks is left out.
 
         Raises:
             UnknownEmbeddingSpaceError: No space has this ID.
