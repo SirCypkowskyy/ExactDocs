@@ -47,7 +47,10 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.models import (
     AgentBounds,
+    AgentRun,
+    AiCaller,
     ArticleEntry,
+    Budgets,
     DocTarget,
     FallbackReason,
     GuidanceFiles,
@@ -62,11 +65,14 @@ from exactdocs.retrieval.models import (
     RepoGuidance,
     RetrievalMode,
     SearchableVersion,
+    ServedArticle,
+    ServedArticles,
     SourceHost,
     SpendWindow,
     TagFilter,
 )
 from exactdocs.retrieval.module import RetrievalModule
+from exactdocs.retrieval.use_cases import VersionBrowser
 from scripted_explorer import Request, ScriptedModels, guided
 
 LIB = "/acme/payments"
@@ -138,13 +144,19 @@ class Catalog:
 
     async def list(
         self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
-    ) -> Sequence[ArticleEntry]:
+    ) -> ServedArticles | None:
         del tag_filter
         paths = sorted(p for p in self.articles[version.manifest_id] if p.startswith(prefix))
-        return [ArticleEntry(path=p, title=p) for p in paths[:limit]]
+        entries = tuple(ArticleEntry(path=p, title=p) for p in paths[:limit])
+        return ServedArticles(manifest_id=version.manifest_id, articles=entries)
 
-    async def read(self, version: SearchableVersion, path: str) -> str | None:
-        return self.articles[version.manifest_id].get(path)
+    async def read(self, version: SearchableVersion, path: str) -> ServedArticle | None:
+        content = self.articles[version.manifest_id].get(path)
+        return (
+            None
+            if content is None
+            else ServedArticle(manifest_id=version.manifest_id, content=content)
+        )
 
 
 @dataclass(slots=True)
@@ -164,6 +176,9 @@ class World:
     module: RetrievalModule
     files: Files
     ledger: InMemorySpendLedger
+    catalog: Catalog
+    chunks: InMemoryChunkRepository
+    index: InMemorySearchIndex
 
 
 async def _world(
@@ -226,7 +241,9 @@ async def _world(
             )
         )
         catalog.add(ref, manifest)
-    return World(module=module, files=files, ledger=ledger)
+    return World(
+        module=module, files=files, ledger=ledger, catalog=catalog, chunks=chunks, index=index
+    )
 
 
 async def _search(world: World, ref: str = "v2") -> SearchDocsResult:
@@ -390,7 +407,7 @@ async def test_a_hostile_file_cannot_escape_its_block_widen_the_agent_or_reach_a
 
 async def test_a_hostile_file_cannot_lift_the_tool_call_limit() -> None:
     files = Files(kept={"m2": [InstructionFile(path="AGENTS.md", content=HOSTILE)]})
-    greedy = "for i in range(40):\n    await search_docs(query='retry')\n[]"
+    greedy = "for i in range(40):\n    await search_docs(query=f'retry {i}')\n[]"
     world = await _world(
         guided(OPEN_FOLDERS, [], after=greedy),
         bounds=AgentBounds(max_tool_calls=12),
@@ -403,6 +420,57 @@ async def test_a_hostile_file_cannot_lift_the_tool_call_limit() -> None:
         RetrievalMode.BM25,
         FallbackReason.AGENT_LIMIT_REACHED,
     )
+
+
+# ---------------------------------------------------------------- #99's guardrails on a guided run
+
+
+async def test_a_guided_streaming_run_still_stops_on_a_loop() -> None:
+    repeat = "for i in range(5):\n    await search_docs(query='retry')\n[]"
+    world = await _world(guided(OPEN_FOLDERS, [], after=repeat))
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.BM25,
+        FallbackReason.AGENT_LOOP_DETECTED,
+    )
+
+
+async def test_the_output_guardrail_filters_picks_on_a_guided_streaming_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world(guided(OPEN_FOLDERS, []))
+    foreign = await _foreign_chunk()
+    # The note asks for the other version's chunk; the model obeys and answers with it first.
+    obey = f"[await read_chunk(chunk_id={foreign!r})]"
+    seen: list[Request] = []
+    model = guided(OPEN_FOLDERS, seen, after=obey)
+    guidance = GuidanceFiles.of(FILES["m2"], trusted=False)
+    browser = VersionBrowser(
+        version=world.catalog.versions["v2"],
+        chunks=world.chunks,
+        search=world.index,
+        articles=world.catalog,
+    )
+    run = AgentRun(
+        question=QUESTION,
+        limit=10,
+        bounds=AgentBounds(),
+        budgets=Budgets(),
+        caller=AiCaller(library=LIB),
+        guidance=guidance,
+    )
+
+    picks = await PydanticAiExplorer().explore(
+        model, browser, run, ledger=world.ledger, clock=FixedClock()
+    )
+
+    assert _notes(seen)  # the run had its guidance, and so streamed
+    ids = [p.chunk_id for p in picks]
+    assert ids
+    assert foreign not in ids  # dropped by the guardrail itself, before the pipeline sees it
+    assert any("output guardrail" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------- token limits, spans and logs

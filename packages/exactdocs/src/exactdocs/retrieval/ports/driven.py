@@ -7,6 +7,7 @@ from typing import Protocol
 
 from exactdocs.retrieval.models import (
     AgentPick,
+    AgentRead,
     AgentRun,
     ArticleEntry,
     ArticleText,
@@ -46,6 +47,8 @@ from exactdocs.retrieval.models import (
     SearchHit,
     SearchIndexState,
     SectionRef,
+    ServedArticle,
+    ServedArticles,
     SpendEntry,
     SpendKey,
     StoredChunk,
@@ -1039,13 +1042,14 @@ class Prices(Protocol):
 class VersionArticles(Protocol):
     """The articles of one exact version, as the catalog stores them (the agentic explorer reads).
 
-    Both answer from ``version.manifest_id`` only: when the version's active manifest changed
-    meanwhile (a re-sync), they answer nothing rather than another manifest's articles.
+    Each answer names the manifest the catalog served it from, which is the version's active one
+    at that moment: the explorer drops any answer from another manifest than the one searched (a
+    re-sync activated a new one meanwhile), so it never reads another version's articles.
     """
 
     async def list(
         self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
-    ) -> Sequence[ArticleEntry]:
+    ) -> ServedArticles | None:
         """List the version's articles under a folder, by path, that the tag filter keeps.
 
         Args:
@@ -1055,11 +1059,12 @@ class VersionArticles(Protocol):
             tag_filter: The search's tag filter.
 
         Returns:
-            At most ``limit`` articles.
+            At most ``limit`` articles and the manifest they come from; ``None`` when the folder
+            is invalid or the version is gone.
         """
         ...
 
-    async def read(self, version: SearchableVersion, path: str) -> str | None:
+    async def read(self, version: SearchableVersion, path: str) -> ServedArticle | None:
         """Read one article's Markdown, verbatim.
 
         Args:
@@ -1067,17 +1072,20 @@ class VersionArticles(Protocol):
             path: The article's path.
 
         Returns:
-            Its text, or ``None`` when the version has no such article.
+            Its text and the manifest it comes from, or ``None`` when the version has no such
+            article.
         """
         ...
 
 
 class DocsBrowser(Protocol):
-    """The read tools the agentic explorer may call, all bound to the one version searched.
+    """The read tools the agentic explorer may call, all bound to what the caller may see.
 
-    Retrieval implements it (``VersionBrowser``) over the pinned manifest: the model never names
-    a library or a version, so it cannot read another one. Every call is recorded as a step of
-    the explored path.
+    Retrieval implements it (``VersionBrowser``) over the pinned manifest and the search's tag
+    filter: the caller's access scope. It reaches the agent as its ``deps``, never as a tool
+    argument: the model never names a library, a version or a tag, so it cannot widen what it
+    reads. Every call is recorded as a step of the explored path, and as a read of the run's
+    trace (``AgentReads``).
     """
 
     async def list_articles(self, prefix: str = "") -> Sequence[ArticleEntry]:
@@ -1136,6 +1144,34 @@ class DocsBrowser(Protocol):
         """
         ...
 
+    async def admit(self, chunk_ids: Sequence[str]) -> Sequence[str]:
+        """Keep the chunk IDs the caller may be answered with: the agent's output guardrail.
+
+        Args:
+            chunk_ids: The chunk IDs the agent answers with, as the model wrote them.
+
+        Returns:
+            Those the pinned version holds and the tag filter keeps, in order, once each.
+        """
+        ...
+
+
+class AgentReads(Protocol):
+    """The agentic explorer's trace: every read it made, where it was bound and what it served.
+
+    The eval suite records them to check that every agentic run stayed within the version the
+    question asked for (docs/evals.md); with telemetry on, each is an event of the run's span.
+    Nothing is recorded by default.
+    """
+
+    def record(self, read: AgentRead) -> None:
+        """Record one read.
+
+        Args:
+            read: The read; it holds no argument and no text.
+        """
+        ...
+
 
 class Explorer(Protocol):
     """Runs the agentic explorer: an LLM that browses one version and picks the chunks (RET-04).
@@ -1143,7 +1179,9 @@ class Explorer(Protocol):
     The pydantic-ai adapter runs an agent in harness Code Mode, with the browser's read tools
     callable only inside the Monty sandbox of ``run_code``, bounded by ``run.bounds`` and the
     spend budgets (the harness ``SpendLimits`` over ``ledger``). It is instrumented without
-    content. The picks are the model's own: the caller checks them against the version.
+    content. Its output guardrail keeps only the picks ``browser.admit`` admits, and a run that
+    repeats a call (tool and arguments) ``run.bounds.max_repeated_calls`` times ends as a loop.
+    The caller still checks the picks against the version.
     """
 
     async def explore(
@@ -1168,8 +1206,8 @@ class Explorer(Protocol):
             The chunks it answers with, best first, at most ``run.limit``.
 
         Raises:
-            AgentStoppedError: The run ended without an answer: a limit, a budget, or a failure;
-                its ``reason`` is the fallback reason to show.
+            AgentStoppedError: The run ended without an answer: a limit, a budget, a loop or a
+                failure; its ``reason`` is the fallback reason to show.
         """
         ...
 

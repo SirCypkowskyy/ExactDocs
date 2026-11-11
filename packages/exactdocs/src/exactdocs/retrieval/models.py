@@ -27,6 +27,7 @@ from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
     CREDENTIAL_HEADER_SUFFIXES,
     CREDENTIAL_HEADERS,
+    DEFAULT_AGENT_REPEATED_CALLS,
     DEFAULT_AGENT_REQUESTS,
     DEFAULT_AGENT_TIMEOUT,
     DEFAULT_AGENT_TOKENS,
@@ -61,9 +62,11 @@ from exactdocs.retrieval.constants import (
     MAX_REQUEST_TIMEOUT,
     MAX_RETRIES,
     MICROS_PER_USD,
+    MIN_AGENT_REPEATED_CALLS,
     MONTHS_PER_YEAR,
     PROFILE_NAME,
     RATE_LIMIT_BELOW_ONE,
+    REPEATED_CALLS_TOO_LOW,
     REPLAY_RETAIN_DAYS,
     RRF_K,
     SANDBOX_NOT_BELOW_TIMEOUT,
@@ -770,6 +773,9 @@ class FallbackReason(StrEnum):
     AGENT_FAILED = "agent_failed"
     """The agentic explorer could not finish (the model failed, or kept answering something
     unusable): a cheaper mode answered."""
+    AGENT_LOOP_DETECTED = "agent_loop_detected"
+    """The agentic explorer made the same call (tool and arguments) as often as a loop takes
+    (``max_repeated_calls``, 3 by default): the run ended and a cheaper mode answered."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2911,12 +2917,15 @@ class AgentBounds:
     """Seconds the whole run may take before it falls back; a ``run_code`` snippet running then
     is stopped by its own ``sandbox_seconds`` only, so the run can last up to
     ``timeout + sandbox_seconds``. Must be more than ``sandbox_seconds``."""
+    max_repeated_calls: int = DEFAULT_AGENT_REPEATED_CALLS
+    """The same call (tool and arguments, ``run_code`` or a read inside it) made this many times
+    in one run is a loop: the run ends (``agent_loop_detected``). At least 2."""
 
     def __post_init__(self) -> None:
-        """Refuse a limit that is not positive.
+        """Refuse a limit that is not positive, or a loop threshold of one call.
 
         Raises:
-            InvalidAgentBoundsError: One is zero or less.
+            InvalidAgentBoundsError: One is zero or less, or ``max_repeated_calls`` is 1.
         """
         for name in (
             "max_tool_calls",
@@ -2930,6 +2939,8 @@ class AgentBounds:
             if getattr(self, name) <= 0:
                 problem = f"{name} must be positive"
                 raise InvalidAgentBoundsError(problem)
+        if self.max_repeated_calls < MIN_AGENT_REPEATED_CALLS:
+            raise InvalidAgentBoundsError(REPEATED_CALLS_TOO_LOW)
         if self.sandbox_seconds >= self.timeout:
             # A run can last its timeout plus the snippet running then: a snippet is stopped by
             # Monty's own limit only, never by the run's timeout.
@@ -2944,6 +2955,51 @@ class ArticleEntry:
     """The article's path in the version."""
     title: str
     """Its title, untrusted repository text."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ServedArticles:
+    """A page of a version's article list, and the manifest the catalog served it from."""
+
+    manifest_id: str
+    """The manifest the list was read from (the version's active one when it was read)."""
+    articles: tuple[ArticleEntry, ...]
+    """The articles."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ServedArticle:
+    """An article's Markdown, and the manifest the catalog served it from."""
+
+    manifest_id: str
+    """The manifest it was read from (the version's active one when it was read)."""
+    content: str
+    """Its Markdown, verbatim."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentRead:
+    """One read of the agentic explorer, as its trace records it (#99).
+
+    It says where the read was bound and where what it served came from; never its arguments or
+    the text read. The eval suite checks every read of every agentic run against the version the
+    question asked for (docs/evals.md); with telemetry on, each read is also an event of the
+    run's trace.
+    """
+
+    search: str
+    """The search the agent ran for (``search_docs``, ``query_docs``)."""
+    tool: str
+    """The read function (``read_chunk``, ``search_docs``...)."""
+    pinned_version: str
+    """``<library>/<ref>`` the read was bound to: the version searched."""
+    pinned_manifest: str
+    """The manifest the read was bound to."""
+    served_versions: tuple[str, ...] = ()
+    """``<library>/<ref>`` of each version what the read returned to the agent came from, once
+    each; empty when it returned nothing."""
+    served_manifests: tuple[str, ...] = ()
+    """Each manifest what it returned came from, once each."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

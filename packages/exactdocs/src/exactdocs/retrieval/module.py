@@ -21,6 +21,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    AgentReads,
     ArticleSuggestions,
     ArticleTitles,
     CallRates,
@@ -134,6 +135,7 @@ from exactdocs.retrieval.use_cases import (
     SearchAllLibrariesUseCase,
     SearchDocsUseCase,
     SetLibraryRetrievalUseCase,
+    UnrecordedAgentReads,
     UntracedSearches,
 )
 from exactdocs_kernel import Clock, SystemClock
@@ -239,6 +241,7 @@ class RetrievalModule:
         explorer: Explorer | None = None,
         version_articles: VersionArticles | None = None,
         agent_bounds: AgentBounds | None = None,
+        agent_reads: AgentReads | None = None,
         hypotheses: HypotheticalAnswers | None = None,
         hypothesis_cache: HypotheticalAnswerCache | None = None,
         hyde_timeout: float = HYDE_TIMEOUT,
@@ -273,8 +276,9 @@ class RetrievalModule:
         the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
         caller (without it they are not rate limited).
         Agentic search: with an ``explorer``, ``agentic`` runs ``AgenticPipeline`` within
-        ``agent_bounds``, its agent listing and reading articles through ``version_articles``
-        and, for a library with repo guidance on, given the ``AGENTS.md`` / ``CLAUDE.md`` files
+        ``agent_bounds``, its agent listing and reading articles through ``version_articles``,
+        each read recorded in ``agent_reads`` (the runs' trace; none by default), and, for a
+        library with repo guidance on, given the ``AGENTS.md`` / ``CLAUDE.md`` files
         ``instruction_files`` reads for the searched manifest (RET-08); an ``agentic`` entry of
         ``pipelines`` replaces it (tests).
         """
@@ -348,6 +352,7 @@ class RetrievalModule:
                 bounds=agent_bounds or AgentBounds(),
                 tracer=tracer,
                 instructions=instruction_files,
+                reads=agent_reads or UnrecordedAgentReads(),
             )
         modes = RetrievalModes(
             pipelines={**built, **(pipelines or {})},

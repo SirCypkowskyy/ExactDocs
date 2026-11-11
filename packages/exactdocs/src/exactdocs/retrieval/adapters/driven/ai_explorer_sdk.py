@@ -13,6 +13,14 @@ Code Mode would hand back to the model as a retry ends it too (``_RunEnders``). 
 fails on the host: its error is recorded by class and the sandbox sees only ``READ_FAILED``, so no
 SQL, DSN or path reaches the model, a result or a span.
 
+Guardrails (#99). The harness 0.60.0 has no loop detection, so ``_RunEnders`` is ours: the same
+call (tool name and a hash of its arguments, ``run_code`` or a read inside it) made
+``max_repeated_calls`` times (3 by default) ends the run (``agent_loop_detected``); a read call
+that repeats, and every read after it, sees only ``REPEATED_CALL``. The harness
+``OutputGuardrail`` checks the answer: a pick the browser does not ``admit`` (another version's,
+one the tag filter excludes, a made-up ID) is removed before the answer leaves the agent, and
+only the count is logged.
+
 Telemetry: the model is instrumented with ``include_content=False`` (the factory's, or ours when
 it is not), so the agent run, each model request and each tool call get a span without prompts,
 answers or tool arguments; the read tools' spans nest inside ``run_code``'s. Token usage goes to
@@ -20,6 +28,9 @@ the global meter (``gen_ai.client.token.usage``).
 """
 
 import asyncio
+import hashlib
+import json
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TypedDict
@@ -44,6 +55,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.code_mode import CodeMode
+from pydantic_ai_harness.guardrails import GuardrailResult, OutputGuardrail
 from pydantic_ai_harness.spend import SpendLimitExceeded
 
 from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import (
@@ -60,6 +72,7 @@ from exactdocs.retrieval.constants import (
     EXPLORER_TRUSTED_GUIDANCE,
     MAX_AGENT_PICKS,
     READ_FAILED,
+    REPEATED_CALL,
     RUN_CODE,
     SANDBOX_LIMIT_MARKERS,
 )
@@ -74,6 +87,8 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import DocsBrowser, SpendLedger
 from exactdocs_kernel import Clock
+
+logger = logging.getLogger(__name__)
 
 
 class ArticleItem(TypedDict):
@@ -152,12 +167,24 @@ class SearchHitItem(TypedDict):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Reads:
-    """The agent's ``deps``: the browser of the version searched, and its failed reads."""
+    """The agent's ``deps``: the caller's scope (the browser) and what the run has done so far.
+
+    The browser is bound to the version searched and the search's tag filter; being the deps, it
+    never appears in a tool's arguments, so the model cannot name another scope.
+    """
 
     browser: DocsBrowser
-    """The read tools, bound to the version searched."""
+    """The read tools, bound to the version searched and the caller's tag filter."""
+    max_repeated_calls: int
+    """The same call made this many times is a loop: the run ends."""
     failures: list[str] = field(default_factory=list)
     """The class of each exception a read raised; any ends the run (``agent_failed``)."""
+    calls: dict[str, int] = field(default_factory=dict)
+    """How often each call (tool name and argument hash) was made."""
+    loops: list[str] = field(default_factory=list)
+    """The tool of each call that looped; any ends the run (``agent_loop_detected``)."""
+    rejected: list[int] = field(default_factory=list)
+    """How many picks of each answer the output guardrail rejected."""
 
 
 class _ReadFailedError(RuntimeError):
@@ -168,8 +195,43 @@ class _ReadFailedError(RuntimeError):
         super().__init__(READ_FAILED)
 
 
+class _RepeatedCallError(RuntimeError):
+    """What the sandbox sees for a read call that loops, and for every read after it."""
+
+    def __init__(self) -> None:
+        """Say the call repeated, and nothing else."""
+        super().__init__(REPEATED_CALL)
+
+
 class _HostFailureError(Exception):
     """A read failed on the host (the database, the catalog): the run ends."""
+
+
+class _LoopDetectedError(Exception):
+    """The agent made the same call ``max_repeated_calls`` times: the run ends."""
+
+
+async def _attempt[T](
+    ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awaitable[T]]
+) -> tuple[T] | None:
+    """Run one read on the browser; a host error is recorded by class only.
+
+    Args:
+        ctx: The run.
+        read: The read, given the browser.
+
+    Returns:
+        What the read returned (in a 1-tuple), or ``None`` when it raised an ``Exception``.
+    """
+    # Gathered rather than caught, so an error raised after it has no chained host error
+    # (a span's stack trace would quote it).
+    (outcome,) = await asyncio.gather(read(ctx.deps.browser), return_exceptions=True)
+    if isinstance(outcome, Exception):
+        ctx.deps.failures.append(type(outcome).__name__)
+        return None
+    if isinstance(outcome, BaseException):  # cancellation and the like pass through
+        raise outcome
+    return (outcome,)
 
 
 async def _guarded[T](ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awaitable[T]]) -> T:
@@ -188,15 +250,9 @@ async def _guarded[T](ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awai
     Raises:
         _ReadFailedError: The read raised anything.
     """
-    # Gathered rather than caught, so the fixed error is raised with no chained host error
-    # (a span's stack trace would quote it).
-    (outcome,) = await asyncio.gather(read(ctx.deps.browser), return_exceptions=True)
-    if isinstance(outcome, Exception):
-        ctx.deps.failures.append(type(outcome).__name__)
+    if (got := await _attempt(ctx, read)) is None:
         raise _ReadFailedError
-    if isinstance(outcome, BaseException):  # cancellation and the like pass through
-        raise outcome
-    return outcome
+    return got[0]
 
 
 async def list_articles(ctx: RunContext[Reads], prefix: str = "") -> list[ArticleItem]:
@@ -381,11 +437,46 @@ def _tripped(error: BaseException) -> bool:
     return False
 
 
-class _RunEnders(AbstractCapability[Reads]):
-    """Ends the run on a tripped Monty limit or a failed read, instead of a model retry.
+def _call_key(call: ToolCallPart, args: ValidatedToolArgs) -> str:
+    """Name a call by its tool and a hash of its arguments, so equal calls get equal keys.
 
-    Both are checked when a ``run_code`` call ends; a failed read ends the run even when the
-    snippet caught its error.
+    Args:
+        call: The tool call.
+        args: Its validated arguments.
+
+    Returns:
+        ``<tool>:<sha256 of the arguments as sorted JSON>``.
+    """
+    canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=repr)
+    return f"{call.tool_name}:{hashlib.sha256(canonical.encode()).hexdigest()}"
+
+
+def _looping(ctx: RunContext[Reads], call: ToolCallPart, args: ValidatedToolArgs) -> bool:
+    """Count a call; say whether the run is looping (this call or one before it repeated).
+
+    Args:
+        ctx: The run.
+        call: The tool call.
+        args: Its validated arguments.
+
+    Returns:
+        True once any call was made ``max_repeated_calls`` times.
+    """
+    key = _call_key(call, args)
+    made = ctx.deps.calls[key] = ctx.deps.calls.get(key, 0) + 1
+    if made >= ctx.deps.max_repeated_calls:
+        ctx.deps.loops.append(call.tool_name)
+    return bool(ctx.deps.loops)
+
+
+class _RunEnders(AbstractCapability[Reads]):
+    """Ends the run on a loop, a tripped Monty limit or a failed read, instead of a model retry.
+
+    A loop is checked at every call: the same tool with the same arguments (by hash) for the
+    ``max_repeated_calls``-th time. A ``run_code`` call that loops ends the run before it runs; a
+    read call that loops, and every read after it, raises ``REPEATED_CALL`` into the sandbox, and
+    the run ends when the snippet returns. Failed reads and Monty limits are checked when a
+    ``run_code`` call ends; a failed read ends the run even when the snippet caught its error.
     """
 
     async def wrap_tool_execute(
@@ -410,23 +501,72 @@ class _RunEnders(AbstractCapability[Reads]):
             What the tool returned.
 
         Raises:
-            _HostFailureError: A read of the snippet failed on the host.
+            _LoopDetectedError: This ``run_code`` call looped (``_end_if_stopped`` ends the run
+                for a failed or looping read of the snippet).
+            _RepeatedCallError: This read call looped, or one before it did (to the sandbox).
             _SandboxLimitError: The snippet tripped a resource limit.
         """
-        del tool_def
+        if tool_def.kind != "function":  # the answer (output tool) is the output guardrail's
+            return await handler(args)
+        if _looping(ctx, call, args):
+            if call.tool_name == RUN_CODE:
+                raise _LoopDetectedError
+            raise _RepeatedCallError
         if call.tool_name != RUN_CODE:
             return await handler(args)
         try:
             result = await handler(args)
         except ToolRetryError as error:
-            if ctx.deps.failures:
-                raise _HostFailureError from None
+            _end_if_stopped(ctx)
             if _tripped(error):
                 raise _SandboxLimitError from error
             raise
-        if ctx.deps.failures:
-            raise _HostFailureError
+        _end_if_stopped(ctx)
         return result
+
+
+def _end_if_stopped(ctx: RunContext[Reads]) -> None:
+    """End the run once a ``run_code`` call is over, if a read failed or looped meanwhile.
+
+    Args:
+        ctx: The run.
+
+    Raises:
+        _HostFailureError: A read of the snippet failed on the host.
+        _LoopDetectedError: A read of the snippet looped.
+    """
+    if ctx.deps.failures:
+        raise _HostFailureError from None
+    if ctx.deps.loops:
+        raise _LoopDetectedError from None
+
+
+async def _admitted_only(ctx: RunContext[Reads], output: object) -> GuardrailResult:
+    """The output guardrail: keep only the picks the caller may be answered with.
+
+    Args:
+        ctx: The run; its ``deps`` holds the browser, bound to the caller's scope.
+        output: The agent's answer (an ``_Answer``).
+
+    Returns:
+        ``allow`` when every pick is admitted; else ``replace`` with the admitted ones only;
+        ``block`` for anything but an answer (the run then fails: ``agent_failed``).
+
+    Raises:
+        _HostFailureError: The check failed on the host.
+    """
+    if not isinstance(output, _Answer):
+        return GuardrailResult.block()
+    picks = output.picks
+    got = await _attempt(ctx, lambda browser: browser.admit([p.chunk_id for p in picks]))
+    if got is None:
+        raise _HostFailureError
+    admitted = set(got[0])
+    kept = [p for p in picks if p.chunk_id in admitted]
+    if len(kept) == len(picks):
+        return GuardrailResult.allow()
+    ctx.deps.rejected.append(len(picks) - len(kept))
+    return GuardrailResult.replace(_Answer(picks=kept))
 
 
 def _instrumented(model: object) -> InstrumentedModel:
@@ -505,11 +645,12 @@ async def explore(
         clock: Decides the spend windows.
 
     Returns:
-        At most ``run.limit`` picks, best first, as the model wrote them.
+        At most ``run.limit`` picks, best first, as the model wrote them, less those the output
+        guardrail rejected.
 
     Raises:
-        AgentStoppedError: A budget (``llm_budget_reached``), a limit (``agent_limit_reached``)
-            or a failure (``agent_failed``) ended the run.
+        AgentStoppedError: A budget (``llm_budget_reached``), a limit (``agent_limit_reached``),
+            a loop (``agent_loop_detected``) or a failure (``agent_failed``) ended the run.
     """
     limits = agent_limits(
         ledger=ledger, budgets=run.budgets, caller=run.caller, clock=clock.now, price=run.price
@@ -536,9 +677,10 @@ async def explore(
             limits.spend,
             _RunEnders(),
             *(guidance_capabilities(guidance) if guidance else ()),
+            OutputGuardrail[Reads](guard=_admitted_only),
         ],
     )
-    reads = Reads(browser=browser)
+    reads = Reads(browser=browser, max_repeated_calls=bounds.max_repeated_calls)
     # Repo guidance (RET-08): only this version's files, in a read-only workspace of their own.
     workspace = guidance_workspace(guidance) if guidance else None
     try:
@@ -552,11 +694,20 @@ async def explore(
     except _HostFailureError as error:
         reason, detail = FallbackReason.AGENT_FAILED, ",".join(dict.fromkeys(reads.failures))
         raise AgentStoppedError(reason.value, detail) from error
+    except _LoopDetectedError as error:
+        reason, detail = FallbackReason.AGENT_LOOP_DETECTED, ",".join(dict.fromkeys(reads.loops))
+        raise AgentStoppedError(reason.value, detail) from error
     except _SandboxLimitError as error:
         reason, detail = FallbackReason.AGENT_LIMIT_REACHED, "sandbox limit"
         raise AgentStoppedError(reason.value, detail) from error
     except (UnexpectedModelBehavior, AgentRunError) as error:
         reason, detail = FallbackReason.AGENT_FAILED, type(error).__name__
         raise AgentStoppedError(reason.value, detail) from error
+    if reads.rejected:  # the count only: a chunk ID or a path is not logged
+        logger.warning(
+            "the output guardrail rejected %d pick(s) outside the version searched or the "
+            "caller's tags",
+            sum(reads.rejected),
+        )
     picks = result.output.picks[: run.limit]
     return [AgentPick(chunk_id=p.chunk_id, justification=p.justification) for p in picks]

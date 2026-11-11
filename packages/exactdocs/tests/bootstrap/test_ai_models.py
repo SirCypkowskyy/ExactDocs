@@ -912,3 +912,20 @@ def test_the_agentic_limits_reach_the_agent(monkeypatch: pytest.MonkeyPatch) -> 
     agentic = Settings().ai.agentic
 
     assert (agentic.max_tool_calls, agentic.sandbox_seconds, agentic.timeout) == (7, 2.0, 120.0)
+
+
+def test_the_loop_threshold_is_3_by_default_and_set_by_the_operator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings().ai.agentic.max_repeated_calls == 3
+
+    monkeypatch.setenv("EXACTDOCS_AI__AGENTIC__MAX_REPEATED_CALLS", "5")
+
+    assert Settings().ai.agentic.max_repeated_calls == 5
+
+
+def test_one_call_is_never_a_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__AGENTIC__MAX_REPEATED_CALLS", "1")
+
+    with pytest.raises(ValidationError, match="max_repeated_calls"):
+        Settings()

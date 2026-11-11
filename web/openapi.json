@@ -8429,7 +8429,8 @@
           "reranker_timeout",
           "reranker_failed",
           "agent_limit_reached",
-          "agent_failed"
+          "agent_failed",
+          "agent_loop_detected"
         ],
         "title": "FallbackReason",
         "description": "Why a search was answered by a cheaper mode than the one it would have used."

@@ -21,7 +21,8 @@ from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.memory import HashEmbeddingModels
 from exactdocs.retrieval.errors import ProviderUnsupportedError
 from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile, RetrievalMode
-from exactdocs.retrieval.ports.driven import Reranker
+from exactdocs.retrieval.ports.driven import AgentReads, Reranker
+from retrieval_eval.fixture import ContainerBuilder
 
 PROFILE = "offline"
 """The provider profile of the stand-in model."""
@@ -137,11 +138,12 @@ def offline_ai(mode: RetrievalMode | None = RetrievalMode.HYBRID) -> AiSettings:
     )
 
 
-def offline_container(settings: Settings) -> Container:
+def offline_container(settings: Settings, *, agent_reads: AgentReads | None = None) -> Container:
     """Build the app's container with the stand-in embedding model.
 
     Args:
         settings: The instance's settings; its ``ai`` section is replaced.
+        agent_reads: Records the agentic explorer's reads (none run here).
 
     Returns:
         The container: hybrid can run, and nothing can call a provider.
@@ -150,22 +152,24 @@ def offline_container(settings: Settings) -> Container:
         settings.model_copy(update={"ai": offline_ai()}),
         model_factory=MarkerFactory(),
         embedding_models=HashEmbeddingModels(size=DIMENSIONS, by_terms=True),
+        agent_reads=agent_reads,
     )
 
 
-def offline_data_container(data_dir: Path) -> Container:
+def offline_data_container(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
     """Build the stand-in's container on a data directory (the eval suite's ``build``).
 
     Args:
         data_dir: The data directory.
+        agent_reads: Records the agentic explorer's reads (none run here).
 
     Returns:
         The container.
     """
-    return offline_container(Settings(data_dir=data_dir))
+    return offline_container(Settings(data_dir=data_dir), agent_reads=agent_reads)
 
 
-def offline_hyde_container(chat: Callable[[], object]) -> Callable[[Path], Container]:
+def offline_hyde_container(chat: Callable[[], object]) -> ContainerBuilder:
     """Build the stand-in's container with an ``llm`` role too (the eval suite's ``build``).
 
     Args:
@@ -175,11 +179,12 @@ def offline_hyde_container(chat: Callable[[], object]) -> Callable[[Path], Conta
         The build function: hybrid and hybrid_hyde can run, and nothing can call a provider.
     """
 
-    def build(data_dir: Path) -> Container:
+    def build(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
         """Build the container on a data directory.
 
         Args:
             data_dir: The data directory.
+            agent_reads: Records the agentic explorer's reads (none run here).
 
         Returns:
             The container.
@@ -198,6 +203,7 @@ def offline_hyde_container(chat: Callable[[], object]) -> Callable[[Path], Conta
             Settings(data_dir=data_dir, ai=ai),
             model_factory=MarkerFactory(chat=chat),
             embedding_models=HashEmbeddingModels(size=DIMENSIONS, by_terms=True),
+            agent_reads=agent_reads,
         )
 
     return build

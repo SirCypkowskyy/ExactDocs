@@ -70,6 +70,7 @@ from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.telemetry import agent_reads as telemetry_agent_reads
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
@@ -153,6 +154,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
 )
 from exactdocs.retrieval.ports.driven import (
+    AgentReads,
     EmbeddingModels,
     HypotheticalAnswerCache,
     ModelFactory,
@@ -441,6 +443,7 @@ def _build_read_side(
     embedding_models: EmbeddingModels | None = None,
     read_only: bool = False,
     clock: Clock | None = None,
+    agent_reads: AgentReads | None = None,
 ) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -459,6 +462,8 @@ def _build_read_side(
         read_only: The database is opened read-only (``serve --stdio``): spend is read from it
             and kept in memory.
         clock: Decides the spend windows (tests); the system clock by default.
+        agent_reads: Records the agentic explorer's reads (the eval suite's trace check); by
+            default span events when telemetry is on, else nothing.
 
     Returns:
         The two modules (``StartupError`` when the AI configuration is invalid), and on
@@ -536,6 +541,7 @@ def _build_read_side(
             list_articles=catalog.list_articles, get_article=catalog.get_article
         ),
         agent_bounds=AgentBounds(**settings.ai.agentic.model_dump()),
+        agent_reads=agent_reads or telemetry_agent_reads(settings),
         hypotheses=PydanticAiHypotheticalAnswers(ledger=spend),
         hypothesis_cache=hypotheses,
         hyde_cache_key=hyde_key,
@@ -764,6 +770,7 @@ class Container:
         model_factory: ModelFactory | None = None,
         embedding_models: EmbeddingModels | None = None,
         clock: Clock | None = None,
+        agent_reads: AgentReads | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -777,7 +784,8 @@ class Container:
         ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
         extension (tests: one that cannot load); ``model_factory`` and ``embedding_models``
         replace pydantic-ai (tests and the eval suite: an in-process embedding model);
-        ``clock`` decides retrieval's spend windows (tests). An invalid AI configuration (or one
+        ``clock`` decides retrieval's spend windows (tests); ``agent_reads`` records the
+        agentic explorer's reads (the eval suite's trace check). An invalid AI configuration (or one
         this installation cannot call) is a ``StartupError``. A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
@@ -806,6 +814,7 @@ class Container:
             model_factory=model_factory,
             embedding_models=embedding_models,
             clock=clock,
+            agent_reads=agent_reads,
         )
         index = RetrievalChunkIndex(
             index_manifest=read.retrieval.index_manifest,

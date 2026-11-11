@@ -19,6 +19,10 @@ classifiers = [
 # an install without it, or with it and nothing configured, stays a BM25 server (RUN-02). Exact
 # pins: the harness 0.60.0 requires pydantic-ai-slim 2.60.0. The harness is taken without its
 # `[codemode]` extra (that extra pulls a DuckDuckGo search client); Monty is listed directly.
+# On a harness bump, re-check: the agentic loop detection (#99) relies on Code Mode sending the
+# nested read calls through the parent's `root_capability` (`ToolManager.handle_call`), so our
+# `wrap_tool_execute` sees them; `test_the_repeated_read_and_every_read_after_it_never_run` fails
+# if it stops doing so.
 ai = [
     "pydantic-ai-slim[openai,anthropic,google]==2.60.0",
     "pydantic-ai-harness==0.60.0",

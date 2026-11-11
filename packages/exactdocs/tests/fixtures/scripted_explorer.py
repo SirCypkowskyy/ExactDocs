@@ -160,6 +160,8 @@ def browsing(*, picks: int = 3, extra: Sequence[str] = ()) -> FunctionModel:
 def greedy(calls: int) -> FunctionModel:
     """An agent that searches ``calls`` times in one snippet: past any small tool-call limit.
 
+    Each search asks for other words, so it is never taken for a loop.
+
     Args:
         calls: How many searches it asks for.
 
@@ -179,17 +181,67 @@ def greedy(calls: int) -> FunctionModel:
         """
         if code_results(messages):
             return answer(info, [])
-        return run_code(f"for i in range({calls}):\n    await search_docs(query='retry')\n'done'")
+        snippet = (
+            f"for i in range({calls}):\n    await search_docs(query='retry ' + str(i))\n'done'"
+        )
+        return run_code(snippet)
 
     return FunctionModel(script, model_name="scripted-greedy")
 
 
-def sandbox_hog(code: str, requests: list[int] | None = None) -> FunctionModel:
+LOOP_IN_ONE_SNIPPET = """\
+hits = []
+for i in range({times}):
+    hits = await search_docs(query='retry', limit=5)
+hits
+"""
+"""What ``looping``'s agent runs in one snippet: the same search ``times`` times."""
+LOOP_SNIPPET = "await search_docs(query='retry', limit=5)"
+"""What ``looping``'s agent runs again and again, one snippet per request."""
+
+
+def looping(times: int, *, in_one_snippet: bool = True) -> FunctionModel:
+    """An agent stuck in a loop: it makes the same call with the same arguments ``times`` times.
+
+    Args:
+        times: How many times it repeats the call.
+        in_one_snippet: Repeat the read call inside one ``run_code`` snippet; else send the same
+            ``run_code`` snippet once per model request.
+
+    Returns:
+        The model; once done it answers with the first hit it got.
+    """
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Repeat the call, then answer.
+
+        Args:
+            messages: The run so far.
+            info: The agent's tools.
+
+        Returns:
+            The next response.
+        """
+        results = code_results(messages)
+        if in_one_snippet and not results:
+            return run_code(LOOP_IN_ONE_SNIPPET.format(times=times))
+        if not in_one_snippet and len(results) < times:
+            return run_code(LOOP_SNIPPET)
+        hits = next((r for r in results if isinstance(r, list) and r), [])
+        return answer(info, [{"chunk_id": h["chunk_id"], "justification": "It."} for h in hits[:1]])
+
+    return FunctionModel(script, model_name="scripted-loop")
+
+
+def sandbox_hog(
+    code: str, requests: list[int] | None = None, *, vary: bool = False
+) -> FunctionModel:
     """An agent whose every snippet is ``code`` (one that trips a Monty limit).
 
     Args:
         code: The snippet.
         requests: Gets a 1 appended for every model request, when given.
+        vary: Make each snippet differ (a comment numbers it), so running it again is no loop.
 
     Returns:
         The model.
@@ -205,10 +257,10 @@ def sandbox_hog(code: str, requests: list[int] | None = None) -> FunctionModel:
         Returns:
             The next response.
         """
-        del messages, info
+        del info
         if requests is not None:
             requests.append(1)
-        return run_code(code)
+        return run_code(f"{code}  # request {len(messages)}" if vary else code)
 
     return FunctionModel(script, model_name="scripted-hog")
 
