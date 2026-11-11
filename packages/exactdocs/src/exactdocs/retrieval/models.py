@@ -1237,11 +1237,29 @@ def _sent_candidate(text: str) -> str:
     return _escaped(text[:MAX_JUDGE_DOCUMENT_CHARS])
 
 
+def judge_tokens(sent: str) -> int:
+    """Estimate, on the high side, the tokens a piece of the judge's prompt takes.
+
+    ASCII characters count at ``CHARS_PER_TOKEN`` per token, every other character (CJK, Cyrillic,
+    emoji, accents) as a whole token: real tokenizers give CJK about 1 token per character, so
+    4 characters per token would undercount it fourfold. ASCII code with many escaped entities
+    runs at about 1.7 characters per token, which ``JUDGE_INPUT_TOKEN_BUDGET``'s headroom covers.
+
+    Args:
+        sent: The text as sent (cut and escaped).
+
+    Returns:
+        The estimated tokens.
+    """
+    ascii_chars = sum(1 for c in sent if c.isascii())
+    return -(-ascii_chars // CHARS_PER_TOKEN) + (len(sent) - ascii_chars)
+
+
 def judge_window(query: str, candidates: Sequence[JudgedCandidate]) -> int:
     """Say how many of the best candidates one judge call may rate.
 
     The estimate counts what is sent (the instructions, the query and each candidate as cut and
-    escaped) at ``CHARS_PER_TOKEN`` per token, plus the delimiters' overhead. The best candidates
+    escaped) with ``judge_tokens``, plus the delimiters' overhead. The best candidates
     are taken in order while they fit ``JUDGE_INPUT_TOKEN_BUDGET``, at most
     ``JUDGE_MAX_CANDIDATES``; the rest keep their order after the judged ones. So a call never
     reaches the step's ``LLM_TOKEN_LIMIT``, which the harness would only notice once the request
@@ -1255,15 +1273,13 @@ def judge_window(query: str, candidates: Sequence[JudgedCandidate]) -> int:
         How many of the first candidates to send; 0 when not even the first fits.
     """
     used = (
-        -(-(len(JUDGE_INSTRUCTIONS) + len(_sent_text(query))) // CHARS_PER_TOKEN)
+        judge_tokens(JUDGE_INSTRUCTIONS)
+        + judge_tokens(_sent_text(query))
         + JUDGE_PROMPT_OVERHEAD_TOKENS
     )
     fits = 0
     for candidate in candidates[:JUDGE_MAX_CANDIDATES]:
-        used += (
-            -(-len(_sent_candidate(candidate.text)) // CHARS_PER_TOKEN)
-            + JUDGE_CANDIDATE_OVERHEAD_TOKENS
-        )
+        used += judge_tokens(_sent_candidate(candidate.text)) + JUDGE_CANDIDATE_OVERHEAD_TOKENS
         if used > JUDGE_INPUT_TOKEN_BUDGET:
             break
         fits += 1

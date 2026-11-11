@@ -720,9 +720,11 @@ settings or the UI; unset, the instance's choice applies. When both a cross-enco
 are configured, the cross-encoder (cheaper) reranks unless the judge is chosen; a library that
 chooses the judge without one configured is reranked by the cross-encoder, if there is one. The
 judge gets the best of the same top N as the cross-encoder that fit one bounded call: at most 64,
-and at most about 24,000 input tokens estimated at 4 characters per token (well under the
-60,000 tokens one LLM step may use, so a call is never stopped after it was paid for). With 2000
-characters per candidate that is about 46; the candidates beyond them keep the mode's order
+and at most about 22,000 input tokens, estimated at 4 characters per token for ASCII text and a
+token per character for any other (CJK, Cyrillic...), on the high side of what tokenizers count.
+That keeps the call under the 60,000 tokens one LLM step may use, even for code full of escaped
+`<`, `>` and `&`, so a call is never stopped after it was paid for. With 2000 characters per
+candidate that is about 42 English or 10 CJK candidates; the candidates beyond them keep the mode's order
 after the judged ones, and `coverage.reranked` counts only the judged. It gets the query and each
 candidate's chunk text (cut to 2000 characters), named by position (`c1`, `c2`...), never by
 chunk ID, and never a library name, a version or a user; the prompt and the instructions mark

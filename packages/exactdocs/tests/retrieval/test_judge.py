@@ -9,6 +9,7 @@ is asked for, an ID it was not given, a score out of bounds, an error or a hang.
 import asyncio
 import json
 import logging
+import math
 import re
 from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -94,6 +95,7 @@ from exactdocs.retrieval.models import (
     judge_id,
     judge_max_tokens,
     judge_prompt,
+    judge_tokens,
     judge_window,
     judged_scores,
     pick_reranker,
@@ -910,3 +912,67 @@ async def test_cancelling_a_search_while_the_judge_rates_propagates() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert task.cancelled()
+
+
+# ---------------------------------------------------------------- non-ASCII and escaped text
+
+
+CJK = "重试策略决定失败的调用再次运行的频率和退避时间。" * 100
+"""Text a tokenizer counts at about one token per character."""
+ESCAPED_CODE = "if (a << 2) > b && c < d: x = f<T>(y) >> 1 & mask\n" * 60
+"""Code whose escaped entities a tokenizer counts at about 1.7 characters per token."""
+
+
+def _real_tokens(text: str) -> int:
+    """A pessimistic stand-in tokenizer: non-ASCII 1 token a character, ASCII 1.7 characters."""
+    ascii_chars = sum(1 for c in text if c.isascii())
+    return math.ceil(ascii_chars / 1.7) + len(text) - ascii_chars
+
+
+def _sent_prompt(text: str) -> tuple[int, int]:
+    """The window for 200 candidates of ``text``, and the stand-in's count of what is sent."""
+    candidates = [JudgedCandidate(chunk_id=ChunkId(f"{i:032x}"), text=text) for i in range(200)]
+    window = judge_window(QUERY, candidates)
+    sent = JUDGE_INSTRUCTIONS + judge_prompt(QUERY, candidates[:window])
+    return window, _real_tokens(sent)
+
+
+def test_each_non_ascii_character_counts_as_at_least_one_token() -> None:
+    text = CJK[:MAX_JUDGE_DOCUMENT_CHARS]
+
+    window, _ = _sent_prompt(CJK)
+
+    assert judge_tokens(text) >= len(text)
+    assert window > 0
+    assert window * MAX_JUDGE_DOCUMENT_CHARS <= JUDGE_INPUT_TOKEN_BUDGET
+
+
+@pytest.mark.parametrize("text", [CJK, ESCAPED_CODE], ids=["cjk", "escaped-code"])
+def test_a_top_n_of_200_stays_under_the_step_limit_whatever_the_script(text: str) -> None:
+    window, tokens = _sent_prompt(text)
+
+    assert window > 0
+    assert tokens + judge_max_tokens(window) < LLM_TOKEN_LIMIT
+
+
+def test_the_budget_covers_the_densest_ascii_with_the_largest_output_cap() -> None:
+    worst_input = math.ceil(JUDGE_INPUT_TOKEN_BUDGET * CHARS_PER_TOKEN / 1.7)
+
+    assert worst_input + judge_max_tokens(JUDGE_MAX_CANDIDATES) < LLM_TOKEN_LIMIT
+
+
+async def test_a_cjk_library_is_judged_in_one_call_within_the_step_limit() -> None:
+    sections = [f"retry {'retry ' * (200 - i)}{CJK}" for i in range(200)]
+    world = await _world(
+        rerank_with=RerankWith.JUDGE, limits=RerankLimits(top_n=200), sections=sections
+    )
+
+    result = await _search(world, limit=5)
+
+    assert (result.reranked, result.fallback_reason) == (True, None)
+    ((request, *_),) = world.judge.calls
+    assert isinstance(request, ModelRequest)
+    prompt = next(str(p.content) for p in request.parts if isinstance(p, UserPromptPart))
+    window = len(CANDIDATE.findall(prompt))
+    assert window == result.coverage.reranked < 200
+    assert _real_tokens(JUDGE_INSTRUCTIONS + prompt) + judge_max_tokens(window) < LLM_TOKEN_LIMIT

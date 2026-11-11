@@ -1131,9 +1131,11 @@ the library's `rerank_with`, else the instance's (`EXACTDOCS_AI__RERANK_WITH`, `
 by default); the judge reranks only when chosen and its role resolves (`judge`, else `llm`),
 else the cross-encoder does when there is one (`ModeChoice.reranker`). `Reranking` then hands the
 best of the same candidates that fit one bounded call (`models.judge_window`: at most
-`JUDGE_MAX_CANDIDATES`, 64, while the input estimated at `CHARS_PER_TOKEN` per token, the text as
-cut and escaped, stays within `JUDGE_INPUT_TOKEN_BUDGET`, 24,000, under half the step's
-`LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
+`JUDGE_MAX_CANDIDATES`, 64, while the input, the text as cut and escaped and estimated by
+`models.judge_tokens` (ASCII at `CHARS_PER_TOKEN` per token, every other character as a token,
+since CJK runs at about one token per character), stays within `JUDGE_INPUT_TOKEN_BUDGET`,
+22,000, whose headroom covers ASCII code with escaped entities at about 1.7 characters per token
+together with the largest output cap under the step's `LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
 sent, paid for and then refused) to the `CandidateJudge` driven port under `asyncio.timeout`
 (`[ai.judge] timeout`, 10 s), with an `LlmStep` whose budgets are
 `AiSpend.budgets_for(library_ai)`. The candidates beyond the window keep their order after the

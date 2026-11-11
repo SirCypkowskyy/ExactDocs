@@ -684,12 +684,14 @@ end."""
 JUDGE_MAX_CANDIDATES: Final[int] = 64
 """Most candidates one judge call rates, whatever the top N: the best ones; the rest keep their
 order after them."""
-JUDGE_INPUT_TOKEN_BUDGET: Final[int] = 24_000
-"""Most input tokens one judge call may be estimated at (``CHARS_PER_TOKEN`` per token, plus
+JUDGE_INPUT_TOKEN_BUDGET: Final[int] = 22_000
+"""Most input tokens one judge call may be estimated at (``models.judge_tokens``, plus
 ``JUDGE_CANDIDATE_OVERHEAD_TOKENS`` per candidate): the best candidates that fit are judged, the
-rest keep their order after them. Less than half of ``LLM_TOKEN_LIMIT``, so a tokenizer that
-counts code at 2 or 3 characters per token still stays inside it with the output cap, and the
-harness never stops a call it has already paid for."""
+rest keep their order after them. Non-ASCII text is estimated at a token per character, at or
+above what tokenizers give it; ASCII text at 4 characters per token, which entity-heavy code
+undercuts at about 1.7. The budget leaves room for that: 22,000 times 4 / 1.7 is about 51,800
+tokens, which with the largest output cap stays under ``LLM_TOKEN_LIMIT``, so the harness never
+stops a call it has already paid for."""
 JUDGE_CANDIDATE_OVERHEAD_TOKENS: Final[int] = 16
 """Estimated input tokens of one candidate's delimiters and ID, beyond its text."""
 JUDGE_PROMPT_OVERHEAD_TOKENS: Final[int] = 64
