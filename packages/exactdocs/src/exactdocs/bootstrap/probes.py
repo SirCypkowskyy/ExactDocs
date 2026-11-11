@@ -4,10 +4,18 @@
 most ``LIVENESS_DATABASE_SECONDS`` for its details (schema, search index and engine). ``/readyz``
 answers 200 only when the database file exists, answers, and is at this build's schema revision.
 Neither connects to a missing database file: SQLite would create an empty one.
+
+Each probe asks the database in a task of its own and waits for it no longer than its budget
+(#298). Cancelling the check instead would not work: SQLAlchemy then closes the connection by
+waiting, shielded from the cancellation, for the driver, which first finishes the statement. A
+check the probe stopped waiting for runs to its end, and the next probe waits for it rather than
+starting another: however often it is called, each probe holds at most one connection.
 """
 
 import asyncio
-from dataclasses import dataclass
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field
+from functools import partial
 from http import HTTPStatus
 from typing import Literal, Self
 
@@ -27,6 +35,7 @@ from exactdocs.bootstrap.constants import (
     PROBE_PATHS,
     READINESS_PATH,
     READINESS_TIMEOUT_SECONDS,
+    READINESS_UNREACHABLE,
     UNTRUSTED_HOST,
 )
 from exactdocs.bootstrap.container import Container
@@ -94,6 +103,12 @@ def build_probe_router(container: Container) -> APIRouter:
     router = APIRouter(tags=["system"])
     head = schema_head()
     methods = sorted(PROBE_METHODS)
+    details = _OneCheckAtATime(
+        check=partial(_database_details, container), budget=LIVENESS_DATABASE_SECONDS
+    )
+    readiness_check = _OneCheckAtATime(
+        check=partial(_not_ready_because, container, head), budget=READINESS_TIMEOUT_SECONDS
+    )
 
     @router.api_route(LIVENESS_PATH, methods=methods)
     @router.api_route(HEALTH_ALIAS_PATH, methods=methods)
@@ -109,7 +124,10 @@ def build_probe_router(container: Container) -> APIRouter:
         """
         if getattr(request.state, UNTRUSTED_HOST, False):
             return Alive(status="ok")
-        return await _health(container)
+        try:
+            return await details()
+        except TimeoutError:
+            return _unknown()
 
     @router.api_route(READINESS_PATH, methods=methods, responses={503: {"model": Readiness}})
     async def readiness(response: Response) -> Readiness:
@@ -121,7 +139,10 @@ def build_probe_router(container: Container) -> APIRouter:
         Returns:
             Whether the instance is ready, and why not.
         """
-        reason = await _not_ready_because(container, head)
+        try:
+            reason = await readiness_check()
+        except TimeoutError:
+            reason = READINESS_UNREACHABLE
         if reason is None:
             return Readiness(status="ready")
         response.status_code = HTTPStatus.SERVICE_UNAVAILABLE
@@ -130,16 +151,13 @@ def build_probe_router(container: Container) -> APIRouter:
     return router
 
 
-async def _health(container: Container) -> Health:
-    """Liveness with the database's details, if it gives them within the liveness budget.
-
-    Args:
-        container: The instance to describe.
+def _unknown() -> Health:
+    """Liveness when the database gave no details in time, or none at all.
 
     Returns:
-        The liveness payload.
+        The payload with the database fields null.
     """
-    unknown = Health(
+    return Health(
         status="ok",
         version=__version__,
         database_reachable=False,
@@ -148,16 +166,75 @@ async def _health(container: Container) -> Health:
         reindex_required=None,
         search_engine=None,
     )
+
+
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- the check in flight
+class _OneCheckAtATime[T]:
+    """Runs a database check in a task of its own, one at a time, and waits for it a budget long.
+
+    A check still running when the budget is up is left to finish on its own: a later call waits
+    for that same check instead of starting a new one, so a stuck database never holds more
+    than one connection for it.
+    """
+
+    check: Callable[[], Coroutine[object, object, T]]
+    """The check; it answers for every error it expects, so the task only fails on a bug."""
+    budget: float
+    """Seconds a call waits for the check."""
+    pending: asyncio.Task[T] | None = field(default=None, init=False)
+    """The check in flight, if any: the reference that keeps its task alive until it is done."""
+
+    async def __call__(self) -> T:
+        """Wait for the check in flight, or a new one, at most ``budget`` seconds.
+
+        Returns:
+            What the check found.
+
+        Raises:
+            TimeoutError: The check did not finish within the budget (it goes on running).
+        """
+        task = self.pending
+        if task is not None and task.get_loop() is not asyncio.get_running_loop():
+            task = None  # left behind by an event loop that is gone: it will never finish here
+        if task is None:
+            task = asyncio.create_task(self.check())
+            task.add_done_callback(self._finished)
+            self.pending = task
+        await asyncio.wait({task}, timeout=self.budget)
+        if not task.done() or task.cancelled():
+            raise TimeoutError
+        return task.result()
+
+    def _finished(self, task: asyncio.Task[T]) -> None:
+        """Let the next call start a new check, and take the task's error so none goes unseen.
+
+        Args:
+            task: The check that just finished.
+        """
+        if self.pending is task:
+            self.pending = None
+        if not task.cancelled():
+            task.exception()  # a probe that was waiting raised it; nobody else needs it
+
+
+async def _database_details(container: Container) -> Health:
+    """Liveness with what the database says about its schema, search index and vector store.
+
+    Args:
+        container: The instance to describe.
+
+    Returns:
+        The liveness payload, unknown details when the database cannot be asked.
+    """
     try:
-        async with asyncio.timeout(LIVENESS_DATABASE_SECONDS):
-            # A thread: even a stat must not hold up the event loop liveness stands for.
-            if await asyncio.to_thread(database_file_missing, container.engine):
-                return unknown
-            revision = await current_revision(container.engine)
-            index = await container.retrieval.get_search_index_state()
-            vectors = await container.retrieval.get_vector_store_state()
-    except SQLAlchemyError, OSError, TimeoutError:
-        return unknown
+        # A thread: even a stat must not hold up the event loop liveness stands for.
+        if await asyncio.to_thread(database_file_missing, container.engine):
+            return _unknown()
+        revision = await current_revision(container.engine)
+        index = await container.retrieval.get_search_index_state()
+        vectors = await container.retrieval.get_vector_store_state()
+    except SQLAlchemyError, OSError:
+        return _unknown()
     return Health(
         status="ok",
         version=__version__,
@@ -181,12 +258,11 @@ async def _not_ready_because(container: Container, head: str | None) -> str | No
         A fixed sentence (no paths or error text: the probe needs no sign-in), or ``None``.
     """
     try:
-        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
-            if await asyncio.to_thread(database_file_missing, container.engine):
-                return "the database file is missing"
-            revision = await current_revision(container.engine)
-    except SQLAlchemyError, OSError, TimeoutError:
-        return "the database is unreachable"
+        if await asyncio.to_thread(database_file_missing, container.engine):
+            return "the database file is missing"
+        revision = await current_revision(container.engine)
+    except SQLAlchemyError, OSError:
+        return READINESS_UNREACHABLE
     if revision != head:
         return "the database is not at this version's schema"
     return None

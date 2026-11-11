@@ -215,6 +215,8 @@ PROBE_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD"})
 """Methods the probes answer; only these skip the Host check, and only on ``PROBE_PATHS``."""
 READINESS_TIMEOUT_SECONDS: Final[float] = 2.0
 """How long readiness waits for the database before it reports it unreachable."""
+READINESS_UNREACHABLE: Final[str] = "the database is unreachable"
+"""Readiness' reason when the database does not answer, or not within its budget."""
 LIVENESS_DATABASE_SECONDS: Final[float] = 0.3
 """How long liveness waits for the database's details: it must answer fast whatever the database
 does (Kubernetes' default probe timeout is 1 s), so after this it answers without them.

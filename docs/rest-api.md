@@ -507,7 +507,8 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   `false` and the database fields are `null`. A request whose `Host` the instance does not trust gets only
   `{"status": "ok"}`. `GET /readyz` (readiness) answers 200 `{"status": "ready"}` when the
   database file exists, answers within 2 s and is at this version's schema revision, else 503
-  `{"status": "not_ready", "reason": ...}` with a fixed sentence. Only exact `GET`/`HEAD`
+  `{"status": "not_ready", "reason": ...}` with a fixed sentence. Both keep their budget while a
+  database statement is still running. Only exact `GET`/`HEAD`
   requests on these paths skip the `Host` check (README *Health checks*).
 
 ## Job problems

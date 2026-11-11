@@ -1261,6 +1261,9 @@ Docker, Kubernetes or a load balancer:
 `/api/health` is an alias of `/healthz`, kept for existing clients. Neither probe creates a
 missing database file (an existing empty one gets SQLite's header and WAL files on connect). To
 wait for a starting instance, poll `/readyz`: liveness answers before the database does.
+A probe stops waiting for the database when its budget is up, even while a statement still
+runs; that check ends in the background, and later probes wait for it instead of starting
+another: however often they are called, a stuck database holds at most one connection for each.
 
 The probes answer whatever the `Host` header says, so a Kubernetes `httpGet` probe (which sends
 the pod IP) needs no extra header. Only exact `GET`/`HEAD` requests on these three paths skip the
