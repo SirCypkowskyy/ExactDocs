@@ -19,6 +19,7 @@ from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
     DEFAULT_AGENT_CACHE_THRESHOLD,
     DEFAULT_AGENT_CACHE_TTL_DAYS,
+    DEFAULT_BM25_CACHE_THRESHOLD,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     FOOTER_CHARS,
@@ -216,6 +217,7 @@ from exactdocs.retrieval.models import (
     VectorCoverage,
     article_chunk_rows,
     bind_role,
+    caller_audience,
     current_space,
     embedding_spend,
     embedding_text,
@@ -1989,7 +1991,8 @@ class PruneHypothesesUseCase:
     configured (neither the instance's nor any library's override, or its profile is gone).
     Also the agentic answer cache's (``answers``): those older than ``answers_ttl``, of an
     ``llm`` model no longer configured, or compared in another space than the configured
-    embedding model's (``caching.similarity_space``).
+    embedding model's (``caching.similarity_space``); every one while the cache is off
+    (``caching`` is ``None``: ``enabled = false``, or no secret key).
     """
 
     hypotheses: HypotheticalAnswerCache
@@ -2001,7 +2004,9 @@ class PruneHypothesesUseCase:
     ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS)
     """How long a cached hypothetical answer is kept (``[ai.hyde] cache_ttl``)."""
     caching: AgentAnswerCaching | None = None
-    """The agentic answer cache; ``None``: there is none to prune."""
+    """Looks up and stores agentic answers; ``None``: the cache is off."""
+    answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
+    """The agentic answers stored, pruned whether the cache is on or off."""
     answers_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS)
     """How long a cached agentic answer is kept (``[ai.agentic_cache] ttl``)."""
 
@@ -2016,12 +2021,13 @@ class PruneHypothesesUseCase:
         deleted = await self.hypotheses.prune(now - self.ttl, kept)
         if deleted:
             logger.info("pruned %d cached hypothetical answers", deleted)
-        answers = 0
-        if self.caching is not None:
+        if self.caching is None:  # off: none of its answers is kept
+            answers = await self.answers.prune(now, (), "")
+        else:
             space = await self.caching.similarity_space()
-            answers = await self.caching.cache.prune(now - self.answers_ttl, kept, space)
-            if answers:
-                logger.info("pruned %d cached agentic answers", answers)
+            answers = await self.answers.prune(now - self.answers_ttl, kept, space)
+        if answers:
+            logger.info("pruned %d cached agentic answers", answers)
         return PrunedHypothesesOut(deleted=deleted, agentic_answers=answers)
 
 
@@ -3947,8 +3953,15 @@ class AgentAnswerCaching:
     """Stamps the answers; the TTL counts from it."""
     runs: EmbeddingRuns | None = None
     """The instance's embedding model, which embeds the question; ``None``: lexical only."""
-    threshold: float = DEFAULT_AGENT_CACHE_THRESHOLD
-    """How similar (0 to 1) a question must be to a cached one to reuse its answer."""
+    enabled: bool | None = None
+    """``True``: on in every space; ``None``: on only with an embedding model (words alone are
+    weaker evidence). Off (``enabled = false``) builds no caching at all."""
+    threshold: float | None = None
+    """How similar (0 to 1) a question must be to a cached one to reuse its answer; ``None``:
+    ``DEFAULT_AGENT_CACHE_THRESHOLD`` with an embedding model, else
+    ``DEFAULT_BM25_CACHE_THRESHOLD``."""
+    audience: str = "library"
+    """Who shares answers: ``library`` (every caller of the version) or ``caller``."""
     timeout: float = QUERY_EMBEDDING_TIMEOUT
     """Seconds to wait for the question's embedding before comparing words only."""
 
@@ -3979,9 +3992,16 @@ class AgentAnswerCaching:
         model: ModelRef,
         bounds: AgentBounds,
         caller: str | None,
+        own: Sequence[BudgetLimit] = (),
         held: Callable[[Sequence[CachedPick]], Awaitable[Sequence[ChunkId]]],
-    ) -> AgentCacheLookup:
+    ) -> AgentCacheLookup | None:
         """Find the most similar cached question of the search's scope, if similar enough.
+
+        The scope is read first: with no answer in it that could serve, nothing is embedded
+        (``store`` embeds the question if the agent answers). Words are compared next; only
+        when they find no hit is the question embedded, after the budgets the embedding counts
+        to are checked (the instance's, the library's and the caller's, the same ones the LLM
+        step is checked against).
 
         Args:
             version: The version searched.
@@ -3992,39 +4012,101 @@ class AgentAnswerCaching:
             model: The ``llm`` role's model.
             bounds: The agent's limits.
             caller: The account searching (a paid question embedding counts to it).
+            own: The library's own budgets, as the search read them.
             held: Says which of an answer's picks the pinned version holds under the filter.
 
         Returns:
-            The lookup: the hit, if any, and what a miss is stored under.
+            The lookup: the hit, if any, and what a miss is stored under; ``None`` when the
+            cache is off for this search (``enabled`` unset and no embedding model).
         """
         configured = await self._configured()
-        similarity = BM25_SIMILARITY if configured is None else configured.target.identity
+        if configured is None and self.enabled is not True:
+            return None  # words alone: only when the operator turned the cache on
+        threshold = self._threshold(configured)
         scope = AgentCacheScope.of(
             version=version,
             model=model,
             tag_filter=tag_filter,
             bounds=bounds,
-            similarity=similarity,
+            similarity=BM25_SIMILARITY if configured is None else configured.target.identity,
+            audience=self._audience(caller),
         )
-        vector = None
-        if configured is not None:
-            vector = await self._embedded(version, query, configured, caller)
-        question = CachedQuestion.of(query, key=self.key, vector=vector)
-        miss = AgentCacheLookup(scope=scope, question=question)
+        question = CachedQuestion.of(query, key=self.key)
+        miss = AgentCacheLookup(
+            scope=scope, question=question, query=query, caller=caller, own=tuple(own)
+        )
         try:
             entries = await self._cache_call(self.cache.scoped(scope))
         except AgentCacheError:  # never a failed search: the agent answers
             return miss
+        eligible = [e for e in entries if e.limit >= limit]
+        found = await self._best(question, eligible, threshold, held) if eligible else None
+        if found is None and eligible and configured is not None:
+            vector = await self._embedded(version, query, configured, caller, own)
+            miss = replace(miss, embedded=True)
+            if vector is not None:
+                question = replace(question, vector=vector)
+                miss = replace(miss, question=question)
+                found = await self._best(question, eligible, threshold, held)
+        if found is None:
+            return miss  # with no answer that could serve, nothing was embedded
+        return replace(miss, hit=found[1], similarity=found[0])
+
+    def _threshold(self, configured: _Configured | None) -> float:
+        """Say how similar a question must be in this space.
+
+        Args:
+            configured: The embedding role, if any.
+
+        Returns:
+            The operator's threshold, else the default of the space.
+        """
+        if self.threshold is not None:
+            return self.threshold
+        if configured is None:
+            return DEFAULT_BM25_CACHE_THRESHOLD
+        return DEFAULT_AGENT_CACHE_THRESHOLD
+
+    def _audience(self, caller: str | None) -> str:
+        """Name who shares the answers of a search: everyone, or the caller alone.
+
+        Args:
+            caller: The account searching; ``None`` for a stdio MCP process.
+
+        Returns:
+            Empty with ``scope = "library"``; with ``"caller"``, an HMAC of the caller (never
+            the account name itself).
+        """
+        return caller_audience(caller, key=self.key) if self.audience == "caller" else ""
+
+    @staticmethod
+    async def _best(
+        question: CachedQuestion,
+        entries: Sequence[CachedAgentAnswer],
+        threshold: float,
+        held: Callable[[Sequence[CachedPick]], Awaitable[Sequence[ChunkId]]],
+    ) -> tuple[float, CachedAgentAnswer] | None:
+        """Find the most similar answer at or above the threshold whose picks are still there.
+
+        Args:
+            question: The search's question.
+            entries: The answers that could serve.
+            threshold: How similar it must be.
+            held: Says which of an answer's picks the pinned version holds under the filter.
+
+        Returns:
+            Its similarity and the answer, or ``None``.
+        """
         ranked = sorted(
-            ((question.similarity(e.question), e) for e in entries if e.limit >= limit),
+            ((question.similarity(e.question), e) for e in entries),
             key=lambda pair: -pair[0],  # stable: the newest of equally similar ones first
         )
         for score, entry in ranked:
-            if score < self.threshold:
+            if score < threshold:
                 break
             if await held(entry.picks):
-                return replace(miss, hit=entry, similarity=score)
-        return miss
+                return score, entry
+        return None
 
     async def _embedded(
         self,
@@ -4032,17 +4114,20 @@ class AgentAnswerCaching:
         query: str,
         configured: _Configured,
         caller: str | None,
+        own: Sequence[BudgetLimit] = (),
     ) -> tuple[float, ...] | None:
         """Embed the question with the instance's embedding model, as a query.
 
-        A paid model is checked against the budgets first and its use recorded, as a hybrid
-        search's query embedding is.
+        A paid model is checked against the budgets first (the embedding budget, and the
+        instance's, the library's and the caller's, as the LLM step is) and its use recorded,
+        as a hybrid search's query embedding is.
 
         Args:
             version: The version searched (its library's budgets apply).
             query: The query text.
             configured: The embedding role.
             caller: The account searching.
+            own: The library's own budgets.
 
         Returns:
             The embedding, or ``None`` when a budget refuses it, the model fails or it does not
@@ -4054,7 +4139,7 @@ class AgentAnswerCaching:
         scopes = tuple(dict.fromkeys([*who.embedding_scopes(), *who.scopes()]))
         spend = self.runs.spend
         paid = configured.target.profile_kind not in FREE_PROFILE_KINDS
-        if spend is not None and paid and await spend.reached(scopes) is not None:
+        if spend is not None and paid and await spend.reached(scopes, own) is not None:
             return None
         try:
             async with asyncio.timeout(self.timeout):
@@ -4073,6 +4158,7 @@ class AgentAnswerCaching:
 
     async def store(
         self,
+        version: SearchableVersion,
         lookup: AgentCacheLookup,
         picks: Sequence[CachedPick],
         *,
@@ -4082,16 +4168,31 @@ class AgentAnswerCaching:
     ) -> None:
         """Keep an agent's answer for similar questions; a cache that fails keeps nothing.
 
+        A question the lookup did not embed (its scope held nothing to compare with) is
+        embedded now, so later questions can be compared with it by meaning.
+
         Args:
+            version: The version searched (its library's budgets apply to the embedding).
             lookup: The search's lookup (its scope and question).
             picks: The picks the pinned version held, best first.
             limit: How many chunks the agent was asked for.
             candidates: How many chunks it looked at.
             complete: False when it picked more than ``limit``.
         """
+        question = lookup.question
+        configured = await self._configured()
+        if (
+            not lookup.embedded
+            and configured is not None
+            and configured.target.identity == lookup.scope.similarity
+        ):
+            vector = await self._embedded(
+                version, lookup.query, configured, lookup.caller, lookup.own
+            )
+            question = replace(question, vector=vector)
         answer = CachedAgentAnswer(
             scope=lookup.scope,
-            question=lookup.question,
+            question=question,
             picks=tuple(picks),
             limit=limit,
             candidates=candidates,
@@ -4235,6 +4336,7 @@ class AgenticPipeline:
             model=found[0],
             bounds=self.bounds,
             caller=caller,
+            own=ai.budgets,
             held=lambda picks: self._held(version, tag_filter, picks),
         )
 
@@ -4277,8 +4379,9 @@ class AgenticPipeline:
             if answer.hits:
                 self.tracer.cache_hit(cache=AGENTIC_ANSWER_CACHE, mode=RetrievalMode.AGENTIC.value)
                 return answer
-            # Every pick went since the lookup (a re-sync or a retag): the agent answers. The
-            # budgets were not checked for it, as for a search between two budget checks.
+            # Every pick went since the lookup (a re-sync or a retag): the agent answers. Its
+            # spend budgets still apply inside the run (SpendLimits); only the LLM search rate
+            # limit did not count it.
         library = request.version.library
         browser = VersionBrowser(
             version=request.version,
@@ -4296,6 +4399,7 @@ class AgenticPipeline:
         if lookup is not None and self.cache is not None and answer.hits:
             kept = {h.chunk_id for h in answer.hits}
             await self.cache.store(
+                request.version,
                 lookup,
                 [p for p in explained if p.chunk_id in kept],
                 limit=request.limit,

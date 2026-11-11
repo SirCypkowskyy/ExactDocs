@@ -441,7 +441,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` (30 days) | How long a HyDE hypothetical answer stays cached (seconds or an ISO 8601 duration). Once a day (just after UTC midnight, and at start; one process on PostgreSQL), and after every collection, the server deletes older answers and those of an `llm` model no longer configured; answers are also deleted when their version's manifest is collected |
-| `EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`, `__THRESHOLD`, `__TTL` | `true`, `0.8`, `P7D` | The agentic answer cache (see [Agentic search](#agentic-search)): a question at least `THRESHOLD` similar (0 to 1; `1` reuses only the same question) to one answered agentically before for the same version, tag filter and `llm` model is answered from that answer (`cache_hit: true`). Answers older than `TTL` are deleted by the nightly upkeep |
+| `EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`, `__THRESHOLD`, `__SCOPE`, `__TTL` | unset, unset, `library`, `P7D` | The agentic answer cache (see [Agentic search](#agentic-search)): a question at least `THRESHOLD` similar (0 to 1; `1` reuses only the same question) to one answered agentically before for the same version, tag filter and `llm` model is answered from that answer (`cache_hit: true`). `ENABLED` unset: on only when an embedding model is configured; `true`: on with words alone too; `false`: off, and the nightly upkeep deletes every cached answer. `THRESHOLD` unset: `0.8` with an embedding model, `0.9` with words alone. `SCOPE`: `library` (callers of a version share answers, justifications included) or `caller`. Answers older than `TTL` are deleted by the nightly upkeep |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -765,17 +765,30 @@ is looked up again in the version, under the call's tags, before it is returned,
 none of whose chunks are left runs the agent. Questions are compared by hybrid similarity: with
 an embedding model, the mean of their embeddings' cosine and of their words' similarity; without
 one, their words only (BM25 term weights over the words left after filler such as "how", "do",
-"I" is dropped, with plurals and verb endings folded: "how do I configure retries" and "how to
-configure retry behaviour" score 0.82). Saving a library's retrieval settings or removing it
-forgets its answers; the nightly upkeep deletes answers past `ttl`, of an `llm` model no longer
-configured, or compared with another embedding model than the configured one.
+"I" or "behaviour" is dropped, with plurals, verb endings and `-ation` folded: "how do I
+configure retries" and "how to configure retry behaviour" are the same terms). Words cannot tell
+a refinement or an opposite from the same question, so two questions match by words only when
+they have **the same terms**, and never when their numbers or versions ("from v1 to v2") or
+their negations ("not", "never", "without", "can't"...) differ, whatever the embeddings say; a
+question with a term the other lacks ("configure retries for uploads") matches only by its
+embedding's cosine, with an embedding model. That is why the cache is on by default only with an
+embedding model; with words alone, turn it on with `enabled = true` (threshold 0.9 by default).
+Saving a library's retrieval settings or removing it forgets its answers; the nightly upkeep
+deletes answers past `ttl`, of an `llm` model no longer configured, or compared with another
+embedding model than the configured one, and every answer while the cache is off.
 
 ```toml
 [ai.agentic_cache]
-enabled = true       # EXACTDOCS_AI__AGENTIC_CACHE__ENABLED
-threshold = 0.8      # 0 to 1; 1: only the same question (case and spacing aside)
+# enabled = true     # unset: on only with an embedding model; false: off, stored answers deleted
+# threshold = 0.8    # 0 to 1; unset: 0.8 with an embedding model, 0.9 with words alone
+scope = "library"    # or "caller": each caller is answered from their own questions only
 ttl = "P7D"          # seconds or an ISO 8601 duration
 ```
+
+With `scope = "library"` (the default) every caller of a library's version shares the cache: one
+caller's cached answer, **the model's justifications included** (which may paraphrase their
+question), can be served to another caller of the same library and version. Use `scope =
+"caller"` where callers must not see the gist of each other's questions.
 
 The cache (`retrieval_agentic_answers`) never stores the question's text: it keeps an HMAC of
 the normalized question and of each of its terms, keyed from the instance's secret key, and,

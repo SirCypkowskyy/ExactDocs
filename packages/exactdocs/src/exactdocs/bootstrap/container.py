@@ -376,7 +376,7 @@ def _agent_cache_key(settings: Settings, *, create: bool) -> bytes | None:
         The key, or ``None`` when the cache is off, or there is no secret key and none may be
         created.
     """
-    if not settings.ai.agentic_cache.enabled:
+    if settings.ai.agentic_cache.enabled is False:
         return None
     return _cache_key(settings, AGENT_CACHE_PURPOSE, create=create)
 
@@ -581,7 +581,9 @@ def _build_read_side(
         hyde_cache_ttl=settings.ai.hyde.cache_ttl,
         agent_answer_cache=answers,
         agent_cache_key=agent_cache_key,
+        agent_cache_enabled=settings.ai.agentic_cache.enabled,
         agent_cache_threshold=settings.ai.agentic_cache.threshold,
+        agent_cache_scope=settings.ai.agentic_cache.scope,
         agent_cache_ttl=settings.ai.agentic_cache.ttl,
     )
     return _ReadSide(

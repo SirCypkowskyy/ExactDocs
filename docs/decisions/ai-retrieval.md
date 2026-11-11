@@ -331,8 +331,11 @@ The agentic answer cache (#100, `retrieval_agentic_answers`) keeps agentic answe
 justifications, explored paths) per manifest, `llm` model and a fingerprint of the tag filter and
 agentic limits; the question is kept as HMACs of it and of each term (HKDF purpose `exactdocs
 agentic cache v1`) and, with an embedding model, as its embedding. Deleted after `[ai.agentic_cache]
-ttl` (7 days), with their manifest, with the library's settings, or once their model or embedding
-model is no longer configured.
+ttl` (7 days), with their manifest, with the library's settings, once their model or embedding
+model is no longer configured, or all of them once the cache is turned off. With `scope =
+"library"` (the default) a cached answer, its model-written justifications included, is served to
+every caller of the library's version, so one caller can read the gist of another's question;
+`scope = "caller"` keeps each caller's answers to themselves.
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;

@@ -1099,7 +1099,12 @@ AGENT_CACHE_FORMAT: Final[int] = 1
 instructions and tools): part of every entry's scope, so changing it makes every entry a miss."""
 DEFAULT_AGENT_CACHE_THRESHOLD: Final[float] = 0.8
 """How similar (0 to 1) a question must be to a cached one of the same scope for its answer to
-be reused (``[ai.agentic_cache] threshold``)."""
+be reused, with an embedding model (``[ai.agentic_cache] threshold``)."""
+DEFAULT_BM25_CACHE_THRESHOLD: Final[float] = 0.9
+"""The same without an embedding model: words alone say less, so the bar is higher."""
+AGENT_CACHE_SCOPES: Final[tuple[str, ...]] = ("library", "caller")
+"""Who shares cached agentic answers (``[ai.agentic_cache] scope``): every caller of a library's
+version, or each caller only their own."""
 DEFAULT_AGENT_CACHE_TTL_DAYS: Final[int] = 7
 """Days a cached agentic answer is kept (``[ai.agentic_cache] ttl``); the nightly upkeep deletes
 older ones."""
@@ -1115,11 +1120,22 @@ AGENT_CACHE_TERM_HASH_CHARS: Final[int] = 16
 """Hex characters kept of each question term's HMAC (64 bits): enough that two terms of one
 scope never collide in practice."""
 QUESTION_STOP_WORDS: Final[frozenset[str]] = TERM_HASH_STOP_WORDS | frozenset(
-    {"about", "am", "be", "could", "get", "if", "me", "should", "there", "this", "we", "would"}
+    {"about", "am", "be", "could", "from", "get", "if", "me", "should", "there", "this", "we"}
+    | {"would", "behaviour", "behavior", "way", "ways", "please", "possible", "properly"}
 )
 """Words two questions may differ by and still ask the same: left out of their lexical
 similarity."""
+QUESTION_POLARITY_WORDS: Final[frozenset[str]] = frozenset(
+    {"not", "no", "never", "without", "nor", "none", "neither", "nothing"}
+)
+"""Words that turn a question around: two questions must hold the same ones, as often, to share
+an answer (``cannot`` and every ``n't`` count as ``not``)."""
+QUESTION_NUMBER: Final[str] = r"\bv?(\d+(?:\.\d+)*)\b"
+"""A number or version in a question (``v1``, ``2.0``, ``3``): two questions must hold the same
+ones, as often, to share an answer (``v1`` and ``1`` are one)."""
 _QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
+    ("ations", "", 8),
+    ("ation", "", 7),
     ("ies", "y", 5),
     ("ches", "ch", 6),
     ("shes", "sh", 6),
@@ -1129,7 +1145,8 @@ _QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
     ("ed", "", 5),
     ("s", "", 4),
 )
-"""Light suffix folding: (suffix, replacement, shortest word it applies to), first match wins."""
+"""Light suffix folding: (suffix, replacement, shortest word it applies to), first match wins:
+plural and verb endings, and ``-ation`` (``configuration`` and ``configure`` are one term)."""
 _SHORTEST_E_FOLD: Final[int] = 3
 """A folded word longer than this loses a final ``e`` (``configure`` and ``configur`` match)."""
 BM25_K1: Final[float] = 1.2

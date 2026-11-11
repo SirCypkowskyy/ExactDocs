@@ -95,6 +95,7 @@ EXPLORER = ModelRef(profile="corp", model="explorer")
 FIRST = "how do I configure retries"
 SIMILAR = "how to configure retry behaviour"
 OTHER = "how do I rotate the API token"
+PARAPHRASE = "what makes failed calls run again"
 GUIDE = {
     "resilience": [
         "Configure retries with RetryPolicy: it decides how often a failed call runs again.",
@@ -278,7 +279,9 @@ class World:
 
 async def _world(
     *,
-    threshold: float = 0.8,
+    threshold: float | None = None,
+    enabled: bool | None = True,
+    scope: str = "library",
     cache: AgentAnswerCache | None = None,
     budgets: Budgets | None = None,
     embeddings: QuestionModels | None = None,
@@ -318,7 +321,9 @@ async def _world(
         agent_bounds=bounds,
         agent_answer_cache=store,
         agent_cache_key=KEY,
+        agent_cache_enabled=enabled,
         agent_cache_threshold=threshold,
+        agent_cache_scope=scope,
         agent_cache_ttl=timedelta(days=7),
     )
     world = World(
@@ -374,12 +379,13 @@ async def _ask(
     ref: str = "v2",
     tags: Sequence[str] = (),
     limit: int = 3,
+    caller: str = "ana",
 ) -> SearchDocsResult:
     return await world.module.search_docs(
         SearchDocsQuery(
             library=LIB, ref=ref, query=question, mode="agentic", limit=limit, tags=list(tags)
         ),
-        caller="ana",
+        caller=caller,
     )
 
 
@@ -421,13 +427,160 @@ async def test_a_different_question_runs_the_agent() -> None:
     assert world.tracer.cache_hits == []
 
 
-async def test_the_threshold_is_configurable() -> None:
-    strict = await _world(threshold=1.0)
-    await _ask(strict, FIRST)
+@pytest.mark.parametrize(("threshold", "hit"), [(0.95, True), (0.97, False)])
+async def test_the_threshold_is_configurable(threshold: float, hit: bool) -> None:
+    questions = QuestionModels(
+        vectors={FIRST: (1.0, 0.0, 0.0), PARAPHRASE: (0.96, 0.28, 0.0)}  # cosine 0.96
+    )
+    world = await _world(embeddings=questions, threshold=threshold)
+    await _ask(world, FIRST)
 
-    assert (await _ask(strict, SIMILAR)).cache_hit is False
-    assert (await _ask(strict, "  How do i CONFIGURE retries ")).cache_hit is True  # the same
-    assert _runs(strict) == 2
+    assert (await _ask(world, PARAPHRASE)).cache_hit is hit
+    assert (await _ask(world, "  How do i CONFIGURE retries ")).cache_hit is True  # the same
+
+
+@pytest.mark.parametrize(
+    ("asked", "again"),
+    [
+        ("why is my request not retried", "why is my request retried"),
+        ("can I use async with the client", "can I not use async with the client"),
+        ("why does the cache not work", "why does the cache work"),
+        ("why doesn't the cache work", "why does the cache work"),
+        ("I cannot connect to the server", "I can connect to the server"),
+        ("retry without backoff", "retry with backoff"),
+        (
+            "how to migrate the database schema from v1 to v2",
+            "how to migrate the database schema from v2 to v3",
+        ),
+        ("upgrade from v2 to v1", "upgrade from v1 to v2"),
+        ("configure retries", "configure retries for uploads"),
+        ("enable retries", "disable retries"),
+        ("add a webhook", "remove a webhook"),
+        ("create the index", "drop the index"),
+        ("call it over http", "call it over grpc"),
+    ],
+)
+def test_questions_that_ask_something_else_never_match_by_words(asked: str, again: str) -> None:
+    one, two = CachedQuestion.of(asked, key=KEY), CachedQuestion.of(again, key=KEY)
+
+    assert one.similarity(two) == 0
+    assert two.similarity(one) == 0
+
+
+@pytest.mark.parametrize(
+    ("asked", "again"),
+    [
+        (FIRST, SIMILAR),
+        ("retry configuration", "configure retries"),
+        ("why doesn't the cache work", "why does not the cache work"),
+        ("why can't I connect", "why cannot I connect"),
+        ("migrate from v1 to v2", "Migrate from 1 to 2"),
+        ("how do I not retry on v2", "on v2, how not to retry"),
+    ],
+)
+def test_the_same_question_in_other_words_matches(asked: str, again: str) -> None:
+    one, two = CachedQuestion.of(asked, key=KEY), CachedQuestion.of(again, key=KEY)
+
+    assert one.similarity(two) >= 0.9
+
+
+def test_a_negation_or_a_number_stops_even_close_embeddings() -> None:
+    near = (1.0, 0.0, 0.0)
+    negated = CachedQuestion.of("why is my request not retried", key=KEY, vector=near)
+    plain = CachedQuestion.of("why is my request retried", key=KEY, vector=near)
+    refined = CachedQuestion.of("why is my upload request retried", key=KEY, vector=near)
+
+    assert negated.similarity(plain) == 0  # cosine 1, opposite questions
+    assert plain.similarity(refined) == pytest.approx(1)  # a term apart: the cosine decides
+
+
+async def test_without_an_embedding_model_the_cache_is_off_unless_turned_on() -> None:
+    world = await _world(enabled=None)
+    await _ask(world, FIRST)
+
+    again = await _ask(world, FIRST)
+
+    assert again.cache_hit is False
+    assert _runs(world) == 2
+    assert not _entries(world)
+
+
+async def test_with_an_embedding_model_the_cache_is_on_by_default() -> None:
+    world = await _world(enabled=None, embeddings=QuestionModels())
+    await _ask(world, FIRST)
+
+    assert (await _ask(world, SIMILAR)).cache_hit is True
+
+
+async def test_with_scope_caller_callers_never_share_answers() -> None:
+    world = await _world(scope="caller")
+    await _ask(world, FIRST, caller="ana")
+
+    other = await _ask(world, SIMILAR, caller="bob")
+    own = await _ask(world, SIMILAR, caller="ana")
+
+    assert (other.cache_hit, own.cache_hit) == (False, True)
+    stored = repr(_entries(world))
+    assert "ana" not in stored
+    assert "bob" not in stored
+
+
+async def test_with_scope_library_callers_share_answers() -> None:
+    world = await _world()
+    await _ask(world, FIRST, caller="ana")
+
+    assert (await _ask(world, SIMILAR, caller="bob")).cache_hit is True
+
+
+async def test_an_empty_scope_embeds_nothing_at_lookup_and_the_answer_at_store() -> None:
+    questions = QuestionModels(vectors={FIRST: (1.0, 0.0, 0.0)})
+    world = await _world(embeddings=questions)
+
+    await _ask(world, FIRST)
+
+    assert questions.queries == [FIRST]  # once: when the agent's answer was stored
+    assert _entries(world)[0].question.vector == (1.0, 0.0, 0.0)
+
+
+async def test_a_hit_by_words_embeds_nothing() -> None:
+    questions = QuestionModels()
+    world = await _world(embeddings=questions)
+    await _ask(world, FIRST)
+    questions.queries.clear()
+
+    again = await _ask(world, SIMILAR)
+
+    assert again.cache_hit is True
+    assert questions.queries == []
+
+
+async def test_a_used_up_library_budget_embeds_no_question() -> None:
+    questions = QuestionModels()
+    world = await _world(embeddings=questions)
+    await _ask(world, FIRST)
+    questions.queries.clear()
+    await world.modes.save(
+        LIB,
+        None,
+        LibraryAi(budgets=(BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=1),)),
+    )
+    await world.ledger.add(
+        [
+            SpendEntry(
+                scope_kind="library",
+                scope_id=LIB,
+                window=SpendWindow.DAY,
+                window_start=T0.date(),
+                input_tokens=5,
+            )
+        ]
+    )
+    await world.cache.put(_entries(world)[0])  # saving the settings forgot it
+
+    result = await _ask(world, PARAPHRASE)
+
+    assert result.cache_hit is False
+    assert questions.queries == []  # the paid embedding was not made
 
 
 async def test_query_docs_is_answered_from_the_cache_too() -> None:
@@ -656,7 +809,7 @@ def test_hashes_are_keyed_by_the_instance() -> None:
 
     assert one.question_hash != two.question_hash
     assert set(one.terms).isdisjoint(two.terms)
-    assert one.similarity(CachedQuestion.of(SIMILAR, key=KEY)) == pytest.approx(0.8165, abs=1e-3)
+    assert one.similarity(CachedQuestion.of(SIMILAR, key=KEY)) == pytest.approx(1)
 
 
 async def test_a_cache_that_fails_is_a_miss_and_logs_only_the_error_class(
@@ -682,15 +835,15 @@ async def test_with_an_embedding_model_questions_are_compared_by_meaning_and_wor
     questions = QuestionModels(
         vectors={
             FIRST: (1.0, 0.0, 0.0),
-            "what makes failed calls run again": (0.96, 0.28, 0.0),  # cosine 0.96, no shared term
+            PARAPHRASE: (0.96, 0.28, 0.0),  # cosine 0.96, no shared term
             "how do I configure logging": (0.0, 1.0, 0.0),
         }
     )
-    world = await _world(embeddings=questions, threshold=0.45)
+    world = await _world(embeddings=questions)
     await _ask(world, FIRST)
     (entry,) = _entries(world)
 
-    paraphrase = await _ask(world, "what makes failed calls run again")
+    paraphrase = await _ask(world, PARAPHRASE)
     unrelated = await _ask(world, "how do I configure logging")  # shares "configure" only
 
     assert entry.question.vector == (1.0, 0.0, 0.0)
@@ -699,7 +852,7 @@ async def test_with_an_embedding_model_questions_are_compared_by_meaning_and_wor
         == EmbeddingTarget(profile_kind="openai-compatible", model="e").identity
     )
     assert (paraphrase.cache_hit, unrelated.cache_hit) == (True, False)
-    assert questions.queries[:2] == [FIRST, "what makes failed calls run again"]
+    assert questions.queries == [FIRST, PARAPHRASE, "how do I configure logging"]
 
 
 async def test_a_failing_question_embedding_compares_words_only_and_logs_no_question(
@@ -782,6 +935,50 @@ async def test_the_prune_deletes_old_answers_and_those_of_retired_models_or_spac
 
     assert pruned.agentic_answers == 3
     assert _entries(world) == [fresh]
+
+
+async def test_with_the_cache_off_its_stored_answers_are_still_forgotten_and_pruned() -> None:
+    store = InMemoryAgentAnswerCache()
+    await store.put(_answer(FIRST, manifest="m2", library=LIB))
+    await store.put(_answer(OTHER, manifest="m2", library="/acme/other"))
+    world = await _world(enabled=False, cache=store)
+
+    off = await _ask(world, FIRST)
+    await world.module.forget_library(ForgetLibraryCommand(library=LIB))
+    assert [a.scope.library for a in store.answers.values()] == ["/acme/other"]
+    pruned = await world.module.prune_hypotheses()
+
+    assert off.cache_hit is False
+    assert pruned.agentic_answers == 1
+    assert not store.answers  # off: none is kept
+
+
+async def test_the_nightly_prune_empties_the_table_when_the_cache_is_off(
+    sql_cache_off: Container,
+) -> None:
+    rows = SqliteAgentAnswerCache(engine=sql_cache_off.engine)
+    await rows.put(_answer(FIRST))
+    await rows.put(_answer(OTHER, manifest="m2"))
+
+    await sql_cache_off.nightly()
+
+    assert await rows.scoped(_answer(FIRST).scope) == []
+    assert await rows.scoped(_answer(OTHER, manifest="m2").scope) == []
+
+
+@pytest.fixture(params=SQL_BACKENDS)
+async def sql_cache_off(request: pytest.FixtureRequest) -> AsyncIterator[Container]:
+    """The app on each SQL database with ``[ai.agentic_cache] enabled = false``.
+
+    Yields:
+        The running container.
+    """
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
+    ai = AiSettings.model_validate({"agentic_cache": {"enabled": False}})
+    container = Container.build(Settings(ai=ai))
+    async with container.running(jobs=False):
+        yield container
 
 
 async def test_cache_hits_are_counted_by_cache_and_mode_only() -> None:

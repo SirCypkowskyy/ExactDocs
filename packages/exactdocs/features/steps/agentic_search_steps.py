@@ -26,7 +26,7 @@ from steps.search_steps import LIBRARY
 QUESTION = "how do I retry failed calls"
 
 
-def _serve(context: Context, model: FunctionModel, ai: dict[str, Any]) -> None:
+def serve_scripted(context: Context, model: FunctionModel, ai: dict[str, Any]) -> None:
     """Serve the same data again with the scripted model as the ``llm`` role.
 
     Args:
@@ -72,7 +72,7 @@ def _search(context: Context, target: str, mode: str) -> dict[str, Any]:
 
 @given("an LLM is configured and agentic mode is on")
 def step_agentic_on(context: Context) -> None:
-    _serve(context, browsing(), scripted_ai("agentic"))
+    serve_scripted(context, browsing(), scripted_ai("agentic"))
 
 
 @when('an agent searches "{target}" in mode "{mode}"')
@@ -106,7 +106,7 @@ def step_all_in_version(context: Context, ref: str) -> None:
 
 @given("agentic mode is limited to {calls:d} tool calls")
 def step_limited(context: Context, calls: int) -> None:
-    _serve(context, greedy(calls + 10), scripted_ai("agentic", {"max_tool_calls": calls}))
+    serve_scripted(context, greedy(calls + 10), scripted_ai("agentic", {"max_tool_calls": calls}))
 
 
 @when("the agent needs more")
@@ -148,7 +148,7 @@ def step_proposes_foreign(context: Context) -> None:
     )
     assert older.status_code == HTTPStatus.OK, older.text
     context.foreign = older.json()["results"][0]["chunk_id"]
-    _serve(context, browsing(extra=[context.foreign]), scripted_ai("agentic"))
+    serve_scripted(context, browsing(extra=[context.foreign]), scripted_ai("agentic"))
     handler = _Records()
     explorer_log = logging.getLogger(ai_explorer_sdk.__name__)
     explorer_log.addHandler(handler)
@@ -170,7 +170,7 @@ def step_guardrail_rejected(context: Context) -> None:
 
 @when("the agent calls the same tool with the same arguments {times:d} times")
 def step_loops(context: Context, times: int) -> None:
-    _serve(context, looping(times), scripted_ai("agentic"))
+    serve_scripted(context, looping(times), scripted_ai("agentic"))
     context.result = _search(context, f"{LIBRARY}/v1.4.0", "agentic")
 
 

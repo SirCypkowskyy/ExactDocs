@@ -27,7 +27,6 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
 )
 from exactdocs.retrieval.constants import (
-    DEFAULT_AGENT_CACHE_THRESHOLD,
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
     DEFAULT_AGENT_REQUESTS,
@@ -305,13 +304,19 @@ class AgenticCacheSettings(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
 
-    enabled: bool = True
-    """`EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`: answer similar agentic questions from the cache."""
-    threshold: float = Field(default=DEFAULT_AGENT_CACHE_THRESHOLD, gt=0, le=1)
+    enabled: bool | None = None
+    """`EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`: unset, the cache is on only when an embedding model
+    is configured; `true` turns it on with words alone too; `false` turns it off, and the nightly
+    upkeep then deletes every cached answer."""
+    threshold: float | None = Field(default=None, gt=0, le=1)
     """`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`: how similar (0 to 1) a question must be to a cached
-    one; 1 reuses only the same question (case and spacing aside). With an embedding model the
-    score is the mean of the embeddings' cosine and the words' similarity, whose scale depends on
-    the model: tune it with real questions."""
+    one; 1 reuses only the same question (case and spacing aside). Unset: 0.8 with an embedding
+    model (the mean of the embeddings' cosine and the words' similarity, whose scale depends on
+    the model: tune it with real questions), 0.9 with words alone."""
+    scope: Literal["library", "caller"] = "library"
+    """`EXACTDOCS_AI__AGENTIC_CACHE__SCOPE`: `library`, every caller of a library's version shares
+    the cached answers (one caller's answer, the model's justifications included, can be served to
+    another); `caller`, each caller is answered from their own questions only."""
     ttl: timedelta = Field(default=timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS), gt=timedelta(0))
     """`EXACTDOCS_AI__AGENTIC_CACHE__TTL`: how long a cached answer is kept (seconds or an ISO 8601
     duration such as `P7D`); the nightly upkeep deletes older ones."""

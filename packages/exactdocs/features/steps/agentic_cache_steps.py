@@ -17,6 +17,7 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from scripted_explorer import ScriptedModels, browsing, scripted_ai
+from steps.agentic_search_steps import serve_scripted
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE, OfflineGit
 from steps.import_steps import wait_for_job
 from steps.search_steps import LIBRARY
@@ -25,6 +26,20 @@ FIRST = "how do I configure retries"
 """The question answered first."""
 SIMILAR = "how to configure retry behaviour"
 """The same question in other words."""
+
+
+def cached_ai() -> dict[str, Any]:
+    """The scripted ``llm`` role's settings, with the agentic cache on for words alone.
+
+    Returns:
+        The ``ai`` settings.
+    """
+    return {**scripted_ai("agentic"), "agentic_cache": {"enabled": True}}
+
+
+@given("an LLM is configured, agentic mode is on and the agentic cache is on")
+def step_cache_on(context: Context) -> None:
+    serve_scripted(context, browsing(), cached_ai())
 
 
 def ask(context: Context, question: str, ref: str) -> dict[str, Any]:
@@ -92,9 +107,7 @@ def step_cached_for(context: Context, ref: str) -> None:
     context.client.__exit__(None, None, None)  # one job worker per process
     stack = ExitStack()
     context.add_cleanup(stack.close)
-    settings = context.settings.model_copy(
-        update={"ai": AiSettings.model_validate(scripted_ai("agentic"))}
-    )
+    settings = context.settings.model_copy(update={"ai": AiSettings.model_validate(cached_ai())})
     context.models = ScriptedModels(model=browsing())
     context.container = Container.build(
         settings,

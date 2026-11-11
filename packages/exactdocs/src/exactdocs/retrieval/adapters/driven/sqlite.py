@@ -232,6 +232,7 @@ agentic_answers = Table(
     Column("library", Text, nullable=False),  # case folded: a library's settings forget it
     Column("similarity", Text, nullable=False),  # bm25, or the embedding model's identity
     Column("terms", Text, nullable=False),  # JSON list of the terms' HMACs
+    Column("guards", Text, nullable=False),  # JSON list of the numbers' and negations' HMACs
     Column("vector", LargeBinary, nullable=True),
     Column("picks", Text, nullable=False),  # JSON: chunk_id, justification, explored_path
     Column("answer_limit", Integer, nullable=False),
@@ -1312,6 +1313,7 @@ def _cached_answer(row: Row[Any]) -> CachedAgentAnswer:
     question = CachedQuestion(
         question_hash=row.question_hash,
         terms=tuple(json.loads(row.terms)),
+        guards=tuple(json.loads(row.guards)),
         vector=_unpacked(row.vector),
     )
     picks = tuple(
@@ -1395,6 +1397,7 @@ class SqliteAgentAnswerCache:
             "library": scope.library,
             "similarity": scope.similarity,
             "terms": json.dumps(list(answer.question.terms)),
+            "guards": json.dumps(list(answer.question.guards)),
             "vector": _packed(answer.question.vector),
             "picks": json.dumps(
                 [

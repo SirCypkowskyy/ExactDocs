@@ -1196,22 +1196,30 @@ its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.clien
 without content.
 
 **Agentic answer cache (#100).** `AgentAnswerCaching` (in `use_cases`, given to `AgenticPipeline`
-when the module has an `AgentAnswerCache` and a key) answers a question similar enough to one
-answered before. Like HyDE's cache it is read once, by `RetrievalModes.within_budget`, **before**
+when the module has an `AgentAnswerCache` and a key, and `[ai.agentic_cache] enabled` is not
+`false`) answers a question similar enough to one answered before. With `enabled` unset it looks
+nothing up without an embedding model (words alone are weak evidence); `threshold` unset is
+`DEFAULT_AGENT_CACHE_THRESHOLD` (0.8) with one and `DEFAULT_BM25_CACHE_THRESHOLD` (0.9) without.
+`scope = "caller"` adds `caller_audience` (an HMAC of the account) to the fingerprint. Like HyDE's cache it is read once, by `RetrievalModes.within_budget`, **before**
 the budget and the rate limit: `AgenticPipeline.cached_answer` resolves the library's `llm` model
 (nothing for a library with AI off) and builds the search's `AgentCacheScope`: the manifest, the
 model, and a SHA-256 fingerprint of the tag filter (tags sorted, `match`), every `AgentBounds`
 field, `AGENT_CACHE_FORMAT` and the similarity space (`bm25`, or the embedding role's
 `EmbeddingTarget.identity`). A re-sync is a new manifest, so a new scope; so is another model,
 filter, limit or embedding model. The scope's answers (`AgentAnswerCache.scoped`, at most
-`AGENT_CACHE_PER_SCOPE` = 200, newest first) are compared with the question
-(`CachedQuestion.similarity`): 1 for the same normalized question, else the cosine of the two
-questions' embeddings (embedded as a query by the instance's embedding model, budget-checked and
-recorded like a hybrid query embedding; a failure or a budget leaves the words alone) averaged
-with their lexical similarity, or the lexical similarity alone. Lexical similarity is the cosine
-of BM25's saturated term-frequency weights over `question_terms` (filler words dropped, plurals
-and verb endings folded); it has no IDF: a scope holds too few short questions for document
-frequencies to mean anything, and one rare filler word would outweigh every shared term. Only an
+`AGENT_CACHE_PER_SCOPE` = 200, newest first) are read first; with none that could serve, nothing
+is embedded. They are compared with the question (`CachedQuestion.similarity`): 1 for the same
+normalized question; 0 when their `question_guards` differ (numbers and versions in order, and
+the polarity words `not`, `no`, `never`, `without`..., `n't` and `cannot` spelt out as `not`); when
+their `question_terms` are the same set, the lexical similarity (the cosine of BM25's saturated
+term-frequency weights; no IDF: a scope holds too few short questions for document frequencies
+to mean anything), averaged with the cosine of their embeddings when both have one; when one
+has a term the other lacks, the embeddings' cosine alone, or 0 without embeddings. Words are
+compared first; only without a hit is the question embedded (as a query by the instance's
+embedding model, checked against the embedding budget and the instance's, library's and caller's
+budgets the LLM step is checked against, and recorded like a hybrid query embedding; a failure or
+a budget leaves the words alone). The LLM search rate limit is not consulted there: counting it
+would charge a search the cache may answer. Only an
 answer asked for at least as many chunks qualifies. The most similar at or above `threshold`
 whose picks the pinned manifest still holds under the tag filter is the hit, carried in
 `ModeChoice.agent_cache` / `PipelineRequest.agent_cache`; `within_budget` then skips the LLM
@@ -1220,12 +1228,13 @@ same `_answer` as a fresh run (looked up again in the manifest under the filter)
 `PipelineAnswer.cache_hit` (`cache_hit` in `search_docs` and `query_docs`) and counts
 `exactdocs.ai.cache_hits` (`SearchTracer.cache_hit`, labels cache and mode only). A miss runs the
 agent and stores its kept picks, with justifications and explored paths, under the lookup's
-scope and question (so the question is embedded once). A cache that fails is a miss and an
+scope and question, embedding the question then if the lookup did not (once per search). A cache that fails is a miss and an
 unwritten answer; only the error's class is logged. `_removed` forgets the answers of removed
 manifests with HyDE's, `SetLibraryRetrieval` and `ForgetLibrary` a library's
 (`forget_library`), and `PruneHypotheses` (nightly and after every collection) those older than
 `[ai.agentic_cache] ttl` (7 days), of an `llm` model no longer configured, or of another
-similarity space. Adapters: `SqliteAgentAnswerCache` (`retrieval_agentic_answers`, SQLite and
+similarity space. The store is wired whether the cache is on or off, so a library's or a
+manifest's answers are still forgotten with the cache off, and the prune then deletes them all. Adapters: `SqliteAgentAnswerCache` (`retrieval_agentic_answers`, SQLite and
 PostgreSQL), `InMemoryAgentAnswerCache`, and `ReadOnlyAgentAnswerCache` for `serve --stdio`.
 
 *Data at rest.* No question text: an HMAC-SHA256 of the normalized question and a 64-bit HMAC
@@ -1233,8 +1242,9 @@ of each term, keyed from the secret key for the HKDF purpose `exactdocs agentic 
 (`AGENT_CACHE_PURPOSE`), and, with an embedding model, the question's embedding as float32
 (an embedding can be partly inverted, so the table is treated as holding the question's meaning).
 The answers are stored as returned: chunk IDs, and the model-written justifications and explored
-paths, which may quote the question's words. Without a secret key (a read-only process) or with
-`enabled = false` nothing is cached.
+paths, which may quote the question's words; with `scope = "library"` they are served to every
+caller of the version. Without a secret key (a read-only process) or with `enabled = false`
+nothing is cached (and the nightly prune deletes what was).
 
 Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.

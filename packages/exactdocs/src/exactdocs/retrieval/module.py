@@ -4,7 +4,6 @@ from datetime import timedelta
 from typing import Self
 
 from exactdocs.retrieval.constants import (
-    DEFAULT_AGENT_CACHE_THRESHOLD,
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
@@ -253,7 +252,9 @@ class RetrievalModule:
         hyde_cache_ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS),
         agent_answer_cache: AgentAnswerCache | None = None,
         agent_cache_key: bytes | None = None,
-        agent_cache_threshold: float = DEFAULT_AGENT_CACHE_THRESHOLD,
+        agent_cache_enabled: bool | None = None,
+        agent_cache_threshold: float | None = None,
+        agent_cache_scope: str = "library",
         agent_cache_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS),
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
@@ -288,9 +289,11 @@ class RetrievalModule:
         entry of ``pipelines`` replaces it (tests). With ``agent_answer_cache`` and
         ``agent_cache_key`` (the HMAC key of its questions), a question at least
         ``agent_cache_threshold`` similar to one answered before in the same scope is answered
-        from the cache (``AgentAnswerCaching``); the nightly prune deletes answers older than
-        ``agent_cache_ttl``. Removing a manifest, or saving or forgetting a library's settings,
-        forgets its answers.
+        from the cache (``AgentAnswerCaching``): when ``agent_cache_enabled`` is true, or unset
+        and an embedding model is configured; ``agent_cache_scope`` says whether callers share
+        answers (``library``) or not (``caller``). The nightly prune deletes answers older than
+        ``agent_cache_ttl``, and every answer while the cache is off. Removing a manifest, or
+        saving or forgetting a library's settings, forgets its answers, on or off.
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -324,16 +327,23 @@ class RetrievalModule:
             batch_size=embedding_batch_size,
         )
         hypotheses_cached = hypothesis_cache or NoHypothesisCache()
-        answers: AgentAnswerCache = NoAgentAnswerCache()
+        # The store is always wired, so its rows are forgotten and pruned even with the cache
+        # off; only looking up and storing need it on and a key.
+        answers: AgentAnswerCache = agent_answer_cache or NoAgentAnswerCache()
         caching = None
-        if agent_answer_cache is not None and agent_cache_key is not None:
-            answers = agent_answer_cache
+        if (
+            agent_answer_cache is not None
+            and agent_cache_key is not None
+            and agent_cache_enabled is not False
+        ):
             caching = AgentAnswerCaching(
                 cache=answers,
                 key=agent_cache_key,
                 clock=clock,
                 runs=runs,
+                enabled=agent_cache_enabled,
                 threshold=agent_cache_threshold,
+                audience=agent_cache_scope,
                 timeout=query_embedding_timeout,
             )
         prune_hypotheses = PruneHypothesesUseCase(
@@ -342,6 +352,7 @@ class RetrievalModule:
             clock=clock,
             ttl=hyde_cache_ttl,
             caching=caching,
+            answers=answers,
             answers_ttl=agent_cache_ttl,
         )
         built: dict[RetrievalMode, RetrievalPipeline] = {

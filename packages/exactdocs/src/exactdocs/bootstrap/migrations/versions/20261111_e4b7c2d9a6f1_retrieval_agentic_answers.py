@@ -23,6 +23,7 @@ def upgrade() -> None:
         sa.Column("library", sa.Text, nullable=False),
         sa.Column("similarity", sa.Text, nullable=False),
         sa.Column("terms", sa.Text, nullable=False),
+        sa.Column("guards", sa.Text, nullable=False),
         sa.Column("vector", sa.LargeBinary, nullable=True),
         sa.Column("picks", sa.Text, nullable=False),
         sa.Column("answer_limit", sa.Integer, nullable=False),

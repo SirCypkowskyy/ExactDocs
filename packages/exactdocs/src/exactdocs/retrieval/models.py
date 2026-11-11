@@ -65,6 +65,8 @@ from exactdocs.retrieval.constants import (
     MIN_AGENT_REPEATED_CALLS,
     MONTHS_PER_YEAR,
     PROFILE_NAME,
+    QUESTION_NUMBER,
+    QUESTION_POLARITY_WORDS,
     QUESTION_STOP_WORDS,
     RATE_LIMIT_BELOW_ONE,
     REPEATED_CALLS_TOO_LOW,
@@ -3146,6 +3148,36 @@ def _folded(word: str) -> str:
     return word[:-1] if len(word) > _SHORTEST_E_FOLD and word.endswith("e") else word
 
 
+def _question_text(query: str) -> str:
+    """Normalize a question and spell its negations out (``can't`` and ``cannot`` are ``can not``).
+
+    Args:
+        query: The question, as the caller sent it.
+
+    Returns:
+        ``normalized_query`` with every ``n't`` written as `` not``.
+    """
+    text = normalized_query(query).replace("\u2019", "'")
+    text = re.sub(r"\bcan'?t\b|\bcannot\b", "can not", text)
+    text = re.sub(r"\bwon't\b", "will not", text)
+    return re.sub(r"(\w)n't\b", r"\1 not", text)
+
+
+def _question_words(query: str) -> tuple[list[str], list[str]]:
+    """Split a question into its numbers and its words.
+
+    Args:
+        query: The question, as the caller sent it.
+
+    Returns:
+        The numbers and versions (``QUESTION_NUMBER``, without a ``v``), and the other words
+        (split at anything but letters and digits, ``_`` included), in order.
+    """
+    text = _question_text(query)
+    numbers = [m.group(1) for m in re.finditer(QUESTION_NUMBER, text)]
+    return numbers, re.findall(r"[^\W_]+", re.sub(QUESTION_NUMBER, " ", text))
+
+
 def question_terms(query: str) -> tuple[str, ...]:
     """Split a question into the terms its lexical similarity compares, in order.
 
@@ -3153,12 +3185,33 @@ def question_terms(query: str) -> tuple[str, ...]:
         query: The question, as the caller sent it.
 
     Returns:
-        Its words (``normalized_query``, split at anything but letters and digits, ``_``
-        included), without ``QUESTION_STOP_WORDS``, each folded (``_folded``); repeated ones
-        are kept, as a term frequency counts them.
+        Its words without ``QUESTION_STOP_WORDS``, numbers and polarity words (those are its
+        ``question_guards``), each folded (``_folded``); repeated ones are kept, as a term
+        frequency counts them.
     """
-    words = re.findall(r"[^\W_]+", normalized_query(query))
-    return tuple(_folded(w) for w in words if w not in QUESTION_STOP_WORDS)
+    _, words = _question_words(query)
+    return tuple(
+        _folded(w)
+        for w in words
+        if w not in QUESTION_STOP_WORDS and w not in QUESTION_POLARITY_WORDS
+    )
+
+
+def question_guards(query: str) -> tuple[str, ...]:
+    """Name what two questions must share exactly: their numbers, versions and negations.
+
+    "Why is my request not retried" and "why is my request retried", or a migration "from v1 to
+    v2" and one "from v2 to v3", differ by one word of many: similar words, opposite questions.
+
+    Args:
+        query: The question, as the caller sent it.
+
+    Returns:
+        Its numbers and versions in order ("from v2 to v1" is not "from v1 to v2"), then its
+        ``QUESTION_POLARITY_WORDS`` sorted (a paraphrase may move them); repeated ones kept.
+    """
+    numbers, words = _question_words(query)
+    return (*numbers, *sorted(w for w in words if w in QUESTION_POLARITY_WORDS))
 
 
 def _bm25_weight(frequency: int) -> float:
@@ -3246,6 +3299,7 @@ class AgentCacheScope:
         tag_filter: TagFilter,
         bounds: AgentBounds,
         similarity: str,
+        audience: str = "",
     ) -> AgentCacheScope:
         """Build the scope of an agentic search.
 
@@ -3255,6 +3309,8 @@ class AgentCacheScope:
             tag_filter: The search's tag filter.
             bounds: The agent's limits.
             similarity: The space questions are compared in.
+            audience: Who shares its answers: empty for every caller of the library, else
+                ``caller_audience`` of the caller.
 
         Returns:
             The scope.
@@ -3266,6 +3322,7 @@ class AgentCacheScope:
             "match": tag_filter.match.value if tags else TagMatch.ANY.value,
             "bounds": {f.name: getattr(bounds, f.name) for f in fields(bounds)},
             "similarity": similarity,
+            "audience": audience,
         }
         digest = hashlib.sha256(json.dumps(settled, sort_keys=True).encode()).hexdigest()
         return cls(
@@ -3291,6 +3348,8 @@ class CachedQuestion:
     """HMAC-SHA256 (hex) of ``normalized_query``."""
     terms: tuple[str, ...]
     """The HMAC of each of ``question_terms``, in order."""
+    guards: tuple[str, ...] = ()
+    """The HMAC of each of ``question_guards``, in their order."""
     vector: tuple[float, ...] | None = None
     """The question's embedding in the scope's space; ``None`` in a ``bm25`` scope."""
 
@@ -3321,26 +3380,39 @@ class CachedQuestion:
         return cls(
             question_hash=keyed(normalized_query(query)),
             terms=tuple(keyed(t)[:AGENT_CACHE_TERM_HASH_CHARS] for t in question_terms(query)),
+            guards=tuple(keyed(g)[:AGENT_CACHE_TERM_HASH_CHARS] for g in question_guards(query)),
             vector=None if vector is None else tuple(vector),
         )
 
     def similarity(self, other: CachedQuestion) -> float:
         """Say how alike two questions are (hybrid: embeddings and terms, else terms alone).
 
+        Words alone cannot tell a refinement ("configure retries for uploads") or a negation from
+        the same question, so two questions that differ by a content term are similar only by
+        their embeddings, and two that differ by a number, a version or a negation are never.
+
         Args:
             other: A cached question of the same scope.
 
         Returns:
-            1 for the same normalized question; else ``AGENT_CACHE_DENSE_WEIGHT`` of their
-            embeddings' cosine plus the rest of their lexical similarity when both have one, or
-            their lexical similarity alone.
+            1 for the same normalized question; 0 when their ``guards`` differ. When their terms
+            are the same set: ``AGENT_CACHE_DENSE_WEIGHT`` of their embeddings' cosine plus the
+            rest of their lexical similarity when both have an embedding, else their lexical
+            similarity. When one has a term the other lacks: their embeddings' cosine alone, or
+            0 without embeddings.
         """
         if self.question_hash == other.question_hash:
             return 1.0
+        if self.guards != other.guards:
+            return 0.0
+        dense = None
+        if self.vector is not None and other.vector is not None:
+            dense = dense_similarity(self.vector, other.vector)
+        if set(self.terms) != set(other.terms):
+            return 0.0 if dense is None else dense
         lexical = lexical_similarity(self.terms, other.terms)
-        if self.vector is None or other.vector is None:
+        if dense is None:
             return lexical
-        dense = dense_similarity(self.vector, other.vector)
         return AGENT_CACHE_DENSE_WEIGHT * dense + (1 - AGENT_CACHE_DENSE_WEIGHT) * lexical
 
 
@@ -3393,3 +3465,25 @@ class AgentCacheLookup:
     still holds; ``None``: the agent runs."""
     similarity: float = 0.0
     """How similar the hit's question is (0 without a hit)."""
+    query: str = ""
+    """The question's text, kept in memory for the search only (``store`` may embed it); never
+    stored."""
+    caller: str | None = None
+    """The account searching: a question embedding at ``store`` counts to it."""
+    own: tuple[BudgetLimit, ...] = ()
+    """The library's own budgets, as the search read them."""
+    embedded: bool = False
+    """The lookup already tried to embed the question (``store`` does not try again)."""
+
+
+def caller_audience(caller: str | None, *, key: bytes) -> str:
+    """Name the caller whose answers a ``scope = "caller"`` cache keeps apart.
+
+    Args:
+        caller: The account searching; ``None`` for a stdio MCP process.
+        key: The instance's agentic cache key.
+
+    Returns:
+        An HMAC-SHA256 (hex) of the account, never its name.
+    """
+    return hmac.new(key, f"caller:{caller or ''}".encode(), hashlib.sha256).hexdigest()
