@@ -1048,6 +1048,29 @@ an unusable vector (or the key could not be opened), and `vector_store_unavailab
 cannot search. Reranking (below) runs after the pipeline, on the fused order, like for any
 mode; the pipeline is asked for the reranker's top N when that is more than the limit.
 
+**HyDE (#94).** `HydePipeline` (in `use_cases`, registered for `hybrid_hyde` when a vector store
+exists and a `HypotheticalAnswers` writer is given) resolves the library's `llm` role
+(`AiProviders.profile_for`, from the profile as it is now; nothing is sent for a library with AI
+off) and looks the answer up in the `HypotheticalAnswerCache` port by `HydeKey`: the searched
+manifest, the model (`<profile>:<model>`) and a SHA-256 of the normalized query (case folded,
+whitespace collapsed; never the text). A new manifest of the version is a new key, and the
+removal use cases (`CollectChunks`, `RemoveChunks`, `DiscardPendingChunks`) forget the answers of
+the manifests they remove. On a miss, in a `<search>.hyde` span without the query, within
+`HYDE_TIMEOUT` (10 s), it builds the chat model (`ModelFactory.chat_model`) and calls the
+writer: `ai_hyde.PydanticAiHypotheticalAnswers` loads `ai_hyde_sdk` only then, which runs one
+pydantic-ai `Agent(output_type=str)` with the fixed `HYDE_INSTRUCTIONS` and
+`max_tokens = HYDE_MAX_TOKENS`, inside `agent_limits`: the harness `SpendLimits` over the ledger
+(so its spend lands in the caller's instance, library and user rows, priced by the price book) and
+pydantic-ai's `UsageLimits`. The budgets it gets come from `AiSpend.budgets_for(library_ai)`, the
+seam where per-library budgets (#102) merge in. The answer is then embedded for the vector half
+(`HybridPipeline.fuse(embed=answer, mode=hybrid_hyde)`) while BM25 searches the query itself.
+Budgets and the rate limit are checked before (`within_budget` turns the choice into `hybrid`);
+a `SpendLimitExceeded` at the request answers `hybrid` with `llm_budget_reached`, and an LLM error,
+an empty answer, a model that cannot be built or a timeout answers `hybrid` with
+`llm_unavailable`; only the error's class is logged. The cache is `retrieval_hyde_answers`
+(`SqliteHypothesisCache`, SQLite and PostgreSQL); a read-only process (`serve --stdio`) reads it
+and keeps its own answers in memory (`ReadOnlyHypothesisCache`).
+
 **Reranker (#93).** Reranking is a flag on top of any mode (`ModeChoice.rerank`, with the
 library's `rerank_top_n` or the instance's `[ai.reranker] top_n`). `RetrievalModes.run` asks the
 pipeline for the top N when that is more than the call's limit; the search use cases then open a

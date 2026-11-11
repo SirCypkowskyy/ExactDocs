@@ -329,7 +329,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `fallback_reason` `embedding_in_progress` while the version is not embedded with the configured
   model, `llm_budget_reached` when a budget its query embedding counts to (embedding, instance,
   library or user) is used up, or `embedding_unavailable` when the model fails or times out on the
-  query.
+  query. A `hybrid_hyde` search embeds the LLM's hypothetical answer to the query instead of the
+  query (BM25 still searches the query); the answer is cached per query, version and LLM, so a
+  repeated query calls no LLM. Without that answer it answers `hybrid` (or BM25, as above) with
+  `fallback_reason` `llm_budget_reached`, `llm_rate_limited`, or `llm_unavailable` when the LLM
+  fails, answers nothing or does not answer within 10 s.
   A budget or the LLM search rate limit never fails a
   search: one that would run an LLM step answers in the best mode without one, with
   `fallback_reason` `llm_budget_reached` or `llm_rate_limited`, and a paid rerank over budget is

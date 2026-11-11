@@ -104,13 +104,19 @@ from exactdocs.ingestion.ports.driven import (
 )
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
+from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
-from exactdocs.retrieval.adapters.driven.memory import InMemoryCallRates, ReadOnlySpendLedger
+from exactdocs.retrieval.adapters.driven.memory import (
+    InMemoryCallRates,
+    ReadOnlyHypothesisCache,
+    ReadOnlySpendLedger,
+)
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteChunkRepository,
+    SqliteHypothesisCache,
     SqliteLibraryModes,
     SqliteProviderProfiles,
     SqliteSpendLedger,
@@ -121,6 +127,7 @@ from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
 from exactdocs.retrieval.models import ModelRole, ProviderKind, RerankLimits, RetrievalMode
 from exactdocs.retrieval.ports.driven import (
     EmbeddingModels,
+    HypotheticalAnswerCache,
     ModelFactory,
     ModelRoles,
     RetrievalPipeline,
@@ -133,11 +140,13 @@ from exactdocs_kernel import Clock, DomainError, SystemClock
 logger = logging.getLogger(__name__)
 
 
-def _ai_configuration(settings: Settings) -> ConfiguredAi:
+def _ai_configuration(settings: Settings, probe: ModelFactory | None = None) -> ConfiguredAi:
     """Read the AI profiles and roles of the environment and the TOML file, refusing bad ones.
 
     Args:
         settings: The runtime configuration.
+        probe: The model factory the instance calls models with, which says what it cannot call;
+            pydantic-ai's by default (tests and the eval suite pass the one they build with).
 
     Returns:
         The configuration.
@@ -150,7 +159,7 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
         configured = configured_ai(settings.ai)
     except DomainError as error:  # fixed texts and names: never a key
         raise StartupError(str(error)) from None
-    probe = PydanticAiModels()
+    probe = probe or PydanticAiModels()
     for profile in configured.profiles:
         if (reason := probe.unsupported(profile)) is not None:
             message = f"AI provider {profile.name!r}: {reason}"
@@ -315,7 +324,7 @@ def _build_read_side(
         The two modules (``StartupError`` when the AI configuration is invalid), and on
         PostgreSQL the search engine to choose at start.
     """
-    ai = _ai_configuration(settings)
+    ai = _ai_configuration(settings, model_factory)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -335,8 +344,10 @@ def _build_read_side(
         )
     vectors = vector_index(engine, sqlite_extension=vector_extension)
     spend: SpendLedger = SqliteSpendLedger(engine=engine)
+    hypotheses: HypotheticalAnswerCache = SqliteHypothesisCache(engine=engine)
     if read_only:
         spend = ReadOnlySpendLedger(shared=spend)
+        hypotheses = ReadOnlyHypothesisCache(shared=hypotheses)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
@@ -379,6 +390,8 @@ def _build_read_side(
         clock=clock,
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
+        hypotheses=PydanticAiHypotheticalAnswers(ledger=spend),
+        hypothesis_cache=hypotheses,
     )
     return _ReadSide(catalog=catalog, retrieval=retrieval, search_choice=choice)
 

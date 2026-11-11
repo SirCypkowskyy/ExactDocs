@@ -57,6 +57,7 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     EmbeddingSource,
+    HydeKey,
     IndexedManifest,
     KeySource,
     LibraryAi,
@@ -185,6 +186,18 @@ ai_spend = Table(
     Column("requests", Integer, nullable=False, server_default="0"),
     Column("usd_micros", Integer, nullable=False, server_default="0"),
     Column("unpriced", Integer, nullable=False, server_default="0"),  # requests without a price
+)
+# HyDE's hypothetical answers (#94), by the searched manifest, the `llm` model and a SHA-256 of
+# the normalized query (never its text). A changed version has a new manifest, so a new key; the
+# rows of a removed manifest are deleted with its chunks.
+hyde_answers = Table(
+    "retrieval_hyde_answers",
+    metadata,
+    Column("manifest_id", Text, primary_key=True),
+    Column("model", Text, primary_key=True),  # <profile>:<model>
+    Column("query_hash", Text, primary_key=True),
+    Column("answer", Text, nullable=False),
+    Column("created_at", Text, nullable=False),  # ISO 8601, UTC
 )
 # The replay tokens each row has taken (the harness's ``SpendEntry.token``): a response replayed
 # after a crash adds to a row once. Dropped once their window is over.
@@ -1039,3 +1052,82 @@ def _old_replays(latest: date) -> Delete:
             )
         )
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteHypothesisCache:
+    """Implements ``ports.driven.HypotheticalAnswerCache`` in ``retrieval_hyde_answers``.
+
+    The same statements run on SQLite and PostgreSQL (an upsert of each dialect).
+    """
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def get(self, key: HydeKey) -> str | None:
+        """Read a stored answer.
+
+        Args:
+            key: The query, the manifest and the model.
+
+        Returns:
+            The answer, or ``None``.
+        """
+        statement = select(hyde_answers.c.answer).where(
+            hyde_answers.c.manifest_id == key.manifest_id,
+            hyde_answers.c.model == key.model,
+            hyde_answers.c.query_hash == key.query_hash,
+        )
+        async with self.engine.connect() as connection:
+            return (await connection.execute(statement)).scalar_one_or_none()
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        """Store an answer, replacing one stored under the same key.
+
+        Args:
+            key: The query, the manifest and the model.
+            answer: The hypothetical answer.
+            at: When it was written.
+        """
+        values = {
+            "manifest_id": key.manifest_id,
+            "model": key.model,
+            "query_hash": key.query_hash,
+            "answer": answer,
+            "created_at": at.astimezone(UTC).isoformat(),
+        }
+        upsert = (
+            postgres_insert(hyde_answers)
+            if self.engine.dialect.name == "postgresql"
+            else sqlite_insert(hyde_answers)
+        ).values(values)
+        upsert = upsert.on_conflict_do_update(
+            index_elements=[
+                hyde_answers.c.manifest_id,
+                hyde_answers.c.model,
+                hyde_answers.c.query_hash,
+            ],
+            set_={"answer": upsert.excluded.answer, "created_at": upsert.excluded.created_at},
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(upsert)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of these manifests.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        if not manifest_ids:
+            return 0
+        deleted = 0
+        async with self.engine.begin() as connection:
+            for part in batched(sorted(set(manifest_ids)), VECTOR_BATCH, strict=False):
+                result = await connection.execute(
+                    delete(hyde_answers).where(hyde_answers.c.manifest_id.in_(part))
+                )
+                deleted += result.rowcount
+        return deleted

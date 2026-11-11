@@ -1820,7 +1820,7 @@ export interface components {
          * @description Why a search was answered by a cheaper mode than the one it would have used.
          * @enum {string}
          */
-        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable" | "reranker_timeout" | "reranker_failed";
+        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable" | "llm_unavailable" | "reranker_timeout" | "reranker_failed";
         /**
          * FieldError
          * @description One invalid request field.

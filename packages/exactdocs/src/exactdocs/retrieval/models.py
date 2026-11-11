@@ -716,6 +716,9 @@ class FallbackReason(StrEnum):
     """The vector store cannot be loaded here (sqlite-vec), so no hybrid mode can run."""
     EMBEDDING_UNAVAILABLE = "embedding_unavailable"
     """The embedding model failed or timed out on the query: BM25 answered alone."""
+    LLM_UNAVAILABLE = "llm_unavailable"
+    """The LLM failed or timed out writing HyDE's hypothetical answer: hybrid search answered
+    with the query alone."""
     RERANKER_TIMEOUT = "reranker_timeout"
     """The reranker did not answer in time: the candidates keep the order the mode found."""
     RERANKER_FAILED = "reranker_failed"
@@ -2646,3 +2649,74 @@ def embedding_spend(
         requests=requests,
         price=price,
     )
+
+
+def normalized_query(query: str) -> str:
+    """Normalize a query for HyDE's cache: case folded, whitespace collapsed.
+
+    Args:
+        query: The query text.
+
+    Returns:
+        The text that decides whether two queries share a hypothetical answer.
+    """
+    return " ".join(unicodedata.normalize("NFKC", query).casefold().split())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HydeKey:
+    """What a cached hypothetical answer belongs to: a query, a version's manifest, a model.
+
+    The manifest stands for the version as it is now: when the version's manifest changes (a new
+    commit is imported), the key changes with it, so the old answer is never used again, and it
+    is deleted with the old manifest's chunks. The query is kept as a SHA-256 of its normalized
+    text, never as text.
+    """
+
+    manifest_id: str
+    """The searched version's manifest."""
+    model: str
+    """The ``llm`` role's ``<profile>:<model>`` that wrote it."""
+    query_hash: str
+    """SHA-256 (hex) of ``normalized_query``."""
+
+    @classmethod
+    def of(cls, manifest_id: str, model: ModelRef, query: str) -> HydeKey:
+        """Build the key of a search.
+
+        Args:
+            manifest_id: The searched version's manifest.
+            model: The ``llm`` role's model.
+            query: The query text, as the caller sent it.
+
+        Returns:
+            The key.
+        """
+        digest = hashlib.sha256(normalized_query(query).encode()).hexdigest()
+        return cls(manifest_id=manifest_id, model=str(model), query_hash=digest)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HypotheticalAnswer:
+    """HyDE's hypothetical answer to a query, and what writing it took."""
+
+    text: str
+    """The passage; it is embedded for the vector half, never shown."""
+    input_tokens: int = 0
+    """Tokens the provider reported sending."""
+    output_tokens: int = 0
+    """Tokens it reported receiving."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LlmStep:
+    """What one LLM step (HyDE) runs for, and the budgets it runs within (#95)."""
+
+    caller: AiCaller
+    """The library and the account it counts to."""
+    budgets: Budgets
+    """The limits its spend is checked against, as ``AiSpend.budgets_for`` gives them."""
+    price: ModelPrice | None
+    """The model's price as the price book has it; ``None``: the bundled price list."""
+    clock: Callable[[], datetime]
+    """Decides the UTC windows its spend lands in."""

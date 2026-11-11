@@ -33,6 +33,7 @@ from exactdocs.retrieval.models import (
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
+    HydeKey,
     IndexedManifest,
     LibraryAi,
     ManifestChunk,
@@ -63,7 +64,7 @@ from exactdocs.retrieval.models import (
     identifier_tokens,
     search_terms,
 )
-from exactdocs.retrieval.ports.driven import SpendLedger
+from exactdocs.retrieval.ports.driven import HypotheticalAnswerCache, SpendLedger
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1140,3 +1141,92 @@ def _summed(
     for key, row in second.items():
         summed[key] = summed[key].plus(row) if key in summed else row
     return summed
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryHypothesisCache:
+    """Implements ``ports.driven.HypotheticalAnswerCache`` with a dictionary."""
+
+    answers: dict[HydeKey, str] = field(default_factory=dict)
+    """Each answer by its key."""
+
+    async def get(self, key: HydeKey) -> str | None:
+        """Read a stored answer.
+
+        Args:
+            key: The query, the manifest and the model.
+
+        Returns:
+            The answer, or ``None``.
+        """
+        return self.answers.get(key)
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        """Store an answer.
+
+        Args:
+            key: The query, the manifest and the model.
+            answer: The hypothetical answer.
+            at: When it was written.
+        """
+        del at
+        self.answers[key] = answer
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of these manifests.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        doomed = [key for key in self.answers if key.manifest_id in set(manifest_ids)]
+        for key in doomed:
+            del self.answers[key]
+        return len(doomed)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReadOnlyHypothesisCache:
+    """Implements ``ports.driven.HypotheticalAnswerCache`` over a read-only database.
+
+    A stdio MCP process (``serve --stdio``) reads the shared answers and keeps its own in memory.
+    """
+
+    shared: HypotheticalAnswerCache
+    """The instance's ``retrieval_hyde_answers``, read only."""
+    local: InMemoryHypothesisCache = field(default_factory=InMemoryHypothesisCache)
+    """What this process wrote."""
+
+    async def get(self, key: HydeKey) -> str | None:
+        """Read this process's answer, else the shared one.
+
+        Args:
+            key: The query, the manifest and the model.
+
+        Returns:
+            The answer, or ``None``.
+        """
+        return await self.local.get(key) or await self.shared.get(key)
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        """Keep an answer in this process.
+
+        Args:
+            key: The query, the manifest and the model.
+            answer: The hypothetical answer.
+            at: When it was written.
+        """
+        await self.local.put(key, answer, at)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete this process's answers of these manifests (the shared ones are not ours).
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        return await self.local.forget(manifest_ids)

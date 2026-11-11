@@ -395,7 +395,7 @@ and instance modes are: their scores must compare across libraries.
 | reranker | BM25 → rerank | planned |
 | embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
-| embedding model + LLM (+ reranker) | hybrid with HyDE → rerank (a default only once the eval suite shows it beats BM25) | planned |
+| embedding model + LLM (+ reranker) | HyDE (`hybrid_hyde`): the LLM writes a short hypothetical answer, whose embedding searches the vector half while BM25 keeps the query; cached per query, version and model; within the budgets, else hybrid with `fallback_reason` `llm_budget_reached`, `llm_rate_limited` or `llm_unavailable` (an LLM error or timeout) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid_hyde`; a default only once the eval suite shows it beats BM25) |
 | LLM + agentic mode | a pydantic-ai agent browses the documentation tree and returns the articles that answer the question, with a justification; similar past questions are served from a cache | planned |
 
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
@@ -677,7 +677,7 @@ start, so the first search never waits for them; a load that fails is a warning,
 call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. A hybrid search is
 reranked the same way, after the fusion.
 
-The hybrid pipeline is built (#92); the HyDE and agentic pipelines arrive with #94 and #98.
+The hybrid (#92) and HyDE (#94) pipelines are built; the agentic pipeline arrives with #98.
 
 ### PostgreSQL
 

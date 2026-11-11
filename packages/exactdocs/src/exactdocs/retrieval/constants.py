@@ -552,8 +552,9 @@ it.
 A mode is listed only once the eval suite marks it ``eligible_as_default`` (its recall@5 beats
 BM25's by 5 points with a wrong-version rate of 0, docs/evals.md). No mode is yet: ``hybrid`` has
 not been evaluated with a real embedding model in CI (the local models are #245), and
-``hybrid_hyde`` has no pipeline (#94 adds it with its eval result). Until then an operator
-chooses a mode (``EXACTDOCS_AI__MODE``, a library's mode or the call).
+``hybrid_hyde`` has only been run on stand-in models (pydantic-ai's ``FunctionModel`` and the
+term-hash embedding, #94), which say nothing about its recall. Until then an operator chooses a
+mode (``EXACTDOCS_AI__MODE``, a library's mode or the call).
 """
 
 # ---------------------------------------------------------------- models (hybrid search, #92)
@@ -572,6 +573,21 @@ the matches of the others), as FTS5's ``snippet(..., 24)``: a shorter text is re
 QUERY_EMBEDDING_TIMEOUT: Final[float] = 5.0
 """Seconds a search waits for its query's embedding before answering with BM25
 (``embedding_unavailable``): a slow provider makes a search no slower than this."""
+
+# ---------------------------------------------------------------- models (HyDE, #94)
+HYDE_TIMEOUT: Final[float] = 10.0
+"""Seconds a search waits for HyDE's hypothetical answer (building the model included) before it
+answers with plain hybrid search (``llm_unavailable``)."""
+HYDE_MAX_TOKENS: Final[int] = 256
+"""The most output tokens of one hypothetical answer (the model's ``max_tokens``)."""
+HYDE_INSTRUCTIONS: Final[str] = (
+    "You write a short passage of software documentation that answers the question you are "
+    "given, the way the project's own reference docs would: name the functions, classes, "
+    "options and terms such docs would use. At most 120 words, no preamble, no questions back. "
+    "If you do not know the answer, write the most plausible documentation passage anyway."
+)
+"""HyDE's fixed instructions: the hypothetical answer is embedded, never shown to anyone, so a
+plausible passage in the docs' own words is what helps the vector half (Gao et al. 2022)."""
 
 # ---------------------------------------------------------------- models (AI providers, #241)
 PROFILE_NAME_PATTERN: Final[str] = r"^[a-z0-9][a-z0-9_-]{0,62}$"
@@ -865,6 +881,10 @@ _VECTOR_ABSENT: Final[str] = "AND c.id NOT IN (SELECT chunk_key FROM {table})"
 # ---------------------------------------------------------------- adapters/driven/ai_embeddings
 EMBEDDINGS_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_embeddings_sdk"
 """The pydantic-ai side of the embedding adapter, imported once an embedding model is called."""
+
+# ---------------------------------------------------------------- adapters/driven/ai_hyde
+HYDE_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_hyde_sdk"
+"""The pydantic-ai side of the HyDE writer, imported once a hypothetical answer is written."""
 
 # ---------------------------------------------------------------- adapters/driven/genai_prices
 PRICE_PROVIDERS: Final[dict[str, str]] = {

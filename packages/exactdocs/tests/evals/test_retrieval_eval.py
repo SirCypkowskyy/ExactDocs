@@ -1,12 +1,16 @@
 """The retrieval eval suite: its dataset, its metrics, its gates, and BM25 on the real import."""
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import AiSettings, Settings
@@ -23,7 +27,7 @@ from exactdocs.retrieval.models import (
 from fake_llm import gateway
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
-from offline_embedding import offline_data_container
+from offline_embedding import LLM, offline_data_container, offline_hyde_container
 from retrieval_eval.cli import OFFLINE_NOT_JUDGED, main
 from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import model_free_container, run_on_fixture
@@ -47,6 +51,7 @@ from retrieval_eval.suite import (
 
 BM25 = next(m for m in MODES if m.mode is RetrievalMode.BM25)
 HYBRID = next(m for m in MODES if m.mode is RetrievalMode.HYBRID)
+HYBRID_HYDE = next(m for m in MODES if m.mode is RetrievalMode.HYBRID_HYDE)
 
 
 def _expected_queries() -> list[tuple[dict[str, Any], str, dict[str, Any] | None]]:
@@ -1003,6 +1008,60 @@ async def test_hybrid_is_reported_against_bm25_on_the_offline_embedding(
     # Every hybrid question embedded its query; BM25 costs nothing.
     assert hybrid.metrics.tokens_per_question > 0
     assert bm25.metrics.tokens_per_question == 0
+
+
+def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A stand-in LLM whose hypothetical answer restates the question."""
+    del info
+    question = next(
+        str(part.content)
+        for message in messages
+        for part in getattr(message, "parts", ())
+        if part.part_kind == "user-prompt"
+    )
+    return ModelResponse(parts=[TextPart(content=f"The documentation says: {question}")])
+
+
+@pytest.mark.parametrize(
+    "chat",
+    [
+        pytest.param(lambda: FunctionModel(_echo, model_name=LLM), id="FunctionModel"),
+        pytest.param(
+            lambda: TestModel(custom_output_text="RetryPolicy", model_name=LLM), id="TestModel"
+        ),
+    ],
+)
+async def test_hybrid_hyde_runs_through_the_suite_on_a_stand_in_llm(
+    docs_repo: DocsRepo, tmp_path: Path, chat: Callable[[], object]
+) -> None:
+    report = await run_on_fixture(
+        docs_repo,
+        tmp_path / "data",
+        build=offline_hyde_container(chat),
+        modes=[BM25, HYBRID_HYDE],
+        local_roles=frozenset({ModelRole.EMBEDDING, ModelRole.LLM}),
+        comparison=Comparison(baseline=read_baseline(BASELINE_FILE).recall_at_5),
+        not_judged=OFFLINE_NOT_JUDGED,
+    )
+
+    assert report.passed, report.problems
+    bm25, hyde = report.modes
+    assert (hyde.mode, hyde.status, hyde.fallbacks, hyde.errors) == (
+        RetrievalMode.HYBRID_HYDE,
+        "ran",
+        0,
+        [],
+    )
+    assert hyde.metrics is not None
+    assert bm25.metrics is not None
+    assert hyde.metrics.wrong_version_rate == 0
+    assert hyde.wrong_version_cases == []
+    # A stand-in LLM cannot tell whether HyDE should be a default.
+    assert (hyde.eligible_as_default, hyde.not_judged) == (None, "offline embedding")
+    # The LLM step (priced) and the embedding of its answer reach the report; BM25 costs nothing.
+    assert hyde.metrics.tokens_per_question > 0
+    assert hyde.metrics.usd_per_question > 0
+    assert (bm25.metrics.tokens_per_question, bm25.metrics.usd_per_question) == (0, 0)
 
 
 def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Path) -> None:

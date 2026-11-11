@@ -8213,6 +8213,7 @@
           "llm_rate_limited",
           "vector_store_unavailable",
           "embedding_unavailable",
+          "llm_unavailable",
           "reranker_timeout",
           "reranker_failed"
         ],

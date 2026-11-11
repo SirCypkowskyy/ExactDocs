@@ -5,6 +5,7 @@ from typing import Self
 from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    HYDE_TIMEOUT,
     QUERY_EMBEDDING_TIMEOUT,
 )
 from exactdocs.retrieval.models import (
@@ -23,6 +24,8 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     DefaultVersions,
     EmbeddingModels,
+    HypotheticalAnswerCache,
+    HypotheticalAnswers,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -95,10 +98,12 @@ from exactdocs.retrieval.use_cases import (
     GetSearchIndexStateUseCase,
     GetVectorStoreStateUseCase,
     HybridPipeline,
+    HydePipeline,
     IndexManifestUseCase,
     ListProvidersUseCase,
     ListRolesUseCase,
     ListUnembeddedVersionsUseCase,
+    NoHypothesisCache,
     NoModelFactory,
     NoSpendLedger,
     NoStoredProfiles,
@@ -216,6 +221,9 @@ class RetrievalModule:
         embedding_dimensions: int | None = None,
         embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH,
         query_embedding_timeout: float = QUERY_EMBEDDING_TIMEOUT,
+        hypotheses: HypotheticalAnswers | None = None,
+        hypothesis_cache: HypotheticalAnswerCache | None = None,
+        hyde_timeout: float = HYDE_TIMEOUT,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -234,7 +242,10 @@ class RetrievalModule:
         ``embedding_dimensions`` and ``embedding_batch_size`` are the embedding role's settings.
         With a vector store, ``hybrid`` runs ``HybridPipeline`` (BM25 and vectors fused), whose
         query embedding waits at most ``query_embedding_timeout`` seconds; a ``hybrid`` entry
-        of ``pipelines`` replaces it (tests).
+        of ``pipelines`` replaces it (tests). With a vector store and ``hypotheses`` (the HyDE
+        writer), ``hybrid_hyde`` runs ``HydePipeline``: the ``llm`` role's hypothetical answer,
+        cached in ``hypothesis_cache``, searches the vector half, and a search waits at most
+        ``hyde_timeout`` seconds for it.
         Cost: ``price_overrides`` are the operator's prices by ``<profile>:<model>``, ``budgets``
         the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
         caller (without it they are not rate limited).
@@ -269,11 +280,12 @@ class RetrievalModule:
             dimensions=embedding_dimensions,
             batch_size=embedding_batch_size,
         )
+        hypotheses_cached = hypothesis_cache or NoHypothesisCache()
         built: dict[RetrievalMode, RetrievalPipeline] = {
             RetrievalMode.BM25: Bm25Pipeline(search=search)
         }
         if vectors is not None:
-            built[RetrievalMode.HYBRID] = HybridPipeline(
+            hybrid = HybridPipeline(
                 search=search,
                 vectors=vectors,
                 chunks=chunks,
@@ -281,6 +293,17 @@ class RetrievalModule:
                 tracer=tracer,
                 timeout=query_embedding_timeout,
             )
+            built[RetrievalMode.HYBRID] = hybrid
+            if hypotheses is not None:
+                built[RetrievalMode.HYBRID_HYDE] = HydePipeline(
+                    hybrid=hybrid,
+                    providers=providers,
+                    writer=hypotheses,
+                    cache=hypotheses_cached,
+                    spend=ai_spend,
+                    tracer=tracer,
+                    timeout=hyde_timeout,
+                )
         modes = RetrievalModes(
             pipelines={**built, **(pipelines or {})},
             roles=roles or ProfileModelRoles(providers=providers),
@@ -324,10 +347,14 @@ class RetrievalModule:
                 tracer=tracer,
             ),
             discard_pending_chunks=DiscardPendingChunksUseCase(
-                manifests=manifests, chunks=chunks, clock=clock
+                manifests=manifests, chunks=chunks, clock=clock, hypotheses=hypotheses_cached
             ),
-            collect_chunks=CollectChunksUseCase(manifests=manifests, chunks=chunks, clock=clock),
-            remove_chunks=RemoveChunksUseCase(manifests=manifests, chunks=chunks),
+            collect_chunks=CollectChunksUseCase(
+                manifests=manifests, chunks=chunks, clock=clock, hypotheses=hypotheses_cached
+            ),
+            remove_chunks=RemoveChunksUseCase(
+                manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached
+            ),
             retag_articles=RetagArticlesUseCase(chunks=chunks),
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
             get_vector_store_state=GetVectorStoreStateUseCase(modes=modes),
