@@ -17,7 +17,7 @@ without, ``uv run exactdocs`` from the checkout. Give each build a unique versio
 version with the commit) or a fresh ``UV_CACHE_DIR``: uv reuses a cached wheel of the same file
 name, so another build of ``0.0.0.dev0`` would run instead of this one. Everything it starts is
 gone when it exits. Only the fields both releases return are compared: a release may add fields,
-not change them.
+not change them (except its own fixed wording, ``NOT_STORED``, such as the notice).
 """
 
 import argparse
@@ -187,11 +187,21 @@ def served(api: Api) -> dict[str, object]:
     return seen
 
 
+NOT_STORED = frozenset({"notice"})
+"""Fields that are this build's fixed wording, not data the instance stored: a release may
+reword the untrusted-content notice (#98 added its model-output clause)."""
+
+
 def differences(old: object, new: object, where: str = "") -> list[str]:
-    """List where ``new`` changed a value ``old`` had; keys only one side has are not compared."""
+    """List where ``new`` changed a value ``old`` had.
+
+    Keys only one side has are not compared, nor the fixed wording in ``NOT_STORED``.
+    """
     if isinstance(old, dict) and isinstance(new, dict):
         return [
-            d for k in old.keys() & new.keys() for d in differences(old[k], new[k], f"{where}.{k}")
+            d
+            for k in (old.keys() & new.keys()) - NOT_STORED
+            for d in differences(old[k], new[k], f"{where}.{k}")
         ]
     if isinstance(old, list) and isinstance(new, list):
         if len(old) != len(new):
