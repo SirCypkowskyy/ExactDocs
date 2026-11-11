@@ -147,6 +147,67 @@ class EmbeddingRoleSettings(RoleSettings):
     version's background `embed` job."""
 
 
+class BudgetSettings(BaseModel):
+    """Spend limits and the LLM search rate limit (``EXACTDOCS_AI__BUDGETS__*``, ``[ai.budgets]``).
+
+    Unset: no limit. Windows are UTC days and months.
+    The instance's limits count every AI call (embedding runs too); per-library and per-user
+    limits apply to each library and each account (the API token's or the session's) on its own;
+    the embedding limits only to embedding runs. Reaching one skips the LLM step or the rerank
+    (the search answers in a cheaper mode and says why) and pauses embedding until the window
+    resets. A US dollar limit needs a price for every configured model.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    daily_usd: float | None = Field(default=None, gt=0)
+    """The instance's US dollars per day."""
+    monthly_usd: float | None = Field(default=None, gt=0)
+    """The instance's US dollars per month."""
+    daily_tokens: int | None = Field(default=None, ge=1)
+    """The instance's tokens per day."""
+    monthly_tokens: int | None = Field(default=None, ge=1)
+    """The instance's tokens per month."""
+    per_library_daily_usd: float | None = Field(default=None, gt=0)
+    """Each library's US dollars per day."""
+    per_library_monthly_usd: float | None = Field(default=None, gt=0)
+    """Each library's US dollars per month."""
+    per_library_daily_tokens: int | None = Field(default=None, ge=1)
+    """Each library's tokens per day."""
+    per_library_monthly_tokens: int | None = Field(default=None, ge=1)
+    """Each library's tokens per month."""
+    per_user_daily_usd: float | None = Field(default=None, gt=0)
+    """Each account's US dollars per day (a stdio MCP process has none)."""
+    per_user_monthly_usd: float | None = Field(default=None, gt=0)
+    """Each account's US dollars per month."""
+    per_user_daily_tokens: int | None = Field(default=None, ge=1)
+    """Each account's tokens per day."""
+    per_user_monthly_tokens: int | None = Field(default=None, ge=1)
+    """Each account's tokens per month."""
+    daily_embedding_usd: float | None = Field(default=None, gt=0)
+    """Embedding runs' US dollars per day, instance-wide."""
+    monthly_embedding_usd: float | None = Field(default=None, gt=0)
+    """Embedding runs' US dollars per month, instance-wide."""
+    daily_embedding_tokens: int | None = Field(default=None, ge=1)
+    """Embedding runs' tokens per day, instance-wide."""
+    monthly_embedding_tokens: int | None = Field(default=None, ge=1)
+    """Embedding runs' tokens per month, instance-wide."""
+    llm_searches_per_minute: int | None = Field(default=None, ge=1)
+    """LLM searches each caller may make per minute (REST, HTTP MCP and stdio alike); more
+    answer without the LLM step (`fallback_reason` `llm_rate_limited`). Per server process."""
+
+
+class PriceSettings(BaseModel):
+    """A model's price, for one the bundled price list does not know: ``[ai.prices."p:m"]``."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    input_usd_per_mtok: float = Field(ge=0)
+    """US dollars per million input tokens."""
+    output_usd_per_mtok: float = Field(default=0.0, ge=0)
+    """US dollars per million output tokens."""
+
+
 class AiSettings(BaseModel):
     """The ``ai`` section: AI retrieval, read from ``EXACTDOCS_AI__<FIELD>`` variables."""
 
@@ -169,6 +230,10 @@ class AiSettings(BaseModel):
     """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
     judge: RoleSettings = Field(default_factory=RoleSettings)
     """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`); the LLM role when unset."""
+    budgets: BudgetSettings = Field(default_factory=BudgetSettings)
+    """Spend limits and the LLM search rate limit (`EXACTDOCS_AI__BUDGETS__...`)."""
+    prices: dict[str, PriceSettings] = Field(default_factory=dict)
+    """Prices by `<profile>:<model>`, overriding the bundled list (`[ai.prices."corp:m"]`)."""
 
     @field_validator("mode", mode="before")
     @classmethod

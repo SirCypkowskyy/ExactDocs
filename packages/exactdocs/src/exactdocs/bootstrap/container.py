@@ -51,7 +51,7 @@ from exactdocs.bootstrap.database import (
     migrate,
     open_database,
 )
-from exactdocs.bootstrap.embedding import SaveProviderThenEmbed
+from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox
@@ -105,6 +105,7 @@ from exactdocs.ingestion.ports.driven import (
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
+from exactdocs.retrieval.adapters.driven.memory import InMemoryCallRates, ReadOnlySpendLedger
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
@@ -117,10 +118,11 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
-from exactdocs.retrieval.models import ProviderKind, RerankLimits, RetrievalMode
-from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
+from exactdocs.retrieval.models import ModelRole, ProviderKind, RerankLimits, RetrievalMode
+from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline, SpendLedger
 from exactdocs.retrieval.ports.driving import SaveProvider
-from exactdocs_kernel import DomainError, SystemClock
+from exactdocs.retrieval.use_cases import PriceBook
+from exactdocs_kernel import Clock, DomainError, SystemClock
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +149,38 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
         if (reason := probe.unsupported(profile)) is not None:
             message = f"AI provider {profile.name!r}: {reason}"
             raise StartupError(message)
+    if configured.budgets.limits_usd:
+        _require_prices(configured)
     return configured
+
+
+def _require_prices(configured: ConfiguredAi) -> None:
+    """Refuse a US dollar budget while a configured model has no known price.
+
+    Its spend could not be counted in dollars, so the budget would never stop it. Profiles
+    stored over the REST API are not known before the database is read; their models count as
+    unpriced (``unpriced`` in the usage) until a price is configured.
+
+    Args:
+        configured: The AI configuration.
+
+    Raises:
+        StartupError: A role's model is neither in the bundled price list nor in
+            ``[ai.prices]``.
+    """
+    book = PriceBook(listed=GenaiPrices(), overrides=configured.prices)
+    kinds = {profile.name: profile.kind.value for profile in configured.profiles}
+    for role in ModelRole:
+        ref = configured.roles.explicit(role)
+        if ref is None or ref.profile not in kinds:
+            continue
+        if book.price(ref, kinds[ref.profile]) is None:
+            message = (
+                f"a US dollar budget is set, but the price of {ref} ({role.value}) is unknown: "
+                f'set [ai.prices."{ref}"] input_usd_per_mtok and output_usd_per_mtok '
+                "(EXACTDOCS_AI__PRICES__...), or use token budgets"
+            )
+            raise StartupError(message)
 
 
 async def _warm_ai(retrieval: RetrievalModule) -> None:
@@ -250,6 +283,8 @@ def _build_read_side(
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
+    read_only: bool = False,
+    clock: Clock | None = None,
 ) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -261,6 +296,9 @@ def _build_read_side(
         model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
+        read_only: The database is opened read-only (``serve --stdio``): spend is read from it
+            and kept in memory.
+        clock: Decides the spend windows (tests); the system clock by default.
 
     Returns:
         The two modules (``StartupError`` when the AI configuration is invalid), and on
@@ -285,6 +323,9 @@ def _build_read_side(
             bm25=PgSearchIndex(engine=engine, table=quiet),
         )
     vectors = vector_index(engine, sqlite_extension=vector_extension)
+    spend: SpendLedger = SqliteSpendLedger(engine=engine)
+    if read_only:
+        spend = ReadOnlySpendLedger(shared=spend)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
@@ -319,8 +360,12 @@ def _build_read_side(
         vectors=vectors,
         embedding_models=PydanticAiEmbeddingModels(),
         article_titles=CatalogArticleTitles(get_article_titles=catalog.get_article_titles),
-        spend=SqliteSpendLedger(engine=engine),
+        spend=spend,
         prices=GenaiPrices(),
+        price_overrides=ai.prices,
+        budgets=ai.budgets,
+        call_rates=InMemoryCallRates(),
+        clock=clock,
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
     )
@@ -448,7 +493,7 @@ class ReadOnlyContainer:
         engine = open_database(settings, read_only=True)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
-        read = _build_read_side(engine, settings, ai_box=ai_box)
+        read = _build_read_side(engine, settings, ai_box=ai_box, read_only=True)
         return cls(
             settings=settings,
             engine=engine,
@@ -514,6 +559,7 @@ class Container:
         model_roles: ModelRoles | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         vector_extension: Callable[[], str] | None = None,
+        clock: Clock | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -524,7 +570,8 @@ class Container:
         ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
         ``model_roles`` stands in for the role resolution over the configured AI profiles and
         ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
-        extension (tests: one that cannot load). An invalid AI configuration (or one this
+        extension (tests: one that cannot load); ``clock`` decides retrieval's spend windows
+        (tests). An invalid AI configuration (or one this
         installation cannot call) is a ``StartupError``. A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
@@ -548,6 +595,7 @@ class Container:
             model_roles=model_roles,
             pipelines=pipelines,
             vector_extension=vector_extension,
+            clock=clock,
         )
         index = RetrievalChunkIndex(
             index_manifest=read.retrieval.index_manifest,
@@ -675,14 +723,17 @@ class Container:
 
     @asynccontextmanager
     async def _embedding_queued(self) -> AsyncGenerator[None]:
-        """Queue the missing embedding in the background while the block runs.
+        """Queue the missing embedding in the background while the block runs, and every day.
 
         A start never waits for the coverage of every version; stopping cancels what is left.
+        Then the queueing runs again just after each UTC midnight, when the day's (and on the
+        first, the month's) spend windows reset: a version an exhausted budget left unembedded
+        (its job stopped with ``ai_budget_reached``) is retried then.
 
         Yields:
             Nothing: the block runs while the queueing goes on.
         """
-        queueing = asyncio.create_task(self._queue_embedding())
+        queueing = asyncio.create_task(self._queue_embedding_daily())
         try:
             yield
         finally:
@@ -690,7 +741,12 @@ class Container:
             with suppress(asyncio.CancelledError):
                 await queueing
 
-    async def _queue_embedding(self) -> None:
+    async def _queue_embedding_daily(self) -> None:
+        """Queue the missing embedding now, then after every UTC midnight (one process does)."""
+        await self.queue_embedding()
+        await requeue_daily(engine=self.engine, queue=self.queue_embedding)
+
+    async def queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.
 
         A new or changed embedding model, or versions imported while none was configured, are

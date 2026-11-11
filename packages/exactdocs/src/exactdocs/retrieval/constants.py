@@ -518,6 +518,10 @@ QUERY_ATTRIBUTE: Final[str] = "exactdocs.query"
 """The span attribute holding the query text, set only when the operator opted in."""
 SEARCH_DURATION_METRIC: Final[str] = "exactdocs.search.duration"
 """Histogram of how long searches and their stages took, by search, stage and mode."""
+FALLBACKS_METRIC: Final[str] = "exactdocs.ai.fallbacks"
+"""Counter of searches a cheaper mode answered, by mode and reason (no library, user or query)."""
+FALLBACK_REASON_ATTRIBUTE: Final[str] = "exactdocs.fallback.reason"
+"""The label of ``FALLBACKS_METRIC`` naming the reason (``llm_budget_reached``)."""
 SEARCH_ATTRIBUTE: Final[str] = "exactdocs.search"
 """The metric attribute naming the search (``search_docs``, ``query_docs``...)."""
 STAGE_ATTRIBUTE: Final[str] = "exactdocs.search.stage"
@@ -676,6 +680,45 @@ SPEND_INSTANCE_ID: Final[str] = ""
 """The scope ID of the instance's rows: there is one instance."""
 SPEND_SCOPE_LIBRARY: Final[str] = "library"
 """The ledger scope kind of what one library spends; its scope ID is the library ID."""
+SPEND_SCOPE_USER: Final[str] = "user"
+"""The ledger scope kind of what one account spends (the API token's or the session's); its
+scope ID is the account ID. A stdio MCP process has no account: it counts to instance and
+library only."""
+SPEND_SCOPE_EMBEDDING: Final[str] = "embedding"
+"""The ledger scope kind of what embedding runs spend, instance-wide (the separate embedding
+budget); its scope ID is ``SPEND_INSTANCE_ID``. Embedding runs count to the instance's and the
+library's rows as well."""
+SPEND_SCOPE_KINDS: Final[frozenset[str]] = frozenset(
+    {SPEND_SCOPE_INSTANCE, SPEND_SCOPE_LIBRARY, SPEND_SCOPE_USER, SPEND_SCOPE_EMBEDDING}
+)
+"""Every scope kind of the ledger, the first part of its row key."""
+MONTHS_PER_YEAR: Final[int] = 12
+"""December is the last month: the month window after it starts in January."""
+BUDGET_WITHOUT_CEILING: Final[str] = "a budget needs a US dollar or a token ceiling"
+"""Why a budget with neither ceiling is refused (it would limit nothing)."""
+BUDGET_NOT_POSITIVE: Final[str] = "a budget ceiling must be positive"
+"""Why a ceiling of zero or less is refused (unset it for no limit)."""
+RATE_LIMIT_BELOW_ONE: Final[str] = "llm_searches_per_minute must be at least 1"
+"""Why a rate limit below one is refused (unset it for no limit)."""
+RATE_WINDOW_SECONDS: Final[float] = 60.0
+"""The sliding window of the LLM searches-per-minute limit."""
+SPEND_COUNTERS: Final[tuple[str, ...]] = (
+    "input_tokens",
+    "output_tokens",
+    "requests",
+    "usd_micros",
+    "unpriced",
+)
+"""The columns of a ledger row an addition sums."""
+REPLAY_RETAIN_DAYS: Final[int] = 2
+"""Replay tokens of day windows older than this many days are dropped: those days are over."""
+FREE_PROFILE_KINDS: Final[frozenset[str]] = frozenset({"local"})
+"""Kinds whose models cost nothing (in-process models): priced at zero, their tokens counted."""
+LLM_REQUEST_LIMIT: Final[int] = 8
+"""The most model requests one LLM step (HyDE, judge, an agentic search) may make
+(pydantic-ai ``UsageLimits.request_limit``)."""
+LLM_TOKEN_LIMIT: Final[int] = 60_000
+"""The most input and output tokens one LLM step may use (``UsageLimits.total_tokens_limit``)."""
 MICROS_PER_USD: Final[int] = 1_000_000
 """The ledger keeps US dollars as whole millionths, so atomic additions stay exact."""
 TOKENS_PER_MILLION: Final[int] = 1_000_000
@@ -878,3 +921,16 @@ _PG_VECTOR_PENDING: Final[str] = _VECTOR_PENDING.replace(
     _HEADING_CHARACTERS, _PG_HEADING_CHARACTERS
 )
 """``_VECTOR_PENDING`` on PostgreSQL (the rest of the SQL is the same)."""
+
+# ---------------------------------------------------------------- adapters/driven/harness_spend
+HARNESS_KEY_SEPARATOR: Final[str] = "|"
+"""Joins the parts of a harness ``SpendEntry.key``: ``<name>|<window>|<scope>|<bucket>``
+(pydantic-ai-harness 0.60.0; a contract test pins it)."""
+HARNESS_KEY_PARTS: Final[int] = 4
+"""A harness key has a budget name, a window, a scope and a bucket."""
+HARNESS_ANY_SCOPE: Final[str] = "*"
+"""The scope part of a harness key of a budget without a scope: our instance-wide kinds."""
+HARNESS_MONTH_BUCKET: Final[str] = r"\d{4}-\d{2}"
+"""A month window's bucket in a harness key: ``YYYY-MM``."""
+INSTANCE_WIDE_KINDS: Final[frozenset[str]] = frozenset({"instance", "embedding"})
+"""Scope kinds with one scope for the whole instance, unscoped in the harness."""

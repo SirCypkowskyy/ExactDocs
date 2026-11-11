@@ -5,10 +5,10 @@ import sys
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from itertools import batched
 
-from exactdocs.retrieval.constants import CHARS_PER_TOKEN, MEMORY_FORMAT
+from exactdocs.retrieval.constants import CHARS_PER_TOKEN, MEMORY_FORMAT, RATE_WINDOW_SECONDS
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     RetiredEmbeddingSpaceError,
@@ -45,6 +45,7 @@ from exactdocs.retrieval.models import (
     SectionRef,
     SpaceState,
     SpendEntry,
+    SpendKey,
     SpendWindow,
     StoredChunk,
     TagFilter,
@@ -56,6 +57,7 @@ from exactdocs.retrieval.models import (
     identifier_tokens,
     search_terms,
 )
+from exactdocs.retrieval.ports.driven import SpendLedger
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -914,30 +916,55 @@ class HashEmbeddingModels:
 class InMemorySpendLedger:
     """Implements ``ports.driven.SpendLedger`` with a dictionary of summed rows."""
 
-    rows: dict[tuple[str, str, SpendWindow, str], SpendEntry] = field(default_factory=dict)
-    """Each row by (scope kind, scope ID, window, window start)."""
+    rows: dict[SpendKey, SpendEntry] = field(default_factory=dict)
+    """Each row by its key."""
+    replays: set[tuple[str, SpendKey]] = field(default_factory=set)
+    """The (replay token, row) pairs already added."""
 
     async def add(self, entries: Sequence[SpendEntry]) -> None:
-        """Add each entry to its row.
+        """Add each entry to its row, skipping an entry whose token the row has taken.
 
         Args:
             entries: The usage.
         """
         for entry in entries:
-            key = (entry.scope_kind, entry.scope_id, entry.window, entry.window_start.isoformat())
+            key = entry.key
+            if entry.token is not None:
+                if (entry.token, key) in self.replays:
+                    continue
+                self.replays.add((entry.token, key))
             row = self.rows.get(key)
-            self.rows[key] = (
-                entry
-                if row is None
-                else replace(
-                    row,
-                    input_tokens=row.input_tokens + entry.input_tokens,
-                    output_tokens=row.output_tokens + entry.output_tokens,
-                    requests=row.requests + entry.requests,
-                    usd_micros=row.usd_micros + entry.usd_micros,
-                    unpriced=row.unpriced + entry.unpriced,
-                )
-            )
+            self.rows[key] = (SpendEntry.empty(key) if row is None else row).plus(entry)
+        if (latest := max((e.window_start for e in entries if e.token), default=None)) is not None:
+            # A long-lived process (stdio) keeps only the tokens of windows a replay can reach.
+            kept = {window: window.kept_since(latest) for window in SpendWindow}
+            stale = {r for r in self.replays if r[1].window_start < kept[r[1].window]}
+            self.replays.difference_update(stale)
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        """Read the rows that exist.
+
+        Args:
+            keys: The rows.
+
+        Returns:
+            Each one found.
+        """
+        return {key: self.rows[key] for key in keys if key in self.rows}
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        """Read the rows of windows starting on or after a day.
+
+        Args:
+            first: The earliest window start.
+
+        Returns:
+            The rows, in key order.
+        """
+        found = [row for key, row in self.rows.items() if key.window_start >= first]
+        return sorted(
+            found, key=lambda r: (r.scope_kind, r.scope_id, r.window.value, r.window_start)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -946,6 +973,8 @@ class StaticPrices:
 
     input_prices: Mapping[tuple[str, str], float] = field(default_factory=dict)
     """US dollars per million input tokens, by (profile kind, model)."""
+    output_prices: Mapping[tuple[str, str], float] = field(default_factory=dict)
+    """US dollars per million output tokens, by (profile kind, model)."""
 
     def input_usd_per_million(self, profile_kind: str, model: str) -> float | None:
         """Look the model up.
@@ -958,3 +987,120 @@ class StaticPrices:
             Its price, or ``None``.
         """
         return self.input_prices.get((profile_kind, model))
+
+    def output_usd_per_million(self, profile_kind: str, model: str) -> float | None:
+        """Look the model's output price up.
+
+        Args:
+            profile_kind: The profile's kind.
+            model: The model.
+
+        Returns:
+            Its price, or ``None``.
+        """
+        return self.output_prices.get((profile_kind, model))
+
+
+@dataclass(
+    slots=True, kw_only=True
+)  # conventions: allow-mutable-dataclass -- per-process call times
+class InMemoryCallRates:
+    """Implements ``ports.driven.CallRates`` with a sliding minute per caller, in this process.
+
+    The limit is per process: several server processes on one PostgreSQL database each allow
+    the limit (the budgets, in the shared ledger, hold across processes).
+    """
+
+    calls: dict[str, list[datetime]] = field(default_factory=dict)
+    """Each caller's calls in the last minute, oldest first."""
+
+    async def allow(self, key: str, limit: int, now: datetime) -> bool:
+        """Count a call unless the caller made ``limit`` calls in the last minute.
+
+        Args:
+            key: Whose calls.
+            limit: The most calls per minute.
+            now: The time of the call.
+
+        Returns:
+            True when it is allowed (and counted).
+        """
+        start = now - timedelta(seconds=RATE_WINDOW_SECONDS)
+        recent = [at for at in self.calls.get(key, ()) if at > start]
+        allowed = len(recent) < limit
+        if allowed:
+            recent.append(now)
+        if recent:
+            self.calls[key] = recent
+        else:
+            self.calls.pop(key, None)
+        return allowed
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReadOnlySpendLedger:
+    """Implements ``ports.driven.SpendLedger`` over a database this process may not write.
+
+    A stdio MCP process opens the database read-only: it reads the shared rows, so the
+    instance's and the libraries' budgets hold, and keeps what it spends itself in memory,
+    added to what it reads, for as long as it runs.
+    """
+
+    shared: SpendLedger
+    """The instance's ``retrieval_ai_spend`` rows, read only."""
+    local: InMemorySpendLedger = field(default_factory=InMemorySpendLedger)
+    """What this process spent."""
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        """Keep the usage in this process.
+
+        Args:
+            entries: The usage.
+        """
+        await self.local.add(entries)
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        """Read the shared rows plus this process's spend.
+
+        Args:
+            keys: The rows.
+
+        Returns:
+            Each row either side has.
+        """
+        return _summed(await self.shared.get(keys), await self.local.get(keys))
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        """Read the rows of windows starting on or after a day, both sides summed.
+
+        Args:
+            first: The earliest window start.
+
+        Returns:
+            The rows, in key order.
+        """
+        shared = {row.key: row for row in await self.shared.since(first)}
+        local = {row.key: row for row in await self.local.since(first)}
+        summed = _summed(shared, local)
+        return sorted(
+            summed.values(),
+            key=lambda r: (r.scope_kind, r.scope_id, r.window.value, r.window_start),
+        )
+
+
+def _summed(
+    first: Mapping[SpendKey, SpendEntry], second: Mapping[SpendKey, SpendEntry]
+) -> dict[SpendKey, SpendEntry]:
+    """Add two sets of rows key by key.
+
+    Args:
+        first: Some rows.
+        second: Others.
+
+    Returns:
+        Every key of either, its counters summed.
+    """
+    summed = dict(first)
+    for key, row in second.items():
+        summed[key] = summed[key].plus(row) if key in summed else row
+    return summed
