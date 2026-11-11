@@ -74,6 +74,7 @@ from exactdocs.retrieval.dtos import (
     ProviderListOut,
     ProviderNameQuery,
     ProviderOut,
+    PrunedHypothesesOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -893,6 +894,7 @@ class RetrievalModes:
             rerank=choice.rerank,
             search=search,
             caller=choice.caller,
+            hypothesis=choice.hypothesis,
         )
         if choice.mode.needs_vectors and self.embedded is not None:
             found = await self.embedded.search_space(version.manifest_id)
@@ -937,11 +939,9 @@ class RetrievalModes:
             return choice
         who = AiCaller(library=library.casefold(), user=caller)
         own = None if choice.library_ai is None else choice.library_ai.budgets
-        if (
-            choice.mode.needs_llm
-            and not await self._cached_hypothesis(choice, version, query)
-            and (reason := await self.spend.llm_step(who, own)) is not None
-        ):
+        if (hypothesis := await self._cached_hypothesis(choice, version, query)) is not None:
+            choice = replace(choice, hypothesis=hypothesis)  # no LLM call: no limit applies
+        elif choice.mode.needs_llm and (reason := await self.spend.llm_step(who, own)) is not None:
             choice = choice.without_llm(reason)
         if (
             choice.rerank
@@ -955,8 +955,8 @@ class RetrievalModes:
 
     async def _cached_hypothesis(
         self, choice: ModeChoice, version: SearchableVersion | None, query: str | None
-    ) -> bool:
-        """Say whether a HyDE search will read its hypothetical answer rather than call the LLM.
+    ) -> str | None:
+        """Read a HyDE search's cached hypothetical answer, if it has one (no LLM call then).
 
         Args:
             choice: The mode picked.
@@ -964,12 +964,12 @@ class RetrievalModes:
             query: The query text, if known.
 
         Returns:
-            True for a ``hybrid_hyde`` search whose answer is cached.
+            The answer of a ``hybrid_hyde`` search whose answer is cached, else ``None``.
         """
         if choice.mode is not RetrievalMode.HYBRID_HYDE or version is None or query is None:
-            return False
+            return None
         hyde = self.pipelines.get(RetrievalMode.HYBRID_HYDE)
-        return isinstance(hyde, HydePipeline) and await hyde.is_cached(version, query)
+        return await hyde.cached_answer(version, query) if isinstance(hyde, HydePipeline) else None
 
     async def _paid_rerank(self, library: str, ai: LibraryAi | None) -> bool:
         """Say whether the library's reranker costs money (any but an in-process one).
@@ -1754,8 +1754,7 @@ class DiscardPendingChunksUseCase:
 class CollectChunksUseCase:
     """Implements ``ports.driving.CollectChunks``.
 
-    Also prunes HyDE's cache: answers older than ``hyde_ttl``, and those of an ``llm`` model no
-    longer configured (neither the instance's nor any library's, or its profile is gone).
+    Also prunes HyDE's cache (``PruneHypothesesUseCase``), as the server does once a day.
     """
 
     manifests: ActiveManifests
@@ -1763,10 +1762,8 @@ class CollectChunksUseCase:
     clock: Clock
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
-    hyde_ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS)
-    """How long a cached hypothetical answer is kept (``[ai.hyde] cache_ttl``)."""
-    providers: AiProviders | None = None
-    """Names the ``llm`` models still configured; without it the cache is not pruned."""
+    prune: PruneHypothesesUseCase | None = None
+    """Prunes HyDE's cache by age and model; without it the cache is not pruned here."""
 
     async def __call__(self, command: CollectChunksCommand) -> RemovedChunks:
         """Run after the catalog's collection: its superseded manifests are gone, so are ours."""
@@ -1777,12 +1774,39 @@ class CollectChunksUseCase:
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=False)
         removed = await _removed(self.chunks, self.hypotheses, doomed)
-        if self.providers is not None:
-            kept = await _llm_models(self.providers)
-            pruned = await self.hypotheses.prune(now - self.hyde_ttl, kept)
-            if pruned:
-                logger.info("pruned %d cached hypothetical answers", pruned)
+        if self.prune is not None:
+            await self.prune()
         return removed
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PruneHypothesesUseCase:
+    """Implements ``ports.driving.PruneHypotheses``.
+
+    Deletes HyDE's answers older than ``ttl``, and those of an ``llm`` model no longer
+    configured (neither the instance's nor any library's override, or its profile is gone).
+    """
+
+    hypotheses: HypotheticalAnswerCache
+    """HyDE's cached answers."""
+    providers: AiProviders
+    """Names the ``llm`` models still configured."""
+    clock: Clock
+    """Decides the TTL's cutoff."""
+    ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS)
+    """How long a cached hypothetical answer is kept (``[ai.hyde] cache_ttl``)."""
+
+    async def __call__(self) -> PrunedHypothesesOut:
+        """Prune the cache.
+
+        Returns:
+            How many answers were deleted.
+        """
+        kept = await _llm_models(self.providers)
+        deleted = await self.hypotheses.prune(self.clock.now() - self.ttl, kept)
+        if deleted:
+            logger.info("pruned %d cached hypothetical answers", deleted)
+        return PrunedHypothesesOut(deleted=deleted)
 
 
 async def _llm_models(providers: AiProviders) -> set[str]:
@@ -3480,30 +3504,31 @@ class HydePipeline:
             The ``hybrid_hyde`` answer; or hybrid's (BM25's when the vectors cannot be used),
             with the reason the hypothetical answer was not used (hybrid's own when it has one).
         """
-        hypothesis = await self._hypothesis(request)
+        hypothesis = request.hypothesis or await self._hypothesis(request)
         if isinstance(hypothesis, FallbackReason):
             answer = await self.hybrid.run(request)
             return answer if answer.fallback_reason else replace(answer, fallback_reason=hypothesis)
         return await self.hybrid.fuse(request, embed=hypothesis, mode=RetrievalMode.HYBRID_HYDE)
 
-    async def is_cached(self, version: SearchableVersion, query: str) -> bool:
-        """Say whether the query's hypothetical answer is cached for the version (no LLM call).
+    async def cached_answer(self, version: SearchableVersion, query: str) -> str | None:
+        """Read the query's cached hypothetical answer for the version (no LLM call).
 
         Args:
             version: The version searched.
             query: The query text.
 
         Returns:
-            True when a search would read it rather than call the LLM; False with AI off.
+            The answer, or ``None`` when there is none (or AI is off for the library).
         """
         ai = await self.providers.library_modes.ai_of(version.library)
         if not ai.enabled:
-            return False
+            return None
         found = await self.providers.profile_for(ModelRole.LLM, version.library, ai)
         if found is None:
-            return False
-        key = HydeKey.of(version.manifest_id, found[0], query, key=self.cache_key)
-        return await self._cached(key) is not None
+            return None
+        return await self._cached(
+            HydeKey.of(version.manifest_id, found[0], query, key=self.cache_key)
+        )
 
     async def _cached(self, key: HydeKey) -> str | None:
         """Read a cached answer; a cache that cannot be read is a miss.

@@ -1078,11 +1078,15 @@ The cache is `retrieval_hyde_answers` (`SqliteHypothesisCache`, SQLite and Postg
 read-only process (`serve --stdio`) reads it and keeps its own answers in a bounded LRU
 (`ReadOnlyHypothesisCache`, `HYDE_MEMORY_CACHE_SIZE`). A cache that cannot be read is a miss and
 one that cannot be written costs a call next time; only the error's class is logged. A cached
-answer is no LLM call: `RetrievalModes.within_budget` asks `HydePipeline.is_cached` first, so a hit
+answer is no LLM call: `RetrievalModes.within_budget` reads it first (`HydePipeline.cached_answer`)
+and passes it on in `ModeChoice.hypothesis` (one cache read per search), so a hit
 answers `hybrid_hyde` even with a budget used up, and is not counted against the LLM search rate
-limit. The collection job (`CollectChunks`) prunes answers older than `[ai.hyde] cache_ttl`
+limit. `PruneHypotheses` deletes answers older than `[ai.hyde] cache_ttl`
 (30 days) and those of an `llm` model no longer configured (neither the instance's nor any
-library's override, or its profile is gone). Cache hits are not a metric yet
+library's override, or its profile is gone). It runs at start and once a day just after UTC
+midnight with the embedding re-queue (`Container.nightly`, the same single leader on
+PostgreSQL as `requeue_daily`), and after every collection (`CollectChunks`). Cache hits are not
+a metric yet
 (`exactdocs.ai.cache_hits` comes with the answer cache, #100).
 
 *Data at rest.* The table stores the hypothetical answers in plain text; they are written from

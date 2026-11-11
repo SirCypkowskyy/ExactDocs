@@ -1590,3 +1590,10 @@ class AiUsageOut(_Dto):
     scopes: list[ScopeUsageOut]
     """The instance and the embedding budget first, then each library and user that spent
     something this month."""
+
+
+class PrunedHypothesesOut(_Dto):
+    """What a prune of HyDE's cache deleted."""
+
+    deleted: int
+    """Answers older than the TTL, or of an ``llm`` model no longer configured."""

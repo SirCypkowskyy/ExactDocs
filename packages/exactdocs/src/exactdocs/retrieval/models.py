@@ -752,6 +752,9 @@ class ModeChoice:
     cheaper: RetrievalMode = RetrievalMode.BM25
     """The best mode without an LLM step: what answers when a budget or the rate limit skips
     the LLM step of ``mode``."""
+    hypothesis: str | None = None
+    """HyDE's cached hypothetical answer, read once by ``within_budget``: the pipeline uses it
+    instead of reading the cache again or calling the LLM."""
 
     def without_llm(self, reason: FallbackReason) -> ModeChoice:
         """Fall back to the cheaper mode, saying why.
@@ -1011,6 +1014,8 @@ class PipelineRequest:
     caller: str | None = None
     """The account the search counts to (``ModeChoice.caller``): a paid call the pipeline makes
     (the query's embedding) is checked against and recorded to its budgets too."""
+    hypothesis: str | None = None
+    """HyDE's cached hypothetical answer, when the search already read it (``ModeChoice``)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

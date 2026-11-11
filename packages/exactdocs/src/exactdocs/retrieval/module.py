@@ -68,6 +68,7 @@ from exactdocs.retrieval.ports.driving import (
     ListUnembeddedVersions,
     OpenEmbeddingSpace,
     PlanEmbedding,
+    PruneHypotheses,
     QueryDocs,
     ReadChunk,
     RebuildSearchIndex,
@@ -115,6 +116,7 @@ from exactdocs.retrieval.use_cases import (
     PlanEmbeddingUseCase,
     PriceBook,
     ProfileModelRoles,
+    PruneHypothesesUseCase,
     QueryDocsUseCase,
     ReadChunkUseCase,
     RebuildSearchIndexUseCase,
@@ -189,6 +191,8 @@ class RetrievalModule:
     """How far each embedding space has got (``GET /api/v1/ai/embedding``)."""
     get_ai_usage: GetAiUsage
     """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
+    prune_hypotheses: PruneHypotheses
+    """Deletes HyDE's cached answers past their TTL or of models no longer configured."""
 
     @classmethod
     def build(
@@ -292,6 +296,9 @@ class RetrievalModule:
             batch_size=embedding_batch_size,
         )
         hypotheses_cached = hypothesis_cache or NoHypothesisCache()
+        prune_hypotheses = PruneHypothesesUseCase(
+            hypotheses=hypotheses_cached, providers=providers, clock=clock, ttl=hyde_cache_ttl
+        )
         built: dict[RetrievalMode, RetrievalPipeline] = {
             RetrievalMode.BM25: Bm25Pipeline(search=search)
         }
@@ -366,9 +373,9 @@ class RetrievalModule:
                 chunks=chunks,
                 clock=clock,
                 hypotheses=hypotheses_cached,
-                hyde_ttl=hyde_cache_ttl,
-                providers=providers,
+                prune=prune_hypotheses,
             ),
+            prune_hypotheses=prune_hypotheses,
             remove_chunks=RemoveChunksUseCase(
                 manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached
             ),

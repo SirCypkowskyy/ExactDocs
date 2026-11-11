@@ -22,7 +22,7 @@ from pydantic_ai.models.test import TestModel
 
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
-from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryCallRates,
@@ -36,7 +36,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryVectorIndex,
     ReadOnlyHypothesisCache,
 )
-from exactdocs.retrieval.adapters.driven.sqlite import SqliteHypothesisCache
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteHypothesisCache, SqliteLibraryModes
 from exactdocs.retrieval.constants import HYDE_INSTRUCTIONS, HYDE_MAX_TOKENS
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
@@ -337,7 +337,7 @@ class World:
     models: ConceptModels
     llm: Llm
     ledger: InMemorySpendLedger
-    cache: InMemoryHypothesisCache | BrokenCache
+    cache: InMemoryHypothesisCache | BrokenCache | CountingCache
     tracer: RecordingTracer
     modes: InMemoryLibraryModes
 
@@ -350,7 +350,7 @@ def _world(
     budgets: Budgets | None = None,
     hyde_timeout: float = 5.0,
     embedding_profile: str = "corp",
-    cache: BrokenCache | None = None,
+    cache: BrokenCache | CountingCache | None = None,
     clock: Clock | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
@@ -359,7 +359,9 @@ def _world(
     models = ConceptModels()
     llm = llm or Llm()
     ledger = InMemorySpendLedger()
-    store: InMemoryHypothesisCache | BrokenCache = cache or InMemoryHypothesisCache()
+    store: InMemoryHypothesisCache | BrokenCache | CountingCache = (
+        cache or InMemoryHypothesisCache()
+    )
     clock = clock or Clock()
     tracer = RecordingTracer()
     modes = InMemoryLibraryModes()
@@ -1041,3 +1043,109 @@ async def test_every_cache_prunes_by_age_and_by_model(cache: HypotheticalAnswerC
     )
     assert await cache.prune(T0, ()) == 1  # no model configured: every answer goes
     assert await cache.get(fresh) is None
+
+
+# ---------------------------------------------------------------- pruning on the real composition
+
+
+@pytest.fixture(params=SQL_BACKENDS)
+async def sql_container(request: pytest.FixtureRequest) -> AsyncIterator[Container]:
+    """The app on each SQL database, with an ``llm`` role (never called here).
+
+    Yields:
+        The running container.
+    """
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
+    ai = AiSettings.model_validate(
+        {
+            "providers": {
+                "corp": {"kind": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"}
+            },
+            "llm": {"model": str(WRITER)},
+        }
+    )
+    container = Container.build(Settings(ai=ai))
+    async with container.running(jobs=False):
+        yield container
+
+
+async def test_every_sql_library_store_names_each_llm_override_once(
+    sql_container: Container,
+) -> None:
+    modes = SqliteLibraryModes(engine=sql_container.engine)
+    other = ModelRef(profile="corp", model="other")
+    await modes.save("/acme/a", None, LibraryAi(llm=other))
+    await modes.save("/acme/b", None, LibraryAi(llm=other))
+    await modes.save("/acme/c", RetrievalMode.BM25, LibraryAi())
+
+    assert await modes.llm_overrides() == frozenset({"corp:other"})
+
+
+async def test_collection_on_sql_prunes_answers_past_the_ttl_and_of_retired_models(
+    sql_container: Container,
+) -> None:
+    cache = SqliteHypothesisCache(engine=sql_container.engine)
+    now = datetime.now(UTC)
+    old = HydeKey.of("m1", WRITER, "old", key=KEY)
+    fresh = HydeKey.of("m1", WRITER, "fresh", key=KEY)
+    retired = HydeKey.of("m1", ModelRef(profile="corp", model="retired"), "fresh", key=KEY)
+    await cache.put(old, "old", now - timedelta(days=40))
+    await cache.put(fresh, "fresh", now)
+    await cache.put(retired, "retired", now)
+
+    await sql_container.retrieval.collect_chunks(CollectChunksCommand(grace_seconds=0))
+
+    assert (await cache.get(old), await cache.get(fresh), await cache.get(retired)) == (
+        None,
+        "fresh",
+        None,
+    )
+
+
+async def test_the_nightly_upkeep_prunes_the_cache(sql_container: Container) -> None:
+    cache = SqliteHypothesisCache(engine=sql_container.engine)
+    old = HydeKey.of("m1", WRITER, "old", key=KEY)
+    await cache.put(old, "old", datetime.now(UTC) - timedelta(days=40))
+
+    await sql_container.nightly()
+
+    assert await cache.get(old) is None
+
+
+@dataclass(slots=True)
+class CountingCache:
+    """An in-memory cache that counts its reads."""
+
+    inner: InMemoryHypothesisCache = field(default_factory=InMemoryHypothesisCache)
+    reads: int = 0
+
+    @property
+    def answers(self) -> Mapping[HydeKey, str]:
+        return self.inner.answers
+
+    async def get(self, key: HydeKey) -> str | None:
+        self.reads += 1
+        return await self.inner.get(key)
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        await self.inner.put(key, answer, at)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        return await self.inner.forget(manifest_ids)
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        return await self.inner.prune(written_before, keep_models)
+
+
+async def test_a_search_reads_the_cache_once() -> None:
+    counting = CountingCache()
+    world = await _ready(cache=counting)
+    await _search(world)  # a miss: written
+    counting.reads = 0
+
+    again = await _search(world)
+
+    assert again.retrieval_mode is RetrievalMode.HYBRID_HYDE
+    assert counting.reads == 1
+    assert world.llm.prompts == [QUESTION]

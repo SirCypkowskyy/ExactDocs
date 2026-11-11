@@ -931,9 +931,20 @@ class Container:
                 await queueing
 
     async def _queue_embedding_daily(self) -> None:
-        """Queue the missing embedding now, then after every UTC midnight (one process does)."""
+        """Run the nightly upkeep now, then after every UTC midnight (one process does)."""
+        await self.nightly()
+        await requeue_daily(engine=self.engine, queue=self.nightly)
+
+    async def nightly(self) -> None:
+        """Queue the missing embedding, then prune HyDE's cache (its TTL, retired models).
+
+        Each part is logged on failure and never stops the other or the server.
+        """
         await self.queue_embedding()
-        await requeue_daily(engine=self.engine, queue=self.queue_embedding)
+        try:
+            await self.retrieval.prune_hypotheses()
+        except Exception:
+            logger.exception("pruning HyDE's cache failed; it runs again tomorrow")
 
     async def queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.

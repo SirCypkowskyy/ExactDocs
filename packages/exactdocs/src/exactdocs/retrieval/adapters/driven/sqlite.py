@@ -761,8 +761,8 @@ class SqliteLibraryModes:
         Returns:
             Each ``<profile>:<model>`` once.
         """
-        statement = select(distinct(library_settings.c.llm)).where(
-            library_settings.c.llm.is_not(None)
+        statement = (
+            select(library_settings.c.llm).where(library_settings.c.llm.is_not(None)).distinct()
         )
         async with self.engine.connect() as connection:
             texts = (await connection.execute(statement)).scalars().all()
