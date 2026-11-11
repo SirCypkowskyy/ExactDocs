@@ -25,15 +25,29 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
 )
 from exactdocs.retrieval.constants import (
+    DEFAULT_AGENT_REQUESTS,
+    DEFAULT_AGENT_TIMEOUT,
+    DEFAULT_AGENT_TOKENS,
+    DEFAULT_AGENT_TOOL_CALLS,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RERANK_TIMEOUT,
     DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
+    DEFAULT_SANDBOX_MEMORY,
+    DEFAULT_SANDBOX_SECONDS,
+    DEFAULT_SANDBOX_SUSPENSIONS,
+    MAX_AGENT_REQUESTS,
+    MAX_AGENT_TIMEOUT,
+    MAX_AGENT_TOKENS,
+    MAX_AGENT_TOOL_CALLS,
     MAX_EMBEDDING_BATCH,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_RERANK_TIMEOUT,
     MAX_RERANK_TOP_N,
+    MAX_SANDBOX_MEMORY,
+    MAX_SANDBOX_SECONDS,
+    MAX_SANDBOX_SUSPENSIONS,
 )
 from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RetrievalMode
 
@@ -197,6 +211,34 @@ class BudgetSettings(BaseModel):
     answer without the LLM step (`fallback_reason` `llm_rate_limited`). Per server process."""
 
 
+class AgenticSettings(BaseModel):
+    """The agentic mode's limits per search (``EXACTDOCS_AI__AGENTIC__*``, ``[ai.agentic]``).
+
+    Passing any of them ends the agent's run, and the search answers with the best mode without an
+    LLM step (`fallback_reason` `agent_limit_reached`). Spend budgets apply on top of them.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    max_tool_calls: int = Field(default=DEFAULT_AGENT_TOOL_CALLS, ge=1, le=MAX_AGENT_TOOL_CALLS)
+    """Read-tool calls per search, `run_code` itself included."""
+    max_requests: int = Field(default=DEFAULT_AGENT_REQUESTS, ge=1, le=MAX_AGENT_REQUESTS)
+    """Model requests per search."""
+    max_tokens: int = Field(default=DEFAULT_AGENT_TOKENS, ge=1, le=MAX_AGENT_TOKENS)
+    """Input and output tokens per search."""
+    sandbox_seconds: float = Field(default=DEFAULT_SANDBOX_SECONDS, gt=0, le=MAX_SANDBOX_SECONDS)
+    """Execution time of each `run_code` snippet in the Monty sandbox (waiting for a tool does not
+    count)."""
+    sandbox_memory: int = Field(default=DEFAULT_SANDBOX_MEMORY, ge=1, le=MAX_SANDBOX_MEMORY)
+    """Heap of each snippet, in bytes."""
+    sandbox_suspensions: int = Field(
+        default=DEFAULT_SANDBOX_SUSPENSIONS, ge=1, le=MAX_SANDBOX_SUSPENSIONS
+    )
+    """Host interactions (tool calls, name lookups) of the sandbox per search."""
+    timeout: float = Field(default=DEFAULT_AGENT_TIMEOUT, gt=0, le=MAX_AGENT_TIMEOUT)
+    """Seconds one agentic search may take, model calls included."""
+
+
 class PriceSettings(BaseModel):
     """A model's price, for one the bundled price list does not know: ``[ai.prices."p:m"]``."""
 
@@ -233,6 +275,8 @@ class AiSettings(BaseModel):
     """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`); the LLM role when unset."""
     budgets: BudgetSettings = Field(default_factory=BudgetSettings)
     """Spend limits and the LLM search rate limit (`EXACTDOCS_AI__BUDGETS__...`)."""
+    agentic: AgenticSettings = Field(default_factory=AgenticSettings)
+    """The agentic mode's limits per search (`EXACTDOCS_AI__AGENTIC__MAX_TOOL_CALLS`, ...)."""
     prices: dict[str, PriceSettings] = Field(default_factory=dict)
     """Prices by `<profile>:<model>`, overriding the bundled list (`[ai.prices."corp:m"]`)."""
 

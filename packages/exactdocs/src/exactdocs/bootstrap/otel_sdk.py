@@ -30,6 +30,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from exactdocs import __version__
 from exactdocs.bootstrap.constants import (
     EXPORTER_VARIABLE,
+    GEN_AI_PREFIX,
+    MESSAGES_SUFFIX,
     OTLP_ENDPOINT_VARIABLE,
     PROMPT_SPAN_ATTRIBUTES,
     QUERY_TEXT_PARAMETERS,
@@ -139,6 +141,20 @@ def redact_query(query: str) -> str:
     )
 
 
+def is_prompt(key: str) -> bool:
+    """Say whether a span attribute holds what a model was sent or answered.
+
+    Args:
+        key: The attribute's name.
+
+    Returns:
+        True for ``PROMPT_SPAN_ATTRIBUTES`` and any other ``gen_ai.*.messages`` attribute.
+    """
+    return key in PROMPT_SPAN_ATTRIBUTES or (
+        key.startswith(GEN_AI_PREFIX) and key.endswith(MESSAGES_SUFFIX)
+    )
+
+
 def scrub(span: ReadableSpan) -> ReadableSpan:
     """Return the span without query text: redacted ``url.query``, no exception text, no caller.
 
@@ -155,7 +171,7 @@ def scrub(span: ReadableSpan) -> ReadableSpan:
     attributes = {
         key: value
         for key, value in (span.attributes or {}).items()
-        if key not in SCRUBBED_SPAN_ATTRIBUTES
+        if key not in SCRUBBED_SPAN_ATTRIBUTES and not is_prompt(key)
     }
     query = attributes.get(URL_QUERY_ATTRIBUTE)
     if isinstance(query, str):
@@ -200,14 +216,14 @@ def without_prompts(span: ReadableSpan) -> ReadableSpan:
         The span itself when it has none of them, else a copy without them.
     """
     attributes = span.attributes or {}
-    if not PROMPT_SPAN_ATTRIBUTES & attributes.keys():
+    if not any(is_prompt(key) for key in attributes):
         return span
     return ReadableSpan(
         name=span.name,
         context=span.context,
         parent=span.parent,
         resource=span.resource,
-        attributes={k: v for k, v in attributes.items() if k not in PROMPT_SPAN_ATTRIBUTES},
+        attributes={k: v for k, v in attributes.items() if not is_prompt(k)},
         events=span.events,
         links=span.links,
         kind=span.kind,

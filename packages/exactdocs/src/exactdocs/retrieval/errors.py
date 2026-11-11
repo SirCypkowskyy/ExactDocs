@@ -503,3 +503,36 @@ class RerankerError(DomainError):
             reason: A fixed text, or an HTTP status; nothing from the request.
         """
         super().__init__(f"reranker failed: {reason}")
+
+
+class AgentStoppedError(DomainError):
+    """The agentic explorer ended without an answer: a cheaper mode answers instead.
+
+    Searches never fail with it: ``reason`` is the ``fallback_reason`` the result shows
+    (``agent_limit_reached``, ``agent_failed``, ``llm_budget_reached``). The message names the
+    kind of stop, never the query, a prompt or what the agent read.
+    """
+
+    code = "agent_stopped"
+
+    def __init__(self, reason: str, detail: str) -> None:
+        """Say why the run ended.
+
+        Args:
+            reason: The ``FallbackReason`` value the search shows.
+            detail: A fixed text or an exception's class name; nothing from the run.
+        """
+        super().__init__(f"the agentic search stopped ({reason}): {_data(detail)}")
+        self.reason = reason
+
+
+class InvalidAgentBoundsError(ValidationError):
+    """A limit of the agentic explorer that cannot be enforced as written."""
+
+    def __init__(self, name: str) -> None:
+        """Name the limit.
+
+        Args:
+            name: The limit's field name.
+        """
+        super().__init__(f"invalid agentic limit: {name} must be positive")

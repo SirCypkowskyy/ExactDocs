@@ -1820,7 +1820,7 @@ export interface components {
          * @description Why a search was answered by a cheaper mode than the one it would have used.
          * @enum {string}
          */
-        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable" | "reranker_timeout" | "reranker_failed";
+        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable" | "reranker_timeout" | "reranker_failed" | "agent_limit_reached" | "agent_failed";
         /**
          * FieldError
          * @description One invalid request field.
@@ -2249,6 +2249,19 @@ export interface components {
              * @description Offsets into `snippet` of the words that matched.
              */
             readonly highlights: readonly components["schemas"]["Span"][];
+            /**
+             * Justification
+             * @description `agentic`: why the agent picked this chunk, in its own words (untrusted model text); null
+             *     for the other modes.
+             */
+            readonly justification?: string | null;
+            /**
+             * Explored Path
+             * @description `agentic`: the read calls the agent made up to the one that reached this chunk's article,
+             *     in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the
+             *     other modes.
+             */
+            readonly explored_path?: readonly string[];
             /** Library */
             readonly library: string;
             /** Version */
@@ -3233,6 +3246,19 @@ export interface components {
              * @description Offsets into `snippet` of the words that matched.
              */
             readonly highlights: readonly components["schemas"]["Span"][];
+            /**
+             * Justification
+             * @description `agentic`: why the agent picked this chunk, in its own words (untrusted model text); null
+             *     for the other modes.
+             */
+            readonly justification?: string | null;
+            /**
+             * Explored Path
+             * @description `agentic`: the read calls the agent made up to the one that reached this chunk's article,
+             *     in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the
+             *     other modes.
+             */
+            readonly explored_path?: readonly string[];
         };
         /**
          * SessionState

@@ -933,12 +933,15 @@ room for its 9 MB.)
   error statuses lose their message and stack trace (a pydantic `ValidationError` quotes its
   `input_value`), keeping the exception type; FastMCP's `enduser.id` and `enduser.scope` (who
   called) are dropped. Model spans always lose `PROMPT_SPAN_ATTRIBUTES` (`gen_ai.input.messages`,
-  `gen_ai.output.messages`, `gen_ai.system_instructions`, tool-call arguments and results), even
+  `gen_ai.output.messages` and any other `gen_ai.*.messages`, `gen_ai.system_instructions`,
+  tool-call arguments and results, under the current and the older attribute names, and an agent
+  run's `pydantic_ai.all_messages` and `final_result`), even
   with the query text opted in (`without_prompts`): the second guard after pydantic-ai's
   `include_content=False`. Health and readiness probes (`PROBE_PATHS`) get no request span.
 - **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
   for the search and one per stage (`version`, `rank`, `rerank` when a reranker is configured,
-  `chunks`), in its mode. The query text is a
+  `chunks`; inside `rank`, `embed_query` for hybrid and `agent` for agentic, whose pydantic-ai
+  spans nest below it), in its mode. The query text is a
   separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without
   a tracer the use cases get `UntracedSearches`, which records nothing.
 - **Jobs:** bootstrap wraps every job handler in `TracedJobHandler` (`ingestion.<kind>` spans);
@@ -966,8 +969,8 @@ room for its 9 MB.)
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
-*Next: AI retrieval* milestone. Built: **mode selection** (#89), **provider profiles** (#241)
-and the **reranker** (#93).
+*Next: AI retrieval* milestone. Built: **mode selection** (#89), **provider profiles** (#241),
+the **reranker** (#93), **hybrid search** (#92) and **agentic search** (#98).
 
 **Profiles and roles (#241).** Retrieval's models hold a `ProviderProfile` (a named endpoint with a
 `kind`, validated per kind, never a plaintext key: a stored key is sealed, a file is named, an
@@ -1072,6 +1075,33 @@ answer too) or TEI's (`tei` profiles), cuts the texts to `MAX_RERANK_*_CHARS`, s
 endpoint accepts concurrently (a `TaskGroup`: one failed batch cancels the rest), and turns every failure into a `RerankerError` without the URL, key
 or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client; the
 fastembed cross-encoder (#245) is another `Reranker` the factory returns for `local` profiles.
+
+**Agentic search (#98).** `AgenticPipeline` (in `use_cases`, registered for `agentic` when the
+module is given an `Explorer`, as bootstrap always does) resolves the library's `llm` role,
+builds its model through `AiProviders.model_for` and runs the `Explorer` driven port in a
+`<search>.agent` span, within `AgentBounds.timeout`. The agent reads through a `VersionBrowser`
+(retrieval's implementation of the `DocsBrowser` port: `list_articles`, `article_outline`,
+`read_article`, `read_chunk`, `search_docs`), bound to the request's `SearchableVersion`: chunks,
+outlines and BM25 come from its manifest, articles from the `VersionArticles` port (bootstrap's
+`CatalogVersionArticles`, which drops a catalog answer from any other manifest). The browser
+records each call as a step and the first step that reached each article, which becomes a result's
+`explored_path`. The agent's picks are looked up in the pinned manifest under the tag filter, so a
+chunk of another version or a made-up ID is dropped (the wrong-version guarantee does not rest on
+the model). A run that stops raises `AgentStoppedError(reason)`; `RetrievalModes.run` answers it
+with `ModeChoice.without_llm(reason)` (BM25, or hybrid), keeping the agent's reason first
+(`agent_limit_reached`, `llm_budget_reached`, `agent_failed`). The pydantic-ai adapter is split
+like the embedding one: `adapters/driven/ai_explorer.py` imports nothing of `[ai]` and loads
+`ai_explorer_sdk.py` at the first agentic search. That module runs a pydantic-ai `Agent` with the
+browser as `deps` (never a tool argument), harness `CodeMode` around the five read tools (typed
+`TypedDict` returns; `run_code` is the model's only tool; Monty limits from `AgentBounds`), the
+`SpendLimits` of `harness_spend.agent_limits` over the ledger (budgets from
+`AiSpend.budgets_for(library)`: the instance's today, the seam where a library's own budgets are
+merged), and `UsageLimits` (`tool_calls_limit` counts `run_code` and each read call). Code Mode
+hands a tripped Monty limit back to the model as a retry; `_SandboxLimitsEndTheRun` (a capability
+wrapping tool execution) turns it into the end of the run instead. The model is instrumented with
+`include_content=False` (the factory's, or wrapped there), so the agent run, its model requests and
+its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,
+without content.
 
 Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.

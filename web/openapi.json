@@ -8214,7 +8214,9 @@
           "vector_store_unavailable",
           "embedding_unavailable",
           "reranker_timeout",
-          "reranker_failed"
+          "reranker_failed",
+          "agent_limit_reached",
+          "agent_failed"
         ],
         "title": "FallbackReason",
         "description": "Why a search was answered by a cheaper mode than the one it would have used."
@@ -9155,6 +9157,26 @@
             "type": "array",
             "title": "Highlights",
             "description": "Offsets into `snippet` of the words that matched."
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification",
+            "description": "`agentic`: why the agent picked this chunk, in its own words (untrusted model text); null\nfor the other modes."
+          },
+          "explored_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Explored Path",
+            "description": "`agentic`: the read calls the agent made up to the one that reached this chunk's article,\nin order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the\nother modes."
           },
           "library": {
             "type": "string",
@@ -11191,6 +11213,26 @@
             "type": "array",
             "title": "Highlights",
             "description": "Offsets into `snippet` of the words that matched."
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification",
+            "description": "`agentic`: why the agent picked this chunk, in its own words (untrusted model text); null\nfor the other modes."
+          },
+          "explored_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Explored Path",
+            "description": "`agentic`: the read calls the agent made up to the one that reached this chunk's article,\nin order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the\nother modes."
           }
         },
         "additionalProperties": false,

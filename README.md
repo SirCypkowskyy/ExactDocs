@@ -301,7 +301,7 @@ writable for that), and files owned by another user can stop the server from sta
 | `list_libraries(limit?, cursor?)` | Libraries and imported versions (`refs`: ref, kind, commit SHA, default flag) |
 | `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` | The article tree of a version |
 | `read_article(library, ref?, path)` | A full article, verbatim; an unknown path lists close matches |
-| `search_docs(library, query, ref?, tags?, tags_match?, limit?, mode?)` | Search one version; results carry location, neighbors (`prev_chunk_id` / `next_chunk_id`), `coverage`, the retrieval mode that answered (`retrieval_mode`, `reranked`) and, when a cheaper mode answered, `fallback_reason`. Without `mode` the library's mode is used, else the instance's, else the best one configured; asking for a mode that is not available is an error (`mode_unavailable`) naming the missing model role and listing the available modes (see [Retrieval](#retrieval)) |
+| `search_docs(library, query, ref?, tags?, tags_match?, limit?, mode?)` | Search one version; results carry location, neighbors (`prev_chunk_id` / `next_chunk_id`), `coverage`, the retrieval mode that answered (`retrieval_mode`, `reranked`) and, when a cheaper mode answered, `fallback_reason`; `agentic` results also carry `justification` and `explored_path`. Without `mode` the library's mode is used, else the instance's, else the best one configured; asking for a mode that is not available is an error (`mode_unavailable`) naming the missing model role and listing the available modes (see [Retrieval](#retrieval)) |
 | `search_all_docs(query, library?, tags?, tags_match?, limit?)` | Search the default version of every library at once; each result names its library and version, `libraries` counts matches per library; at most 500 libraries are searched and `libraries_omitted` says how many were left out (REST: `GET /api/v1/search`) |
 | `read_chunk(chunk_id)` | One chunk verbatim, e.g. a neighbor of a search result; a chunk ID from before a re-sync answers `stale_chunk` |
 | `article_outline(library, path, ref?)` | An article's heading tree with the chunk ID of each heading (a heading merged into another's chunk points to that chunk) and no body text, to see what it covers before reading it (REST: `GET /api/v1/libraries/{owner}/{repo}/outline?path=&ref=`); a path the version lacks is `not_found` |
@@ -396,7 +396,8 @@ and instance modes are: their scores must compare across libraries.
 | embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
 | embedding model + LLM (+ reranker) | hybrid with HyDE → rerank (a default only once the eval suite shows it beats BM25) | planned |
-| LLM + agentic mode | a pydantic-ai agent browses the documentation tree and returns the articles that answer the question, with a justification; similar past questions are served from a cache | planned |
+| LLM + agentic mode | a pydantic-ai agent browses the version's tree (outlines, articles, chunks, BM25) in a sandbox and returns the chunks that answer the question, each with a `justification` and its `explored_path`; past a limit or a budget it answers with the best non-LLM mode (`fallback_reason: agent_limit_reached`, `llm_budget_reached`, `agent_failed`) | **available** (opt-in: `mode=agentic`, never a default; see [Agentic search](#agentic-search)) |
+| LLM + agentic mode, repeated questions | similar past questions are served from a cache | planned |
 
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
 never splitting code blocks or tables (Chonkie was dropped: its Markdown recipe needs the Hugging
@@ -677,7 +678,44 @@ start, so the first search never waits for them; a load that fails is a warning,
 call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. A hybrid search is
 reranked the same way, after the fusion.
 
-The hybrid pipeline is built (#92); the HyDE and agentic pipelines arrive with #94 and #98.
+The hybrid (#92) and agentic (#98) pipelines are built; the HyDE pipeline arrives with #94.
+
+#### Agentic search
+
+With an `llm` role configured, `mode=agentic` (a call's, a library's or `EXACTDOCS_AI__MODE`; it
+is never chosen by default) hands the question to a pydantic-ai agent on that model. The agent
+works in [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/): its only tool is
+`run_code`, a sandbox ([Monty](https://github.com/pydantic/monty), never IPython) in which it can
+call `list_articles`, `article_outline`, `read_article`, `read_chunk` and `search_docs` (BM25),
+each with a typed result, all bound to the one version searched: no argument names a library or
+a version. It answers with chunk IDs and one sentence each; every ID is then checked against the
+version's manifest and the call's tags, so a result of another version (or a made-up ID) is
+dropped, never returned. Each result carries its `justification` and `explored_path` (the read
+calls up to the one that reached its article, such as `search_docs(retry)`,
+`article_outline(docs/guide/resilience.md)`).
+
+Only the question and what the agent reads are sent to the model, never a library name or a user.
+A run is bounded per search by `[ai.agentic]` (or `EXACTDOCS_AI__AGENTIC__...`) and by the
+budgets above (the harness `SpendLimits`, counted to the instance, the library and the caller):
+
+```toml
+[ai.agentic]
+max_tool_calls = 20          # read calls per search, run_code included (1 to 200)
+max_requests = 8             # model requests per search (1 to 50)
+max_tokens = 60000           # input and output tokens per search
+sandbox_seconds = 5.0        # each run_code snippet's execution time (time awaiting a tool does not count)
+sandbox_memory = 67108864    # each snippet's heap, in bytes
+sandbox_suspensions = 500    # the sandbox's host calls per search
+timeout = 120.0              # seconds per search, model calls included
+```
+
+Passing any of them ends the run, and the search answers with the best mode without an LLM step
+(BM25, or hybrid when an embedding model is set) and `fallback_reason: agent_limit_reached`; a
+budget reached during the run gives `llm_budget_reached`; a model that fails or keeps answering
+something unusable, `agent_failed`. Failures are logged by kind, never with the question. Traces
+show the run as the `agent` stage, with one span per model request and per tool call (the read
+calls nested in `run_code`), never with prompts, answers or tool arguments; `/metrics` shows its
+tokens (`gen_ai.client.token.usage`).
 
 ### PostgreSQL
 

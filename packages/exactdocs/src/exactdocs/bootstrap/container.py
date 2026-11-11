@@ -30,6 +30,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogRenamedPaths,
     CatalogSearchableVersions,
     CatalogStoredArticles,
+    CatalogVersionArticles,
     CatalogVersionCopier,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
@@ -104,6 +105,7 @@ from exactdocs.ingestion.ports.driven import (
 )
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
+from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.memory import InMemoryCallRates, ReadOnlySpendLedger
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
@@ -118,7 +120,13 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
-from exactdocs.retrieval.models import ModelRole, ProviderKind, RerankLimits, RetrievalMode
+from exactdocs.retrieval.models import (
+    AgentBounds,
+    ModelRole,
+    ProviderKind,
+    RerankLimits,
+    RetrievalMode,
+)
 from exactdocs.retrieval.ports.driven import (
     EmbeddingModels,
     ModelFactory,
@@ -379,6 +387,11 @@ def _build_read_side(
         clock=clock,
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
+        explorer=PydanticAiExplorer(),
+        version_articles=CatalogVersionArticles(
+            list_articles=catalog.list_articles, get_article=catalog.get_article
+        ),
+        agent_bounds=AgentBounds(**settings.ai.agentic.model_dump()),
     )
     return _ReadSide(catalog=catalog, retrieval=retrieval, search_choice=choice)
 

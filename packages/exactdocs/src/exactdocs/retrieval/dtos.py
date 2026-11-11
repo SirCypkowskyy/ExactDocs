@@ -175,6 +175,13 @@ class SearchResultOut(_Dto):
     """Verbatim text of the chunk, possibly cut at either end."""
     highlights: list[Span]
     """Offsets into `snippet` of the words that matched."""
+    justification: str | None = None
+    """`agentic`: why the agent picked this chunk, in its own words (untrusted model text); null
+    for the other modes."""
+    explored_path: list[str] = Field(default_factory=list)
+    """`agentic`: the read calls the agent made up to the one that reached this chunk's article,
+    in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the
+    other modes."""
 
     @classmethod
     def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
@@ -195,6 +202,8 @@ class SearchResultOut(_Dto):
             score=hit.score,
             snippet=hit.snippet,
             highlights=[Span(start=a, end=b) for a, b in hit.highlights],
+            justification=hit.justification,
+            explored_path=list(hit.explored_path),
         )
 
 

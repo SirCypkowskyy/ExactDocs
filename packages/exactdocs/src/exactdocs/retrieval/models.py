@@ -26,11 +26,18 @@ from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
     CREDENTIAL_HEADER_SUFFIXES,
     CREDENTIAL_HEADERS,
+    DEFAULT_AGENT_REQUESTS,
+    DEFAULT_AGENT_TIMEOUT,
+    DEFAULT_AGENT_TOKENS,
+    DEFAULT_AGENT_TOOL_CALLS,
     DEFAULT_MODE_ORDER,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RERANK_TIMEOUT,
     DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
+    DEFAULT_SANDBOX_MEMORY,
+    DEFAULT_SANDBOX_SECONDS,
+    DEFAULT_SANDBOX_SUSPENSIONS,
     DNS_LABEL,
     EMBEDDING_INPUT_FORMAT,
     HEADER_NAME,
@@ -63,6 +70,7 @@ from exactdocs.retrieval.constants import (
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
     EmptySearchTextError,
+    InvalidAgentBoundsError,
     InvalidBudgetError,
     InvalidEmbeddingSpaceError,
     InvalidModelRefError,
@@ -421,6 +429,11 @@ class SearchHit:
     """Verbatim text of the chunk (no marker added), possibly cut at either end."""
     highlights: tuple[tuple[int, int], ...]
     """[start, end) offsets into ``snippet``, in order."""
+    justification: str | None = None
+    """Why the agentic explorer picked the chunk, in its own words; ``None`` for other modes."""
+    explored_path: tuple[str, ...] = ()
+    """The read calls the agentic explorer made up to the one that reached this chunk's article,
+    in order (``search_docs(...)``, ``article_outline(guide/auth.md)``); empty for other modes."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -721,6 +734,12 @@ class FallbackReason(StrEnum):
     RERANKER_FAILED = "reranker_failed"
     """The reranker failed (an error, a bad answer, a profile that cannot rerank): the candidates
     keep the order the mode found."""
+    AGENT_LIMIT_REACHED = "agent_limit_reached"
+    """The agentic explorer ran past one of its limits (tool calls, model requests, tokens, the
+    sandbox's time, memory or host calls, its time): the run ended and a cheaper mode answered."""
+    AGENT_FAILED = "agent_failed"
+    """The agentic explorer could not finish (the model failed, or kept answering something
+    unusable): a cheaper mode answered."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2646,3 +2665,96 @@ def embedding_spend(
         requests=requests,
         price=price,
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentBounds:
+    """How far one agentic search may go (docs/decisions/ai-retrieval.md, *Cost and budgets*).
+
+    Each limit ends the run when it is passed, and the search answers with the best mode without
+    an LLM step (``agent_limit_reached``). The spend budgets (#95) apply on top of these.
+    """
+
+    max_tool_calls: int = DEFAULT_AGENT_TOOL_CALLS
+    """Read-tool calls per run, ``run_code`` itself included (``UsageLimits.tool_calls_limit``);
+    also Code Mode's ``max_tool_calls`` per snippet."""
+    max_requests: int = DEFAULT_AGENT_REQUESTS
+    """Model requests per run (``UsageLimits.request_limit``)."""
+    max_tokens: int = DEFAULT_AGENT_TOKENS
+    """Input and output tokens per run (``UsageLimits.total_tokens_limit``)."""
+    sandbox_seconds: float = DEFAULT_SANDBOX_SECONDS
+    """Monty's execution time per ``run_code`` snippet."""
+    sandbox_memory: int = DEFAULT_SANDBOX_MEMORY
+    """Monty's heap per snippet, in bytes."""
+    sandbox_suspensions: int = DEFAULT_SANDBOX_SUSPENSIONS
+    """Monty's host interactions per sandbox session."""
+    timeout: float = DEFAULT_AGENT_TIMEOUT
+    """Seconds the whole run may take."""
+
+    def __post_init__(self) -> None:
+        """Refuse a limit that is not positive.
+
+        Raises:
+            InvalidAgentBoundsError: One is zero or less.
+        """
+        for name in (
+            "max_tool_calls",
+            "max_requests",
+            "max_tokens",
+            "sandbox_seconds",
+            "sandbox_memory",
+            "sandbox_suspensions",
+            "timeout",
+        ):
+            if getattr(self, name) <= 0:
+                raise InvalidAgentBoundsError(name)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArticleEntry:
+    """An article of the version the agentic explorer browses: where it is and its title."""
+
+    path: str
+    """The article's path in the version."""
+    title: str
+    """Its title, untrusted repository text."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArticleText:
+    """An article's Markdown as the agentic explorer reads it, possibly cut."""
+
+    path: str
+    """The article's path in the version."""
+    content: str
+    """Its text, verbatim, at most ``AGENT_READ_CHARS`` characters."""
+    truncated: bool
+    """True when the text was cut."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentPick:
+    """A chunk the agentic explorer answers with, and why (its own words, untrusted)."""
+
+    chunk_id: str
+    """The chunk ID as the model wrote it; checked against the pinned version before use."""
+    justification: str
+    """Why the chunk answers the question."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentRun:
+    """One agentic search as the explorer runs it: the question, its limits and who pays."""
+
+    question: str
+    """The query text: the only part of the search the model receives (no library or user)."""
+    limit: int
+    """How many chunks the answer may hold at most."""
+    bounds: AgentBounds
+    """The run's limits."""
+    budgets: Budgets
+    """The spend limits that apply to the library searched (``AiSpend.budgets_for``)."""
+    caller: AiCaller
+    """The library and the account the run counts to."""
+    price: ModelPrice | None = None
+    """The model's price from the price book; ``None``: the bundled price data."""

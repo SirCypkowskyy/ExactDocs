@@ -5,8 +5,10 @@ from exactdocs.retrieval.ports.driven import (
     CallRates,
     ChunkRepository,
     DefaultVersions,
+    DocsBrowser,
     EmbeddingModels,
     Embeddings,
+    Explorer,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -23,6 +25,7 @@ from exactdocs.retrieval.ports.driven import (
     SecretBox,
     SpendLedger,
     VectorIndex,
+    VersionArticles,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -71,10 +74,12 @@ __all__ = [
     "DefaultVersions",
     "DeleteProvider",
     "DiscardPendingChunks",
+    "DocsBrowser",
     "EmbedBatch",
     "EmbeddingModels",
     "Embeddings",
     "EstimateEmbedding",
+    "Explorer",
     "FinishEmbedding",
     "ForgetLibrary",
     "GetAiUsage",
@@ -114,4 +119,5 @@ __all__ = [
     "SetLibraryRetrieval",
     "SpendLedger",
     "VectorIndex",
+    "VersionArticles",
 ]

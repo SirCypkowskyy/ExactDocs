@@ -1061,6 +1061,13 @@
               "commit_sha": {
                 "type": "string"
               },
+              "explored_path": {
+                "description": "`agentic`: the read calls the agent made up to the one that reached this chunk's article,\nin order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the\nother modes.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "heading_path": {
                 "items": {
                   "type": "string"
@@ -1087,6 +1094,18 @@
                   "type": "object"
                 },
                 "type": "array"
+              },
+              "justification": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "`agentic`: why the agent picked this chunk, in its own words (untrusted model text); null\nfor the other modes."
               },
               "library": {
                 "type": "string"
@@ -1325,7 +1344,9 @@
                 "vector_store_unavailable",
                 "embedding_unavailable",
                 "reranker_timeout",
-                "reranker_failed"
+                "reranker_failed",
+                "agent_limit_reached",
+                "agent_failed"
               ],
               "type": "string"
             },
@@ -1364,6 +1385,13 @@
               "commit_sha": {
                 "type": "string"
               },
+              "explored_path": {
+                "description": "`agentic`: the read calls the agent made up to the one that reached this chunk's article,\nin order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the\nother modes.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "heading_path": {
                 "items": {
                   "type": "string"
@@ -1390,6 +1418,18 @@
                   "type": "object"
                 },
                 "type": "array"
+              },
+              "justification": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "`agentic`: why the agent picked this chunk, in its own words (untrusted model text); null\nfor the other modes."
               },
               "next_chunk_id": {
                 "anyOf": [

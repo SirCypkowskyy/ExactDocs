@@ -334,6 +334,17 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   search: one that would run an LLM step answers in the best mode without one, with
   `fallback_reason` `llm_budget_reached` or `llm_rate_limited`, and a paid rerank over budget is
   skipped (`reranked: false`, `fallback_reason: llm_budget_reached`).
+- **Agentic search** (RET-04): `mode=agentic` (never a default) lets an agent on the `llm` role
+  browse the version (outlines, articles, chunks and BM25, all of that version only) and pick the
+  chunks that answer the question. Its results are the picks the version holds and the call's
+  tags allow, in the agent's order (`score` 1, 1/2, 1/3...), each with `justification` (the model's
+  own sentence, untrusted text) and `explored_path` (the read calls up to the one that reached its
+  article); other modes return `justification: null` and `explored_path: []`.
+  `coverage.candidates` counts the chunks the agent saw. A run past one of its limits
+  (`[ai.agentic]`: tool calls, model requests, tokens, the sandbox's time, memory or host calls,
+  its timeout) is answered by the best mode without an LLM step with `fallback_reason`
+  `agent_limit_reached`; a budget reached during the run gives `llm_budget_reached`; a model
+  that fails or answers nothing usable gives `agent_failed`.
 - **Reranking** (RET-02): with a `reranker` role, a search's best candidates are reordered by the
   reranker (`reranked: true`, `coverage.reranked` counts them, and each reranked result's `score`
   is the reranker's). When `limit` is more than the top N, the reranked results come first and the
