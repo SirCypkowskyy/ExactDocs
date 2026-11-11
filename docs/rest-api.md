@@ -462,8 +462,11 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   `{"input_tokens", "output_tokens", "tokens", "requests", "usd", "unpriced_requests"}`, as the
   providers reported (an LLM step's tokens, which the harness does not split, are input tokens).
   Each budget: `{"window", "window_start", "resets_at", "usd_limit", "usd_left", "tokens_limit",
-  "tokens_left", "reached"}` (`null` for a ceiling that is not set). A library with budgets of
-  its own shows the tighter of its own and the instance's per-library ones.
+  "tokens_left", "reached", "own_usd_limit", "own_tokens_limit"}` (`null` for a ceiling that is
+  not set). A library with budgets of its own shows the tighter of its own and the instance's
+  per-library ones, with `usd_left` and `tokens_left` against it; where the instance's is lower (it was lowered after
+  the library set its own), `own_usd_limit` / `own_tokens_limit` give the library's own ceiling,
+  otherwise they are `null`.
 
 ## Jobs, access and health
 

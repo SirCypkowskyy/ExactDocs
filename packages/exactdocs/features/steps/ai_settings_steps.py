@@ -166,3 +166,45 @@ def step_refused(context: Context, code: str) -> None:
         "daily_tokens": None,
         "monthly_tokens": None,
     }
+
+
+@given("the instance limits every library to {usd:d} USD a day")
+def step_instance_limit(context: Context, usd: int) -> None:
+    context.instance_daily_usd = usd
+    _per_library_daily(context, usd)
+
+
+@given("the library has its own budget of {own:d} USD a day")
+def step_stored_own_budget(context: Context, own: int) -> None:
+    # Stored while the instance allowed it; the operator lowered the instance limit since.
+    _per_library_daily(context, own)
+    _put(context, {"budgets": {"daily_usd": own}})
+    assert context.response.status_code == HTTPStatus.OK, context.response.text
+    _per_library_daily(context, context.instance_daily_usd)
+
+
+def _library_daily_budget(context: Context) -> dict[str, Any]:
+    """Find the library's daily budget in the usage the admin read.
+
+    Args:
+        context: The behave context.
+
+    Returns:
+        The budget as the API shows it.
+    """
+    (scope,) = [s for s in context.usage["scopes"] if s["scope"] == "library"]
+    assert scope["id"].casefold() == LIBRARY.casefold(), scope
+    (budget,) = [b for b in scope["budgets"] if b["window"] == "day"]
+    return budget
+
+
+@then("the library shows {usd:d} USD as its effective daily limit and the money left against it")
+def step_effective_limit(context: Context, usd: int) -> None:
+    budget = _library_daily_budget(context)
+    assert (budget["usd_limit"], budget["usd_left"]) == (usd, usd), budget
+
+
+@then("the usage notes the library's own daily budget of {own:d} USD is higher")
+def step_own_higher(context: Context, own: int) -> None:
+    budget = _library_daily_budget(context)
+    assert budget["own_usd_limit"] == own, budget

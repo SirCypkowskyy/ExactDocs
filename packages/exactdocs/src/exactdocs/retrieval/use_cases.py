@@ -860,7 +860,8 @@ class GetAiUsageUseCase:
             own: Every library's own budgets, by case-folded library ID.
 
         Returns:
-            Its spend today and this month, and its budgets (a library's own applied).
+            Its spend today and this month, and its budgets (a library's own applied, and shown
+            where the instance's lower limit applies instead).
         """
 
         def row(window: SpendWindow, start: date) -> SpendEntry:
@@ -881,15 +882,22 @@ class GetAiUsageUseCase:
             SpendWindow.MONTH: row(SpendWindow.MONTH, month),
         }
         budgets = self.spend.budgets
+        mine: tuple[BudgetLimit, ...] = ()
         if kind == SPEND_SCOPE_LIBRARY:
-            budgets = budgets.for_library(own.get(scope_id.casefold(), ()))
+            mine = own.get(scope_id.casefold(), ())
+            budgets = budgets.for_library(mine)
         return ScopeUsageOut(
             scope=kind,
             id=scope_id,
             day=SpentOut.from_model(spent[SpendWindow.DAY]),
             month=SpentOut.from_model(spent[SpendWindow.MONTH]),
             budgets=[
-                BudgetOut.from_model(limit, spent[limit.window], now)
+                BudgetOut.from_model(
+                    limit,
+                    spent[limit.window],
+                    now,
+                    next((m for m in mine if m.window is limit.window), None),
+                )
                 for limit in budgets.limits
                 if limit.scope_kind == kind
             ],
