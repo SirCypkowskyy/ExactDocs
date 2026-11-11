@@ -16,7 +16,7 @@ sharing terms are near, so hybrid search can be tested end to end); setting
 call; ``FakeGateway.chat_broken`` does the same for chat completions. A chat completion that offers
 an output tool (the LLM judge, #96) is answered with a call of it that rates each
 ``<candidate id="...">`` of the prompt, the last one best (as the reranker does); with
-``FakeGateway.judge_rogue`` set, the ratings also name a chunk ID the prompt did not hold.
+``FakeGateway.judge_rogue`` set, the ratings also name an ID the prompt did not hold.
 """
 
 import hashlib
@@ -57,9 +57,9 @@ def term_vector(text: str) -> list[float]:
     return values
 
 
-ROGUE_ID = "0" * 32
-"""The chunk ID a rogue judge rates although it was not given."""
-_CANDIDATE = re.compile(r'<candidate id="([0-9a-f]+)">')
+ROGUE_ID = "c999"
+"""The candidate ID a rogue judge rates although it was not given."""
+_CANDIDATE = re.compile(r'<candidate id="(c[0-9]+)">')
 
 
 def _judged(body: dict[str, Any], *, rogue: bool) -> dict[str, Any] | None:
@@ -80,9 +80,9 @@ def _judged(body: dict[str, Any], *, rogue: bool) -> dict[str, Any] | None:
         str(m.get("content")) for m in body.get("messages", []) if m.get("role") == "user"
     )
     ids = _CANDIDATE.findall(prompt)
-    ratings = [{"chunk_id": i, "score": min(10, n)} for n, i in enumerate(ids)]
+    ratings = [{"id": i, "score": min(10, n)} for n, i in enumerate(ids)]
     if rogue:
-        ratings.append({"chunk_id": ROGUE_ID, "score": 10})
+        ratings.append({"id": ROGUE_ID, "score": 10})
     call = {
         "id": "call_1",
         "type": "function",
@@ -150,7 +150,7 @@ class FakeGateway:
     chat_broken: threading.Event = field(default_factory=threading.Event)
     """Once set, every chat completion is refused with 400."""
     judge_rogue: threading.Event = field(default_factory=threading.Event)
-    """Once set, the judge's ratings also name ``ROGUE_ID``, a chunk it was not given."""
+    """Once set, the judge's ratings also name ``ROGUE_ID``, an ID it was not given."""
 
     @property
     def v1(self) -> str:

@@ -702,7 +702,7 @@ reranked the same way, after the fusion.
 
 Without a cross-encoder endpoint, or for better judgments than one gives, a small, fast LLM can
 rerank instead: the `judge` role (any chat profile; it defaults to the `llm` role) rates every
-candidate in **one** call, a whole score from 0 to 10 per chunk ID. It reranks only where it is
+candidate in **one** call, a whole score from 0 to 10 per candidate. It reranks only where it is
 chosen, since it costs an LLM call per search:
 
 ```toml
@@ -718,11 +718,16 @@ A library chooses for itself with `rerank_with` (`cross_encoder` or `judge`) in 
 settings or the UI; unset, the instance's choice applies. When both a cross-encoder and a judge
 are configured, the cross-encoder (cheaper) reranks unless the judge is chosen; a library that
 chooses the judge without one configured is reranked by the cross-encoder, if there is one. The
-judge gets the same top N as the cross-encoder, the query and each candidate's chunk text (cut to
-2000 characters), never a library name, a version or a user; the prompt and the instructions mark
+judge gets the best of the same top N as the cross-encoder that fit one bounded call: at most 64,
+and at most about 24,000 input tokens estimated at 4 characters per token (well under the
+60,000 tokens one LLM step may use, so a call is never stopped after it was paid for). With 2000
+characters per candidate that is about 46; the candidates beyond them keep the mode's order
+after the judged ones, and `coverage.reranked` counts only the judged. It gets the query and each
+candidate's chunk text (cut to 2000 characters), named by position (`c1`, `c2`...), never by
+chunk ID, and never a library name, a version or a user; the prompt and the instructions mark
 them as untrusted, delimited text, and every `<`, `>` and `&` in them is escaped, so a candidate
 cannot close its delimiter. Its answer may only reorder the candidates it was given: ratings that
-name a chunk ID it was not given, rate one twice, leave one out or go outside 0 to 10 are refused
+name an ID it was not given (anything but exactly `c1` to `cN`), rate one twice, leave one out or go outside 0 to 10 are refused
 at once (no retry), and the search keeps its order with `fallback_reason` `reranker_failed`. A
 judge that does not answer within its timeout keeps the order with `reranker_timeout`. It is an
 LLM step: it counts against the budgets and the LLM search rate limit (above) (once

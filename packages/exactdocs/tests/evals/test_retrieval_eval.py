@@ -1079,7 +1079,7 @@ async def test_hybrid_hyde_runs_through_the_suite_on_a_stand_in_llm(
     assert (bm25.metrics.tokens_per_question, bm25.metrics.usd_per_question) == (0, 0)
 
 
-_CANDIDATE = re.compile(r'<candidate id="([0-9a-f]+)">(.*?)</candidate>', re.DOTALL)
+_CANDIDATE = re.compile(r'<candidate id="(c[0-9]+)">(.*?)</candidate>', re.DOTALL)
 _QUERY = re.compile(r"<query>(.*?)</query>", re.DOTALL)
 
 
@@ -1098,8 +1098,8 @@ def _lexical_judge(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
     )
     query = _words(_QUERY.findall(prompt)[0])
     ratings = [
-        {"chunk_id": chunk_id, "score": min(10, len(query & _words(text)))}
-        for chunk_id, text in _CANDIDATE.findall(prompt)
+        {"id": candidate, "score": min(10, len(query & _words(text)))}
+        for candidate, text in _CANDIDATE.findall(prompt)
     ]
     tool = info.output_tools[0]
     return ModelResponse(parts=[ToolCallPart(tool.name, {"response": ratings})])

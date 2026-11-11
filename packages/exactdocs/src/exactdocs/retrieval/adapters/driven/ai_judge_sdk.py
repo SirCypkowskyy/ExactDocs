@@ -1,13 +1,14 @@
 """The pydantic-ai side of ``ai_judge``: loaded only once a judge rates candidates.
 
-One ``Agent(output_type=list[Rating])`` per search: every candidate rated in a single call, each
-rating a chunk ID and a whole score from 0 to ``JUDGE_MAX_SCORE`` (bounded by the schema). The
-prompt delimits the query and the candidates as untrusted text (``judge_prompt``) and the
-instructions say so. An output validator refuses ratings that are not exactly one per candidate
-given (``judged_scores``), with no retry (``retries=0``): a judge that names an ID it was not
-given, which a candidate's text may have asked for, is refused at once and the search keeps its
-order. The run is inside the limits of every LLM step (``agent_limits``) and an output token cap
-that grows with the candidates. The model comes instrumented from the factory, without content.
+One ``Agent(output_type=list[Rating])`` per search: every candidate rated in a single call,
+each rating a positional ID (``c1`` ...) and a whole score from 0 to ``JUDGE_MAX_SCORE``
+(bounded by the schema). The prompt delimits the query and the candidates as untrusted text
+(``judge_prompt``) and the instructions say so. An output validator refuses ratings that are not
+exactly one per candidate given (``judged_scores``), with no retry (``retries=0``): a judge that
+names an ID it was not given, which a candidate's text may have asked for, is refused at once and
+the search keeps its order. The run is inside the limits of every LLM step (``agent_limits``)
+and an output token cap that grows with the candidates (``judge_max_tokens``). The model comes
+instrumented from the factory, without content.
 """
 
 from collections.abc import Sequence
@@ -19,18 +20,14 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.spend import SpendLimitExceeded
 
 from exactdocs.retrieval.adapters.driven.harness_spend import agent_limits
-from exactdocs.retrieval.constants import (
-    JUDGE_BASE_TOKENS,
-    JUDGE_INSTRUCTIONS,
-    JUDGE_MAX_SCORE,
-    JUDGE_TOKENS_PER_CANDIDATE,
-)
+from exactdocs.retrieval.constants import JUDGE_INSTRUCTIONS, JUDGE_MAX_SCORE
 from exactdocs.retrieval.errors import InvalidJudgmentError, LlmBudgetReachedError, LlmFailedError
 from exactdocs.retrieval.models import (
     JudgedCandidate,
     JudgeRating,
     JudgeVerdict,
     LlmStep,
+    judge_max_tokens,
     judge_prompt,
     judged_scores,
 )
@@ -42,8 +39,8 @@ class Rating(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, use_attribute_docstrings=True)
 
-    chunk_id: str
-    """The candidate's id, exactly as given."""
+    id: str
+    """The candidate's id, exactly as given (``c1``, ``c2``...)."""
     score: int = Field(ge=0, le=JUDGE_MAX_SCORE)
     """0 (unrelated) to 10 (directly answers the query)."""
 
@@ -57,7 +54,7 @@ def _ratings(output: Sequence[Rating]) -> tuple[JudgeRating, ...]:
     Returns:
         The ratings, in the judge's order.
     """
-    return tuple(JudgeRating(chunk_id=r.chunk_id, score=r.score) for r in output)
+    return tuple(JudgeRating(id=r.id, score=r.score) for r in output)
 
 
 async def judge(
@@ -100,9 +97,7 @@ async def judge(
         handle,
         output_type=list[Rating],
         instructions=JUDGE_INSTRUCTIONS,
-        model_settings=ModelSettings(
-            max_tokens=JUDGE_BASE_TOKENS + JUDGE_TOKENS_PER_CANDIDATE * len(candidates)
-        ),
+        model_settings=ModelSettings(max_tokens=judge_max_tokens(len(candidates))),
         retries=0,
         capabilities=[limits.spend],
     )

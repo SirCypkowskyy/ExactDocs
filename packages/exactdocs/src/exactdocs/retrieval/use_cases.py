@@ -196,6 +196,7 @@ from exactdocs.retrieval.models import (
     embedding_spend,
     embedding_text,
     estimated_usd,
+    judge_window,
     judged_scores,
     language_first,
     leading_hit,
@@ -1266,10 +1267,22 @@ class Reranking:
         Returns:
             The answer reordered, or in its own order with a fallback reason.
         """
-        candidates = [
+        offered = [
             JudgedCandidate(chunk_id=h.chunk_id, text=text)
             for h, text in zip(kept, texts, strict=True)
         ]
+        # Only the best candidates that fit one bounded call are judged; the rest keep their
+        # order after them (never a call the token limit would stop once it was paid for).
+        window = judge_window(query, offered)
+        if window == 0:
+            logger.warning(
+                "the judge of %s was not called: not one candidate fits a call; the search "
+                "keeps its order",
+                version.library,
+            )
+            return _fallen_back(answer, FallbackReason.RERANKER_FAILED)
+        candidates = offered[:window]
+        judged = kept[:window]
         try:
             async with asyncio.timeout(self.limits.judge_timeout):
                 scores = await self._judge_scores(version.library, query, candidates, choice)
@@ -1291,7 +1304,9 @@ class Reranking:
             )
             return _fallen_back(answer, FallbackReason.RERANKER_FAILED)
         return replace(
-            answer, hits=(*reorder(kept, scores), *answer.hits[len(kept) :]), reranked=len(kept)
+            answer,
+            hits=(*reorder(judged, scores), *kept[window:], *answer.hits[len(kept) :]),
+            reranked=window,
         )
 
     async def _judge_scores(

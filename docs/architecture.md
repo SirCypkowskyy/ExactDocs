@@ -1127,17 +1127,26 @@ or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `h
 the library's `rerank_with`, else the instance's (`EXACTDOCS_AI__RERANK_WITH`, `cross_encoder`
 by default); the judge reranks only when chosen and its role resolves (`judge`, else `llm`),
 else the cross-encoder does when there is one (`ModeChoice.reranker`). `Reranking` then hands the
-same candidates to the `CandidateJudge` driven port under `asyncio.timeout`
+best of the same candidates that fit one bounded call (`models.judge_window`: at most
+`JUDGE_MAX_CANDIDATES`, 64, while the input estimated at `CHARS_PER_TOKEN` per token, the text as
+cut and escaped, stays within `JUDGE_INPUT_TOKEN_BUDGET`, 24,000, under half the step's
+`LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
+sent, paid for and then refused) to the `CandidateJudge` driven port under `asyncio.timeout`
 (`[ai.judge] timeout`, 10 s), with an `LlmStep` whose budgets are
-`AiSpend.budgets_for(library_ai)`. Its adapter (`adapters/driven/ai_judge.py`, the SDK side in
+`AiSpend.budgets_for(library_ai)`. The candidates beyond the window keep their order after the
+judged ones. A timeout that strikes after the provider answered may cancel `SpendLimits` while
+it records the spend, which is then lost, as for HyDE: the in-flight overshoot the decision
+record already accepts. Its adapter (`adapters/driven/ai_judge.py`, the SDK side in
 `ai_judge_sdk.py`, loaded on first use) runs one `Agent(output_type=list[Rating])`: each rating a
-chunk ID and an `int` from 0 to `JUDGE_MAX_SCORE` (bounded by the schema, strict, no extra
+positional ID (`c1` ... `cN`, `models.judge_id`, never a chunk ID: short to answer and nothing a
+candidate could imitate usefully) and an `int` from 0 to `JUDGE_MAX_SCORE` (bounded by the schema, strict, no extra
 fields); fixed `JUDGE_INSTRUCTIONS` that say the query and the candidates are untrusted data; the
 user prompt from `models.judge_prompt` (the query in `<query>`, each candidate in
 `<candidate id="...">`, cut to `MAX_JUDGE_*_CHARS` and with `&`, `<`, `>` escaped, so no text can
 close or forge a delimiter); an output validator over `models.judged_scores` (exactly one rating
-per candidate given, no unknown ID) with `retries=0`, so a refused answer is never asked for
-again; `max_tokens` growing with the candidates; and `agent_limits` (`SpendLimits` over the
+per candidate given, each ID mapped back exactly, no unknown ID) with `retries=0`, so a refused
+answer is never asked for again; `max_tokens` from `models.judge_max_tokens` (512, plus 48 per
+candidate: a pretty-printed answer fits with room for a model's reasoning); and `agent_limits` (`SpendLimits` over the
 ledger, `UsageLimits`). `Reranking` checks the ratings again with `judged_scores` before
 `models.reorder`, so the judge can only reorder what it was given. A budget refusal answers
 `llm_budget_reached`; a timeout `reranker_timeout`; anything else (refused ratings, an error, a

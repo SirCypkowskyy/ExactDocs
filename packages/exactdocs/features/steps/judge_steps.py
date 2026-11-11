@@ -6,6 +6,7 @@ chunk ID it was not given. A second profile on the same gateway serves the cross
 unreranked order is taken from the same instance before any model is configured.
 """
 
+import re
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -160,9 +161,10 @@ def step_judge_prompt(context: Context) -> None:
     assert JUDGE_INSTRUCTIONS in system, messages
     (user,) = [str(m["content"]) for m in messages if m["role"] == "user"]
     assert f"<query>{QUERY}</query>" in user, user
-    for chunk_id in context.unreranked[:TOP_N]:
-        assert f'<candidate id="{chunk_id}">' in user, user
-    assert context.unreranked[TOP_N] not in user, "only the top N"
+    ids = re.findall(r'<candidate id="([^"]*)">', user)
+    assert ids == [f"c{n}" for n in range(1, TOP_N + 1)], "the top N, by position"
+    for chunk_id in context.unreranked:
+        assert chunk_id not in user, "never a chunk ID"
     assert "fixture/docs-repo" not in user, "no library name"
     assert call.body["tools"], "the ratings are a structured output"
 
