@@ -302,8 +302,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `auth_failed`: a script that branches on codes handles both sets.
 
 - **Retrieval mode and AI overrides** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with
-  `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null}`
-  replaces the library's settings (every field is optional; an omitted one takes its default).
+  `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null,
+  "rerank_top_n": 16}` replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best mode configured); it must be available with the
   settings sent: 422 `mode_unavailable` names the model role it needs that is not configured, or
@@ -314,14 +314,23 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `llm`, `judge` and `reranker` (`<profile>:<model>`) replace the instance's role for this library
   (404 `unknown_provider` for a profile that does not exist, 422 `invalid_model` when not written
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
+  `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
+  instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
   `GET .../retrieval` returns the settings with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
-  `available_modes` and the `configured_roles` of the library. 404 for an unknown library. A
+  `available_modes`, the `configured_roles` of the library and the `effective_rerank_top_n`. 404 for an unknown library. A
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
   one is a 422 `mode_unavailable` as well. A budget or the LLM search rate limit never fails a
   search: one that would run an LLM step answers in the best mode without one, with
   `fallback_reason` `llm_budget_reached` or `llm_rate_limited`, and a paid rerank over budget is
   skipped (`reranked: false`, `fallback_reason: llm_budget_reached`).
+- **Reranking** (RET-02): with a `reranker` role, a search's best candidates are reordered by the
+  reranker (`reranked: true`, `coverage.reranked` counts them, and each reranked result's `score`
+  is the reranker's). When `limit` is more than the top N, the reranked results come first and the
+  rest follow in the mode's order with the mode's scores, which are not comparable with the
+  reranker's. A reranker that times out or fails never fails the search: results keep
+  the mode's order with `reranked: false` and `fallback_reason` `reranker_timeout` or
+  `reranker_failed` (unless the mode itself fell back, whose reason is kept).
 
 ### AI providers
 

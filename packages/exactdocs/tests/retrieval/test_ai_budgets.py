@@ -6,7 +6,7 @@ skips the LLM step or the paid rerank (the search answers in the cheaper mode an
 stops an embedding job before its next batch.
 """
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 
@@ -71,7 +71,7 @@ from exactdocs.retrieval.models import (
     spend_entries,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports.driven import RetrievalPipeline, SearchTracer
+from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline, SearchTracer
 from exactdocs.retrieval.use_cases import (
     AiSpend,
     Bm25Pipeline,
@@ -135,7 +135,8 @@ class Versions:
 
 @dataclass(slots=True)
 class FakePipeline:
-    """Answers as ``mode`` with the BM25 hits of the requested version; reranks when asked."""
+    """Answers as ``mode`` with the BM25 hits of the requested version (reranking is a stage of
+    its own, through the ``Reranking`` and the factory's reranker)."""
 
     mode: RetrievalMode
     bm25: RetrievalPipeline
@@ -148,7 +149,7 @@ class FakePipeline:
             mode=self.mode,
             hits=found.hits,
             candidates=found.candidates,
-            reranked=len(found.hits) if request.rerank else 0,
+            reranked=0,
             complete=found.complete,
         )
 
@@ -169,6 +170,7 @@ class World:
     clock: Clock
     pipelines: dict[RetrievalMode, FakePipeline]
     models: HashEmbeddingModels
+    reranker: CountingReranker
 
 
 def _chunk(heading: str, content: str) -> ChunkIn:
@@ -188,10 +190,12 @@ async def _build(
     reranker_kind: ProviderKind = ProviderKind.OPENAI_COMPATIBLE,
     embedding: bool = False,
     tracer: SearchTracer | None = None,
+    price_overrides: dict[str, ModelPrice] | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
     bm25 = Bm25Pipeline(search=index)
+    factory = EmbedderFactory()
     fakes = {m: FakePipeline(mode=m, bm25=bm25) for m in RetrievalMode}
     versions = Versions(
         {
@@ -237,12 +241,13 @@ async def _build(
             reranker=ModelRef(profile="corp", model="rerank"),
             embedding=ModelRef(profile="corp", model="a") if embedding else None,
         ),
-        models=EmbedderFactory(),
+        models=factory,
         pipelines=fakes,
         vectors=InMemoryVectorIndex(chunks=chunks) if embedding else None,
         embedding_models=models if embedding else None,
         spend=ledger,
         prices=StaticPrices(input_prices={("openai-compatible", "a"): 0.02}),
+        price_overrides=price_overrides,
         budgets=budgets,
         call_rates=InMemoryCallRates() if rates else None,
         clock=clock,
@@ -269,11 +274,32 @@ async def _build(
                 ],
             )
         )
-    return World(module=module, ledger=ledger, clock=clock, pipelines=fakes, models=models)
+    return World(
+        module=module,
+        ledger=ledger,
+        clock=clock,
+        pipelines=fakes,
+        models=models,
+        reranker=factory.counting,
+    )
 
 
+@dataclass(slots=True)
+class CountingReranker:
+    """A reranker that scores the documents in reverse and records what it was sent."""
+
+    calls: list[tuple[str, list[str]]] = field(default_factory=list)
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
+        self.calls.append((query, list(documents)))
+        return [float(i) for i in range(len(documents))]
+
+
+@dataclass(slots=True)
 class EmbedderFactory:
     """``ModelFactory`` whose embedder is a marker (the hash models ignore it)."""
+
+    counting: CountingReranker = field(default_factory=CountingReranker)
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
@@ -286,9 +312,9 @@ class EmbedderFactory:
         del profile, model
         return object()
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
         del profile, model
-        return object()
+        return self.counting
 
     async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
         raise AssertionError((profile, model, role))
@@ -569,7 +595,39 @@ async def test_a_paid_rerank_over_budget_is_skipped_and_the_results_say_so() -> 
     await _spend(world, "library", LIB, DAY, USD)
 
     assert await _search(world) == (BM25, FallbackReason.LLM_BUDGET_REACHED, False, True)
-    assert world.pipelines[BM25].requests[-1].rerank is False
+    assert len(world.reranker.calls) == 1  # the second search never called the reranker
+
+
+async def test_a_rerank_call_counts_in_the_callers_rows_at_its_price() -> None:
+    world = await _build(
+        ModelRole.RERANKER,
+        price_overrides={"corp:rerank": ModelPrice(input_usd_per_million=1_000_000.0)},
+    )
+
+    assert (await _search(world))[2] is True
+
+    ((query, documents),) = world.reranker.calls
+    tokens = -(-(len(query) + sum(len(d) for d in documents)) // 4)  # estimated: no usage
+    rows = {(k.scope_kind, k.scope_id, k.window): r for k, r in world.ledger.rows.items()}
+    assert set(rows) == {
+        (kind, scope_id, window)
+        for kind, scope_id in (("instance", ""), ("library", LIB), ("user", ADA))
+        for window in SpendWindow
+    }
+    for row in rows.values():
+        assert (row.input_tokens, row.requests, row.unpriced) == (tokens, 1, 0)
+        assert row.usd_micros == tokens * 1_000_000  # $1 per token
+
+
+async def test_an_unpriced_rerank_counts_its_tokens_and_is_marked_unpriced() -> None:
+    world = await _build(ModelRole.RERANKER)
+
+    await _search(world, caller=None)
+
+    assert {k.scope_kind for k in world.ledger.rows} == {"instance", "library"}  # stdio: no user
+    assert {(r.requests, r.unpriced, r.usd_micros) for r in world.ledger.rows.values()} == {
+        (1, 1, 0)
+    }
 
 
 async def test_a_local_reranker_costs_nothing_and_is_never_skipped() -> None:
@@ -581,6 +639,7 @@ async def test_a_local_reranker_costs_nothing_and_is_never_skipped() -> None:
     await _spend(world, "library", LIB, DAY, USD)
 
     assert await _search(world) == (BM25, None, True, True)
+    assert {r.usd_micros for k, r in world.ledger.rows.items() if k.scope_kind == "user"} == {0}
 
 
 async def test_a_fallback_never_answers_from_another_version() -> None:
@@ -763,14 +822,20 @@ async def test_the_budget_is_applied_to_the_choice_itself_so_every_later_stage_s
         spend=AiSpend(ledger=ledger, budgets=Budgets(limits=(_limit("library"),)), clock=clock),
     )
     choice = ModeChoice(mode=AGENTIC, rerank=True, cheaper=BM25)
-    assert await modes.within_budget(choice, library=LIB.upper(), caller=ADA) == choice
+    assert await modes.within_budget(choice, library=LIB.upper(), caller=ADA) == replace(
+        choice, caller=ADA
+    )
     key = SpendKey(scope_kind="library", scope_id=LIB, window=DAY, window_start=clock.at.date())
     await ledger.add([_entry(key, usd=USD)])
 
     within = await modes.within_budget(choice, library=LIB.upper(), caller=ADA)
 
     assert within == ModeChoice(
-        mode=BM25, rerank=False, cheaper=BM25, fallback_reason=FallbackReason.LLM_BUDGET_REACHED
+        mode=BM25,
+        rerank=False,
+        cheaper=BM25,
+        fallback_reason=FallbackReason.LLM_BUDGET_REACHED,
+        caller=ADA,
     )
 
 

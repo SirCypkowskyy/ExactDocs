@@ -485,3 +485,21 @@ class InvalidBudgetError(ValidationError):
             reason: A fixed text naming the problem.
         """
         super().__init__(f"invalid AI budget: {reason}")
+
+
+class RerankerError(DomainError):
+    """A reranker call failed: the endpoint answered with an error, or with something unusable.
+
+    Searches never fail with it: they keep the order their mode found (``reranker_failed``).
+    The message names the failure, never a key, the query or a document.
+    """
+
+    code = "reranker_failed"
+
+    def __init__(self, reason: str) -> None:
+        """Say what went wrong.
+
+        Args:
+            reason: A fixed text, or an HTTP status; nothing from the request.
+        """
+        super().__init__(f"reranker failed: {reason}")

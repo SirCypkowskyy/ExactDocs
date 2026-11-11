@@ -1,14 +1,14 @@
 """Replay tokens of the spend ledger: a replayed LLM response is counted once (#95).
 
 Revision ID: d2f7b4a9c1e6
-Revises: 9c4e1a7b3f52
+Revises: 5abe3b929c5f
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "d2f7b4a9c1e6"
-down_revision = "9c4e1a7b3f52"
+down_revision = "5abe3b929c5f"
 branch_labels = None
 depends_on = None
 

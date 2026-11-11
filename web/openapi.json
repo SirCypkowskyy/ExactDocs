@@ -7950,12 +7950,12 @@
           "candidates": {
             "type": "integer",
             "title": "Candidates",
-            "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1."
+            "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1 (with a reranker, at\nmost its top N + 1 when that is more)."
           },
           "reranked": {
             "type": "integer",
             "title": "Reranked",
-            "description": "Of those, how many a reranker reordered."
+            "description": "Of those, how many a reranker reordered (0 when it failed or timed out)."
           },
           "complete": {
             "type": "boolean",
@@ -8211,7 +8211,9 @@
           "embedding_in_progress",
           "llm_budget_reached",
           "llm_rate_limited",
-          "vector_store_unavailable"
+          "vector_store_unavailable",
+          "reranker_timeout",
+          "reranker_failed"
         ],
         "title": "FallbackReason",
         "description": "Why a search was answered by a cheaper mode than the one it would have used."
@@ -8898,6 +8900,20 @@
             ],
             "title": "Reranker",
             "description": "The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model\nis instance-wide only and cannot be set here."
+          },
+          "rerank_top_n": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 200.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Top N",
+            "description": "How many of its best candidates the reranker reorders (1 to 200); null: the instance's\n(`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default)."
           }
         },
         "additionalProperties": false,
@@ -9006,6 +9022,23 @@
             ],
             "title": "Reranker",
             "description": "The library's own reranker (`<profile>:<model>`); null: the instance's."
+          },
+          "rerank_top_n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Top N",
+            "description": "How many of its best candidates the reranker reorders; null: the instance's."
+          },
+          "effective_rerank_top_n": {
+            "type": "integer",
+            "title": "Effective Rerank Top N",
+            "description": "How many candidates its searches rerank now: its own number, else the instance's."
           }
         },
         "additionalProperties": false,
@@ -9021,7 +9054,9 @@
           "ai_enabled",
           "llm",
           "judge",
-          "reranker"
+          "reranker",
+          "rerank_top_n",
+          "effective_rerank_top_n"
         ],
         "title": "LibraryRetrievalOut",
         "description": "A library's retrieval setting and the mode its searches use now when a call names none."
@@ -10186,6 +10221,7 @@
           "ovhcloud",
           "sambanova",
           "alibaba",
+          "tei",
           "local"
         ],
         "title": "ProviderKind",

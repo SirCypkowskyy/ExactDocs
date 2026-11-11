@@ -8,6 +8,8 @@ records what each request carried.
 import asyncio
 import json
 import re
+import sys
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,10 +24,11 @@ from azure.identity import (
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from google.oauth2.credentials import Credentials
+from pydantic import ValidationError
 from pydantic_ai import Embedder
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
-from exactdocs.bootstrap import ai_sdk
+from exactdocs.bootstrap import ai_models, ai_sdk
 from exactdocs.bootstrap.ai_endpoint import Endpoint
 from exactdocs.bootstrap.ai_models import PydanticAiModels, configured_ai
 from exactdocs.bootstrap.ai_sdk import (
@@ -35,12 +38,14 @@ from exactdocs.bootstrap.ai_sdk import (
     _openai_provider,
 )
 from exactdocs.bootstrap.constants import (
+    AI_SDK_MODULE,
     AZURE_OPENAI_HOST,
     BEDROCK_HOST,
     FOUNDRY_HOST,
     VERTEX_HOST,
 )
-from exactdocs.bootstrap.settings import AiSettings
+from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
@@ -51,6 +56,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
 )
+from exactdocs_kernel import SealedTextUnreadableError
 from fake_llm import DIMENSIONS, FakeGateway, gateway
 
 POISON = {
@@ -214,6 +220,59 @@ async def test_a_reranker_check_speaks_the_cohere_dialect(fake: FakeGateway) -> 
 
     assert check.ok, check.error
     assert fake.seen[0].path == "/v1/rerank"
+
+
+async def test_a_tei_reranker_check_speaks_the_tei_dialect(fake: FakeGateway) -> None:
+    profile = ProviderProfile(name="tei", kind=ProviderKind.TEI, base_url=fake.url)
+
+    check = await PydanticAiModels().check(profile, "bge-reranker-base", ModelRole.RERANKER)
+
+    assert check.ok, check.error
+    (seen,) = fake.seen
+    assert (seen.path, set(seen.body)) == ("/rerank", {"query", "texts", "truncate"})
+
+
+async def test_a_reranker_sends_the_profiles_key_and_headers_only_to_its_endpoint(
+    fake: FakeGateway,
+) -> None:
+    profile = ProviderProfile(
+        name="cohere",
+        kind=ProviderKind.OPENAI_COMPATIBLE,
+        base_url=f"{fake.url}/v2",
+        key=KeySource.ENVIRONMENT,
+        headers=(("X-Team", "docs"),),
+    )
+    models = PydanticAiModels(keys={"cohere": "cohere-key"})
+
+    reranker = await models.reranker(profile, "rerank-v3.5")
+    scores = await reranker.rerank("retry", ["a", "b"])
+
+    assert list(scores) == [0.5, 1.0]
+    (seen,) = fake.seen
+    assert seen.path == "/v2/rerank"
+    assert (seen.headers["authorization"], seen.headers["x-team"]) == ("Bearer cohere-key", "docs")
+
+
+@pytest.mark.parametrize("kind", [ProviderKind.OPENAI, ProviderKind.ANTHROPIC, ProviderKind.OLLAMA])
+async def test_a_kind_without_a_rerank_api_cannot_rerank(kind: ProviderKind) -> None:
+    profile = ProviderProfile(
+        name="other", kind=kind, base_url="https://llm.example.com/v1", key=KeySource.ENVIRONMENT
+    )
+    models = PydanticAiModels(keys={"other": "k"})
+
+    with pytest.raises(ProviderUnsupportedError, match="has no rerank API"):
+        await models.reranker(profile, "rerank")
+
+
+async def test_a_tei_profile_serves_neither_chat_nor_embeddings(fake: FakeGateway) -> None:
+    profile = ProviderProfile(name="tei", kind=ProviderKind.TEI, base_url=fake.url)
+    models = PydanticAiModels()
+
+    with pytest.raises(ProviderUnsupportedError, match="reranker only"):
+        await models.chat_model(profile, "m")
+    with pytest.raises(ProviderUnsupportedError, match="no embeddings"):
+        await models.embedder(profile, "m")
+    assert not fake.seen
 
 
 async def test_claude_gets_the_profiles_key_and_endpoint(fake: FakeGateway) -> None:
@@ -705,3 +764,132 @@ async def test_the_factorys_models_are_instrumented_without_content(fake: FakeGa
     assert isinstance(embedder, Embedder)
     assert isinstance(embedder.instrument, InstrumentationSettings)
     assert embedder.instrument.include_content is False
+
+
+def test_the_reranker_top_n_and_timeout_are_read_with_their_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__RERANKER__MODEL", "rr:rerank-v3.5")
+    monkeypatch.setenv("EXACTDOCS_AI__RERANKER__TOP_N", "12")
+    monkeypatch.setenv("EXACTDOCS_AI__RERANKER__TIMEOUT", "0.5")
+
+    reranker = Settings().ai.reranker
+
+    assert (reranker.model, reranker.top_n, reranker.timeout) == ("rr:rerank-v3.5", 12, 0.5)
+    assert (AiSettings().reranker.top_n, AiSettings().reranker.timeout) == (32, 2.0)
+
+
+@pytest.mark.parametrize("role", [{"top_n": 0}, {"top_n": 201}, {"timeout": 0}, {"timeout": 61}])
+def test_reranker_limits_out_of_bounds_are_refused(role: dict[str, float]) -> None:
+    with pytest.raises(ValidationError):
+        AiSettings.model_validate({"reranker": role})
+
+
+def test_a_sealed_key_that_no_longer_opens_says_so_without_the_key() -> None:
+    profile = ProviderProfile(
+        name="corp",
+        kind=ProviderKind.OPENAI_COMPATIBLE,
+        base_url="https://llm.example.com/v1",
+        key=KeySource.SEALED,
+        sealed_key="gAAAA-sealed-with-another-key",
+    )
+
+    def refuse(sealed: str) -> str:
+        del sealed
+        raise SealedTextUnreadableError
+
+    with pytest.raises(ProviderUnsupportedError, match="does not open") as error:
+        ai_sdk.read_key(profile, None, refuse)
+
+    assert "gAAAA" not in str(error.value)
+
+
+async def test_the_provider_sdks_load_in_a_worker_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded_in: list[str] = []
+
+    def record(name: str) -> object:
+        assert name == AI_SDK_MODULE
+        loaded_in.append(threading.current_thread().name)
+        return ai_sdk
+
+    monkeypatch.delitem(sys.modules, AI_SDK_MODULE)
+    monkeypatch.setattr(ai_models.importlib, "import_module", record)
+
+    await PydanticAiModels().warm()
+
+    assert len(loaded_in) == 1
+    assert loaded_in[0] != threading.main_thread().name
+
+
+async def test_the_first_call_loads_the_provider_sdks_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch, fake: FakeGateway
+) -> None:
+    loaded_in: list[str] = []
+
+    def record(name: str) -> object:
+        assert name == AI_SDK_MODULE
+        loaded_in.append(threading.current_thread().name)
+        return ai_sdk
+
+    monkeypatch.delitem(sys.modules, AI_SDK_MODULE)
+    monkeypatch.setattr(ai_models.importlib, "import_module", record)
+    profile = ProviderProfile(name="rr", kind=ProviderKind.TEI, base_url=fake.url)
+
+    reranker = await PydanticAiModels().reranker(profile, "bge")
+
+    assert loaded_in
+    assert threading.main_thread().name not in loaded_in
+    assert reranker is not None
+
+
+async def test_the_sdks_are_warmed_at_start_when_any_profile_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    warmed: list[bool] = []
+
+    async def record(self: PydanticAiModels) -> None:
+        del self
+        warmed.append(True)
+
+    monkeypatch.setattr(PydanticAiModels, "warm", record)
+    nothing = Container.build(Settings(data_dir=tmp_path / "none"))
+    profile_only = Container.build(
+        Settings(
+            data_dir=tmp_path / "profile",
+            ai=AiSettings.model_validate(
+                {"providers": {"rr": {"kind": "tei", "base_url": "http://tei.internal:8080"}}}
+            ),
+        )
+    )
+
+    async with nothing.running(jobs=False):
+        assert warmed == []
+    async with profile_only.running(jobs=False):
+        assert warmed == [True]
+
+
+async def test_a_failed_sdk_load_at_start_is_a_warning_not_a_stop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(name: str) -> object:
+        message = f"cannot import name 'secret' from 'openai' ({name})"
+        raise ImportError(message)
+
+    monkeypatch.delitem(sys.modules, AI_SDK_MODULE)
+    monkeypatch.setattr(ai_models.importlib, "import_module", broken)
+    container = Container.build(
+        Settings(
+            data_dir=tmp_path,
+            ai=AiSettings.model_validate(
+                {"providers": {"rr": {"kind": "tei", "base_url": "http://tei.internal:8080"}}}
+            ),
+        )
+    )
+
+    async with container.running(jobs=False):
+        pass
+
+    warnings = [r for r in caplog.records if "could not be loaded" in r.getMessage()]
+    assert [r.levelname for r in warnings] == ["WARNING"]
+    assert "(ImportError)" in warnings[0].getMessage()
+    assert "openai" not in caplog.text

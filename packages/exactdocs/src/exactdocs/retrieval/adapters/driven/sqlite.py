@@ -158,6 +158,7 @@ library_settings = Table(
     Column("llm", Text),
     Column("judge", Text),
     Column("reranker", Text),
+    Column("rerank_top_n", Integer),  # NULL: the instance's top N
 )
 # Provider profiles managed over the REST API. The key is sealed by the secret box (its own HKDF
 # purpose); every other field is JSON in `settings`, as `ProviderProfile` names them.
@@ -670,6 +671,7 @@ class SqliteLibraryModes:
             llm=_stored_ref(row.llm),
             judge=_stored_ref(row.judge),
             reranker=_stored_ref(row.reranker),
+            rerank_top_n=row.rerank_top_n,
         )
 
     async def forget(self, library: str) -> None:
@@ -705,6 +707,7 @@ class SqliteLibraryModes:
                         llm=_ref_text(ai.llm),
                         judge=_ref_text(ai.judge),
                         reranker=_ref_text(ai.reranker),
+                        rerank_top_n=ai.rerank_top_n,
                     )
                 )
 

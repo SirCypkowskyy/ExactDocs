@@ -536,9 +536,10 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   key or `auth = "entra"`), `google-vertex` (`project`, `location` and `credentials_file`, or
   `credentials = "adc"`, or an Express-mode key), `google` (Gemini API), `ollama`, `vllm`,
   `litellm`, pydantic-ai's OpenAI-API providers (`deepseek`, `together`, `fireworks`, `cerebras`,
-  `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`), and
-  `local` (#245). Groq, Mistral, Cohere, xAI and Bedrock are reached through their
-  OpenAI-compatible endpoint or LiteLLM.
+  `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`),
+  `tei` (Text Embeddings Inference serving a reranker: the `reranker` role only), and `local`
+  (#245). Groq, Mistral, Cohere, xAI and Bedrock are reached through their OpenAI-compatible
+  endpoint or LiteLLM.
 - **Roles:** `embedding`, `reranker`, `llm`, `judge` (defaults to `llm`).
 - **Explicit values only.** Every SDK client gets its endpoint, key (`unused` for a profile
   without one), project, region and API version from the profile; `OPENAI_API_KEY`,
@@ -570,8 +571,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   under their own key derivation) and never returned. Profiles of the environment or the file are
   read-only there. A stored key is dropped, not reused, when the profile's endpoint changes.
 - **Per library** (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`): AI on or off (off: nothing
-  of the library is ever sent to a provider, searches are BM25), and its own `llm`, `judge` and
-  `reranker`. The embedding model is instance-wide only.
+  of the library is ever sent to a provider, searches are BM25), its own `llm`, `judge` and
+  `reranker`, and its own `rerank_top_n`. The embedding model is instance-wide only.
 - **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
   prints the latency, the model that answered and an embedding's dimensions, never a key;
   `POST /api/v1/ai/providers/{name}/check` does the same for one profile.
@@ -608,7 +609,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   call, so a burst can overshoot by the calls already in flight. Reaching a limit degrades search,
   never breaks it: the LLM step is skipped and the result names the cheaper mode with
   `fallback_reason: llm_budget_reached` (or `llm_rate_limited`); a paid rerank is skipped
-  (`reranked: false`); an `embed` job stops before its next batch with `ai_budget_reached` and is
+  (`reranked: false`; a rerank that ran counts one request and its tokens, estimated at 4
+  characters per token since rerank endpoints report none); an `embed` job stops before its next batch with `ai_budget_reached` and is
   queued again after the window resets (each UTC midnight, by one server process, a few minutes
   after at random), while BM25 keeps answering.
 - **Prices:** from the `genai-prices` data bundled with pydantic-ai (never fetched); a model it
@@ -637,7 +639,40 @@ input_usd_per_mtok = 0.40
 output_usd_per_mtok = 1.60
 ```
 
-The hybrid, HyDE and agentic pipelines arrive with #92 onwards.
+#### Reranker
+
+A cross-encoder reranker reorders the best candidates of every search (`search_docs`,
+`query_docs`, the REST search) for precision. It speaks one of two HTTP dialects:
+
+```toml
+[ai.providers.cohere]                   # Cohere-compatible POST <base_url>/rerank
+kind = "openai-compatible"
+base_url = "https://api.cohere.com/v2"  # Jina: https://api.jina.ai/v1, Voyage: https://api.voyageai.com/v1
+api_key_file = "/run/secrets/cohere_key"
+
+[ai.providers.tei]                      # Text Embeddings Inference: POST <base_url>/rerank
+kind = "tei"
+base_url = "http://tei:8080"
+
+[ai.reranker]
+model = "cohere:rerank-v3.5"            # or "tei:BAAI/bge-reranker-base" (TEI serves one model)
+top_n = 32                              # candidates reranked per search (1 to 200)
+timeout = 2.0                           # seconds for building the reranker and its call
+```
+
+A `tei` profile still needs the `exactdocs[ai]` extra, like every profile, although it only uses
+`httpx2`. vLLM and LiteLLM (`kind = "vllm"` / `"litellm"`, base URL ending in `/v1` or `/v2`) and Azure AI
+Foundry's Cohere deployments (`openai-compatible`) speak the Cohere-compatible dialect too. Only
+the query and the candidates' chunk text are sent (cut to 8000 characters each, in batches of 100,
+or 32 for TEI), never a library name, a version or a user. A reranker that times out, fails or
+answers something unusable never fails a search: results keep their order with `reranked: false`
+and `fallback_reason` `reranker_timeout` or `reranker_failed`, and the failure is logged without
+the query. With a `limit` above `top_n`, the reranked results come first and the rest follow in the
+mode's order, with the mode's scores (not comparable with the reranker's). With any
+provider profile other than `local` configured, the provider SDKs are loaded in a worker thread at
+start, so the first search never waits for them; a load that fails is a warning, never a stop. Whatever the reranker raises (an HTTP client closed under the
+call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. The hybrid, HyDE
+and agentic pipelines arrive with #92 onwards.
 
 ### PostgreSQL
 

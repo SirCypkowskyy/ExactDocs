@@ -416,7 +416,7 @@ _EXCLUDED_KINDS: Final[frozenset[str]] = frozenset(
 )
 """Provider kinds pydantic-ai has whose SDK ``exactdocs[ai]`` does not include."""
 _SELF_HOSTED_KINDS: Final[frozenset[str]] = frozenset(
-    {"openai-compatible", "ollama", "vllm", "litellm", "azure"}
+    {"openai-compatible", "ollama", "vllm", "litellm", "azure", "tei"}
 )
 """Provider kinds with no endpoint of their own: a profile must give ``base_url``."""
 _HOSTED_KINDS: Final[frozenset[str]] = frozenset({
@@ -467,6 +467,29 @@ MAX_REQUEST_TIMEOUT: Final[float] = 600.0
 """Longest overall timeout of one model call, in seconds."""
 MAX_RETRIES: Final[int] = 10
 """Most retries of one model call (the SDK's own, the one retry layer)."""
+
+# ---------------------------------------------------------------- models (reranker, #93)
+DEFAULT_RERANK_TOP_N: Final[int] = 32
+"""How many of a search's best candidates the reranker reorders, unless a library says otherwise."""
+MAX_RERANK_TOP_N: Final[int] = 200
+"""Most candidates one search may send to the reranker (instance or library setting)."""
+DEFAULT_RERANK_TIMEOUT: Final[float] = 2.0
+"""How long a search waits for the reranker, in seconds, before it keeps the unreranked order."""
+MAX_RERANK_TIMEOUT: Final[float] = 60.0
+"""Longest reranker timeout an operator may set, in seconds."""
+
+# ---------------------------------------------------------------- adapters/driven/http_reranker
+MAX_RERANK_DOCUMENT_CHARS: Final[int] = 8000
+"""Longest candidate text sent to a reranker (about 2000 tokens); a longer chunk is cut at the
+end. Every supported endpoint truncates further to its model's window itself (Cohere's
+``max_tokens_per_doc``, TEI's ``truncate``)."""
+MAX_RERANK_QUERY_CHARS: Final[int] = 2000
+"""Longest query text sent to a reranker."""
+COHERE_RERANK_BATCH: Final[int] = 100
+"""Most documents in one Cohere-compatible ``/rerank`` request (Cohere, Jina and Voyage take up to
+1000; gateways may take fewer)."""
+TEI_RERANK_BATCH: Final[int] = 32
+"""Most texts in one TEI ``/rerank`` request: TEI's default ``--max-client-batch-size``."""
 DEFAULT_REQUEST_TIMEOUT: Final[float] = 60.0
 """Overall timeout of one model call when a profile sets none, in seconds."""
 DEFAULT_RETRIES: Final[int] = 2

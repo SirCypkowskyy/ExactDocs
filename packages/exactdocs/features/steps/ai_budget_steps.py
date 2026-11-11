@@ -9,7 +9,7 @@ retrieval clock is fixed, so a scenario can move it past a window's end.
 import math
 import time
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
@@ -61,23 +61,6 @@ class StandInAgentic:
         del request
         return PipelineAnswer(
             mode=RetrievalMode.AGENTIC, hits=(), candidates=0, reranked=0, complete=True
-        )
-
-
-@dataclass(slots=True)
-class RerankingBm25:
-    """Stands in for BM25 with a reranker: says it reranked whenever it was asked to."""
-
-    asked: list[bool] = field(default_factory=list)
-
-    async def run(self, request: PipelineRequest) -> PipelineAnswer:
-        self.asked.append(request.rerank)
-        return PipelineAnswer(
-            mode=RetrievalMode.BM25,
-            hits=(),
-            candidates=0,
-            reranked=5 if request.rerank else 0,
-            complete=True,
         )
 
 
@@ -276,15 +259,34 @@ def step_bm25_meanwhile(context: Context) -> None:
 
 @given("the library's daily budget is used up and the reranker is a paid endpoint")
 def step_library_budget_used_up(context: Context) -> None:
-    context.bm25 = RerankingBm25()
+    stack = ExitStack()
+    context.add_cleanup(stack.close)
+    context.endpoint = stack.enter_context(gateway())
     _serve(
         context,
-        {"budgets": {"per_library_daily_usd": 0.5}},
-        roles=frozenset({ModelRole.RERANKER}),
-        pipelines={RetrievalMode.BM25: context.bm25},
+        {
+            "providers": {"rr": {"kind": "openai-compatible", "base_url": context.endpoint.v1}},
+            "reranker": {"model": "rr:rerank-v3.5"},
+            "prices": {"rr:rerank-v3.5": {"input_usd_per_mtok": 1.0}},
+            "budgets": {"per_library_daily_usd": 0.5},
+        },
     )
-    assert _search(context)["reranked"] is True  # within budget: reranked
+    assert _search(context)["reranked"] is True  # within budget: the endpoint reranked
+    context.rerank_calls = _rerank_calls(context)
+    assert context.rerank_calls == 1
     _spent(context, "library", LIBRARY, SpendWindow.DAY, ONE_USD)
+
+
+def _rerank_calls(context: Context) -> int:
+    """Count the calls the reranker endpoint received.
+
+    Args:
+        context: The behave context.
+
+    Returns:
+        How many rerank requests it got.
+    """
+    return sum(1 for seen in context.endpoint.seen if seen.path.endswith("/rerank"))
 
 
 @when("an agent searches")
@@ -296,7 +298,8 @@ def step_agent_searches(context: Context) -> None:
 def step_unreranked(context: Context, reason: str) -> None:
     body = context.result
     assert (body["reranked"], body["fallback_reason"]) == (False, reason), body
-    assert context.bm25.asked[-1] is False, "the reranker was not asked"
+    assert body["results"], "the mode's results arrive in their own order"
+    assert _rerank_calls(context) == context.rerank_calls, "the reranker was not called"
 
 
 @when("the admin reads the AI usage")

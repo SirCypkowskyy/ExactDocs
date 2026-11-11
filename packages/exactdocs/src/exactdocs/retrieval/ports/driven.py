@@ -479,6 +479,31 @@ class SecretBox(Protocol):
         ...
 
 
+class Reranker(Protocol):
+    """Scores candidates against a query: a cross-encoder behind an endpoint, or in process.
+
+    ``ModelFactory.reranker`` builds one for a profile and a model: the HTTP adapter in the
+    Cohere-compatible or the TEI dialect (#93), fastembed's cross-encoder (#245). It receives the
+    query text and the candidates' chunk text only, never a library name, a version or a user.
+    The caller bounds every call with a timeout and keeps its own order when the call fails.
+    """
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> Sequence[float]:
+        """Score each document's relevance to the query.
+
+        Args:
+            query: The query text.
+            documents: The candidates' text, best first as the search found them.
+
+        Returns:
+            One score per document, in their order; higher is more relevant.
+
+        Raises:
+            RerankerError: The call failed, or its answer cannot be used.
+        """
+        ...
+
+
 class ModelFactory(Protocol):
     """Turns a resolved profile and model into something that can be called.
 
@@ -523,7 +548,7 @@ class ModelFactory(Protocol):
         """
         ...
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
         """Build a reranker (``reranker`` role).
 
         Args:
@@ -531,7 +556,10 @@ class ModelFactory(Protocol):
             model: The model name.
 
         Returns:
-            An opaque handle.
+            The reranker of the profile's kind.
+
+        Raises:
+            ProviderUnsupportedError: The profile's kind cannot rerank, or cannot be called here.
         """
         ...
 
