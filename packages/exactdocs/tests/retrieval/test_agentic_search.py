@@ -7,6 +7,9 @@ rules are under test, a Protocol-shaped ``Explorer`` double stands in for the ag
 
 import asyncio
 import logging
+import os
+import subprocess
+import sys
 import unicodedata
 from collections.abc import Collection, Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -14,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
+from opentelemetry import trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
@@ -33,6 +37,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySearchIndex,
     InMemorySpendLedger,
 )
+from exactdocs.retrieval.adapters.driven.opentelemetry import OpenTelemetrySearchTracer
 from exactdocs.retrieval.constants import (
     AGENT_STEP_ARGUMENT_CHARS,
     EXPLORER_TOOLS,
@@ -75,7 +80,7 @@ from exactdocs.retrieval.models import (
     TagFilter,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports.driven import DocsBrowser, Explorer, SpendLedger
+from exactdocs.retrieval.ports.driven import DocsBrowser, Explorer, SearchTracer, SpendLedger
 from exactdocs.retrieval.use_cases import VersionBrowser
 from exactdocs_kernel import Clock
 from scripted_explorer import (
@@ -240,6 +245,7 @@ async def _world(
     budgets: Budgets | None = None,
     modes: InMemoryLibraryModes | None = None,
     reads_fail_with: str | None = None,
+    search_tracer: SearchTracer | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -260,7 +266,7 @@ async def _world(
         instance_roles=InstanceRoles(llm=ModelRef(profile="corp", model="explorer")),
         models=models,
         clock=FixedClock(),
-        tracer=tracer,
+        tracer=search_tracer or tracer,
         spend=ledger,
         budgets=budgets,
         explorer=explorer or PydanticAiExplorer(),
@@ -676,27 +682,25 @@ def _reading(code: str, sent: list[str]) -> FunctionModel:
     return FunctionModel(script)
 
 
-@pytest.mark.parametrize(
-    "code",
-    [
-        "await read_article(path='docs/paging.md')",
-        (
-            "try:\n    await read_article(path='docs/paging.md')\n"
-            "except Exception as e:\n    x = str(e)\n"
-            "await list_articles()"
-        ),
-    ],
-    ids=["uncaught", "caught by the snippet"],
-)
+HOST_ERROR_SNIPPETS = [
+    "await read_article(path='docs/paging.md')",
+    (
+        "try:\n    await read_article(path='docs/paging.md')\n"
+        "except Exception as e:\n    x = str(e)\n"
+        "await list_articles()"
+    ),
+]
+HOST_ERROR_IDS = ["uncaught", "caught by the snippet"]
+
+
+@pytest.mark.parametrize("code", HOST_ERROR_SNIPPETS, ids=HOST_ERROR_IDS)
 async def test_a_host_error_ends_the_run_and_its_text_goes_nowhere(
     code: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     sent: list[str] = []
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(include_content=True, tracer_provider=tracer_provider)
-    model = InstrumentedModel(_reading(code, sent), settings)  # content on: only ours is used
+    model = InstrumentedModel(
+        _reading(code, sent), InstrumentationSettings(include_content=True)
+    )  # content on: the explorer replaces it with its own instrumentation
     world = await _world(model, reads_fail_with=SECRET)
 
     with caplog.at_level(logging.DEBUG):
@@ -711,10 +715,86 @@ async def test_a_host_error_ends_the_run_and_its_text_goes_nowhere(
     assert "S3CRET-MARKER" not in result.model_dump_json()
     assert "S3CRET-MARKER" not in caplog.text
     assert "RuntimeError" in caplog.text  # the class only
-    for span in exporter.get_finished_spans():
-        assert "S3CRET-MARKER" not in repr(dict(span.attributes or {}))
+
+
+RUN = "EXACTDOCS_AGENTIC_SPANS_E2E"
+"""Set in the process the span test runs in: it sets the global tracer provider, once."""
+
+
+@pytest.fixture(scope="module")
+def process_spans() -> InMemorySpanExporter:
+    """Record every span of the process on the global tracer provider, set once (own process).
+
+    Returns:
+        The exporter holding the finished spans.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return exporter
+
+
+@pytest.fixture
+def global_spans(process_spans: InMemorySpanExporter) -> InMemorySpanExporter:
+    """The process's span exporter, emptied for this test.
+
+    Returns:
+        The exporter.
+    """
+    process_spans.clear()
+    return process_spans
+
+
+@pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
+@pytest.mark.parametrize("code", HOST_ERROR_SNIPPETS, ids=HOST_ERROR_IDS)
+async def test_a_host_error_reaches_no_span(code: str, global_spans: InMemorySpanExporter) -> None:
+    sent: list[str] = []
+    # A model that records content: the explorer re-instruments it, on the global provider.
+    model = InstrumentedModel(_reading(code, sent), InstrumentationSettings(include_content=True))
+    world = await _world(model, reads_fail_with=SECRET, search_tracer=OpenTelemetrySearchTracer())
+
+    result = await _search(world)
+
+    assert result.fallback_reason is FallbackReason.AGENT_FAILED
+    spans = global_spans.get_finished_spans()
+    names = {s.name for s in spans}
+    # The spans that would carry the error exist: the agent stage, the run, run_code, the read.
+    assert {
+        "retrieval.search_docs.agent",
+        "invoke_agent exactdocs-explorer",
+        "execute_tool run_code",
+        "execute_tool read_article",
+    } <= names, names
+    # The read's span records the guard's fixed error, never the host's exception.
+    (failed_read,) = [s for s in spans if s.name == "execute_tool read_article"]
+    raised = [dict(e.attributes or {}) for e in failed_read.events if e.name == "exception"]
+    assert [str(e.get("exception.type")).rsplit(".", 1)[-1] for e in raised] == [
+        "_ReadFailedError"
+    ], raised
+    for span in spans:
+        assert "S3CRET-MARKER" not in repr(dict(span.attributes or {})), span.name
+        assert "S3CRET-MARKER" not in (span.status.description or ""), span.name
         for event in span.events:
-            assert "S3CRET-MARKER" not in repr(dict(event.attributes or {}))
+            assert "S3CRET-MARKER" not in repr(dict(event.attributes or {})), span.name
+
+
+@pytest.mark.skipif(bool(os.environ.get(RUN)), reason="this is the run itself")
+def test_host_errors_reach_no_span_in_their_own_process() -> None:
+    """One process: a process's tracer provider is set once and cannot be replaced."""
+    run = subprocess.run(
+        [
+            sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header",
+            f"{__file__}::test_a_host_error_reaches_no_span",
+        ],
+        env={**os.environ, RUN: "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )  # fmt: skip
+    assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
+    assert f"{len(HOST_ERROR_IDS)} passed" in run.stdout, run.stdout[-1000:]
 
 
 async def test_an_unknown_article_is_a_plain_answer_to_the_model() -> None:

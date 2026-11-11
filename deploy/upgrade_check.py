@@ -17,7 +17,8 @@ without, ``uv run exactdocs`` from the checkout. Give each build a unique versio
 version with the commit) or a fresh ``UV_CACHE_DIR``: uv reuses a cached wheel of the same file
 name, so another build of ``0.0.0.dev0`` would run instead of this one. Everything it starts is
 gone when it exits. Only the fields both releases return are compared: a release may add fields,
-not change them (except its own fixed wording, ``NOT_STORED``, such as the notice).
+not change them (except each answer's own fixed wording, ``NOT_STORED``: the notice, which
+must still be there and not empty).
 """
 
 import argparse
@@ -188,19 +189,22 @@ def served(api: Api) -> dict[str, object]:
 
 
 NOT_STORED = frozenset({"notice"})
-"""Fields that are this build's fixed wording, not data the instance stored: a release may
-reword the untrusted-content notice (#98 added its model-output clause)."""
+"""Top-level fields of an answer that are this build's fixed wording, not data the instance
+stored: a release may reword the untrusted-content notice (#98 added its model-output clause)."""
 
 
-def differences(old: object, new: object, where: str = "") -> list[str]:
+def differences(
+    old: object, new: object, where: str = "", skip: frozenset[str] = frozenset()
+) -> list[str]:
     """List where ``new`` changed a value ``old`` had.
 
-    Keys only one side has are not compared, nor the fixed wording in ``NOT_STORED``.
+    Keys only one side has are not compared, nor the keys of ``skip``, which apply to this level
+    only, never to nested objects.
     """
     if isinstance(old, dict) and isinstance(new, dict):
         return [
             d
-            for k in (old.keys() & new.keys()) - NOT_STORED
+            for k in (old.keys() & new.keys()) - skip
             for d in differences(old[k], new[k], f"{where}.{k}")
         ]
     if isinstance(old, list) and isinstance(new, list):
@@ -212,6 +216,43 @@ def differences(old: object, new: object, where: str = "") -> list[str]:
             for d in differences(a, b, f"{where}[{i}]")
         ]
     return [] if old == new else [f"{where}: {old!r} -> {new!r}"]
+
+
+def answers_differ(before: dict[str, object], after: dict[str, object]) -> list[str]:
+    """Compare what two releases served, answer by answer, except each answer's own wording.
+
+    Args:
+        before: ``served`` by the previous release.
+        after: ``served`` by this build.
+
+    Returns:
+        Where an answer changed; ``NOT_STORED`` fields are skipped at the top of each answer.
+    """
+    return [
+        d
+        for name in before.keys() & after.keys()
+        for d in differences(before[name], after[name], f".{name}", NOT_STORED)
+    ]
+
+
+def missing_notices(answers: dict[str, object]) -> list[str]:
+    """Name the answers this build serves without the untrusted-content notice.
+
+    Args:
+        answers: ``served`` by this build.
+
+    Returns:
+        Each answer whose ``notice`` is missing or empty.
+    """
+    return [
+        name
+        for name, answer in answers.items()
+        if not (
+            isinstance(answer, dict)
+            and isinstance(answer.get("notice"), str)
+            and answer["notice"].strip()
+        )
+    ]
 
 
 def import_fixture(api: Api, repository: str) -> None:
@@ -340,9 +381,12 @@ def main() -> int:
                 sys.exit(f"not migrated to this checkout's head {head}: {health}")
             if "search_index_format" not in health:
                 sys.exit(f"the server is not this build (no search_index_format): {health}")
-            if changed := differences(before, served(api)):
+            after = served(api)
+            if changed := answers_differ(before, after):
                 sys.exit("served differently after the upgrade:\n  " + "\n  ".join(changed))
-            print(f"served unchanged: {len(before)} answers compared")
+            if missing := missing_notices(after):
+                sys.exit(f"served without the untrusted-content notice: {', '.join(missing)}")
+            print(f"served unchanged: {len(before)} answers compared, each with its notice")
 
             step("exactdocs reindex while the server answers")
             check_reindex(api, new_cmd, env)
