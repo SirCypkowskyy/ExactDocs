@@ -20,6 +20,7 @@ import {
   explainAiError,
   keyWords,
   originWords,
+  ownBudgetNote,
   percent,
   type ScopeUsage,
   type SpaceProgress,
@@ -344,12 +345,18 @@ function UsageRow({ scope: s }: { scope: ScopeUsage }) {
           <span className="text-muted-foreground">None</span>
         ) : (
           <ul>
-            {s.budgets.map((b: Budget) => (
-              <li key={b.window} className={b.reached ? "font-medium text-destructive" : undefined}>
-                {budgetWords(b)}
-                {b.reached && ` · reached until ${absoluteTimeWithZone(b.resets_at)}`}
-              </li>
-            ))}
+            {s.budgets.map((b: Budget) => {
+              const note = ownBudgetNote(b);
+              return (
+                <li key={b.window}>
+                  <span className={b.reached ? "font-medium text-destructive" : undefined}>
+                    {budgetWords(b)}
+                    {b.reached && ` · reached until ${absoluteTimeWithZone(b.resets_at)}`}
+                  </span>
+                  {note && <span className="block text-xs text-muted-foreground">{note}</span>}
+                </li>
+              );
+            })}
           </ul>
         )}
       </td>

@@ -1574,20 +1574,32 @@ class BudgetOut(_Dto):
     """Tokens left (never below 0); null when tokens are not limited."""
     reached: bool
     """The limit is used up: the scope's calls are skipped until `resets_at`."""
+    own_usd_limit: float | None = None
+    """A library's own dollar ceiling when it is higher than `usd_limit`, the instance's
+    per-library limit that applies instead; null otherwise."""
+    own_tokens_limit: int | None = None
+    """A library's own token ceiling when it is higher than `tokens_limit`, the instance's
+    per-library limit that applies instead; null otherwise."""
 
     @classmethod
-    def from_model(cls, limit: BudgetLimit, spent: SpendEntry, at: datetime) -> Self:
+    def from_model(
+        cls, limit: BudgetLimit, spent: SpendEntry, at: datetime, own: BudgetLimit | None = None
+    ) -> Self:
         """Show a limit against what its row spent.
 
         Args:
-            limit: The limit.
+            limit: The limit that applies (for a library, the tighter of its own and the
+                instance's).
             spent: The row of the current window.
             at: Now.
+            own: A library's own limit for the same window, if it has one.
 
         Returns:
             The DTO.
         """
         usd_limit = limit.usd_micros
+        own_usd = None if own is None else own.usd_micros
+        own_tokens = None if own is None else own.tokens
         return cls(
             window=limit.window,
             window_start=limit.window.start(at),
@@ -1599,6 +1611,16 @@ class BudgetOut(_Dto):
             tokens_limit=limit.tokens,
             tokens_left=None if limit.tokens is None else max(0, limit.tokens - spent.tokens),
             reached=limit.reached(spent),
+            own_usd_limit=(
+                own_usd / MICROS_PER_USD
+                if own_usd is not None and usd_limit is not None and own_usd > usd_limit
+                else None
+            ),
+            own_tokens_limit=(
+                own_tokens
+                if own_tokens is not None and limit.tokens is not None and own_tokens > limit.tokens
+                else None
+            ),
         )
 
 

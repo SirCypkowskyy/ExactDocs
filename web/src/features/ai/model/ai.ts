@@ -69,6 +69,15 @@ export function budgetWords(b: Budget): string {
   return `${b.window === "day" ? "Today" : "This month"}: ${parts.join(", ")}`;
 }
 
+/** Why a library's budget is lower than the one it set: the instance's lower limit applies. */
+export function ownBudgetNote(b: Budget): string | null {
+  const own: string[] = [];
+  if (b.own_usd_limit != null) own.push(usd(b.own_usd_limit));
+  if (b.own_tokens_limit != null) own.push(`${count(b.own_tokens_limit)} tokens`);
+  if (own.length === 0) return null;
+  return `The instance limit is lower than the library's own budget (${own.join(", ")}), so it applies.`;
+}
+
 export function checkWords(c: ModelCheck): string {
   if (c.status === "error") return c.error ?? "The call failed.";
   const extra = c.dimensions ? `, ${c.dimensions} dimensions` : "";

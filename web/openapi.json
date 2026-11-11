@@ -7433,6 +7433,30 @@
             "type": "boolean",
             "title": "Reached",
             "description": "The limit is used up: the scope's calls are skipped until `resets_at`."
+          },
+          "own_usd_limit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Usd Limit",
+            "description": "A library's own dollar ceiling when it is higher than `usd_limit`, the instance's\nper-library limit that applies instead; null otherwise."
+          },
+          "own_tokens_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Tokens Limit",
+            "description": "A library's own token ceiling when it is higher than `tokens_limit`, the instance's\nper-library limit that applies instead; null otherwise."
           }
         },
         "additionalProperties": false,
