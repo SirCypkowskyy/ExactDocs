@@ -21,6 +21,8 @@ from exactdocs.retrieval.models import (
     HydeKey,
     HypotheticalAnswer,
     IndexedManifest,
+    JudgedCandidate,
+    JudgeVerdict,
     LibraryAi,
     LlmStep,
     ManifestChunk,
@@ -1052,6 +1054,37 @@ class HypotheticalAnswers(Protocol):
         Raises:
             LlmBudgetReachedError: A budget refused the request.
             LlmFailedError: The model failed or answered nothing usable.
+        """
+        ...
+
+
+class CandidateJudge(Protocol):
+    """Rates a search's best candidates with the ``judge`` role's chat model (#96).
+
+    The adapter runs one pydantic-ai ``Agent`` whose output is a list of (chunk ID, bounded
+    score), with fixed instructions that mark the query and the candidates as untrusted,
+    delimited text (``judge_prompt``), an output validator that refuses any ID it was not given
+    (``judged_scores``) with no retry, a token cap, and the limits of every LLM step
+    (``agent_limits``). It receives the query text and the candidates' chunk text only.
+    """
+
+    async def judge(
+        self, model: object, query: str, candidates: Sequence[JudgedCandidate], *, step: LlmStep
+    ) -> JudgeVerdict:
+        """Rate every candidate's relevance to the query in one call.
+
+        Args:
+            model: What ``ModelFactory.chat_model`` returned for the ``judge`` role.
+            query: The query text.
+            candidates: The candidates, best first as the search found them.
+            step: Who it counts to and the budgets it runs within.
+
+        Returns:
+            Exactly one validated rating per candidate, and the call's usage.
+
+        Raises:
+            LlmBudgetReachedError: A budget refused the request.
+            LlmFailedError: The model failed, or its ratings were refused.
         """
         ...
 

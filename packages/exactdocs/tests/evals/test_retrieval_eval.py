@@ -1,6 +1,7 @@
 """The retrieval eval suite: its dataset, its metrics, its gates, and BM25 on the real import."""
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -8,7 +9,14 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -21,13 +29,20 @@ from exactdocs.retrieval.models import (
     ModelRole,
     PipelineAnswer,
     PipelineRequest,
+    RerankWith,
     RetrievalMode,
     SearchHit,
 )
 from fake_llm import gateway
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
-from offline_embedding import LLM, offline_data_container, offline_hyde_container
+from offline_embedding import (
+    JUDGE,
+    LLM,
+    offline_data_container,
+    offline_hyde_container,
+    offline_judge_container,
+)
 from retrieval_eval.cli import OFFLINE_NOT_JUDGED, main
 from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
 from retrieval_eval.fixture import model_free_container, run_on_fixture
@@ -1062,6 +1077,72 @@ async def test_hybrid_hyde_runs_through_the_suite_on_a_stand_in_llm(
     assert hyde.metrics.tokens_per_question > 0
     assert hyde.metrics.usd_per_question > 0
     assert (bm25.metrics.tokens_per_question, bm25.metrics.usd_per_question) == (0, 0)
+
+
+_CANDIDATE = re.compile(r'<candidate id="([0-9a-f]+)">(.*?)</candidate>', re.DOTALL)
+_QUERY = re.compile(r"<query>(.*?)</query>", re.DOTALL)
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9_]+", text.lower()))
+
+
+def _lexical_judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A stand-in judge that rates each candidate by the query words it shares (at most 10)."""
+    prompt = next(
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    )
+    query = _words(_QUERY.findall(prompt)[0])
+    ratings = [
+        {"chunk_id": chunk_id, "score": min(10, len(query & _words(text)))}
+        for chunk_id, text in _CANDIDATE.findall(prompt)
+    ]
+    tool = info.output_tools[0]
+    return ModelResponse(parts=[ToolCallPart(tool.name, {"response": ratings})])
+
+
+async def test_the_judge_reranker_runs_through_the_suite_on_a_stand_in(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    report = await run_on_fixture(
+        docs_repo,
+        tmp_path / "data",
+        build=offline_judge_container(lambda: FunctionModel(_lexical_judge, model_name=JUDGE)),
+        modes=[BM25],
+        local_roles=frozenset({ModelRole.JUDGE}),
+    )
+
+    (bm25,) = report.modes
+    assert (bm25.status, bm25.reranker, bm25.errors) == ("ran", RerankWith.JUDGE, [])
+    assert bm25.metrics is not None
+    assert bm25.metrics.wrong_version_rate == 0, "the judge only reorders the version's own hits"
+    assert bm25.wrong_version_cases == []
+    assert bm25.reranked > 0
+    assert bm25.rerank_fallbacks == 0, "every judgment was measured"
+    # The judge's priced step reaches the report.
+    assert bm25.metrics.tokens_per_question > 0
+    assert bm25.metrics.usd_per_question > 0
+    assert "the LLM judge failed or timed out on 0" in markdown(report)
+
+
+async def test_a_hosted_judge_is_skipped_unless_allowed(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    report = await run_on_fixture(
+        docs_repo,
+        tmp_path / "data",
+        build=offline_judge_container(lambda: FunctionModel(_lexical_judge, model_name=JUDGE)),
+        modes=[BM25],
+    )
+
+    (bm25,) = report.modes
+    assert bm25.status == "skipped"
+    assert bm25.reason is not None
+    assert "judge" in bm25.reason
 
 
 def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Path) -> None:

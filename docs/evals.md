@@ -111,6 +111,23 @@ mode reranked. Compare two runs on the same dataset: one without the role and on
 such as TEI on localhost). Without either flag the reranked modes are `skipped`, and no request
 leaves the machine. Check `rerank_fallbacks` is 0: a reranker that timed out was not measured.
 
+### Evaluating the LLM judge
+
+The judge (#96) reranks like the cross-encoder, so it is measured the same way: a run with
+`EXACTDOCS_AI__RERANK_WITH=judge` and a `judge` (or `llm`) role measures each mode reranked by
+it, e.g. `EXACTDOCS_AI__JUDGE__MODEL=corp:gpt-4.1-mini EXACTDOCS_AI__RERANK_WITH=judge just eval
+--configured-models --modes bm25 --allow-providers`. Each mode's outcome says what reranked it
+(`reranker`: `cross_encoder` or `judge`), and the judge's tokens and USD reach
+`tokens_per_question` / `usd_per_question`. Compare with a run reranked by the cross-encoder (or
+none) on the same dataset; check `rerank_fallbacks` is 0, as a refused or timed-out judgment
+keeps the mode's order and was not measured. A hosted judge is `skipped` without
+`--allow-providers` (or `--local-roles judge` for one on this machine, such as Ollama). CI runs it
+only on a stand-in (`tests/evals/`, `offline_judge_container`): a pydantic-ai `FunctionModel`
+that rates candidates by the query words they share, priced, so the plumbing, the wrong-version
+rate of 0 and the cost per question are checked on every PR without a provider; its recall says
+nothing about a real judge. The manual *Retrieval eval (real providers)* workflow measures a
+real one with `EVAL_JUDGE_MODEL` and `EVAL_RERANK_WITH=judge`.
+
 ## Gates
 
 - **Wrong-version rate must be 0 for every mode that ran**, whatever its recall. One result of
@@ -185,7 +202,7 @@ fixture). A fixture change has to keep BM25's recall@5 within those 2 points.
 |---|---|---|
 | every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25 gating, hybrid on term-hash)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 against the branch's baseline (#104), with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
 | local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | on every PR in the SQLite step on the term-hash stand-in (`--offline-embedding`): its wrong-version rate must be 0, its recall is not a measure of hybrid. With real models: the CI job *Retrieval eval (local models, report-only)* (#245), with the `[local]` extra and the default models cached between runs, no secret: `bm25` and `hybrid` on `BAAI/bge-small-en-v1.5`, then both reranked by `Xenova/ms-marco-MiniLM-L-6-v2` (reranker timeout raised to 30 s so every rerank is measured), compared with the baseline on `develop`. It never fails a pull request; its summary marks `default-eligible` |
-| provider | `hybrid_hyde`, `agentic` | in tests with pydantic-ai's `TestModel` / `FunctionModel` (`hybrid_hyde`: `tests/evals/`, `run_on_fixture` with `offline_hyde_container`, the term-hash embedding and a priced stand-in LLM, `llm` in `local_roles`: wrong-version rate 0, and its tokens and USD reach `tokens_per_question` / `usd_per_question`); with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
+| provider | `hybrid_hyde`, `agentic`, and any mode reranked by the LLM judge | in tests with pydantic-ai's `TestModel` / `FunctionModel` (`hybrid_hyde`: `tests/evals/`, `run_on_fixture` with `offline_hyde_container`, the term-hash embedding and a priced stand-in LLM, `llm` in `local_roles`: wrong-version rate 0, and its tokens and USD reach `tokens_per_question` / `usd_per_question`); with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
 
 A mode whose model role is not configured is reported as `unavailable`, with the role it lacks.
 Whether a configured mode may run is decided **per model role**, not per tier: every role its

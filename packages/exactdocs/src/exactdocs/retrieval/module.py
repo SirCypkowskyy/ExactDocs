@@ -16,6 +16,7 @@ from exactdocs.retrieval.models import (
     ModelPrice,
     ProviderProfile,
     RerankLimits,
+    RerankWith,
     RetrievalMode,
 )
 from exactdocs.retrieval.ports.driven import (
@@ -23,6 +24,7 @@ from exactdocs.retrieval.ports.driven import (
     ArticleSuggestions,
     ArticleTitles,
     CallRates,
+    CandidateJudge,
     ChunkRepository,
     DefaultVersions,
     EmbeddingModels,
@@ -214,6 +216,8 @@ class RetrievalModule:
         secret_box: SecretBox | None = None,
         instance_mode: RetrievalMode | None = None,
         rerank_limits: RerankLimits | None = None,
+        rerank_with: RerankWith = RerankWith.CROSS_ENCODER,
+        judge: CandidateJudge | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         renames: RenamedPaths | None = None,
         suggestions: ArticleSuggestions | None = None,
@@ -244,7 +248,10 @@ class RetrievalModule:
         read-only), ``stored_profiles`` (the REST API's; none without it), ``instance_roles``,
         ``models`` (builds callable models; nothing can be called without it) and
         ``secret_box`` (seals keys sent over the REST API; they are refused without it).
-        ``rerank_limits`` is the instance's reranker top N and timeout (the defaults without it).
+        ``rerank_limits`` is the instance's reranker top N and timeouts (the defaults without it).
+        ``rerank_with`` is what reranks libraries without their own choice when both are
+        configured; ``judge`` rates candidates with the ``judge`` role (the LLM judge never
+        reranks without it).
         ``roles`` replaces the role resolution over them (tests). ``pipelines`` adds retrieval
         modes beside ``bm25``, which is always there. A mode can run when it has a pipeline and
         its roles are configured, and, for the hybrid modes, when ``vectors`` (the vector store)
@@ -330,8 +337,13 @@ class RetrievalModule:
             instance_mode=instance_mode,
             vectors=vectors,
             reranking=Reranking(
-                providers=providers, chunks=chunks, limits=rerank_limits or RerankLimits()
+                providers=providers,
+                chunks=chunks,
+                limits=rerank_limits or RerankLimits(),
+                judge=judge,
+                spend=ai_spend,
             ),
+            rerank_with=rerank_with,
             embedded=runs,
             spend=ai_spend,
             providers=providers,

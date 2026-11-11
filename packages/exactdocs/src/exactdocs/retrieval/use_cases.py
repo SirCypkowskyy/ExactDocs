@@ -109,6 +109,7 @@ from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
     EmbeddingFailedError,
     HypothesisCacheError,
+    InvalidJudgmentError,
     InvalidProviderError,
     InvalidVectorError,
     LlmBudgetReachedError,
@@ -152,6 +153,7 @@ from exactdocs.retrieval.models import (
     HydeKey,
     IndexedManifest,
     InstanceRoles,
+    JudgedCandidate,
     KeySource,
     LibraryAi,
     LlmStep,
@@ -173,6 +175,7 @@ from exactdocs.retrieval.models import (
     ProviderProfile,
     ReachedBudget,
     RerankLimits,
+    RerankWith,
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
@@ -193,10 +196,12 @@ from exactdocs.retrieval.models import (
     embedding_spend,
     embedding_text,
     estimated_usd,
+    judged_scores,
     language_first,
     leading_hit,
     name_match,
     outline,
+    pick_reranker,
     rank_matches,
     reciprocal_rank_fusion,
     reorder,
@@ -208,6 +213,7 @@ from exactdocs.retrieval.ports.driven import (
     ArticleSuggestions,
     ArticleTitles,
     CallRates,
+    CandidateJudge,
     ChunkRepository,
     DefaultVersions,
     EmbeddingModels,
@@ -786,6 +792,25 @@ class RetrievalModes:
     embedding model is configured. Without one, nothing is checked (pipelines decide)."""
     reranking: Reranking | None = None
     """Reorders the best candidates when a reranker is configured; none: nothing is reranked."""
+    rerank_with: RerankWith = RerankWith.CROSS_ENCODER
+    """What reranks the searches of libraries without their own choice, when a library has both
+    a cross-encoder and a judge (``EXACTDOCS_AI__RERANK_WITH``); the judge reranks only when
+    chosen (``pick_reranker``)."""
+
+    def reranker_of(self, roles: Collection[ModelRole], ai: LibraryAi) -> RerankWith | None:
+        """Say what reranks a library's searches now.
+
+        Args:
+            roles: The roles configured for the library now.
+            ai: The library's overrides.
+
+        Returns:
+            The cross-encoder, the judge, or ``None`` when nothing reranks (no reranking here, or
+            neither is configured).
+        """
+        if self.reranking is None:
+            return None
+        return pick_reranker(roles, ai.rerank_with or self.rerank_with)
 
     def rerank_top_n(self, ai: LibraryAi) -> int:
         """Say how many candidates a library's searches rerank.
@@ -848,11 +873,10 @@ class RetrievalModes:
                 library=await self.library_modes.mode_of(library),
                 instance=self.instance_mode,
             )
-        choice = replace(choice, library_ai=ai)
-        if not choice.rerank:
+        reranker = self.reranker_of(registry.roles, ai)
+        choice = replace(choice, library_ai=ai, rerank=reranker is not None, reranker=reranker)
+        if reranker is None:
             return choice
-        if self.reranking is None:
-            return replace(choice, rerank=False)
         return replace(choice, rerank_top_n=self.rerank_top_n(ai))
 
     async def run(
@@ -939,10 +963,17 @@ class RetrievalModes:
             return choice
         who = AiCaller(library=library.casefold(), user=caller)
         own = None if choice.library_ai is None else choice.library_ai.budgets
+        counted: FallbackReason | bool = False  # the LLM step's check: refused, passed, none
         if (hypothesis := await self._cached_hypothesis(choice, version, query)) is not None:
             choice = replace(choice, hypothesis=hypothesis)  # no LLM call: no limit applies
-        elif choice.mode.needs_llm and (reason := await self.spend.llm_step(who, own)) is not None:
-            choice = choice.without_llm(reason)
+        elif choice.mode.needs_llm:
+            if (reason := await self.spend.llm_step(who, own)) is not None:
+                choice = choice.without_llm(reason)
+                counted = reason
+            else:
+                counted = True
+        if choice.rerank and choice.reranker is RerankWith.JUDGE:
+            return await _judge_within_budget(self.spend, choice, who, own, counted=counted)
         if (
             choice.rerank
             # no limit: no need to read the reranker's profile
@@ -1004,7 +1035,8 @@ class RetrievalModes:
         if not choice.rerank or self.reranking is None:
             return answer, {}
         reranked, read = await self.reranking.apply(version, query, answer, choice)
-        if reranked.reranked:
+        # The judge's spend is recorded by the harness inside its agent; a cross-encoder's here.
+        if reranked.reranked and choice.reranker is not RerankWith.JUDGE:
             await self._record_rerank(choice, version, query, reranked, read)
         return reranked, read
 
@@ -1054,9 +1086,47 @@ class RetrievalModes:
             logger.exception("could not record the spend of a rerank of %s", version.library)
 
 
+async def _judge_within_budget(
+    spend: AiSpend,
+    choice: ModeChoice,
+    who: AiCaller,
+    own: Sequence[BudgetLimit] | None,
+    *,
+    counted: FallbackReason | bool,
+) -> ModeChoice:
+    """Skip the judge a budget or the LLM search rate limit does not allow now.
+
+    The judge is an LLM step: a search whose own LLM step was refused skips it for the same
+    reason, without asking again; one whose LLM step was allowed (and so counted against the
+    rate limit) checks only the budgets; any other is checked and counted as an LLM search.
+
+    Args:
+        spend: The budgets and the LLM search rate limit.
+        choice: The choice, after its own LLM step was checked.
+        who: The library and the account searching.
+        own: The library's own budgets as already read.
+        counted: The reason the search's LLM step was refused, True when it was allowed,
+            False when it has none (or answered from the cache).
+
+    Returns:
+        The choice, or the same without reranking, with the reason.
+    """
+    if isinstance(counted, FallbackReason):
+        reason: FallbackReason | None = counted
+    elif counted:
+        reason = await spend.paid_call(who, own)
+    else:
+        reason = await spend.llm_step(who, own)
+    if reason is None:
+        return choice
+    return replace(
+        choice, rerank=False, reranker=None, fallback_reason=choice.fallback_reason or reason
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Reranking:
-    """Reorders a search's best candidates with a cross-encoder (RET-02).
+    """Reorders a search's best candidates with a cross-encoder or the LLM judge (RET-02).
 
     The reranker is the one the library resolves to (its override, else the instance's
     ``reranker`` role), built from the profile as it is now. It receives the query text and the
@@ -1066,14 +1136,26 @@ class Reranking:
     fails the search: the candidates keep the mode's order, ``reranked`` stays 0, and the
     fallback reason says why (when no other reason was given already). Failures are logged
     without the query or any text.
+
+    The judge (#96, ``choice.reranker`` is ``judge``) is the library's ``judge`` role (its
+    override, else the instance's, else the ``llm`` role), called once for all the candidates
+    within ``limits.judge_timeout`` and the budgets of every LLM step. Its ratings are checked
+    again here (``judged_scores``): it can only reorder the candidates it was given, never add,
+    drop or rewrite one. A budget used up meanwhile answers ``llm_budget_reached``; a timeout,
+    an error or refused ratings ``reranker_timeout`` or ``reranker_failed``.
     """
 
     providers: AiProviders
-    """Resolves and builds the library's reranker."""
+    """Resolves and builds the library's reranker and judge."""
     chunks: ChunkRepository
     """Reads the candidates' text."""
     limits: RerankLimits = field(default_factory=RerankLimits)
-    """The instance's top N and timeout."""
+    """The instance's top N and timeouts."""
+    judge: CandidateJudge | None = None
+    """Rates the candidates with the ``judge`` role (pydantic-ai); none: the judge never
+    reranks (``reranker_failed``)."""
+    spend: AiSpend | None = None
+    """The budgets, the prices and the clock of the judge's step; none: no budget applies."""
 
     async def apply(
         self, version: SearchableVersion, query: str, answer: PipelineAnswer, choice: ModeChoice
@@ -1109,6 +1191,32 @@ class Reranking:
         if not kept:
             return answer, stored
         texts = [stored[h.chunk_id].chunk.content for h in kept]
+        if choice.reranker is RerankWith.JUDGE:
+            return await self._judged(version, query, answer, choice, kept, texts), stored
+        return await self._cross_encoded(version, query, answer, choice, kept, texts), stored
+
+    async def _cross_encoded(
+        self,
+        version: SearchableVersion,
+        query: str,
+        answer: PipelineAnswer,
+        choice: ModeChoice,
+        kept: Sequence[SearchHit],
+        texts: Sequence[str],
+    ) -> PipelineAnswer:
+        """Have the cross-encoder score the candidates, and reorder them by its scores.
+
+        Args:
+            version: The version searched.
+            query: The query text.
+            answer: The pipeline's answer, its first hits the candidates.
+            choice: The search's choice: the library's overrides.
+            kept: The candidates whose chunk exists, best first.
+            texts: Their text, in the same order.
+
+        Returns:
+            The answer reordered, or in its own order with a fallback reason.
+        """
         try:
             async with asyncio.timeout(self.limits.timeout):
                 reranker = await self._reranker(version.library, choice.library_ai)
@@ -1119,23 +1227,128 @@ class Reranking:
                 version.library,
                 self.limits.timeout,
             )
-            return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT), stored
+            return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT)
         except RerankerError as error:
             logger.warning(
                 "the reranker of %s failed: %s; the search keeps its order", version.library, error
             )
-            return _fallen_back(answer, FallbackReason.RERANKER_FAILED), stored
+            return _fallen_back(answer, FallbackReason.RERANKER_FAILED)
         if len(scores) != len(kept) or not all(math.isfinite(score) for score in scores):
             logger.warning(
                 "the reranker of %s did not answer one finite score per candidate; the search "
                 "keeps its order",
                 version.library,
             )
-            return _fallen_back(answer, FallbackReason.RERANKER_FAILED), stored
-        reranked = replace(
+            return _fallen_back(answer, FallbackReason.RERANKER_FAILED)
+        return replace(
             answer, hits=(*reorder(kept, scores), *answer.hits[len(kept) :]), reranked=len(kept)
         )
-        return reranked, stored
+
+    async def _judged(
+        self,
+        version: SearchableVersion,
+        query: str,
+        answer: PipelineAnswer,
+        choice: ModeChoice,
+        kept: Sequence[SearchHit],
+        texts: Sequence[str],
+    ) -> PipelineAnswer:
+        """Have the judge rate the candidates in one call, and reorder them by its ratings.
+
+        Args:
+            version: The version searched.
+            query: The query text.
+            answer: The pipeline's answer, its first hits the candidates.
+            choice: The search's choice: its caller and the library's overrides.
+            kept: The candidates whose chunk exists, best first.
+            texts: Their text, in the same order.
+
+        Returns:
+            The answer reordered, or in its own order with a fallback reason.
+        """
+        candidates = [
+            JudgedCandidate(chunk_id=h.chunk_id, text=text)
+            for h, text in zip(kept, texts, strict=True)
+        ]
+        try:
+            async with asyncio.timeout(self.limits.judge_timeout):
+                scores = await self._judge_scores(version.library, query, candidates, choice)
+        except TimeoutError:
+            logger.warning(
+                "the judge of %s did not answer within %ss: the search keeps its order",
+                version.library,
+                self.limits.judge_timeout,
+            )
+            return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT)
+        except LlmBudgetReachedError:
+            logger.info(
+                "a budget stopped the judge of %s: the search keeps its order", version.library
+            )
+            return _fallen_back(answer, FallbackReason.LLM_BUDGET_REACHED)
+        except RerankerError as error:
+            logger.warning(
+                "the judge of %s failed: %s; the search keeps its order", version.library, error
+            )
+            return _fallen_back(answer, FallbackReason.RERANKER_FAILED)
+        return replace(
+            answer, hits=(*reorder(kept, scores), *answer.hits[len(kept) :]), reranked=len(kept)
+        )
+
+    async def _judge_scores(
+        self,
+        library: str,
+        query: str,
+        candidates: Sequence[JudgedCandidate],
+        choice: ModeChoice,
+    ) -> tuple[float, ...]:
+        """Build the library's judge from the profile as it is now and have it rate.
+
+        Args:
+            library: The library searched.
+            query: The query text.
+            candidates: The candidates.
+            choice: The search's choice: its caller and the library's overrides.
+
+        Returns:
+            One score per candidate, in their order.
+
+        Raises:
+            LlmBudgetReachedError: A budget refused the request.
+            RerankerError: No judge resolves, it cannot be built or called, it failed, or its
+                ratings are not exactly one bounded score per candidate; only the kind of
+                failure is kept, never a message that may echo the prompt.
+        """
+        if self.judge is None:
+            reason = "no judge can run here"
+            raise RerankerError(reason)
+        ai = choice.library_ai or await self.providers.library_modes.ai_of(library)
+        found = await self.providers.profile_for(ModelRole.JUDGE, library, ai)
+        if found is None:  # AI off, no role, or a profile that no longer exists
+            reason = "no judge resolves for the library"
+            raise RerankerError(reason)
+        ref, profile = found
+        spend = self.spend
+        step = LlmStep(
+            caller=AiCaller(library=library.casefold(), user=choice.caller),
+            budgets=spend.budgets_for(ai) if spend is not None else Budgets(),
+            price=spend.prices.price(ref, profile.kind.value) if spend is not None else None,
+            clock=spend.clock.now if spend is not None else SystemClock().now,
+        )
+        try:
+            model = await self.providers.factory.chat_model(profile, ref.model)
+            verdict = await self.judge.judge(model, query, candidates, step=step)
+            return judged_scores(candidates, verdict.ratings)
+        except LlmBudgetReachedError:
+            raise
+        except LlmFailedError as error:
+            reason = f"it failed ({error.reason})"
+            raise RerankerError(reason) from error
+        except InvalidJudgmentError as error:
+            reason = f"its ratings were refused ({error.fault})"
+            raise RerankerError(reason) from error
+        except Exception as error:  # a judge problem never fails a search; re-raised as ours
+            reason = f"it failed ({_kind(error)})"
+            raise RerankerError(reason) from error
 
     async def _reranker(self, library: str, ai: LibraryAi | None) -> Reranker:
         """Build the library's reranker from the profile as it is now.
@@ -1318,7 +1531,8 @@ class SearchDocsUseCase:
         whole.answered_by(answer.mode.value)
         read: Mapping[ChunkId, StoredChunk] = {}
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
-            with self.tracer.span(f"{SEARCH_DOCS}.rerank", mode=answer.mode.value):
+            stage = "judge" if choice.reranker is RerankWith.JUDGE else "rerank"
+            with self.tracer.span(f"{SEARCH_DOCS}.{stage}", mode=answer.mode.value):
                 answer, read = await self.modes.rerank(choice, version, text.value, answer)
         answer = answer.cut(query.limit)
         if answer.fallback_reason is not None:
@@ -2118,7 +2332,8 @@ class QueryDocsUseCase:
         whole.answered_by(answer.mode.value)
         read: Mapping[ChunkId, StoredChunk] = {}
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
-            with self.tracer.span(f"{QUERY_DOCS}.rerank", mode=answer.mode.value):
+            stage = "judge" if choice.reranker is RerankWith.JUDGE else "rerank"
+            with self.tracer.span(f"{QUERY_DOCS}.{stage}", mode=answer.mode.value):
                 answer, read = await self.modes.rerank(choice, version, text.value, answer)
         answer = answer.cut(QUERY_DOCS_CANDIDATES)
         if answer.fallback_reason is not None:
@@ -2183,6 +2398,9 @@ async def _library_retrieval(
         reranker=_ref_text(ai.reranker),
         rerank_top_n=ai.rerank_top_n,
         effective_rerank_top_n=modes.rerank_top_n(ai),
+        rerank_with=ai.rerank_with,
+        instance_rerank_with=modes.rerank_with,
+        effective_reranker=modes.reranker_of(registry.roles, ai),
         budgets=LibraryBudgets.from_limits(ai.budgets),
         budget_ceilings=LibraryBudgets.from_ceilings(
             budgets.ceiling(SpendWindow.DAY), budgets.ceiling(SpendWindow.MONTH)
@@ -2250,6 +2468,7 @@ class SetLibraryRetrievalUseCase:
             judge=_parse_ref(command.judge),
             reranker=_parse_ref(command.reranker),
             rerank_top_n=command.rerank_top_n,
+            rerank_with=command.rerank_with,
             budgets=command.budgets.limits(),
         )
         if self.modes.spend is not None:

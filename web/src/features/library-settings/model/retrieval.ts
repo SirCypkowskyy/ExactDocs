@@ -7,6 +7,12 @@ type Budgets = components["schemas"]["LibraryBudgets"];
 export type RetrievalMode = components["schemas"]["RetrievalMode"];
 type ModelRole = components["schemas"]["ModelRole"];
 type FallbackReason = components["schemas"]["FallbackReason"];
+export type RerankWith = components["schemas"]["RerankWith"];
+
+export const RERANK_WITH_LABEL: Record<RerankWith, string> = {
+  cross_encoder: "Cross-encoder (cheaper)",
+  judge: "LLM judge",
+};
 
 /** The roles a library may override. Never the embedding model: one per instance. */
 export const OVERRIDABLE = ["llm", "judge", "reranker"] as const;
@@ -58,14 +64,20 @@ export function modeSource(r: LibraryRetrieval): string {
   return "The best mode the instance has configured.";
 }
 
-/** The steps the effective pipeline runs, a reranker last when one is configured. */
+/** The steps the effective pipeline runs, the reranker or the LLM judge last when one reranks. */
 export function pipelineSteps(r: LibraryRetrieval): string[] {
   const steps = [...MODE_STEPS[r.effective_mode]];
-  if (r.configured_roles.includes("reranker")) {
-    steps.push(`The reranker reorders the best ${r.effective_rerank_top_n}`);
+  const top = r.effective_rerank_top_n;
+  if (r.effective_reranker === "cross_encoder") {
+    steps.push(`The reranker reorders the best ${top}`);
+  } else if (r.effective_reranker === "judge") {
+    steps.push(`The LLM judge rates the best ${top} in one call and reorders them`);
   }
   return steps;
 }
+
+/** The role that reranks the library's searches now, if one does. */
+const RERANK_ROLE: Record<RerankWith, ModelRole> = { cross_encoder: "reranker", judge: "judge" };
 
 export interface RoleInUse {
   role: ModelRole;
@@ -80,7 +92,7 @@ export interface RoleInUse {
 export function rolesInUse(r: LibraryRetrieval, roles: readonly AiRole[] | undefined): RoleInUse[] {
   const instance = (role: ModelRole) => roles?.find((x) => x.role === role)?.model ?? undefined;
   const used = new Set<ModelRole>(MODE_ROLES[r.effective_mode]);
-  if (r.configured_roles.includes("reranker")) used.add("reranker");
+  if (r.effective_reranker) used.add(RERANK_ROLE[r.effective_reranker]);
   return r.configured_roles
     .filter((role) => used.has(role))
     .map((role) => {
@@ -105,6 +117,8 @@ export interface RetrievalDraft {
   judge: RoleDraft;
   reranker: RoleDraft;
   rerankTopN: string;
+  /** `""`: the instance's choice. */
+  rerankWith: "" | RerankWith;
   dailyUsd: string;
   monthlyUsd: string;
   dailyTokens: string;
@@ -130,6 +144,7 @@ export function retrievalDraftOf(r: LibraryRetrieval): RetrievalDraft {
     judge: roleDraft(r.judge),
     reranker: roleDraft(r.reranker),
     rerankTopN: text(r.rerank_top_n),
+    rerankWith: r.rerank_with ?? "",
     dailyUsd: text(b.daily_usd),
     monthlyUsd: text(b.monthly_usd),
     dailyTokens: text(b.daily_tokens),
@@ -149,6 +164,7 @@ export function bodyOf(d: RetrievalDraft): LibraryRetrievalBody {
     judge: ref(d.judge),
     reranker: ref(d.reranker),
     rerank_top_n: num(d.rerankTopN),
+    rerank_with: d.rerankWith || null,
     budgets: {
       daily_usd: num(d.dailyUsd),
       monthly_usd: num(d.monthlyUsd),

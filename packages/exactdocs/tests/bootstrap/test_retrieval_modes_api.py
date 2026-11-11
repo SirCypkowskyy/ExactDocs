@@ -105,6 +105,9 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "reranker": None,
         "rerank_top_n": None,
         "effective_rerank_top_n": 32,
+        "rerank_with": None,
+        "instance_rerank_with": "cross_encoder",
+        "effective_reranker": None,
         "budgets": NO_BUDGETS,
         "budget_ceilings": NO_BUDGETS,
     }

@@ -71,6 +71,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     Removed,
+    RerankWith,
     RetrievalMode,
     SectionRef,
     SpendEntry,
@@ -164,6 +165,7 @@ library_settings = Table(
     Column("judge", Text),
     Column("reranker", Text),
     Column("rerank_top_n", Integer),  # NULL: the instance's top N
+    Column("rerank_with", Text),  # RerankWith value (#96); NULL: the instance's choice
     # The library's own budgets (#102); NULL: not limited by the library.
     Column("daily_usd_micros", BigInteger),
     Column("monthly_usd_micros", BigInteger),
@@ -695,6 +697,7 @@ class SqliteLibraryModes:
             judge=_stored_ref(row.judge),
             reranker=_stored_ref(row.reranker),
             rerank_top_n=row.rerank_top_n,
+            rerank_with=_stored_rerank_with(row.rerank_with),
             budgets=_stored_budgets(row),
         )
 
@@ -751,6 +754,7 @@ class SqliteLibraryModes:
                         judge=_ref_text(ai.judge),
                         reranker=_ref_text(ai.reranker),
                         rerank_top_n=ai.rerank_top_n,
+                        rerank_with=None if ai.rerank_with is None else ai.rerank_with.value,
                         **_budget_columns(ai),
                     )
                 )
@@ -808,6 +812,21 @@ def _budget_columns(ai: LibraryAi) -> dict[str, int | None]:
         )
         columns[f"{BUDGET_WINDOW_PREFIX[window.value]}_tokens"] = limit.tokens if limit else None
     return columns
+
+
+def _stored_rerank_with(text: str | None) -> RerankWith | None:
+    """Read a stored reranker choice; one this build does not know counts as unset.
+
+    Args:
+        text: The stored value.
+
+    Returns:
+        The choice, or ``None``.
+    """
+    try:
+        return None if text is None else RerankWith(text)
+    except ValueError:
+        return None
 
 
 def _stored_ref(text: str | None) -> ModelRef | None:

@@ -28,16 +28,18 @@ from exactdocs.bootstrap.constants import (
 )
 from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
+    DEFAULT_JUDGE_TIMEOUT,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
     HYDE_CACHE_TTL_DAYS,
     MAX_EMBEDDING_BATCH,
     MAX_EMBEDDING_DIMENSIONS,
+    MAX_JUDGE_TIMEOUT,
     MAX_RERANK_TIMEOUT,
     MAX_RERANK_TOP_N,
 )
-from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RetrievalMode
+from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RerankWith, RetrievalMode
 
 
 class ProviderSettings(BaseModel):
@@ -134,6 +136,16 @@ class RerankerSettings(RoleSettings):
     answer (reading the candidates' text is not counted). Unset: 2 s, or 5 s when the reranker
     runs on a `local` profile (a CPU is slower); after that, or on any reranker error,
     results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
+    `reranker_failed`)."""
+
+
+class JudgeSettings(RoleSettings):
+    """The judge role: ``EXACTDOCS_AI__JUDGE__<FIELD>`` or ``[ai.judge]`` (#96)."""
+
+    timeout: float = Field(default=DEFAULT_JUDGE_TIMEOUT, gt=0, le=MAX_JUDGE_TIMEOUT)
+    """`EXACTDOCS_AI__JUDGE__TIMEOUT`: seconds a search gives the judge, to be built and to rate
+    every candidate in its one call (10 s by default); after that, or on any error or refused
+    ratings, results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
     `reranker_failed`)."""
 
 
@@ -243,8 +255,14 @@ class AiSettings(BaseModel):
     """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`, `__TOP_N`, `__TIMEOUT`)."""
     llm: RoleSettings = Field(default_factory=RoleSettings)
     """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
-    judge: RoleSettings = Field(default_factory=RoleSettings)
-    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`); the LLM role when unset."""
+    judge: JudgeSettings = Field(default_factory=JudgeSettings)
+    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`, `__TIMEOUT`); the LLM role when unset."""
+    rerank_with: RerankWith = RerankWith.CROSS_ENCODER
+    """`EXACTDOCS_AI__RERANK_WITH`: what reranks the searches of libraries without their own
+    choice: `cross_encoder` (the `reranker` role, the default: cheaper) or `judge` (the `judge`
+    role, else the `llm` role: an LLM rates every candidate in one call, counted against the
+    budgets). The judge reranks only when chosen; chosen without a judge, the cross-encoder
+    reranks when there is one."""
     hyde: HydeSettings = Field(default_factory=HydeSettings)
     """HyDE's cache (`EXACTDOCS_AI__HYDE__CACHE_TTL`)."""
     budgets: BudgetSettings = Field(default_factory=BudgetSettings)

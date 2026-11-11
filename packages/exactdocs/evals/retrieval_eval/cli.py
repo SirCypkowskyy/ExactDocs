@@ -51,7 +51,7 @@ def _parser() -> argparse.ArgumentParser:
         "--local-roles",
         default="",
         help="comma-separated configured roles whose model runs on this machine (embedding, "
-        "reranker, llm); any other configured role counts as a hosted provider",
+        "reranker, llm, judge); any other configured role counts as a hosted provider",
     )
     parser.add_argument(
         "--allow-providers",

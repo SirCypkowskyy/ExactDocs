@@ -26,6 +26,8 @@ import {
   type OverridableRole,
   pipelineSteps,
   profileOptions,
+  RERANK_WITH_LABEL,
+  type RerankWith,
   type RetrievalDraft,
   retrievalDraftOf,
   rolesInUse,
@@ -287,6 +289,22 @@ function AiForm({ owner, repo, r, providers, providersError, activity, onStart }
               hint={`1 to ${MAX_RERANK_TOP_N}. Empty: the instance's number.`}
               onChange={(e) => edit({ rerankTopN: e.target.value })}
             />
+            <SelectField
+              id="ai-rerankWith"
+              label="Rerank with"
+              value={draft.rerankWith}
+              hint="The LLM judge rates every candidate in one call, counted against the spend limits. It reranks only where it is chosen and its model (else the LLM) is configured."
+              onChange={(e) => edit({ rerankWith: e.target.value as "" | RerankWith })}
+            >
+              <option value="">
+                {`The instance's choice (${RERANK_WITH_LABEL[r.instance_rerank_with]})`}
+              </option>
+              {(Object.keys(RERANK_WITH_LABEL) as RerankWith[]).map((value) => (
+                <option key={value} value={value}>
+                  {RERANK_WITH_LABEL[value]}
+                </option>
+              ))}
+            </SelectField>
           </div>
         </fieldset>
         <fieldset>

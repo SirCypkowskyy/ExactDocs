@@ -2265,6 +2265,13 @@ export interface components {
              */
             readonly rerank_top_n?: number | null;
             /**
+             * @description What reranks its searches when both are configured: `cross_encoder` (the `reranker`
+             *     role, cheaper) or `judge` (the `judge` role, an LLM that rates every candidate in one call);
+             *     null: the instance's choice (`EXACTDOCS_AI__RERANK_WITH`, `cross_encoder` by default). The
+             *     judge reranks only when chosen here or by the instance.
+             */
+            readonly rerank_with?: components["schemas"]["RerankWith"] | null;
+            /**
              * @description The library's own spend limits per UTC day and month. Each may be at most the instance's
              *     (`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of
              *     the two applies. None by default.
@@ -2333,6 +2340,18 @@ export interface components {
              * @description How many candidates its searches rerank now: its own number, else the instance's.
              */
             readonly effective_rerank_top_n: number;
+            /** @description The library's own choice of reranker; null: the instance's. */
+            readonly rerank_with: components["schemas"]["RerankWith"] | null;
+            /**
+             * @description The instance's choice (`EXACTDOCS_AI__RERANK_WITH`).
+             * @default cross_encoder
+             */
+            readonly instance_rerank_with: components["schemas"]["RerankWith"];
+            /**
+             * @description What reranks its searches now: `cross_encoder`, `judge` (only when chosen and its role is
+             *     configured), or null when nothing does.
+             */
+            readonly effective_reranker: components["schemas"]["RerankWith"] | null;
             /** @description The library's own spend limits; the tighter of these and the instance's applies. */
             readonly budgets: components["schemas"]["LibraryBudgets"];
             /** @description The most each of the library's own limits may be (the instance's limits); null: any. */
@@ -3165,6 +3184,12 @@ export interface components {
              */
             readonly truncated: boolean;
         };
+        /**
+         * RerankWith
+         * @description What reorders a search's best candidates when both are configured (#96).
+         * @enum {string}
+         */
+        readonly RerankWith: "cross_encoder" | "judge";
         /**
          * ResolvedVersion
          * @description The version an ID resolved to; always states which one was used.
