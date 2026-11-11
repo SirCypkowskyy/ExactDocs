@@ -43,6 +43,9 @@ ML_MODULES = {p.replace("-", "_") for p in ML_PACKAGES}
 LLM_CLIENT_PACKAGES = frozenset({"pydantic-ai", "pydantic-ai-slim"})
 """In ML_PACKAGES for the default install, but allowed in the `-ai` image: they call hosted or
 self-hosted models over HTTP and run none themselves."""
+LOCAL_PACKAGES = frozenset({"fastembed", "onnxruntime", "tokenizers", "huggingface-hub"})
+"""The ML_PACKAGES the `[local]` extra brings (fastembed on ONNX Runtime): the `-local` image may
+hold these and LLM_CLIENT_PACKAGES, nothing else of ML_PACKAGES (no torch, no transformers)."""
 NEVER_IN_IMAGES = frozenset({"aiohttp"})
 """Entra ID uses azure.identity's sync token provider (#241), never `azure.identity.aio`."""
 MODELS_DIR = "/opt/exactdocs/models"
@@ -50,6 +53,19 @@ MODELS_DIR = "/opt/exactdocs/models"
 ONNX_EXAMPLES = "/site-packages/onnxruntime/datasets/"
 """ONNX Runtime's own example models (a few KB, for its docs): the only model files the `-local`
 image may hold outside MODELS_DIR."""
+MODEL_SHA256 = {
+    "BAAI/bge-small-en-v1.5/model_optimized.onnx": (
+        "51f1bd0addd6e859e42c2c8021a5e5461385bb676a649f4b269aa445449f2431"
+    ),
+    "Xenova/ms-marco-MiniLM-L-6-v2/onnx/model.onnx": (
+        "c623d0bcb99f4622beb413eaef00cfbe5db20df9f1dd982da4b4f26022881870"
+    ),
+}
+"""The default models' ONNX files at their pinned revisions (the Hub's LFS sha256 of
+Qdrant/bge-small-en-v1.5-onnx-Q@aa8f8b06 and Xenova/ms-marco-MiniLM-L-6-v2@a0914435): the
+`-local` image must hold exactly these bytes. Change with PINNED_MODEL_REVISIONS."""
+MODEL_NOTICE = "NOTICE"
+"""The models' licenses and attribution in MODELS_DIR (deploy/model-notices/NOTICE)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,20 +84,21 @@ IMAGE_VARIANTS = {
     # 375 MB until DBOS (#65); see docs/releasing.md.
     "base": Variant(budget=400 * MB, allowed_ml=frozenset(), models=False),
     "ai": Variant(budget=560 * MB, allowed_ml=LLM_CLIENT_PACKAGES, models=False),
-    "local": Variant(budget=950 * MB, allowed_ml=frozenset(ML_PACKAGES), models=True),
+    "local": Variant(budget=950 * MB, allowed_ml=LOCAL_PACKAGES | LLM_CLIENT_PACKAGES, models=True),
 }
 IMAGE_BUDGET = IMAGE_VARIANTS["base"].budget
 USAGE = "usage: check_artifacts.py wheel <file.whl> | image <image-ref> [base|ai|local]"
 
 # Run in the image's own Python: the installed distributions, and (local) why a default model
-# cannot serve its role, judged by ExactDocs' own check of the marker `models pull` wrote
-# (EXPECTED, the models directory, is prepended).
+# cannot serve its role, judged by ExactDocs' own check of the marker `models pull` wrote, whether
+# the ONNX files hold the expected bytes and whether the license notice is there (EXPECTED, HASHES
+# and NOTICE are prepended).
 LIST_DISTRIBUTIONS = (
     "import importlib.metadata as m, json; "
     "print(json.dumps(sorted({d.metadata['Name'] for d in m.distributions()})))"
 )
 CHECK_MODELS = """
-import json, os
+import hashlib, json, os
 from pathlib import Path
 from exactdocs.bootstrap.constants import DEFAULT_LOCAL_EMBEDDING, DEFAULT_LOCAL_RERANKER
 from exactdocs.bootstrap.local_models import LocalModels
@@ -98,6 +115,16 @@ else:
     ):
         if (reason := local.missing(model, role)) is not None:
             problems.append(reason)
+    for name, digest in HASHES.items():
+        path = Path(folder, name)
+        found = None
+        if path.is_file():
+            with path.open("rb") as f:
+                found = hashlib.file_digest(f, "sha256").hexdigest()
+        if found != digest:
+            problems.append(f"{path} has sha256 {found}, not the pinned {digest}")
+    if not Path(folder, NOTICE).is_file():
+        problems.append(f"{folder} has no {NOTICE} with the models' licenses")
     if os.access(folder, os.W_OK):
         problems.append(f"{folder} is writable by the server's user")
 print(json.dumps(problems))
@@ -217,7 +244,10 @@ def image(ref: str, kind: str = "base") -> int:
     distributions = json.loads(_run(ref, "python", "-c", LIST_DISTRIBUTIONS))
     models = []
     if variant.models:
-        script = f"EXPECTED = {MODELS_DIR!r}\n{CHECK_MODELS}"
+        script = (
+            f"EXPECTED = {MODELS_DIR!r}\nHASHES = {MODEL_SHA256!r}\nNOTICE = {MODEL_NOTICE!r}\n"
+            f"{CHECK_MODELS}"
+        )
         models = json.loads(_run(ref, "python", "-c", script).splitlines()[-1])
     problems = image_problems(variant, distributions, found, models)
     return report(f"image ({kind})", size, variant.budget, problems)

@@ -429,6 +429,7 @@ jobs:
           python3 deploy/check_artifacts.py image exactdocs:ci-local local || status=1
           exit "$status"
       - name: Trivy scan (-ai)
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/trivy-gate
         with:
           image: exactdocs:ci-ai
@@ -449,7 +450,9 @@ jobs:
         run: |
           flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
           sha=$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)
-          trap 'for n in ai local; do docker logs "exactdocs-ci-$n" 2>&1 | tail -n 50; docker stop "exactdocs-ci-$n" 2>/dev/null; done' EXIT
+          # The loop stops each container (--rm removes it); the trap only cleans up after a
+          # failure, so a container that is already gone is no error.
+          trap 'for n in ai local; do docker logs "exactdocs-ci-$n" 2>&1 | tail -n 50 || true; docker stop "exactdocs-ci-$n" >/dev/null 2>&1 || true; done' EXIT
           for variant in ai local; do
             name="exactdocs-ci-$variant"
             echo "::group::$variant"
@@ -486,10 +489,17 @@ jobs:
             -e EXACTDOCS_AI__RERANKER__MODEL=local:Xenova/ms-marco-MiniLM-L-6-v2 \
             -e EXACTDOCS_AI__RERANKER__TIMEOUT=30 \
             -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci-local
-          trap 'docker logs exactdocs-ci-offline 2>&1 | tail -n 80; docker stop exactdocs-ci-offline' EXIT
+          trap 'docker logs exactdocs-ci-offline 2>&1 | tail -n 80 || true; docker stop exactdocs-ci-offline >/dev/null 2>&1 || true' EXIT
           test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' exactdocs-ci-offline)" = none
           docker exec -i exactdocs-ci-offline python - file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
             < deploy/smoke_local.py
+      # The runner VMs are persistent (50 GiB): drop this run's variant images (about 1.4 GB
+      # together) so they do not pile up; the BuildKit cache keeps their layers for the next run.
+      - name: Remove the variant images
+        if: always()
+        run: |
+          docker image rm exactdocs:ci-ai exactdocs:ci-local >/dev/null 2>&1 || true
+          docker image prune -f
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then

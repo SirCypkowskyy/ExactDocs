@@ -34,7 +34,11 @@ env:
 jobs:
   # One pass per variant and channel. `exclude-tags` keeps everything outside the pass out of it
   # (JavaScript regular expressions): the base passes exclude every -ai/-local tag, a variant's
-  # passes exclude every tag that is not that variant's dev (or stable) tag.
+  # passes exclude every tag that is not that variant's dev (or stable) tag. The action tests the
+  # patterns against every tag and then every digest (`sha256:...`, and `sha256-....sig` tags):
+  # a digest that matches is dropped from the pass, so a variant's "not this" lookahead starts
+  # with `(?!sha256[:-])`, or it would match every digest and the pass would delete nothing.
+  # packages/exactdocs/tests/bootstrap/test_ghcr_retention.py checks them on sample tags.
   cleanup:
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     strategy:
@@ -45,11 +49,11 @@ jobs:
             not-dev: '^(latest|\d+\.\d+|\d+\.\d+\.\d+)$|-(ai|local)$'
             not-stable: '(^dev$|\.dev\d+)|-(ai|local)$'
           - variant: ai
-            not-dev: '^(?!(.*\.dev\d+.*|dev)-ai$)'
-            not-stable: '^(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-ai$)'
+            not-dev: '^(?!sha256[:-])(?!(.*\.dev\d+.*|dev)-ai$)'
+            not-stable: '^(?!sha256[:-])(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-ai$)'
           - variant: local
-            not-dev: '^(?!(.*\.dev\d+.*|dev)-local$)'
-            not-stable: '^(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-local$)'
+            not-dev: '^(?!sha256[:-])(?!(.*\.dev\d+.*|dev)-local$)'
+            not-stable: '^(?!sha256[:-])(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-local$)'
     steps:
       - name: Dev images (X.Y.Z.devN) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_DEV }}
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2 # upstream has no floating major tag

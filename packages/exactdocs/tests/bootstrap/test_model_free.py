@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from exactdocs.bootstrap.constants import PINNED_MODEL_REVISIONS
+
 ROOT = Path(__file__).parents[4]
 # deploy/ is not a package: load the script (the one shared ML list) as a namespace.
 check_artifacts = SimpleNamespace(**runpy.run_path(str(ROOT / "deploy" / "check_artifacts.py")))
@@ -258,6 +260,10 @@ def test_a_variant_with_what_it_may_hold_passes(
         ("ai", "onnxruntime"),
         ("ai", "Huggingface_Hub"),
         ("ai", "torch"),
+        ("local", "torch"),
+        ("local", "onnx"),
+        ("local", "transformers"),
+        ("local", "sentence-transformers"),
     ],
 )
 def test_an_ml_package_the_variant_may_not_hold_fails(variant: str, package: str) -> None:
@@ -295,3 +301,27 @@ def test_the_local_variant_without_its_default_models_fails() -> None:
     problems = check_artifacts.image_problems(VARIANTS["local"], [], [], [reason])
 
     assert problems == [reason]
+
+
+def test_the_local_variant_may_hold_only_what_the_local_extra_brings() -> None:
+    allowed = VARIANTS["local"].allowed_ml
+
+    assert allowed == {
+        "fastembed",
+        "onnxruntime",
+        "tokenizers",
+        "huggingface-hub",
+        "pydantic-ai",
+        "pydantic-ai-slim",
+    }
+    assert allowed <= check_artifacts.ML_PACKAGES
+
+
+def test_every_default_model_has_a_pinned_onnx_digest() -> None:
+    """The check verifies the ONNX bytes of each default model (one entry per model folder)."""
+    folders = {
+        name.rsplit("/", 1)[0].removesuffix("/onnx") for name in check_artifacts.MODEL_SHA256
+    }
+
+    assert folders == set(PINNED_MODEL_REVISIONS)
+    assert all(len(d) == 64 for d in check_artifacts.MODEL_SHA256.values())

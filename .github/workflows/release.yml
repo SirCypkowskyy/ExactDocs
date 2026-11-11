@@ -28,6 +28,7 @@ jobs:
       channel: ${{ steps.meta.outputs.channel }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
       image: ${{ steps.meta.outputs.image }}
+      refresh: ${{ steps.meta.outputs.refresh }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,6 +57,9 @@ jobs:
             echo "channel=$channel"
             echo "short_sha=${GITHUB_SHA::7}"
             echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
+            # DEBIAN_REFRESH of every image build, set once: the push must rebuild the layers that
+            # were scanned, even when it starts after midnight UTC.
+            echo "refresh=$(date -u +%F)"
           } >> "$GITHUB_OUTPUT"
           echo "### $channel release $version from $branch" >> "$GITHUB_STEP_SUMMARY"
 
@@ -166,11 +170,10 @@ jobs:
         variant: [base, ai, local]
     steps:
       - uses: actions/checkout@v7
+      # Debian security updates: a cached apt layer would keep the package set of an older
+      # build, so DEBIAN_REFRESH is the release's date (needs.meta.outputs.refresh, the same in
+      # the push below, so it reuses these layers).
       - uses: docker/setup-buildx-action@v4
-      # Debian security updates: a cached apt layer would keep the package set of an older build.
-      # (The same date in the push below, so it reuses these layers.)
-      - id: refresh
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # Built natively (arm64, from the cache) and loaded; the Debian and Python packages are the
       # same for amd64. The gate fails on a fixable CRITICAL/HIGH finding; accepted ones are in
       # .trivyignore (docs/releasing.md).
@@ -184,7 +187,7 @@ jobs:
           tags: exactdocs:scan-${{ matrix.variant }}
           build-args: |
             VERSION=${{ needs.meta.outputs.version }}
-            DEBIAN_REFRESH=${{ steps.refresh.outputs.date }}
+            DEBIAN_REFRESH=${{ needs.meta.outputs.refresh }}
           cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}
           cache-to: type=gha,scope=exactdocs-${{ matrix.variant }},mode=max
       - name: Size budget, packages and models
@@ -208,23 +211,29 @@ jobs:
     strategy:
       matrix:
         include:
+          # title, description and licenses as in the variant's stage of deploy/Dockerfile:
+          # metadata-action's own labels (from the repository) would replace them otherwise.
           - variant: base
             suffix: ""
             title: ExactDocs
+            description: Self-hosted, version-accurate documentation for AI coding agents
+            licenses: Apache-2.0
           - variant: ai
             suffix: -ai
             title: ExactDocs (AI)
+            description: Self-hosted, version-accurate documentation for AI coding agents, with AI retrieval (exactdocs[ai])
+            licenses: Apache-2.0
           - variant: local
             suffix: -local
             title: ExactDocs (local models)
+            description: Self-hosted, version-accurate documentation for AI coding agents, with local embedding and reranking models (exactdocs[ai,local])
+            licenses: Apache-2.0 AND MIT
     steps:
       - uses: actions/checkout@v7
       # The Python stages cross-build linux/amd64 natively on the ARM64 runner; only the runtime
       # stage's apt-get runs under the QEMU binfmt that the runner VMs have (deploy/runners).
       # The default models of -local are platform-independent and pulled once, natively.
       - uses: docker/setup-buildx-action@v4
-      - id: refresh
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -245,6 +254,12 @@ jobs:
             type=raw,value=dev${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'dev' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.licenses=${{ matrix.licenses }}
+          annotations: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.licenses=${{ matrix.licenses }}
       - id: build
         uses: docker/build-push-action@v7
         with:
@@ -255,7 +270,7 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ needs.meta.outputs.version }}
-            DEBIAN_REFRESH=${{ steps.refresh.outputs.date }}
+            DEBIAN_REFRESH=${{ needs.meta.outputs.refresh }}
           tags: ${{ steps.tags.outputs.tags }}
           labels: ${{ steps.tags.outputs.labels }}
           annotations: ${{ steps.tags.outputs.annotations }}

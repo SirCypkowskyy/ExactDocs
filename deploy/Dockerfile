@@ -144,10 +144,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
       --python-platform "$(cat /tmp/python-platform)"
 
 # --- the default local models, for the `local` target only. Model files are the same on every
-# platform, so this runs natively, once, with a virtualenv for the build platform (the variant's
-# own venv may be for the other architecture). `exactdocs models pull` fetches each default at
-# its pinned Hub revision (PINNED_MODEL_REVISIONS) into a cache mount and skips a model already
-# there at that revision, so a rebuild contacts no Hub; only the default models are copied out.
+# platform, so this runs natively, with a virtualenv for the build platform (the variant's own
+# venv may be for the other architecture). In a multi-arch build it runs once per target platform
+# (`builder` has a TARGETARCH layer), but the shared cache mount makes the second run offline.
+# `exactdocs models pull` fetches each default at its pinned Hub revision
+# (PINNED_MODEL_REVISIONS) into that cache mount and skips a model already there at that
+# revision, so a rebuild contacts no Hub; only the default models are copied out. Their ONNX
+# bytes are checked against pinned sha256 digests by deploy/check_artifacts.py (MODEL_SHA256).
 FROM builder AS models
 COPY --from=export /requirements-ai-local.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
@@ -242,6 +245,8 @@ LABEL org.opencontainers.image.title="ExactDocs (AI)" \
 FROM app AS local
 COPY --from=build-local /app/.venv /app/.venv
 COPY --from=models /opt/exactdocs/models /opt/exactdocs/models
+# The models' licenses (MIT, Apache-2.0) and attribution: they ship with their weights.
+COPY deploy/model-notices/NOTICE /opt/exactdocs/models/NOTICE
 ENV EXACTDOCS_MODELS_DIR=/opt/exactdocs/models
 ARG VERSION=0.0.0
 ARG REVISION=unknown
@@ -249,7 +254,7 @@ ARG CREATED=unknown
 LABEL org.opencontainers.image.title="ExactDocs (local models)" \
       org.opencontainers.image.description="Self-hosted, version-accurate documentation for AI coding agents, with local embedding and reranking models (exactdocs[ai,local])" \
       org.opencontainers.image.source="https://github.com/SirCypkowskyy/ExactDocs" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.created="${CREATED}"

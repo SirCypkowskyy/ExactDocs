@@ -1,7 +1,7 @@
 """The fastembed side of local models (the ``[local]`` extra): imported only once one is used.
 
 Every model loads from its own folder in ``EXACTDOCS_MODELS_DIR`` (``specific_model_path``,
-``local_files_only``): fastembed 0.9.0 returns that folder before any Hub code runs, so loading
+``local_files_only``): fastembed 0.9.1 returns that folder before any Hub code runs, so loading
 never reaches the Hugging Face Hub (``HF_HUB_OFFLINE`` is not needed, and not set; the
 socket-blocked tests prove it). ``exactdocs models pull`` uses the same model
 lists to know which files to fetch; it is the only command that downloads.

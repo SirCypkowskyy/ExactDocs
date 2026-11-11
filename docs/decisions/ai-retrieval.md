@@ -145,7 +145,7 @@ dialect (Cohere, Jina, Voyage, vLLM, LiteLLM, Azure AI Foundry) or the TEI `/rer
 
 ## Local and offline models
 
-- **fastembed 0.9.0 on ONNX Runtime 1.31.0** (CPU) in an `exactdocs[local]` extra: embeddings
+- **fastembed 0.9.1 on ONNX Runtime 1.31.0** (CPU) in an `exactdocs[local]` extra: embeddings
   (`TextEmbedding`) and a cross-encoder (`TextCrossEncoder`) without torch. sentence-transformers
   was rejected: it needs torch (hundreds of MB) and is not installable from pydantic-ai on 3.14.
 - **Defaults:** `BAAI/bge-small-en-v1.5` (384 dimensions, 67 MB quantized ONNX) and
@@ -177,12 +177,14 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
 - `[ai]` lists `pydantic-ai-harness` and `pydantic-monty` instead of
   `pydantic-ai-harness[codemode]`: that extra also pulls a DuckDuckGo search client (`ddgs`,
   `primp`, `lxml`: about 27 MB) that Code Mode does not import.
-- CI builds the three targets of one Dockerfile and checks each budget (#246). Built on
-  2026-11-11 (amd64) the variants measured 352.9, 491.9 and 847.0 MB; arm64, where CI runs, adds
-  about 34 MB to each (base 386.5 MB), which leaves the budgets about 6 to 7 % of headroom, so
-  they stay as set. CI's job summary has the current numbers; `docs/releasing.md`, *Size and
-  model-free budgets*, the reasoning. The `-local` models are baked in at build time (pulled at
-  their pinned revisions), not pulled at first start: the image must work with `--network none`.
+- CI builds the three targets of one Dockerfile and checks each budget (#246). CI (arm64,
+  PR #285) measured **387.0**, **520.2** and **867.6 MB** (amd64: 353.0, 492.0 and 847.9 MB), so
+  the budgets stay as set: 7.1 % of headroom for `-ai`, and 8.7 % for `-local`, kept on purpose as
+  room for a default-model update. `docs/releasing.md`, *Size and model-free budgets*, has the
+  reasoning. The `-local` models are baked in at build time (pulled at their pinned revisions,
+  their ONNX files checked against pinned sha256 digests), not pulled at first start: the image
+  must work with `--network none`. Their licenses (MIT for bge-small, Apache-2.0 for the
+  cross-encoder) ship with them in `/opt/exactdocs/models/NOTICE`.
 
 ## Vector store
 
@@ -536,7 +538,7 @@ install together with the current lock (`httpx2` 2.16, `fastmcp` 4.1.6, `opentel
 | `pydantic-monty` | 1.3.0 | 2026-10-22 | `[ai]` (Code Mode sandbox) |
 | `sqlite-vec` | 0.1.9 | 2026-03-31 | `[ai]` |
 | `pgvector` (Python) | 0.5.1 | 2026-10-09 | `[ai]` |
-| `fastembed` | 0.9.0 | 2026-10-07 | `[local]` |
+| `fastembed` | 0.9.1 (0.9.0 until #246: 0.9.1 allows Pillow 13, which fixes CRITICAL CVEs of Pillow 12.3) | 2026-10-24 | `[local]` |
 | `onnxruntime` | 1.31.0 | 2026-10-09 | `[local]` |
 | `pydantic-evals` | 2.60.0 | 2026-10-23 | dev group |
 | `psycopg[binary]` | 3.3.6 (already locked through DBOS) | 2026-09-18 | default |
@@ -544,7 +546,10 @@ install together with the current lock (`httpx2` 2.16, `fastmcp` 4.1.6, `opentel
 | `authlib` | >= 1.9.1 (locked 1.9.3 through FastMCP, released 2026-11-03) | 2026-10-14 (the floor's date) | default (Teams) |
 
 Transitive pins of note: `genai-prices` 0.1.13 (pydantic-ai's floor, 2026-10-15), `numpy` 2.5.4
-(2026-10-10) and `huggingface-hub` 1.33.0 (2026-09-24, fastembed requires < 2.0) under `[local]`.
+(2026-10-10), `huggingface-hub` 1.33.0 (2026-09-24, fastembed requires < 2.0) and `pillow` 13.0.0
+(2026-10-16; 12.3.0 until #246, which has CRITICAL and HIGH CVEs fixed in 13.0) under `[local]`;
+`pyasn1` 0.6.5 (2026-10-27; 0.6.4 until #246, 4 HIGH CVEs) under `[ai]` (google-auth). All three
+were more than two weeks old when bumped (2026-11-11), so no exception to the rule was needed.
 Newer releases exist (pydantic-ai-slim 2.6x, harness 0.66, onnxruntime 1.31.1); they are taken by
 Dependabot-style bumps once two weeks old, with the eval suite as the check.
 

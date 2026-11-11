@@ -6,7 +6,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-euo", "pipefail", "-c"]
 set dotenv-load := true
 
-image := "exactdocs:local"
+image := "exactdocs:build"
 web := "web"
 
 # List recipes
@@ -97,7 +97,7 @@ build version="": web-build
     cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
     if [ -n "{{ version }}" ]; then export UV_DYNAMIC_VERSIONING_BYPASS="{{ version }}"; fi;       uv build --all-packages --out-dir dist
 
-# Build the Docker image for the local platform: variant base, ai or local (tag exactdocs:local, -ai, -local)
+# Build the Docker image for the local platform: variant base, ai or local (tag exactdocs:build, -ai, -local)
 docker-build version="0.0.0.dev0" variant="base":
     docker build -f deploy/Dockerfile --target {{ variant }} --build-arg VERSION={{ version }} \
       -t {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} .

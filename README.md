@@ -47,7 +47,7 @@ until a model role is configured:
 |---|---|---|
 | `:<version>`, `:latest` | BM25 on SQLite or PostgreSQL; no model, no ML library | most installs |
 | `:<version>-ai`, `:latest-ai` | `exactdocs[ai]`: the hosted and self-hosted model providers, sqlite-vec, pgvector | [AI providers](#ai-providers-and-model-roles) over the network |
-| `:<version>-local`, `:latest-local` | `exactdocs[ai,local]` and the two default [local models](#local-models), read-only in `/opt/exactdocs/models` | air-gapped instances: hybrid search and reranking with no network |
+| `:<version>-local`, `:latest-local` | `exactdocs[ai,local]` and the two default [local models](#local-models), read-only in `/opt/exactdocs/models` (their licenses, MIT and Apache-2.0, in its `NOTICE`) | air-gapped instances: hybrid search and reranking with no network |
 
 The `uvx` equivalents are `uvx --from 'exactdocs[ai]' exactdocs serve` and
 `uvx --from 'exactdocs[ai,local]' exactdocs serve` (then `exactdocs models pull`). Dev builds

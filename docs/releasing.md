@@ -159,30 +159,45 @@ release's *Scan image* jobs; the sizes land in the job summary):
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
 | wheel (with the UI) | 5 MB | 0.9 MB (CI, PR #237) | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 386.5 MB (CI, arm64); 352.9 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
-| image `ai` (`<v>-ai`: `exactdocs[ai]`) | 560 MB | 491.9 MB on amd64 (+139 MB); arm64 in CI's summary | as `base`, except that pydantic-ai(-slim) is allowed: it calls models over HTTP and runs none |
-| image `local` (`<v>-local`: `exactdocs[ai,local]` + default models) | 950 MB | 847.0 MB on amd64 (+494 MB: 335 MB of packages, 159 MB of models); arm64 in CI's summary | both default models at their pinned revisions in `/opt/exactdocs/models` (checked with the server's own marker check), which UID 10001 cannot write, and `EXACTDOCS_MODELS_DIR` set to it; model files nowhere else (but ONNX Runtime's own few-KB examples); no aiohttp |
+| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 387.0 MB (CI, arm64, PR #285); 353.0 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
+| image `ai` (`<v>-ai`: `exactdocs[ai]`) | 560 MB | 520.2 MB (CI, arm64, PR #285: +133 MB); 492.0 MB on amd64 | as `base`, except that pydantic-ai(-slim) is allowed: it calls models over HTTP and runs none |
+| image `local` (`<v>-local`: `exactdocs[ai,local]` + default models) | 950 MB | 867.6 MB (CI, arm64, PR #285: +481 MB, of which 159 MB are the models); 847.9 MB on amd64 | of `ML_PACKAGES` only fastembed, onnxruntime, tokenizers, huggingface-hub and pydantic-ai(-slim) (no torch, transformers, onnx, ...); both default models at their pinned revisions in `/opt/exactdocs/models` (the server's own marker check) with the pinned sha256 of their ONNX files (`MODEL_SHA256`), their license `NOTICE`, a directory UID 10001 cannot write, and `EXACTDOCS_MODELS_DIR` set to it; model files nowhere else (but ONNX Runtime's own few-KB examples); no aiohttp |
 
 **Why these budgets.** The decision record estimated 531 MB for `-ai` and 887 MB for `-local` from
-the extras' site-packages (measured 2026-11-07 on x86_64) and set 560 MB and 950 MB. Built from
-the Dockerfile (2026-11-11, amd64), the variants add 139 MB (`[ai]`) and 494 MB (`[ai,local]`
-with the models) to the base image. arm64, where CI runs, measures the base image 33.6 MB larger
-than amd64 (386.5 vs 352.9 MB), so CI's numbers are the ones that count: about 525 MB and 880 MB
-expected, which leaves about 6 % and 7 % of headroom, the same margin as the base image's.
+the extras' site-packages (measured 2026-11-07 on x86_64) and set 560 MB and 950 MB. CI (arm64,
+PR #285) measured 387.0, 520.2 and 867.6 MB: 7.1 % of headroom for `-ai`, the same margin as the
+base image's. `-local` keeps 950 MB, 8.7 % of headroom (930 MB would be about 7 %), on purpose: it
+is the decision record's figure, and the extra 20 MB is room for a default-model update (a newer
+revision or a slightly larger cross-encoder replaces 159 MB of weights, which no dependency
+trimming can offset). amd64 images are 20 to 34 MB smaller than arm64 ones (353.0, 492.0 and
+847.9 MB), so CI's arm64 numbers are the ones that count.
 Raising a budget needs a reason in the PR; dropping a dependency to stay inside it is the first
 choice.
 
 - **Only `-local` may hold ONNX Runtime and model files.** The `-ai` image is checked against
   `ML_PACKAGES` like the base one, minus `pydantic-ai` and `pydantic-ai-slim`
-  (`LLM_CLIENT_PACKAGES`). No variant holds **aiohttp**: Entra ID uses `azure.identity`'s sync
+  (`LLM_CLIENT_PACKAGES`); `-local` also allows what `[local]` brings (`LOCAL_PACKAGES`:
+  fastembed, onnxruntime, tokenizers, huggingface-hub) and nothing else of the list. No variant holds **aiohttp**: Entra ID uses `azure.identity`'s sync
   token provider (#241), never `azure.identity.aio`.
 - **The `-local` models are baked in, not pulled at first start.** The image must work with
   `--network none`, so the build runs `exactdocs models pull`, which fetches each default model at
   its pinned Hub revision (`PINNED_MODEL_REVISIONS`), into a BuildKit cache mount (a rebuild
-  contacts no Hub) natively on the build platform (the files are the same for amd64 and arm64),
-  and copies the two folders into the image, owned by root and read-only.
+  contacts no Hub) natively on the build platform (the files are the same for amd64 and arm64; a
+  multi-arch build runs the stage once per platform, the second time from the cache), and copies
+  the two folders into the image, owned by root and read-only. The check then compares their ONNX
+  files with the sha256 the Hub records for them at the pinned revisions (`MODEL_SHA256` in
+  `deploy/check_artifacts.py`; update it with `PINNED_MODEL_REVISIONS`), so a build is verified
+  byte for byte and not only by the Hub commit and TLS.
   `EXACTDOCS_MODELS_DIR=/opt/exactdocs/models` is set in the image. A model of your own goes into
   another directory (a volume) with `exactdocs models pull` and its own `EXACTDOCS_MODELS_DIR`.
+- **Model licenses.** The weights are third-party: `BAAI/bge-small-en-v1.5` (Qdrant's quantized
+  ONNX port, MIT) and `Xenova/ms-marco-MiniLM-L-6-v2` (an ONNX conversion of
+  `cross-encoder/ms-marco-MiniLM-L-6-v2`, Apache-2.0), as their model cards at the pinned
+  revisions say. Neither repository has a LICENSE or NOTICE file, and `models pull` fetches only
+  the model and tokenizer files, so `deploy/model-notices/NOTICE` (the attribution, and the MIT
+  and Apache-2.0 texts) is copied to `/opt/exactdocs/models/NOTICE`, and the `-local` image's
+  `org.opencontainers.image.licenses` is `Apache-2.0 AND MIT`. A new default model needs its
+  entry there.
 - **Smoke tests.** Every variant runs `deploy/smoke.sh` (read-only root filesystem, no
   capabilities) with no model configured: the `-ai` and `-local` images stay BM25 servers until
   a role is set. The `-ai` image also runs `deploy/check_sqlite_vec.py` (the vector store in the
@@ -191,9 +206,10 @@ choice.
   imports the fixture, waits for the version to be embedded, and the search must answer with
   `retrieval_mode` `hybrid` and `reranked: true`.
 - **CI time.** The variants are built, checked, scanned and smoke-tested in their own job, in
-  parallel with the base image's; `local` builds on the `ai` stages, and the runner VM's BuildKit
-  keeps their layers and the models' cache mount between jobs.
-- **Locally:** `just docker-build 0.0.0.dev0 ai` (or `local`) builds `exactdocs:local-ai`, and
+  parallel with the base image's (2 min 20 s on a warm VM); `local` builds on the `ai` stages, and
+  the runner VM's BuildKit keeps their layers and the models' cache mount between jobs. The job
+  removes its two images at the end (`if: always()`), so they do not pile up on the VM's disk.
+- **Locally:** `just docker-build 0.0.0.dev0 ai` (or `local`) builds `exactdocs:build-ai` (`exactdocs:build-local`), and
   `just docker-check ai` runs the same check.
 
 The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
@@ -230,7 +246,8 @@ measured above to 374.5 MB in CI (Docker image job of #218), 0.5 MB under the ol
 the budget was raised to 400 MB: the same headroom (about 7 %) as before, for dependency and Debian
 updates. A smaller footprint stays possible behind the same `Checkpoints` port (an ingestion-owned
 checkpoint table instead of DBOS). psycopg is LGPL-3.0: list it if the image ever gets a
-third-party notices file.
+third-party notices file (the `-local` image has one for its model weights only,
+`/opt/exactdocs/models/NOTICE`; see *Model licenses* above).
 
 **Telemetry since E10-07 (#87): 384.4 MB.** The OpenTelemetry SDK and its OTLP/HTTP exporter (with
 protobuf, googleapis-common-protos and requests) are imported only when `EXACTDOCS_TELEMETRY=otlp`,
@@ -330,7 +347,8 @@ flowchart LR
    `linux/arm64`), pushed with its tags (suffix `-ai` / `-local`), with SBOM + provenance
    attestations and a keyless **cosign** signature. Only the runtime stage's `apt-get` runs under
    QEMU for amd64; the Python stages cross-build natively, and the `-local` models are pulled
-   once, natively. Each variant has its own GitHub Actions cache scope (`exactdocs-<variant>`).
+   natively (once per platform, the second from the build's cache mount). `DEBIAN_REFRESH` (the
+   date) is set once in **meta**, so the push rebuilds exactly the layers that were scanned. Each variant has its own GitHub Actions cache scope (`exactdocs-<variant>`).
 6. **github-release**: creates or updates the release with the distributions.
 
 ## One-time setup
