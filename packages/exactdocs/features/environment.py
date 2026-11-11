@@ -42,3 +42,7 @@ def before_scenario(context: Context, scenario: Scenario) -> None:
     # CI's ParadeDB has pg_search and sets EXACTDOCS_TEST_PG_SEARCH=1: never skipped there.
     elif "pg_search" in scenario.effective_tags and not databases.PG_SEARCH:
         scenario.skip("needs a PostgreSQL server with the pg_search extension")
+    # Supabase scenarios need the supabase/postgres image (EXACTDOCS_TEST_SUPABASE_URL); CI runs
+    # one and sets EXACTDOCS_REQUIRE_SUPABASE=1, so there they can never be skipped.
+    elif "supabase" in scenario.effective_tags and databases.SUPABASE_URL is None:
+        scenario.skip("needs the supabase/postgres image: set EXACTDOCS_TEST_SUPABASE_URL")
