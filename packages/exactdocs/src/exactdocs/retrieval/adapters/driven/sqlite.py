@@ -684,6 +684,25 @@ class SqliteLibraryModes:
             budgets=_stored_budgets(row),
         )
 
+    async def budgets(self) -> dict[str, tuple[BudgetLimit, ...]]:
+        """Read the own budgets of every library that has some, in one query.
+
+        Returns:
+            Each such library's budgets, by case-folded library ID.
+        """
+        columns = library_settings.c
+        query = select(library_settings).where(
+            or_(
+                columns.daily_usd_micros.is_not(None),
+                columns.monthly_usd_micros.is_not(None),
+                columns.daily_tokens.is_not(None),
+                columns.monthly_tokens.is_not(None),
+            )
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {row.library: _stored_budgets(row) for row in rows}
+
     async def forget(self, library: str) -> None:
         """Delete the library's row.
 

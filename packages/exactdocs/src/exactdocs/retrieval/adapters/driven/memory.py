@@ -16,6 +16,7 @@ from exactdocs.retrieval.errors import (
     VectorStoreUnavailableError,
 )
 from exactdocs.retrieval.models import (
+    BudgetLimit,
     CatalogLibrary,
     Chunk,
     ChunkId,
@@ -381,6 +382,14 @@ class InMemoryLibraryModes:
         """
         return self.overrides.get(library.casefold(), LibraryAi())
 
+    async def budgets(self) -> dict[str, tuple[BudgetLimit, ...]]:
+        """Read the own budgets of every library that has some.
+
+        Returns:
+            Each such library's budgets, by case-folded library ID.
+        """
+        return {key: ai.budgets for key, ai in self.overrides.items() if ai.budgets}
+
     async def forget(self, library: str) -> None:
         """Drop the library's settings.
 
@@ -633,6 +642,21 @@ class InMemoryVectorIndex:
         rows = self.chunks.rows.get(manifest_id, {}).values()
         embedded = sum((*r.chunk_set, r.position) in stored for r in rows)
         return VectorCoverage(chunks=len(rows), embedded=embedded)
+
+    async def coverage_many(
+        self, space_id: EmbeddingSpaceId, manifest_ids: Collection[str]
+    ) -> dict[str, VectorCoverage]:
+        """Count each manifest's chunks and those with a vector.
+
+        Args:
+            space_id: The space.
+            manifest_ids: The manifests.
+
+        Returns:
+            The counts per manifest that has chunks.
+        """
+        found = {m: await self.coverage(space_id, m) for m in manifest_ids}
+        return {m: c for m, c in found.items() if c.chunks}
 
     async def missing(
         self, space_id: EmbeddingSpaceId, manifest_id: str, limit: int

@@ -179,7 +179,10 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
         </Button>
       </div>
       <div role="status" aria-label={`${p.name} check`} className="mt-2 text-sm">
-        {check.isError && <Problem error={check.error} />}
+        {/* The status region announces it already: no second live region inside. */}
+        {check.isError && (
+          <p className="font-medium text-destructive">{explainAiError(check.error)}</p>
+        )}
         {check.data && (
           <ul className="flex flex-col gap-1">
             {check.data.checks.map((c) => (
@@ -280,7 +283,7 @@ function UsageSection() {
     <Section
       id="usage-heading"
       title="Usage and budgets"
-      intro="What AI calls spent today and this month (UTC), and what is left of each budget. A used-up budget skips the paid step; searches still answer."
+      intro="What AI calls spent today and this month (UTC), and what is left of each budget, for the instance, embedding runs, every library and account that spent something, and every library with budgets of its own. A used-up budget skips the paid step; searches still answer."
     >
       {usage.isPending ? (
         <p className="text-sm text-muted-foreground">Loading the usage…</p>

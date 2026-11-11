@@ -824,6 +824,19 @@ async def test_a_library_override_names_an_existing_profile() -> None:
     assert (shown.llm, shown.judge) == (None, "corp:o3")
 
 
+async def test_a_library_override_names_a_profile_this_installation_can_call() -> None:
+    world = _world(roles=InstanceRoles(llm=CHAT))
+    world.factory.unsupported_kinds.add(ProviderKind.OPENAI_COMPATIBLE)
+
+    with pytest.raises(ProviderUnsupportedError, match="not installed") as raised:
+        await world.module.set_library_retrieval(
+            SetLibraryRetrievalCommand(library=LIB, reranker="corp:bge")
+        )
+
+    assert raised.value.code == "provider_unsupported"
+    assert await world.modes.ai_of(LIB) == LibraryAi()  # nothing was stored
+
+
 async def test_a_library_override_brings_a_role_the_instance_lacks() -> None:
     world = _world()
 
@@ -913,9 +926,12 @@ async def test_a_librarys_own_budgets_are_stored_with_it(
     )
 
     await modes.save("/Acme/Payments", None, ai)
+    await modes.save("/acme/no-budget", None, LibraryAi(rerank_top_n=4))
 
     assert await modes.ai_of("/acme/payments") == ai
+    assert await modes.budgets() == {"/acme/payments": ai.budgets}  # one read, every library
     await modes.save("/acme/payments", None, LibraryAi())
+    assert await modes.budgets() == {}
     assert await modes.ai_of("/acme/payments") == LibraryAi()
 
 

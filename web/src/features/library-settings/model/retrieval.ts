@@ -32,6 +32,14 @@ const MODE_STEPS: Record<RetrievalMode, readonly string[]> = {
   agentic: ["An LLM agent opens and reads the docs"],
 };
 
+/** The model roles each mode's pipeline calls; the reranker is a stage of its own. */
+const MODE_ROLES: Record<RetrievalMode, readonly ModelRole[]> = {
+  bm25: [],
+  hybrid: ["embedding"],
+  hybrid_hyde: ["embedding", "llm"],
+  agentic: ["llm"],
+};
+
 const FALLBACK_WORDS: Partial<Record<FallbackReason, string>> = {
   mode_unavailable: "The mode set for it can't run now: a model role it needs is not configured.",
   vector_store_unavailable: "The vector store can't be loaded, so the vector modes are off.",
@@ -66,17 +74,21 @@ export interface RoleInUse {
 }
 
 /**
- * The model each role a search may use resolves to: the library's override, else the instance's
+ * The model each role the effective pipeline calls resolves to: the library's override, else the instance's
  * (the judge: else the LLM). `roles` is undefined when the instance's roles could not be read.
  */
 export function rolesInUse(r: LibraryRetrieval, roles: readonly AiRole[] | undefined): RoleInUse[] {
   const instance = (role: ModelRole) => roles?.find((x) => x.role === role)?.model ?? undefined;
-  return r.configured_roles.map((role) => {
-    const own = role === "embedding" ? null : r[role];
-    if (own) return { role, model: own, from: "library" };
-    const model = instance(role) ?? (role === "judge" ? instance("llm") : undefined);
-    return { role, model, from: "instance" };
-  });
+  const used = new Set<ModelRole>(MODE_ROLES[r.effective_mode]);
+  if (r.configured_roles.includes("reranker")) used.add("reranker");
+  return r.configured_roles
+    .filter((role) => used.has(role))
+    .map((role) => {
+      const own = role === "embedding" ? null : r[role];
+      if (own) return { role, model: own, from: "library" };
+      const model = instance(role) ?? (role === "judge" ? instance("llm") : undefined);
+      return { role, model, from: "instance" };
+    });
 }
 
 /** One override as edited: no profile means the instance's model. */
@@ -168,7 +180,9 @@ export function modeOptions(r: LibraryRetrieval, d: RetrievalDraft) {
  * The profiles an override may name: only those this server can call. A profile an override
  * still names that is gone or unsupported stays listed, marked, so the form shows the truth.
  */
-export function profileOptions(providers: readonly AiProvider[], current: string) {
+export function profileOptions(providers: readonly AiProvider[] | undefined, current: string) {
+  // Not read yet (or not readable): offer the stored one as it is, never call it missing.
+  if (providers === undefined) return current ? [{ value: current, note: "" }] : [];
   const usable = providers.filter((p) => !p.unsupported).map((p) => ({ value: p.name, note: "" }));
   if (current && !usable.some((p) => p.value === current)) {
     usable.push({ value: current, note: " (not available)" });
@@ -179,9 +193,23 @@ export function profileOptions(providers: readonly AiProvider[], current: string
 const ceilingWord = (n: number | null | undefined, unit: string) =>
   n === null || n === undefined ? undefined : `${n.toLocaleString("en-US")} ${unit}`;
 
-/** The most each budget may be, as a hint. */
-export function ceilingHint(ceilings: Budgets | undefined, key: keyof Budgets, unit: string) {
+const over = (value: number | null | undefined, most: number | null | undefined) =>
+  value !== null && value !== undefined && most !== null && most !== undefined && value > most;
+
+/**
+ * The most each budget may be, as a hint. A stored budget the instance's limit was lowered
+ * below since is said plainly: the instance's limit is what applies.
+ */
+export function ceilingHint(
+  ceilings: Budgets | undefined,
+  key: keyof Budgets,
+  unit: string,
+  stored?: Budgets,
+) {
   const most = ceilingWord(ceilings?.[key], unit);
+  if (most && over(stored?.[key], ceilings?.[key])) {
+    return `Above the instance's limit of ${most}, which applies instead. It can be kept or lowered, not raised.`;
+  }
   return most ? `At most ${most}, the instance's limit.` : "The instance sets no limit here.";
 }
 
@@ -193,7 +221,11 @@ const BUDGET_FIELDS = [
 ] as const;
 
 /** The checks that need no server; the server stays the authority. */
-export function validateRetrieval(d: RetrievalDraft, ceilings: Budgets | undefined): DraftErrors {
+export function validateRetrieval(
+  d: RetrievalDraft,
+  ceilings: Budgets | undefined,
+  stored?: Budgets,
+): DraftErrors {
   const errors: DraftErrors = {};
   for (const role of OVERRIDABLE) {
     if (d[role].profile && !d[role].model.trim()) errors[role] = "Name the model to use.";
@@ -213,7 +245,10 @@ export function validateRetrieval(d: RetrievalDraft, ceilings: Budgets | undefin
       continue;
     }
     const most = ceilings?.[key];
-    if (most !== null && most !== undefined && value > most) {
+    // A stored budget above a since-lowered limit may stay, or come down; never go up.
+    const kept = stored?.[key];
+    const allowed = kept !== null && kept !== undefined && value <= kept;
+    if (over(value, most) && !allowed) {
       errors[field] = `The instance allows a library at most ${ceilingWord(most, unit)}.`;
     }
   }

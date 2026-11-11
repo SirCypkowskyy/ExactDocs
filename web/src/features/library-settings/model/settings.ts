@@ -115,6 +115,12 @@ export function explainSave(error: unknown): Problem {
   return generic(error);
 }
 
+/** The profiles an override may name could not be read. */
+export function explainProfilesError(error: unknown): string {
+  const words = error instanceof HttpError ? session(error)?.message : OFFLINE.message;
+  return `${words ?? "The AI profiles could not be read."} Overrides keep what they have; try again to change them.`;
+}
+
 /** A refused retrieval save: a mode that can't run, a profile that's gone, a budget too high. */
 export function explainRetrievalSave(error: unknown): Problem {
   if (!(error instanceof HttpError)) return OFFLINE;
@@ -124,6 +130,7 @@ export function explainRetrievalSave(error: unknown): Problem {
     case "mode_unavailable":
       return { field: "mode", message: error.message };
     case "unknown_provider":
+    case "provider_unsupported":
     case "invalid_model":
     case "budget_above_instance":
       return { message: error.message };

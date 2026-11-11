@@ -194,6 +194,7 @@ async def _build(
     embedding: bool = False,
     tracer: SearchTracer | None = None,
     price_overrides: dict[str, ModelPrice] | None = None,
+    modes: InMemoryLibraryModes | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -237,7 +238,7 @@ async def _build(
         chunks=chunks,
         search=index,
         maintenance=index,
-        library_modes=InMemoryLibraryModes(),
+        library_modes=modes or InMemoryLibraryModes(),
         roles=None if embedding else Roles(frozenset(roles)),
         configured_profiles=[profile],
         instance_roles=InstanceRoles(
@@ -1035,3 +1036,42 @@ async def test_the_usage_shows_a_librarys_own_budget_where_it_is_tighter() -> No
         if s.scope == "library"
     }
     assert limits == {LIB: [(1.0, True)], OTHER: [(2.0, False)]}
+
+
+async def test_a_stored_budget_above_a_lowered_instance_limit_is_kept_but_not_raised() -> None:
+    stored = InMemoryLibraryModes()
+    await stored.save(LIB, None, LibraryAi(budgets=(_limit("library", usd=4),)))
+    # The operator lowered the per-library limit from 5 to 2 USD since.
+    lowered = await _build(
+        ModelRole.LLM, budgets=Budgets(limits=(_limit("library", usd=2),)), modes=stored
+    )
+    modes = lowered.module.set_library_retrieval
+    await modes(SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=4)))
+
+    shown = await modes(
+        SetLibraryRetrievalCommand(library=LIB, rerank_top_n=4, budgets=LibraryBudgets(daily_usd=4))
+    )  # another setting changes: the stored budget stays
+    lower = await modes(
+        SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=3))
+    )
+    with pytest.raises(LibraryBudgetAboveInstanceError):
+        await modes(SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=3.5)))
+
+    assert (shown.budgets.daily_usd, shown.budget_ceilings.daily_usd) == (4, 2)
+    assert lower.budgets.daily_usd == 3
+
+
+async def test_the_usage_lists_a_library_with_its_own_budget_before_it_spends() -> None:
+    world = await _build(ModelRole.LLM)
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=OTHER.upper(), budgets=LibraryBudgets(monthly_tokens=9))
+    )
+    await _spend(world, "library", LIB, DAY, USD)
+
+    usage = await world.module.get_ai_usage()
+
+    libraries = {s.id: s for s in usage.scopes if s.scope == "library"}
+    assert set(libraries) == {LIB, OTHER}
+    (monthly,) = libraries[OTHER].budgets
+    assert (monthly.tokens_limit, monthly.tokens_left, libraries[OTHER].month.tokens) == (9, 9, 0)
+    assert libraries[LIB].budgets == []

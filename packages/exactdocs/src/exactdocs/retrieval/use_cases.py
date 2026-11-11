@@ -169,6 +169,7 @@ from exactdocs.retrieval.models import (
     StoredChunk,
     TagFilter,
     TagMatch,
+    VectorCoverage,
     article_chunk_rows,
     bind_role,
     current_space,
@@ -446,6 +447,15 @@ class AiSpend:
             return ()
         return (await self.library_modes.ai_of(library)).budgets
 
+    async def all_own_budgets(self) -> Mapping[str, tuple[BudgetLimit, ...]]:
+        """Read every library's own budgets at once.
+
+        Returns:
+            Each library's budgets that has some, by case-folded ID; none without
+            ``library_modes``.
+        """
+        return {} if self.library_modes is None else await self.library_modes.budgets()
+
     async def limits_for(
         self, scopes: Sequence[tuple[str, str]], own: Sequence[BudgetLimit] | None = None
     ) -> Budgets:
@@ -588,22 +598,27 @@ class GetAiUsageUseCase:
         month = SpendWindow.MONTH.start(now)
         today = SpendWindow.DAY.start(now)
         rows = {row.key: row for row in await self.spend.ledger.since(month)}
+        own = await self.spend.all_own_budgets()  # every library's, in one read
+        spenders = {(k.scope_kind, k.scope_id) for k in rows}
+        spent_libraries = {i.casefold() for kind, i in spenders if kind == SPEND_SCOPE_LIBRARY}
+        # A library with budgets of its own is listed even before it spends anything.
+        spenders |= {(SPEND_SCOPE_LIBRARY, i) for i in own if i not in spent_libraries}
         scopes: dict[tuple[str, str], None] = {
             (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID): None,
             (SPEND_SCOPE_EMBEDDING, SPEND_INSTANCE_ID): None,
         }
-        for key in sorted(rows, key=lambda k: (k.scope_kind, k.scope_id)):
-            scopes.setdefault((key.scope_kind, key.scope_id), None)
+        for scope in sorted(spenders):
+            scopes.setdefault(scope, None)
         return AiUsageOut(
             at=now,
             llm_searches_per_minute=self.spend.budgets.llm_searches_per_minute,
             scopes=[
-                await self._scope(kind, scope_id, rows, today, month, now)
+                self._scope(kind, scope_id, rows, today, month, now, own)
                 for kind, scope_id in scopes
             ],
         )
 
-    async def _scope(
+    def _scope(
         self,
         kind: str,
         scope_id: str,
@@ -611,6 +626,7 @@ class GetAiUsageUseCase:
         today: date,
         month: date,
         now: datetime,
+        own: Mapping[str, tuple[BudgetLimit, ...]],
     ) -> ScopeUsageOut:
         """Show one scope.
 
@@ -621,6 +637,7 @@ class GetAiUsageUseCase:
             today: Today's window start.
             month: This month's window start.
             now: When the rows were read.
+            own: Every library's own budgets, by case-folded library ID.
 
         Returns:
             Its spend today and this month, and its budgets (a library's own applied).
@@ -645,7 +662,7 @@ class GetAiUsageUseCase:
         }
         budgets = self.spend.budgets
         if kind == SPEND_SCOPE_LIBRARY:
-            budgets = await self.spend.limits_for([(kind, scope_id)])
+            budgets = budgets.for_library(own.get(scope_id.casefold(), ()))
         return ScopeUsageOut(
             scope=kind,
             id=scope_id,
@@ -2018,6 +2035,7 @@ class SetLibraryRetrievalUseCase:
         Raises:
             UnknownLibraryError: There is no such library.
             UnknownProviderError: An override names a profile that does not exist.
+            ProviderUnsupportedError: An override names a profile this installation cannot call.
         """
         library = await self.libraries.canonical_id(command.library)
         if library is None:
@@ -2031,10 +2049,14 @@ class SetLibraryRetrievalUseCase:
             budgets=command.budgets.limits(),
         )
         if self.modes.spend is not None:
-            self.modes.spend.budgets.check_library(ai.budgets)
+            stored = await self.modes.library_modes.ai_of(library)
+            self.modes.spend.budgets.check_library(ai.budgets, stored.budgets)
         for name in sorted(ai.profiles()):
-            if await self.providers.profile(name) is None:
+            profile = await self.providers.profile(name)
+            if profile is None:
                 raise UnknownProviderError(name)
+            if (reason := self.providers.factory.unsupported(profile)) is not None:
+                raise ProviderUnsupportedError(name, reason)
         mode = None
         if command.mode is not None:
             mode = (await self.modes.registry(library, ai)).check(command.mode)
@@ -3284,8 +3306,11 @@ class GetEmbeddingProgressUseCase:
         current = None if configured is None else await self.runs.space(configured.target)
         versions = await self.runs.active_versions() if spaces else []
         progress: list[EmbeddingSpaceProgressOut] = []
+        manifests = [v.manifest_id for v in versions]
+        empty = VectorCoverage(chunks=0, embedded=0)
         for space in spaces:
-            covered = [await store.coverage(space.id, v.manifest_id) for v in versions]
+            per_manifest = await store.coverage_many(space.id, manifests)  # one query per space
+            covered = [per_manifest.get(m, empty) for m in manifests]
             progress.append(
                 EmbeddingSpaceProgressOut(
                     id=space.id,

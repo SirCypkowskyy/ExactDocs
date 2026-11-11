@@ -2424,6 +2424,22 @@ class BudgetCeiling:
     """Tokens; ``None``: not limited."""
 
 
+def _raised_over(value: int | None, ceiling: int | None, stored: int | None) -> bool:
+    """Say whether a library's own ceiling goes over the instance's and was not stored so.
+
+    Args:
+        value: The ceiling as it would be saved; ``None``: not limited by the library.
+        ceiling: The instance's; ``None``: no ceiling.
+        stored: The library's ceiling as stored now; ``None``: none.
+
+    Returns:
+        True when it is over the instance's and higher than the stored one (or new).
+    """
+    if value is None or ceiling is None or value <= ceiling:
+        return False
+    return stored is None or value > stored
+
+
 def _tighter(first: int | None, second: int | None) -> int | None:
     """Pick the lower of two ceilings, where ``None`` is no ceiling.
 
@@ -2500,30 +2516,30 @@ class Budgets:
             usd_micros=min(usd) if usd else None, tokens=min(tokens) if tokens else None
         )
 
-    def check_library(self, own: Sequence[BudgetLimit]) -> None:
+    def check_library(self, own: Sequence[BudgetLimit], stored: Sequence[BudgetLimit] = ()) -> None:
         """Refuse a library's own budgets that go over what the instance allows a library.
 
+        A ceiling the library already had is kept even when the instance's limit was lowered
+        below it since: only raising one over the instance's is refused (the tighter applies).
+
         Args:
-            own: The library's budgets.
+            own: The library's budgets as they would be saved.
+            stored: Its budgets as they are stored now.
 
         Raises:
-            LibraryBudgetAboveInstanceError: One goes over the instance's ceiling.
+            LibraryBudgetAboveInstanceError: One is raised over the instance's ceiling.
         """
+        before = {limit.window: limit for limit in stored}
         for limit in own:
             ceiling = self.ceiling(limit.window)
+            kept = before.get(limit.window)
             period = "daily" if limit.window is SpendWindow.DAY else "monthly"
-            if (
-                limit.usd_micros is not None
-                and ceiling.usd_micros is not None
-                and limit.usd_micros > ceiling.usd_micros
+            if _raised_over(
+                limit.usd_micros, ceiling.usd_micros, kept.usd_micros if kept else None
             ):
-                what, most = f"{period}_usd", f"{ceiling.usd_micros / MICROS_PER_USD:g} USD"
+                what, most = f"{period}_usd", f"{(ceiling.usd_micros or 0) / MICROS_PER_USD:g} USD"
                 raise LibraryBudgetAboveInstanceError(what, most)
-            if (
-                limit.tokens is not None
-                and ceiling.tokens is not None
-                and limit.tokens > ceiling.tokens
-            ):
+            if _raised_over(limit.tokens, ceiling.tokens, kept.tokens if kept else None):
                 what, most = f"{period}_tokens", f"{ceiling.tokens} tokens"
                 raise LibraryBudgetAboveInstanceError(what, most)
 

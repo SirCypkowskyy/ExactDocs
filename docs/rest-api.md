@@ -312,14 +312,17 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   is skipped for that reason).
   `ai_enabled: false` sends nothing of the library to any AI provider: its searches are BM25.
   `llm`, `judge` and `reranker` (`<profile>:<model>`) replace the instance's role for this library
-  (404 `unknown_provider` for a profile that does not exist, 422 `invalid_model` when not written
+  (404 `unknown_provider` for a profile that does not exist, 422 `provider_unsupported` for one this
+  installation cannot call (an extra or SDK is missing), 422 `invalid_model` when not written
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
   `budgets` are the library's own spend limits per UTC day and month (`daily_usd`, `monthly_usd`,
   `daily_tokens`, `monthly_tokens`; `null`: not limited by the library). Each may be at most the
   instance's: the lowest of `[ai.budgets]`'s instance and `per_library_...` ceilings of that
-  window and unit, 422 `budget_above_instance` otherwise. The tighter of the library's and the
+  window and unit, 422 `budget_above_instance` otherwise. A stored budget the instance's limit was
+  lowered below since may be sent again unchanged or lowered (the instance's, the tighter, applies);
+  only raising it is refused, so other settings can still be saved. The tighter of the library's and the
   instance's per-library limit applies, to its LLM steps, paid reranks and embedding alike.
   `GET .../retrieval` returns the settings with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the

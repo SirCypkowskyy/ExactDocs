@@ -32,7 +32,12 @@ import {
   sameDraft,
   validateRetrieval,
 } from "../model/retrieval";
-import { type Activity, explainRetrievalSave, type Problem } from "../model/settings";
+import {
+  type Activity,
+  explainProfilesError,
+  explainRetrievalSave,
+  type Problem,
+} from "../model/settings";
 import { sectionHeading } from "./styles";
 
 interface Props {
@@ -71,7 +76,8 @@ export function AiSection({ owner, repo, activity, onStart }: Props) {
             owner={owner}
             repo={repo}
             r={retrieval.data}
-            providers={providers.data ?? []}
+            providers={providers.data}
+            providersError={providers.isError ? explainProfilesError(providers.error) : undefined}
             activity={activity}
             onStart={onStart}
           />
@@ -137,12 +143,15 @@ interface FormProps {
   owner: string;
   repo: string;
   r: LibraryRetrieval;
-  providers: readonly AiProvider[];
+  /** Undefined while the profiles load or when they could not be read. */
+  providers: readonly AiProvider[] | undefined;
+  /** Why the profiles could not be read, if they could not. */
+  providersError: string | undefined;
   activity: Activity;
   onStart: () => void;
 }
 
-function AiForm({ owner, repo, r, providers, activity, onStart }: FormProps) {
+function AiForm({ owner, repo, r, providers, providersError, activity, onStart }: FormProps) {
   const queryClient = useQueryClient();
   const saved = retrievalDraftOf(r);
   const [draft, setDraft] = useState<RetrievalDraft>(saved);
@@ -184,7 +193,7 @@ function AiForm({ owner, repo, r, providers, activity, onStart }: FormProps) {
   function submit(event: FormEvent) {
     event.preventDefault();
     if (save.isPending || unchanged) return;
-    const found = validateRetrieval(draft, r.budget_ceilings);
+    const found = validateRetrieval(draft, r.budget_ceilings, r.budgets);
     setErrors(found);
     setProblem(undefined);
     const first = Object.keys(found)[0];
@@ -243,47 +252,57 @@ function AiForm({ owner, repo, r, providers, activity, onStart }: FormProps) {
             </option>
           ))}
         </SelectField>
-        <fieldset disabled={off} className="flex flex-col gap-5 disabled:opacity-60">
-          <legend className="text-sm font-medium">Models</legend>
-          <p className="-mt-3 text-sm text-muted-foreground">
+        {/* A legend is no flex item: the fieldset stays a block and the fields get their own box. */}
+        <fieldset disabled={off} className="disabled:opacity-60">
+          <legend className="mb-1 text-sm font-medium">Models</legend>
+          <p className="text-sm text-muted-foreground">
             Use another profile's model than the instance's. The embedding model is the same for
             every library.
           </p>
-          {OVERRIDABLE.map((role) => (
-            <RoleOverride
-              key={role}
-              role={role}
-              draft={draft}
-              providers={providers}
-              error={errors[role]}
-              onChange={(value) => edit({ [role]: value })}
+          <div className="mt-5 flex flex-col gap-5">
+            {providersError ? (
+              <p role="alert" className="text-sm font-medium text-destructive">
+                {providersError}
+              </p>
+            ) : providers === undefined ? (
+              <p className="text-sm text-muted-foreground">Loading the profiles…</p>
+            ) : null}
+            {OVERRIDABLE.map((role) => (
+              <RoleOverride
+                key={role}
+                role={role}
+                draft={draft}
+                providers={providers}
+                error={errors[role]}
+                onChange={(value) => edit({ [role]: value })}
+              />
+            ))}
+            <Field
+              id="ai-rerankTopN"
+              label="Candidates to rerank"
+              inputMode="numeric"
+              value={draft.rerankTopN}
+              placeholder={String(r.effective_rerank_top_n)}
+              error={errors.rerankTopN}
+              hint={`1 to ${MAX_RERANK_TOP_N}. Empty: the instance's number.`}
+              onChange={(e) => edit({ rerankTopN: e.target.value })}
             />
-          ))}
-          <Field
-            id="ai-rerankTopN"
-            label="Candidates to rerank"
-            inputMode="numeric"
-            value={draft.rerankTopN}
-            placeholder={String(r.effective_rerank_top_n)}
-            error={errors.rerankTopN}
-            hint={`1 to ${MAX_RERANK_TOP_N}. Empty: the instance's number.`}
-            onChange={(e) => edit({ rerankTopN: e.target.value })}
-          />
+          </div>
         </fieldset>
-        <fieldset className="flex flex-col gap-5">
-          <legend className="text-sm font-medium">Spend limits</legend>
-          <p className="-mt-3 text-sm text-muted-foreground">
+        <fieldset>
+          <legend className="mb-1 text-sm font-medium">Spend limits</legend>
+          <p className="text-sm text-muted-foreground">
             Per UTC day and month. Once one is used up, searches skip the paid step and say why.
             Empty: only the instance's limits apply.
           </p>
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="mt-5 grid gap-5 sm:grid-cols-2">
             <Field
               id="ai-dailyUsd"
               label="US dollars per day"
               inputMode="decimal"
               value={draft.dailyUsd}
               error={errors.dailyUsd}
-              hint={ceilingHint(r.budget_ceilings, "daily_usd", "USD")}
+              hint={ceilingHint(r.budget_ceilings, "daily_usd", "USD", r.budgets)}
               onChange={(e) => edit({ dailyUsd: e.target.value })}
             />
             <Field
@@ -292,7 +311,7 @@ function AiForm({ owner, repo, r, providers, activity, onStart }: FormProps) {
               inputMode="decimal"
               value={draft.monthlyUsd}
               error={errors.monthlyUsd}
-              hint={ceilingHint(r.budget_ceilings, "monthly_usd", "USD")}
+              hint={ceilingHint(r.budget_ceilings, "monthly_usd", "USD", r.budgets)}
               onChange={(e) => edit({ monthlyUsd: e.target.value })}
             />
             <Field
@@ -301,7 +320,7 @@ function AiForm({ owner, repo, r, providers, activity, onStart }: FormProps) {
               inputMode="numeric"
               value={draft.dailyTokens}
               error={errors.dailyTokens}
-              hint={ceilingHint(r.budget_ceilings, "daily_tokens", "tokens")}
+              hint={ceilingHint(r.budget_ceilings, "daily_tokens", "tokens", r.budgets)}
               onChange={(e) => edit({ dailyTokens: e.target.value })}
             />
             <Field
@@ -310,7 +329,7 @@ function AiForm({ owner, repo, r, providers, activity, onStart }: FormProps) {
               inputMode="numeric"
               value={draft.monthlyTokens}
               error={errors.monthlyTokens}
-              hint={ceilingHint(r.budget_ceilings, "monthly_tokens", "tokens")}
+              hint={ceilingHint(r.budget_ceilings, "monthly_tokens", "tokens", r.budgets)}
               onChange={(e) => edit({ monthlyTokens: e.target.value })}
             />
           </div>
@@ -347,7 +366,7 @@ function RoleOverride({
 }: {
   role: OverridableRole;
   draft: RetrievalDraft;
-  providers: readonly AiProvider[];
+  providers: readonly AiProvider[] | undefined;
   error: string | undefined;
   onChange: (value: RetrievalDraft[OverridableRole]) => void;
 }) {
@@ -359,6 +378,8 @@ function RoleOverride({
         id={`ai-${role}-profile`}
         label={`${label} profile`}
         value={value.profile}
+        // Until the profiles are read only the stored one is offered, never marked missing.
+        disabled={providers === undefined}
         onChange={(e) => onChange({ profile: e.target.value, model: value.model })}
       >
         <option value="">

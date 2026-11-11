@@ -96,7 +96,11 @@ const ROLES = [
 
 type Reply = { status: number; body: unknown };
 
-function serve(initial: LibraryRetrieval, put?: (body: Record<string, unknown>) => Reply) {
+function serve(
+  initial: LibraryRetrieval,
+  put?: (body: Record<string, unknown>) => Reply,
+  profiles: () => Promise<Response> = async () => Response.json({ providers: PROVIDERS }),
+) {
   const calls: { method: string; url: string; body: unknown }[] = [];
   let stored = initial;
   vi.stubGlobal(
@@ -105,7 +109,7 @@ function serve(initial: LibraryRetrieval, put?: (body: Record<string, unknown>) 
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, url, body });
-      if (url.endsWith("/v1/ai/providers")) return Response.json({ providers: PROVIDERS });
+      if (url.endsWith("/v1/ai/providers")) return profiles();
       if (url.endsWith("/v1/ai/roles")) return Response.json({ roles: ROLES });
       if (url.endsWith("/retrieval") && method === "PUT") {
         const reply = put?.(body) ?? { status: 200, body: { ...stored, ...body } };
@@ -251,14 +255,81 @@ describe("library AI settings", () => {
   });
 });
 
+describe("profiles while they load or fail", () => {
+  const stored = { ...HYBRID, llm: "corp:gpt-4.1" };
+
+  it("offers the stored override as it is and disables the choice while profiles load", async () => {
+    let release: (r: Response) => void = () => {};
+    serve(stored, undefined, () => new Promise((resolve) => (release = resolve)));
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+
+    const profile = ai.getByLabelText("LLM profile");
+    expect(profile).toBeDisabled();
+    expect(ai.getByText("Loading the profiles…")).toBeInTheDocument();
+    expect(
+      within(profile)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["The instance's", "corp"]);
+
+    release(Response.json({ providers: PROVIDERS }));
+    await waitFor(() => expect(ai.getByLabelText("LLM profile")).toBeEnabled());
+    expect(ai.queryByText("Loading the profiles…")).not.toBeInTheDocument();
+  });
+
+  it("says when the profiles cannot be read, without calling the stored one missing", async () => {
+    serve(stored, undefined, async () =>
+      Response.json({ error: "internal", detail: "x", fields: [] }, { status: 500 }),
+    );
+    renderPage();
+    const ai = await section();
+
+    expect(await ai.findByText(/The AI profiles could not be read/)).toBeInTheDocument();
+    const profile = ai.getByLabelText("LLM profile");
+    expect(profile).toBeDisabled();
+    expect(within(profile).queryByText(/not available/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a stored budget above a lowered instance limit, warns, and saves other changes", async () => {
+    const lowered = {
+      ...HYBRID,
+      budgets: { ...NO_BUDGETS, daily_usd: 4 },
+      budget_ceilings: { ...NO_BUDGETS, daily_usd: 2 },
+    };
+    const calls = serve(lowered);
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+
+    expect(
+      ai.getByText(/Above the instance's limit of 2 USD, which applies instead/),
+    ).toBeVisible();
+    await userEvent.type(ai.getByLabelText("Candidates to rerank"), "8");
+    await userEvent.click(ai.getByRole("button", { name: "Save AI settings" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({
+      rerank_top_n: 8,
+      budgets: { daily_usd: 4 },
+    });
+  });
+});
+
 describe("retrieval model", () => {
-  it("resolves each role to the library's model, else the instance's, the judge else the LLM", () => {
-    const r = { ...HYBRID, configured_roles: ["embedding", "llm", "judge"] as const };
-    expect(rolesInUse({ ...r, llm: "own:o3" }, ROLES as never)).toEqual([
+  it("lists only the roles the effective pipeline calls, the library's model first", () => {
+    const r = { ...HYBRID, configured_roles: ["embedding", "reranker", "llm", "judge"] as const };
+    expect(
+      rolesInUse({ ...r, effective_mode: "hybrid_hyde", llm: "own:o3" }, ROLES as never),
+    ).toEqual([
       { role: "embedding", model: "corp:text-embedding-3-small", from: "instance" },
+      { role: "reranker", model: undefined, from: "instance" },
       { role: "llm", model: "own:o3", from: "library" },
-      { role: "judge", model: "corp:gpt-4.1-mini", from: "instance" },
     ]);
+    // BM25 calls no model: an instance LLM is configured but not listed.
+    expect(
+      rolesInUse({ ...r, effective_mode: "bm25", configured_roles: ["llm"] }, ROLES as never),
+    ).toEqual([]);
     expect(rolesInUse(r as never, undefined)[0]?.model).toBeUndefined();
   });
 
@@ -305,6 +376,20 @@ describe("retrieval model", () => {
       dailyTokens: "1.5",
       monthlyUsd: "-1",
     };
+    const raised = { ...retrievalDraftOf(stored), dailyUsd: "5", monthlyUsd: "3" };
+    expect(
+      validateRetrieval(
+        raised,
+        { ...NO_BUDGETS, daily_usd: 2, monthly_usd: 2 },
+        {
+          ...NO_BUDGETS,
+          daily_usd: 4,
+        },
+      ),
+    ).toEqual({
+      dailyUsd: "The instance allows a library at most 2 USD.", // raised past the stored 4
+      monthlyUsd: "The instance allows a library at most 2 USD.", // none stored
+    });
     expect(validateRetrieval(bad, stored.budget_ceilings)).toEqual({
       rerankTopN: "Enter a whole number from 1 to 200, or leave it empty.",
       dailyTokens: "Enter a whole number of tokens above 0, or leave it empty.",
@@ -320,6 +405,7 @@ describe("retrieval model", () => {
       message: "the words",
     });
     expect(explainRetrievalSave(e("budget_above_instance")).message).toBe("the words");
+    expect(explainRetrievalSave(e("provider_unsupported")).message).toBe("the words");
     expect(explainRetrievalSave(new TypeError("offline")).message).toMatch(/Can't reach/);
   });
 });
