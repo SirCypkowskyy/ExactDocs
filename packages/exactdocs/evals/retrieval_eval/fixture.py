@@ -94,6 +94,7 @@ async def run_on_fixture(
     comparison: Comparison | None = None,
     dataset_file: Path = DATASET_FILE,
     not_judged: Mapping[RetrievalMode, str] | None = None,
+    expect_engine: str | None = None,
 ) -> SuiteReport:
     """Import every fixture version, run the dataset through each mode and apply the gates.
 
@@ -110,6 +111,8 @@ async def run_on_fixture(
         dataset_file: The dataset to run: the repository's by default; CI also runs
             ``develop``'s when the dataset changed.
         not_judged: Modes whose eligibility as a default the run cannot tell, and why.
+        expect_engine: The full-text search engine that must answer (CI: ``pg_search`` on
+            ParadeDB); another one fails the suite, so a silent fallback cannot pass.
 
     Returns:
         The judged report.
@@ -121,6 +124,10 @@ async def run_on_fixture(
     container = build(data_dir)
     async with container.running(jobs=False):
         await import_fixture(container, docs_repo)
+        engine = (await container.retrieval.get_search_index_state()).engine
+        if expect_engine is not None and engine != expect_engine:
+            problem = f"the search engine was {engine}, not the expected {expect_engine}"
+            comparison = dataclasses.replace(comparison, problems=(*comparison.problems, problem))
         if ModelRole.EMBEDDING in local_roles or allow_providers:
             await embed_fixture(container)  # as the embed jobs would; a no-op without a model
         outcomes = await run_modes(
@@ -140,6 +147,7 @@ async def run_on_fixture(
         comparison,
         fingerprint=fingerprint(dataset),
         not_judged=not_judged,
+        search_engine=engine,
     )
 
 

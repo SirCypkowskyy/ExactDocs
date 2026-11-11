@@ -64,6 +64,7 @@ async def test_health_reports_the_search_index_format(client: httpx.AsyncClient)
     body = (await client.get("/api/health")).json()
 
     assert (body["search_index_format"], body["reindex_required"]) == (FORMAT, False)
+    assert body["search_engine"] == "fts5"
 
 
 async def test_health_stays_up_without_a_recorded_index_format(

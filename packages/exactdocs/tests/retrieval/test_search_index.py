@@ -23,6 +23,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryLibraryModes,
     InMemorySearchIndex,
 )
+from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex, _statements
@@ -146,13 +147,27 @@ class World:
         )
 
 
+async def _sql_index(
+    backend: str, container: Container
+) -> SqliteSearchIndex | PostgresSearchIndex | PgSearchIndex:
+    """The search adapter of a database backend, on the running container's database."""
+    if backend == "sqlite":
+        return SqliteSearchIndex(engine=container.engine)
+    table = PostgresSearchIndex(engine=container.engine)
+    if backend != "pg_search":
+        return table
+    index = PgSearchIndex(engine=container.engine, table=table)
+    assert await index.prepare(create=True) is None
+    return index
+
+
 @pytest.fixture(params=["memory", *SEARCH_BACKENDS])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     clock = Clock()
 
     def build(
         chunks: ChunkRepository,
-        search: InMemorySearchIndex | SqliteSearchIndex | PostgresSearchIndex,
+        search: InMemorySearchIndex | SqliteSearchIndex | PostgresSearchIndex | PgSearchIndex,
     ) -> RetrievalModule:
         return RetrievalModule.build(
             defaults=InMemoryDefaultVersions(),
@@ -186,16 +201,12 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             build(memory, memory_index), memory_index, clock, entries, forget, "memory", age
         )
         return
-    if request.param.startswith("postgres"):
+    postgres = request.param != "sqlite"
+    if postgres:
         request.getfixturevalue("on_" + request.param)
     container = Container.build(Settings())
     async with container.running(jobs=False):
-        postgres = request.param.startswith("postgres")
-        index: SqliteSearchIndex | PostgresSearchIndex = (
-            PostgresSearchIndex(engine=container.engine)
-            if postgres
-            else SqliteSearchIndex(engine=container.engine)
-        )
+        index = await _sql_index(request.param, container)
 
         async def count() -> int:
             async with container.engine.connect() as connection:

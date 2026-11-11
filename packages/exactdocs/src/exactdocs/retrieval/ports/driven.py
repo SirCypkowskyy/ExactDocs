@@ -227,7 +227,7 @@ class ChunkRepository(Protocol):
 
 
 class SearchIndex(Protocol):
-    """Full-text (BM25) search over stored chunk sets; SQLite FTS5 now, ParadeDB later.
+    """Full-text (BM25) search over stored chunk sets; SQLite FTS5, ParadeDB, PostgreSQL.
 
     Every engine behaves the same: see ``tests/retrieval/test_search_index.py``. The index holds
     one entry per chunk of a chunk set, so a set shared by several manifests is indexed once.

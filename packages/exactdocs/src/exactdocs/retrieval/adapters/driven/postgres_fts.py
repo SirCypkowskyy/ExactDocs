@@ -4,8 +4,9 @@
 chunk, keyed by `retrieval_chunks.id` with a cascading foreign key, and the same four columns as
 FTS5: the section's own heading, its ancestors, its text and `identifier_tokens` of them. PostgreSQL
 computes `document` from them (the `simple` configuration, labels A to D). It is not BM25: ranking
-follows the same column weights but may order close matches differently from SQLite. ParadeDB's
-`pg_search` (BM25 on PostgreSQL) is a later adapter of the same port.
+follows the same column weights but may order close matches differently from SQLite. Where the
+database has ParadeDB's `pg_search`, its BM25 (`pg_search.py`) answers over these same rows, and
+this adapter still writes and rebuilds them (bootstrap chooses the engine at start).
 """
 
 import json
@@ -36,6 +37,7 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ManifestHit,
     RebuiltIndex,
+    SearchEngine,
     SearchHit,
     SearchIndexState,
     TagFilter,
@@ -136,6 +138,9 @@ class PostgresSearchIndex:
     """The PostgreSQL database."""
     rebuild_batch: int = REBUILD_BATCH
     """Chunks per transaction while ``exactdocs reindex`` fills the new index."""
+    write_settings: tuple[str, ...] = ()
+    """``SET LOCAL`` statements run before indexing a chunk set: with `pg_search` answering, its
+    ``PG_SEARCH_QUIET_SCANS``, so the anti-join over the indexed table logs no warning."""
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Index the chunks of this set that have no row yet.
@@ -144,6 +149,8 @@ class PostgresSearchIndex:
             chunk_set: A stored chunk set.
         """
         async with self._writing() as connection:
+            for statement in self.write_settings:
+                await connection.exec_driver_sql(statement)
             missing = await connection.execute(
                 _missing, {"blob": chunk_set.blob_sha, "config": chunk_set.config_hash}
             )
@@ -245,7 +252,9 @@ class PostgresSearchIndex:
         """
         async with self.engine.connect() as connection:
             stored = await connection.scalar(text("SELECT format FROM retrieval_search_format"))
-        return SearchIndexState(stored_format=stored, current_format=POSTGRES_FORMAT)
+        return SearchIndexState(
+            stored_format=stored, current_format=POSTGRES_FORMAT, engine=SearchEngine.POSTGRES_FTS
+        )
 
     async def rebuild(self) -> RebuiltIndex:
         """Build ``retrieval_search_next`` of every stored chunk, then swap it in.

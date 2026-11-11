@@ -39,3 +39,6 @@ def before_scenario(context: Context, scenario: Scenario) -> None:
     del context
     if "postgres" in scenario.effective_tags and databases.ADMIN_URL is None:
         scenario.skip("needs a PostgreSQL server: set EXACTDOCS_TEST_POSTGRES_URL")
+    # CI's ParadeDB has pg_search and sets EXACTDOCS_TEST_PG_SEARCH=1: never skipped there.
+    elif "pg_search" in scenario.effective_tags and not databases.PG_SEARCH:
+        scenario.skip("needs a PostgreSQL server with the pg_search extension")

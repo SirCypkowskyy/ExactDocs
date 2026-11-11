@@ -146,6 +146,7 @@ def _assert_unknown(body: dict[str, object]) -> None:
         None,
         None,
     )
+    assert body["search_engine"] is None
     assert body["vector_store_missing"] is None
 
 
