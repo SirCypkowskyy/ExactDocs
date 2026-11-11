@@ -36,6 +36,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogRenamedPaths,
     CatalogSearchableVersions,
     CatalogStoredArticles,
+    CatalogVersionArticles,
     CatalogVersionCopier,
     CatalogVersionPublisher,
     RetrievalChunkIndex,
@@ -113,6 +114,7 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
 from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.memory import (
@@ -138,6 +140,7 @@ from exactdocs.retrieval.constants import (
     PG_SEARCH_QUIET_SCANS,
 )
 from exactdocs.retrieval.models import (
+    AgentBounds,
     ModelRole,
     ProviderKind,
     ProviderProfile,
@@ -522,6 +525,11 @@ def _build_read_side(
         clock=clock,
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
+        explorer=PydanticAiExplorer(),
+        version_articles=CatalogVersionArticles(
+            list_articles=catalog.list_articles, get_article=catalog.get_article
+        ),
+        agent_bounds=AgentBounds(**settings.ai.agentic.model_dump()),
         hypotheses=PydanticAiHypotheticalAnswers(ledger=spend),
         hypothesis_cache=hypotheses,
         hyde_cache_key=hyde_key,

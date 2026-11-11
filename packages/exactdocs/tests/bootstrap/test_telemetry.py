@@ -11,7 +11,8 @@ import importlib
 import os
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -35,7 +36,7 @@ from exactdocs.bootstrap.constants import SDK_MODULE
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.otel_sdk import redact_query, scrub, without_prompts
-from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.bootstrap.telemetry import (
     TracedJobHandler,
     build_metrics_router,
@@ -57,6 +58,7 @@ from exactdocs.retrieval.adapters.driven.opentelemetry import OpenTelemetrySearc
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs_kernel import SystemClock
 from otlp_collector import Collector, Span, collecting, shut_telemetry_down
+from scripted_explorer import ScriptedModels, browsing, scripted_ai
 
 RUN = "EXACTDOCS_TELEMETRY_E2E"  # set in the process the end-to-end tests run in
 QUERY = "retry_policy"
@@ -127,6 +129,12 @@ PROMPTS = {
     "gen_ai.system_instructions": '[{"type":"text","content":"You are"}]',
     "gen_ai.tool.call.arguments": '{"query": "secret"}',
     "gen_ai.tool.call.result": '{"chunks": []}',
+    # pydantic-ai's older names, its agent run's history and output, and any other messages
+    "tool_arguments": '{"query": "secret"}',
+    "tool_response": '{"chunks": []}',
+    "pydantic_ai.all_messages": '[{"role":"user","parts":[{"content":"secret"}]}]',
+    "final_result": '{"picks": []}',
+    "gen_ai.choice.messages": '[{"content":"secret"}]',
 }
 
 
@@ -749,6 +757,151 @@ async def test_prometheus_is_a_reader_beside_the_otlp_export(
     assert QUERY not in text
 
 
+# ----------------------------------------------------------------- the agentic mode, own process
+
+
+def agentic_container() -> Container:
+    """The container with the scripted agent as the ``llm`` role (nothing leaves the process).
+
+    Returns:
+        The container; the rest of its settings come from the environment.
+    """
+    ai = AiSettings.model_validate(scripted_ai(mode=None))
+    return Container.build(Settings(ai=ai), model_factory=ScriptedModels(model=browsing()))
+
+
+async def agentic_search(app: FastAPI) -> None:
+    """Search the one version in the agentic mode, over REST, signed in."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        login = await client.post("/api/v1/session", json={"username": "ada", "password": HORSE})
+        assert login.status_code == 201
+        found = await client.get(
+            f"/api/v1/libraries{LIBRARY}/search", params={"q": QUERY, "ref": REF, "mode": "agentic"}
+        )
+        body = found.json()
+        assert (body["retrieval_mode"], body["fallback_reason"]) == ("agentic", None), found.text
+        assert body["results"], found.text
+
+
+@asynccontextmanager
+async def serve_agentic(container: Container) -> AsyncGenerator[FastAPI]:
+    """Run the app with an admin and one indexed version.
+
+    Args:
+        container: The agentic container.
+
+    Yields:
+        The running app.
+    """
+    async with serving(create_app(container)) as app:
+        await container.identity.create_first_admin(
+            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+        )
+        await index_one_version(container)
+        yield app
+
+
+@pytest.fixture
+async def agentic_app(collector: Collector) -> AsyncIterator[FastAPI]:
+    """The agentic app with telemetry on.
+
+    Yields:
+        The running app.
+    """
+    del collector  # telemetry is on before the container is built
+    async with serve_agentic(agentic_container()) as app:
+        yield app
+
+
+def ancestors(span: Span, by_id: dict[str, Span]) -> list[str]:
+    """Name the spans above ``span``, nearest first."""
+    names = []
+    while (parent := by_id.get(span.parent_span_id)) is not None:
+        names.append(parent.name)
+        span = parent
+    return names
+
+
+AGENT_SPANS = {
+    "retrieval.search_docs",
+    "retrieval.search_docs.rank",
+    "retrieval.search_docs.agent",
+    "invoke_agent exactdocs-explorer",
+    "execute_tool run_code",
+    "execute_tool search_docs",
+    "execute_tool article_outline",
+}
+
+
+@pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
+async def test_agent_tool_calls_are_spans_inside_run_code_without_content(
+    collector: Collector, agentic_app: FastAPI
+) -> None:
+    await agentic_search(agentic_app)
+
+    spans = collector.wait_for(lambda found: names(found) >= AGENT_SPANS)
+    by_id = {s.span_id: s for s in spans}
+    for tool in ["search_docs", "list_articles", "article_outline", "read_chunk"]:
+        calls = [s for s in spans if s.name == f"execute_tool {tool}"]
+        assert calls, tool
+        for call in calls:  # one span per call, inside run_code, inside the search's agent stage
+            above = ancestors(call, by_id)
+            assert above[0] == "execute_tool run_code", above
+            assert "invoke_agent exactdocs-explorer" in above, above
+            assert "retrieval.search_docs.agent" in above, above
+            assert above[2:5] == [
+                "retrieval.search_docs.agent",
+                "retrieval.search_docs.rank",
+                "retrieval.search_docs",
+            ], above
+    # No prompt, answer, tool argument or result: not as attributes, not anywhere in the bytes.
+    leaked = [s for s in spans if any(k.endswith(".messages") for k in s.attributes)]
+    assert not leaked, leaked
+    for key in [
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+        "gen_ai.system_instructions",
+    ]:
+        assert not [s for s in spans if key in s.attributes], key
+    received = collector.received()
+    for text in [QUERY, "Set `retry_policy`", "answers it", "await search_docs"]:
+        assert text.encode() not in received, text
+
+
+@pytest.fixture
+async def agentic_metered_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FastAPI]:
+    """The agentic app with ``EXACTDOCS_METRICS`` on and no OTLP export.
+
+    Yields:
+        The running app.
+    """
+    monkeypatch.setenv("EXACTDOCS_METRICS", "true")
+    monkeypatch.delenv("EXACTDOCS_TELEMETRY", raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://203.0.113.9:4318")
+    async with serve_agentic(agentic_container()) as app:
+        yield app
+
+
+@pytest.mark.skipif(not os.environ.get(RUN), reason="runs in its own process")
+async def test_an_agentic_search_shows_its_token_usage_on_metrics_without_its_text(
+    agentic_metered_app: FastAPI,
+) -> None:
+    await agentic_search(agentic_metered_app)
+
+    text = (await scrape(agentic_metered_app)).text
+
+    tokens = "gen_ai_client_token_usage_sum"  # recorded by pydantic-ai for each model request
+    assert sampled(text, tokens, gen_ai_token_type="input") > 0, text
+    assert sampled(text, tokens, gen_ai_token_type="output") > 0, text
+    assert sampled(text, "gen_ai_client_token_usage_count", gen_ai_operation_name="chat") >= 2
+    usage = [line for line in text.splitlines() if line.startswith("gen_ai_client_token_usage")]
+    for secret in [QUERY, LIBRARY, "payments", "retries", '"ada"', "answers it"]:
+        assert not [line for line in usage if secret in line], secret
+    assert QUERY not in text
+
+
 @pytest.mark.skipif(bool(os.environ.get(RUN)), reason="this is the run itself")
 @pytest.mark.parametrize(
     "test",
@@ -757,6 +910,8 @@ async def test_prometheus_is_a_reader_beside_the_otlp_export(
         "test_the_query_text_is_kept_only_when_the_operator_opted_in",
         "test_prometheus_scrapes_request_search_and_llm_metrics_without_query_text",
         "test_prometheus_is_a_reader_beside_the_otlp_export",
+        "test_agent_tool_calls_are_spans_inside_run_code_without_content",
+        "test_an_agentic_search_shows_its_token_usage_on_metrics_without_its_text",
     ],
 )
 def test_telemetry_end_to_end_in_its_own_process(test: str) -> None:

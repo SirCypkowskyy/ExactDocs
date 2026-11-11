@@ -48,10 +48,12 @@ from retrieval_eval.suite import (
     run_modes,
     with_evaluators,
 )
+from scripted_explorer import ScriptedModels, browsing, scripted_ai
 
 BM25 = next(m for m in MODES if m.mode is RetrievalMode.BM25)
 HYBRID = next(m for m in MODES if m.mode is RetrievalMode.HYBRID)
 HYBRID_HYDE = next(m for m in MODES if m.mode is RetrievalMode.HYBRID_HYDE)
+AGENTIC = next(m for m in MODES if m.mode is RetrievalMode.AGENTIC)
 
 
 def _expected_queries() -> list[tuple[dict[str, Any], str, dict[str, Any] | None]]:
@@ -1062,6 +1064,51 @@ async def test_hybrid_hyde_runs_through_the_suite_on_a_stand_in_llm(
     assert hyde.metrics.tokens_per_question > 0
     assert hyde.metrics.usd_per_question > 0
     assert (bm25.metrics.tokens_per_question, bm25.metrics.usd_per_question) == (0, 0)
+
+
+# ---------------------------------------------------------------- agentic on a scripted model
+
+
+def scripted_agentic_container(data_dir: Path) -> Container:
+    """The app with the ``llm`` role on a scripted pydantic-ai ``FunctionModel`` (no provider).
+
+    Args:
+        data_dir: The data directory.
+
+    Returns:
+        The container: ``agentic`` runs its real pipeline, Code Mode and limits.
+    """
+    ai = AiSettings.model_validate(scripted_ai(mode=None))
+    return Container.build(
+        Settings(data_dir=data_dir, ai=ai), model_factory=ScriptedModels(model=browsing())
+    )
+
+
+async def test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    report = await run_on_fixture(
+        docs_repo,
+        tmp_path / "data",
+        build=scripted_agentic_container,
+        modes=[BM25, AGENTIC],
+        local_roles=frozenset({ModelRole.LLM}),  # the scripted model runs in this process
+        not_judged={RetrievalMode.AGENTIC: "scripted model"},
+    )
+
+    assert report.passed, report.problems
+    bm25, agentic = report.modes
+    assert (agentic.mode, agentic.status, agentic.fallbacks) == (RetrievalMode.AGENTIC, "ran", 0)
+    assert agentic.metrics is not None
+    assert bm25.metrics is not None
+    # Every question ran the agent, and none of its answers left the version asked for.
+    assert agentic.metrics.wrong_version_rate == 0
+    assert agentic.wrong_version_cases == []
+    assert agentic.errors == []
+    assert agentic.metrics.recall_at_10 > 0
+    # Its spend went through the harness SpendLimits into the ledger the suite reads.
+    assert agentic.metrics.tokens_per_question > 0
+    assert (agentic.eligible_as_default, agentic.not_judged) == (None, "scripted model")
 
 
 def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Path) -> None:
