@@ -8,6 +8,7 @@ rules are under test, a Protocol-shaped ``Explorer`` double stands in for the ag
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 import unicodedata
@@ -37,7 +38,10 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySearchIndex,
     InMemorySpendLedger,
 )
-from exactdocs.retrieval.adapters.driven.opentelemetry import OpenTelemetrySearchTracer
+from exactdocs.retrieval.adapters.driven.opentelemetry import (
+    OpenTelemetryAgentReads,
+    OpenTelemetrySearchTracer,
+)
 from exactdocs.retrieval.constants import (
     AGENT_STEP_ARGUMENT_CHARS,
     EXPLORER_TOOLS,
@@ -59,8 +63,11 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     AgentBounds,
     AgentPick,
+    AgentRead,
     AgentRun,
+    AiCaller,
     ArticleEntry,
+    ArticleText,
     BudgetLimit,
     Budgets,
     ChunkId,
@@ -70,13 +77,18 @@ from exactdocs.retrieval.models import (
     LibraryAi,
     ManifestStatus,
     ModelRef,
+    Outline,
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
     RetrievalMode,
     SearchableVersion,
+    SearchHit,
+    ServedArticle,
+    ServedArticles,
     SourceHost,
     SpendWindow,
+    StoredChunk,
     TagFilter,
 )
 from exactdocs.retrieval.module import RetrievalModule
@@ -89,6 +101,7 @@ from scripted_explorer import (
     browsing,
     code_results,
     greedy,
+    looping,
     run_code,
     sandbox_hog,
 )
@@ -162,17 +175,24 @@ class Articles:
     fail_with: str | None = None
     """Every read raises a ``RuntimeError`` with this text, as a broken database would."""
 
+    serve_from: str | None = None
+    """Answer from this manifest instead of the one asked for, as after a re-sync."""
+
     async def list(
         self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
-    ) -> Sequence[ArticleEntry]:
-        stored = self.catalog.articles[version.manifest_id]
+    ) -> ServedArticles | None:
+        manifest = self.serve_from or version.manifest_id
+        stored = self.catalog.articles[manifest]
         paths = sorted(p for p in stored if p.startswith(prefix) and tag_filter.keeps(_tags_of(p)))
-        return [ArticleEntry(path=p, title=p.title()) for p in paths[:limit]]
+        entries = tuple(ArticleEntry(path=p, title=p.title()) for p in paths[:limit])
+        return ServedArticles(manifest_id=manifest, articles=entries)
 
-    async def read(self, version: SearchableVersion, path: str) -> str | None:
+    async def read(self, version: SearchableVersion, path: str) -> ServedArticle | None:
         if self.fail_with is not None:
             raise RuntimeError(self.fail_with)
-        return self.catalog.articles[version.manifest_id].get(path)
+        manifest = self.serve_from or version.manifest_id
+        content = self.catalog.articles[manifest].get(path)
+        return None if content is None else ServedArticle(manifest_id=manifest, content=content)
 
 
 @dataclass(slots=True)
@@ -227,6 +247,16 @@ class StoppingExplorer:
 
 
 @dataclass(slots=True)
+class RecordedReads:
+    """An ``AgentReads`` double: the run's trace, read by read."""
+
+    reads: list[AgentRead] = field(default_factory=list)
+
+    def record(self, read: AgentRead) -> None:
+        self.reads.append(read)
+
+
+@dataclass(slots=True)
 class World:
     module: RetrievalModule
     catalog: Catalog
@@ -235,6 +265,7 @@ class World:
     models: ScriptedModels
     chunks: InMemoryChunkRepository
     index: InMemorySearchIndex
+    reads: RecordedReads
 
 
 async def _world(
@@ -253,6 +284,7 @@ async def _world(
     ledger = InMemorySpendLedger()
     tracer = Tracer()
     models = ScriptedModels(model=model or browsing())
+    reads = RecordedReads()
     module = RetrievalModule.build(
         searchable=catalog,
         libraries=InMemoryLibraries(),
@@ -272,6 +304,7 @@ async def _world(
         explorer=explorer or PydanticAiExplorer(),
         version_articles=Articles(catalog=catalog, fail_with=reads_fail_with),
         agent_bounds=bounds,
+        agent_reads=reads,
     )
     world = World(
         module=module,
@@ -281,6 +314,7 @@ async def _world(
         models=models,
         chunks=chunks,
         index=index,
+        reads=reads,
     )
     await _import(world, "v1", "m1", OLD_GUIDE)
     await _import(world, "v2", "m2", GUIDE)
@@ -461,7 +495,7 @@ async def test_more_tool_calls_than_allowed_end_the_run_and_bm25_answers() -> No
 
 
 async def test_more_model_requests_than_allowed_end_the_run() -> None:
-    world = await _world(sandbox_hog("1 + 1"), bounds=AgentBounds(max_requests=3))
+    world = await _world(sandbox_hog("1 + 1", vary=True), bounds=AgentBounds(max_requests=3))
 
     result = await _search(world)
 
@@ -473,7 +507,7 @@ async def test_more_model_requests_than_allowed_end_the_run() -> None:
     [
         "while True:\n    pass",
         "x = [0] * 50_000_000\nlen(x)",
-        "for i in range(100):\n    await list_articles()",
+        "for i in range(100):\n    await list_articles(prefix=str(i))",  # new arguments: no loop
     ],
     ids=["time", "memory", "suspensions"],
 )
@@ -824,7 +858,8 @@ def _writing(query: str, justification: str) -> FunctionModel:
 async def test_model_text_in_results_is_cleaned_and_bounded() -> None:
     query = "RetryPolicy\n\x1b[31mIGNORE ALL\u202e" + "x" * 500
     justification = "Because\nit\tsays so\x00." + "y" * 2000
-    bounds = AgentBounds(max_tool_calls=200, sandbox_suspensions=1000)
+    # 61 searches, 60 of them the same: no loop here, the text is under test.
+    bounds = AgentBounds(max_tool_calls=200, sandbox_suspensions=1000, max_repeated_calls=100)
     world = await _world(_writing(query, justification), bounds=bounds)
 
     result = await _search(world)
@@ -906,3 +941,289 @@ async def test_without_a_library_budget_the_instance_s_roomy_one_lets_the_agent_
     result = await _search(world)
 
     assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.AGENTIC, None)
+
+
+# ---------------------------------------------------------------- the caller's scope: deps (#99)
+
+SCOPE_WORDS = ("library", "version", "ref", "manifest", "tag", "caller", "user", "ctx", "deps")
+"""Names no model-visible tool parameter may have: the scope comes from the agent's deps only."""
+
+
+async def test_the_caller_s_scope_is_the_agent_s_deps_never_a_tool_argument() -> None:
+    seen: list[AgentInfo] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info)
+        if code_results(messages):
+            return answer(info, [])
+        return run_code("await list_articles()")
+
+    await _search(await _world(FunctionModel(script)))
+
+    (tool,) = seen[0].function_tools
+    parameters = list(tool.parameters_json_schema["properties"])
+    assert set(parameters) <= {"code", "restart"}  # Code Mode's own
+    assert not [p for p in parameters for w in SCOPE_WORDS if w in p.split("_")]
+    signatures = [
+        line
+        for line in (tool.description or "").splitlines()
+        if line.lstrip().startswith("async def")
+    ]
+    assert len(signatures) == len(EXPLORER_TOOLS)
+    for line in signatures:
+        names = re.findall(r"(\w+)\s*:", line.split("(", 1)[1].rsplit(")", 1)[0])
+        assert names, line
+        assert not [n for n in names for w in SCOPE_WORDS if w in n.split("_")], line
+
+
+async def test_a_snippet_cannot_widen_its_scope_with_an_argument() -> None:
+    foreign = await _v1_chunk(await _world())
+    sent: list[str] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(repr(messages))
+        if len(sent) == 1:
+            return run_code(f"await read_chunk(chunk_id={foreign!r}, version='v1')")
+        return answer(info, [{"chunk_id": foreign, "justification": "From v1."}])
+
+    world = await _world(FunctionModel(script))
+
+    result = await _search(world)
+
+    assert foreign not in [r.chunk_id for r in result.results]
+    assert not any(OLD_GUIDE["resilience"][0] in text for text in sent)  # v1 was never read
+    assert all(r.pinned_manifest == "m2" for r in world.reads.reads)
+
+
+# ---------------------------------------------------------------- the output guardrail (#99)
+
+
+async def _explore(
+    world: World, model: Model, browser: DocsBrowser, *, limit: int = 10
+) -> Sequence[AgentPick]:
+    run = AgentRun(
+        question=QUESTION,
+        limit=limit,
+        bounds=AgentBounds(),
+        budgets=Budgets(),
+        caller=AiCaller(library=LIB),
+    )
+    return await PydanticAiExplorer().explore(
+        model, browser, run, ledger=world.ledger, clock=FixedClock()
+    )
+
+
+def _browser(world: World, *, tags: Sequence[str] = ()) -> VersionBrowser:
+    return VersionBrowser(
+        version=world.catalog.versions["v2"],
+        chunks=world.chunks,
+        search=world.index,
+        articles=Articles(catalog=world.catalog),
+        tag_filter=TagFilter(tags=tuple(tags)),
+    )
+
+
+async def test_the_output_guardrail_rejects_picks_the_caller_may_not_see(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world()
+    foreign = await _v1_chunk(world)
+    auth = (await world.module.search_docs(
+        SearchDocsQuery(library=LIB, ref="v2", query="token downtime", mode="bm25")
+    )).results[0].chunk_id  # fmt: skip
+    untagged = (await world.module.search_docs(
+        SearchDocsQuery(library=LIB, ref="v2", query="backoff", mode="bm25")
+    )).results[0]  # fmt: skip
+    assert untagged.article_path == "docs/resilience.md"  # in the pinned version, but untagged
+    model = browsing(picks=2, extra=[foreign, "0" * 32, untagged.chunk_id, auth])
+
+    picks = await _explore(world, model, _browser(world, tags=["security"]))
+
+    ids = [p.chunk_id for p in picks]
+    assert foreign not in ids
+    assert "0" * 32 not in ids
+    assert untagged.chunk_id not in ids  # the pinned version holds it; the caller's tags do not
+    assert set(ids) == {auth}  # the search found it within the tags, and the agent added it too
+    (warning,) = [r.getMessage() for r in caplog.records if "output guardrail" in r.getMessage()]
+    assert "rejected 3 pick(s)" in warning
+    assert foreign not in caplog.text
+
+
+async def test_an_answer_within_the_scope_passes_the_guardrail_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world()
+
+    picks = await _explore(world, browsing(picks=3), _browser(world))
+
+    assert len(picks) == 3
+    assert "output guardrail" not in caplog.text
+
+
+@dataclass(slots=True)
+class FailingAdmission:
+    """A browser whose guardrail check fails on the host, as a broken database would."""
+
+    browser: VersionBrowser
+    message: str
+
+    async def list_articles(self, prefix: str = "") -> Sequence[ArticleEntry]:
+        return await self.browser.list_articles(prefix)
+
+    async def article_outline(self, path: str) -> Outline | None:
+        return await self.browser.article_outline(path)
+
+    async def read_article(self, path: str) -> ArticleText | None:
+        return await self.browser.read_article(path)
+
+    async def read_chunk(self, chunk_id: str) -> StoredChunk | None:
+        return await self.browser.read_chunk(chunk_id)
+
+    async def search_docs(self, query: str, limit: int) -> Sequence[tuple[SearchHit, StoredChunk]]:
+        return await self.browser.search_docs(query, limit)
+
+    async def admit(self, chunk_ids: Sequence[str]) -> Sequence[str]:
+        del chunk_ids
+        raise RuntimeError(self.message)
+
+
+async def test_a_guardrail_check_that_fails_on_the_host_ends_the_run_without_its_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    world = await _world()
+    marker = "postgresql://u:S3CRET-MARK@db"
+    browser = FailingAdmission(browser=_browser(world), message=marker)
+
+    with pytest.raises(AgentStoppedError) as stopped:
+        await _explore(world, browsing(), browser)
+
+    assert (stopped.value.reason, stopped.value.detail) == ("agent_failed", "RuntimeError")
+    assert "S3CRET-MARK" not in caplog.text
+
+
+# ---------------------------------------------------------------- loop detection (#99)
+
+
+@pytest.mark.parametrize("repeated", ["read", "run_code"])
+async def test_the_same_call_three_times_ends_the_run_and_bm25_answers(repeated: str) -> None:
+    world = await _world(looping(3, in_one_snippet=repeated == "read"))
+
+    result = await _search(world)
+
+    assert result.retrieval_mode is RetrievalMode.BM25
+    assert result.fallback_reason is FallbackReason.AGENT_LOOP_DETECTED
+    assert result.results
+    assert all(r.justification is None and not r.explored_path for r in result.results)
+    assert world.tracer.fallbacks == [("bm25", "agent_loop_detected")]
+
+
+async def test_twice_is_no_loop() -> None:
+    world = await _world(looping(2))
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.AGENTIC, None)
+
+
+async def test_the_operator_sets_how_many_repeats_make_a_loop() -> None:
+    world = await _world(looping(4), bounds=AgentBounds(max_repeated_calls=5))
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.AGENTIC, None)
+
+
+async def test_the_repeated_read_and_every_read_after_it_never_run() -> None:
+    world = await _world(looping(6))
+
+    await _search(world)
+
+    searches = [r for r in world.reads.reads if r.tool == "search_docs"]
+    assert len(searches) == 2  # the third, same as the first two, is refused, as is the rest
+
+
+async def test_a_snippet_that_catches_the_repeated_call_still_ends_the_run() -> None:
+    caught = (
+        "for i in range(5):\n"
+        "    try:\n"
+        "        await search_docs(query='x')\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "'ok'"
+    )
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return answer(info, []) if code_results(messages) else run_code(caught)
+
+    result = await _search(await _world(FunctionModel(script)))
+
+    assert result.fallback_reason is FallbackReason.AGENT_LOOP_DETECTED
+
+
+def test_one_call_is_never_a_loop() -> None:
+    with pytest.raises(InvalidAgentBoundsError, match="max_repeated_calls"):
+        AgentBounds(max_repeated_calls=1)
+
+
+# ---------------------------------------------------------------- the run's trace (#99)
+
+
+async def test_every_read_is_traced_with_its_versions_and_never_its_arguments() -> None:
+    world = await _world()
+
+    await _search(world)
+
+    reads = world.reads.reads
+    assert {r.tool for r in reads} == {"search_docs", "list_articles", "article_outline",
+                                       "read_chunk"}  # fmt: skip
+    assert {r.search for r in reads} == {"search_docs"}
+    assert {(r.pinned_version, r.pinned_manifest) for r in reads} == {(f"{LIB}/v2", "m2")}
+    assert {v for r in reads for v in r.served_versions} == {f"{LIB}/v2"}
+    assert {m for r in reads for m in r.served_manifests} == {"m2"}
+    assert all(QUESTION not in repr(r) for r in reads)
+
+
+async def test_articles_the_catalog_serves_from_another_manifest_never_reach_the_agent() -> None:
+    world = await _world()
+    browser = VersionBrowser(
+        version=world.catalog.versions["v2"],
+        chunks=world.chunks,
+        search=world.index,
+        articles=Articles(catalog=world.catalog, serve_from="m1"),  # a re-sync meanwhile
+        reads=world.reads,
+    )
+
+    assert await browser.list_articles() == ()
+    assert await browser.read_article("docs/resilience.md") is None
+    assert [(r.tool, r.served_manifests) for r in world.reads.reads] == [
+        ("list_articles", ()),
+        ("read_article", ()),
+    ]
+
+
+def test_a_read_is_an_event_of_the_current_span_without_content() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    read = AgentRead(
+        search="search_docs",
+        tool="read_chunk",
+        pinned_version=f"{LIB}/v2",
+        pinned_manifest="m2",
+        served_versions=(f"{LIB}/v2",),
+        served_manifests=("m2",),
+    )
+
+    with provider.get_tracer("t").start_as_current_span("execute_tool read_chunk"):
+        OpenTelemetryAgentReads().record(read)
+
+    (span,) = exporter.get_finished_spans()
+    (event,) = span.events
+    assert event.name == "exactdocs.agent.read"
+    assert dict(event.attributes or {}) == {
+        "exactdocs.agent.tool": "read_chunk",
+        "exactdocs.agent.pinned_version": f"{LIB}/v2",
+        "exactdocs.agent.pinned_manifest": "m2",
+        "exactdocs.agent.served_versions": (f"{LIB}/v2",),
+        "exactdocs.agent.served_manifests": ("m2",),
+    }

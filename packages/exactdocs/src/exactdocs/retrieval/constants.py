@@ -1078,6 +1078,15 @@ SANDBOX_NOT_BELOW_TIMEOUT: Final[str] = "sandbox_seconds must be less than timeo
 """Why ``AgentBounds`` refuses a snippet time as long as the run's whole time."""
 MAX_AGENT_PICKS: Final[int] = 50
 """The most picks the agent's answer may hold, whatever the limit asked."""
+DEFAULT_AGENT_REPEATED_CALLS: Final[int] = 3
+"""The agent makes the same call (tool and arguments) this many times in a run: it is looping,
+and the run ends (``agent_loop_detected``, #99)."""
+MIN_AGENT_REPEATED_CALLS: Final[int] = 2
+"""The lowest ``max_repeated_calls``: one call is never a loop."""
+MAX_AGENT_REPEATED_CALLS: Final[int] = 50
+"""The highest ``max_repeated_calls`` an operator may set."""
+REPEATED_CALLS_TOO_LOW: Final[str] = "max_repeated_calls must be at least 2"
+"""Why ``AgentBounds`` refuses a loop threshold that would end a run at its first call."""
 
 # ---------------------------------------------------------------- adapters/driven/ai_explorer
 EXPLORER_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_explorer_sdk"
@@ -1104,6 +1113,22 @@ RUN_CODE: Final[str] = "run_code"
 """Code Mode's one model-visible tool."""
 READ_FAILED: Final[str] = "the documentation could not be read"
 """What the sandbox sees when a read fails on the host (never the host's error); the run ends."""
+REPEATED_CALL: Final[str] = "the same call was made again with the same arguments: the run ends"
+"""What the sandbox sees when a read call repeats one made before as often as a loop takes; the
+run then ends (``agent_loop_detected``)."""
+AGENT_READ_EVENT: Final[str] = "exactdocs.agent.read"
+"""The span event recording one read of the agentic explorer: the tool, the version it was bound
+to and the versions of what it served (never its arguments or the text read)."""
+AGENT_TOOL_ATTRIBUTE: Final[str] = "exactdocs.agent.tool"
+"""The read function an ``exactdocs.agent.read`` event records."""
+AGENT_PINNED_VERSION_ATTRIBUTE: Final[str] = "exactdocs.agent.pinned_version"
+"""``<library>/<ref>`` the read was bound to."""
+AGENT_PINNED_MANIFEST_ATTRIBUTE: Final[str] = "exactdocs.agent.pinned_manifest"
+"""The manifest the read was bound to."""
+AGENT_SERVED_VERSIONS_ATTRIBUTE: Final[str] = "exactdocs.agent.served_versions"
+"""``<library>/<ref>`` of each version what the read served came from."""
+AGENT_SERVED_MANIFESTS_ATTRIBUTE: Final[str] = "exactdocs.agent.served_manifests"
+"""Each manifest what the read served came from."""
 SANDBOX_LIMIT_MARKERS: Final[tuple[str, ...]] = (
     "time limit exceeded",
     "memory limit exceeded",

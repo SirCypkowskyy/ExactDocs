@@ -42,6 +42,21 @@ class Hit(_Model):
     """The commit the result was read from, when the mode says."""
 
 
+class TracedRead(_Model):
+    """One read an agentic run made, from its trace: where it was bound and what it served."""
+
+    tool: str
+    """The read function."""
+    pinned_version: str
+    """``<library>/<ref>`` the read was bound to."""
+    pinned_manifest: str
+    """The manifest it was bound to."""
+    served_versions: list[str] = []
+    """``<library>/<ref>`` of what it returned to the agent."""
+    served_manifests: list[str] = []
+    """The manifests of what it returned."""
+
+
 class Answer(_Model):
     """What a mode returned for a question (the expected output: the ideal answer)."""
 
@@ -62,6 +77,10 @@ class Answer(_Model):
     """What those tokens cost, in USD."""
     search_ms: float | None = None
     """How long the search took, when the retriever measured it (else the whole task counts)."""
+    library: str | None = None
+    """The library asked, when the retriever records the run's trace."""
+    reads: list[TracedRead] | None = None
+    """The agentic run's trace: every read it made; ``None`` when no trace was recorded."""
 
 
 class CaseInfo(_Model):

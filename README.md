@@ -409,7 +409,7 @@ and instance modes are: their scores must compare across libraries.
 | embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
 | embedding model + LLM (+ reranker) | HyDE (`hybrid_hyde`): the LLM writes a short hypothetical answer, whose embedding searches the vector half while BM25 keeps the query; cached per query, version and model; within the budgets, else hybrid with `fallback_reason` `llm_budget_reached`, `llm_rate_limited` or `llm_unavailable` (an LLM error or timeout) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid_hyde`; a default only once the eval suite shows it beats BM25) |
-| LLM + agentic mode | a pydantic-ai agent browses the version's tree (outlines, articles, chunks, BM25) in a sandbox and returns the chunks that answer the question, each with a `justification` and its `explored_path`; past a limit or a budget it answers with the best non-LLM mode (`fallback_reason: agent_limit_reached`, `llm_budget_reached`, `agent_failed`) | **available** (opt-in: `mode=agentic`, never a default; see [Agentic search](#agentic-search)) |
+| LLM + agentic mode | a pydantic-ai agent browses the version's tree (outlines, articles, chunks, BM25) in a sandbox and returns the chunks that answer the question, each with a `justification` and its `explored_path`; past a limit, a budget or a loop it answers with the best non-LLM mode (`fallback_reason: agent_limit_reached`, `llm_budget_reached`, `agent_loop_detected`, `agent_failed`) | **available** (opt-in: `mode=agentic`, never a default; see [Agentic search](#agentic-search)) |
 | LLM + agentic mode, repeated questions | similar past questions are served from a cache | planned |
 
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
@@ -705,10 +705,13 @@ is never chosen by default) hands the question to a pydantic-ai agent on that mo
 works in [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/): its only tool is
 `run_code`, a sandbox ([Monty](https://github.com/pydantic/monty), never IPython) in which it can
 call `list_articles`, `article_outline`, `read_article`, `read_chunk` and `search_docs` (BM25),
-each with a typed result, all bound to the one version searched: no argument names a library or
-a version. It answers with chunk IDs and one sentence each; every ID is then checked against the
-version's manifest and the call's tags, so a result of another version (or a made-up ID) is
-dropped, never returned. The call's tags apply to every read too, so the agent never sees an
+each with a typed result, all bound to what the caller may see: the one version searched and the
+call's tags. That scope is the agent's `deps`, never a tool argument, so no argument can name a
+library, a version or a tag. It answers with chunk IDs and one sentence each; an output guardrail
+(the harness `OutputGuardrail`) removes every ID that is not in the version's manifest or that
+the call's tags exclude before the answer leaves the agent, and the IDs are checked once more
+after it, so a result of another version (or a made-up ID) is dropped, never returned; only the
+number of rejected picks is logged. The call's tags apply to every read too, so the agent never sees an
 article they exclude. Each result carries its `justification` and `explored_path` (the read
 calls up to the one that reached its article, such as `search_docs(retry)`,
 `article_outline(docs/guide/resilience.md)`). Both are model output, marked so in the schema and
@@ -729,6 +732,7 @@ sandbox_seconds = 5.0        # each run_code snippet's execution time (time awai
 sandbox_memory = 67108864    # each snippet's heap, in bytes
 sandbox_suspensions = 500    # the sandbox's host calls per search
 timeout = 120.0              # seconds per search, model calls included (more than sandbox_seconds)
+max_repeated_calls = 3       # the same call (tool and arguments) this often is a loop (2 to 50)
 ```
 
 A snippet running when `timeout` passes stops at its own `sandbox_seconds`, so a search can last
@@ -736,13 +740,17 @@ up to `timeout` plus `sandbox_seconds`; `sandbox_seconds` must be less than `tim
 
 Passing any of them ends the run, and the search answers with the best mode without an LLM step
 (BM25, or hybrid when an embedding model is set) and `fallback_reason: agent_limit_reached`; a
-budget reached during the run gives `llm_budget_reached`; a model that fails or keeps answering
+budget reached during the run gives `llm_budget_reached`; an agent that makes the same call (the
+same tool with the same arguments, `run_code` or a read inside it) `max_repeated_calls` times,
+`agent_loop_detected` (the repeated read never runs; a loop whose arguments change each time
+is not detected as one, and ends at `max_tool_calls` with `agent_limit_reached`); a model that fails or keeps answering
 something unusable, `agent_failed`, as does a read that fails on the server (the database, the
 catalog): its error is never shown to the model, only a fixed text, and the run ends. Failures
 are logged by kind, never with the question or the error's text. Traces
 show the run as the `agent` stage, with one span per model request and per tool call (the read
-calls nested in `run_code`), never with prompts, answers or tool arguments; `/metrics` shows its
-tokens (`gen_ai.client.token.usage`).
+calls nested in `run_code`, each with an `exactdocs.agent.read` event naming the version it was
+bound to and the versions of what it returned), never with prompts, answers or tool arguments;
+`/metrics` shows its tokens (`gen_ai.client.token.usage`).
 
 #### Local models
 
