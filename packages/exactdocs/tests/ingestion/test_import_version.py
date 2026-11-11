@@ -48,6 +48,7 @@ from exactdocs.ingestion.models import (
     ArticleChunk,
     ChunkingConfig,
     Credential,
+    FetchedFile,
     GitRename,
     ImportedRef,
     ImportedVersion,
@@ -70,7 +71,7 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import TagLocks, import_job
-from exactdocs.ingestion.ports import GuidancePolicy, RenameSource
+from exactdocs.ingestion.ports import GuidancePolicy, RenameSource, RepositoryFiles
 from exactdocs.ingestion.use_cases import (
     ImportVersionUseCase,
     RunNextJobUseCase,
@@ -389,6 +390,7 @@ def build_world(
     earlier: Sequence[GitRename] = (),
     stored: Stored | None = None,
     guidance: GuidancePolicy | None = None,
+    reader: RepositoryFiles | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -412,6 +414,7 @@ def build_world(
         imported_tags=NoStoredTags(),
         copier=NoCopier(),
         guidance=guidance,
+        files=reader,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -1800,24 +1803,54 @@ class Policy:
         return InstructionPolicy.KEEP if self.keep else InstructionPolicy.DROP
 
 
-def _guided_world(tmp_path: Path, policy: Policy | None, **files: bytes) -> World:
+@dataclass(slots=True)
+class Files:
+    """A ``RepositoryFiles`` double: what the commit holds by path, and what was asked."""
+
+    held: Mapping[str, FetchedFile]
+    asked: list[tuple[list[str], int]] = field(default_factory=list)
+    error: Exception | None = None
+
+    async def read_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs=(),
+        credential: Credential | None = None,
+    ) -> dict[str, FetchedFile]:
+        del repository, commit_sha, refs, credential
+        self.asked.append((list(paths), max_bytes))
+        if self.error is not None:
+            raise self.error
+        return {p: self.held[p] for p in paths if p in self.held}
+
+
+def _held(**extra: FetchedFile) -> dict[str, FetchedFile]:
+    return {
+        "AGENTS.md": FetchedFile(data=ROOT_NOTES),
+        "docs/guide/CLAUDE.md": FetchedFile(data=GUIDE_NOTES),
+        "src/AGENTS.md": FetchedFile(data=b"not a folder of a selected file"),
+        **extra,
+    }
+
+
+def _guided_world(tmp_path: Path, policy: Policy | None, files: Files | None = None) -> World:
     return build_world(
         tmp_path,
         {"docs/guide/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()},
-        elsewhere={
-            "AGENTS.md": ROOT_NOTES,
-            "docs/guide/CLAUDE.md": GUIDE_NOTES,
-            "src/AGENTS.md": b"not a folder of a selected file",
-            **files,
-        },
         guidance=policy,
+        reader=files or Files(held=_held()),
     )
 
 
 async def test_the_instruction_files_are_kept_with_the_version_even_outside_the_selection(
     tmp_path: Path,
 ) -> None:
-    world = _guided_world(tmp_path, Policy(keep=True))
+    files = Files(held=_held())
+    world = _guided_world(tmp_path, Policy(keep=True), files)
 
     await world.run(make_job(), world.progress)
 
@@ -1826,13 +1859,13 @@ async def test_the_instruction_files_are_kept_with_the_version_even_outside_the_
         ("AGENTS.md", ROOT_NOTES.decode()),
         ("docs/guide/CLAUDE.md", GUIDE_NOTES.decode()),
     ]
-    # One literal-path checkout of every candidate: the root and the selected files' folders.
-    (asked, _), *_ = [e for e in world.gateway.extra if "AGENTS.md" in e[0]]
+    # Each candidate read on its own, bounded per file: the root and the selected files' folders.
+    ((asked, most),) = files.asked
     assert asked == [
         "AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md",
         "docs/guide/AGENTS.md", "docs/guide/CLAUDE.md",
     ]  # fmt: skip
-    assert "src/AGENTS.md" not in asked
+    assert most == MAX_INSTRUCTION_FILE_BYTES
     assert [a.path for a in version.articles] == ["docs/guide/auth.md", "docs/install.md"]
 
 
@@ -1840,30 +1873,56 @@ async def test_the_instruction_files_are_kept_with_the_version_even_outside_the_
 async def test_no_instruction_file_is_kept_or_fetched_with_repo_guidance_off(
     tmp_path: Path, policy: Policy | None
 ) -> None:
-    world = _guided_world(tmp_path, policy)
+    files = Files(held=_held())
+    world = _guided_world(tmp_path, policy, files)
 
     await world.run(make_job(), world.progress)
 
     (version,) = world.catalog.stored
     assert version.instructions == ()
-    assert not [e for e in world.gateway.extra if "AGENTS.md" in e[0]]
+    assert files.asked == []
 
 
-async def test_an_oversized_or_binary_instruction_file_is_left_out_with_a_problem(
+async def test_an_oversized_binary_or_linked_out_file_is_left_out_alone_with_a_problem(
     tmp_path: Path,
 ) -> None:
-    big = b"x" * (MAX_INSTRUCTION_FILE_BYTES + 1)
-    world = _guided_world(
-        tmp_path, Policy(keep=True), **{"CLAUDE.md": big, "docs/AGENTS.md": b"\0"}
+    held = _held(
+        **{
+            "CLAUDE.md": FetchedFile(problem="larger than 32768 bytes", code=ProblemCode.TOO_LARGE),
+            "docs/AGENTS.md": FetchedFile(data=b"\0"),
+            "docs/CLAUDE.md": FetchedFile(
+                problem="a link that leads nowhere usable", code=ProblemCode.NOT_A_FILE
+            ),
+        }
     )
+    world = _guided_world(tmp_path, Policy(keep=True), Files(held=held))
 
     await world.run(make_job(), world.progress)
 
     (version,) = world.catalog.stored
     assert [i.path for i in version.instructions] == ["AGENTS.md", "docs/guide/CLAUDE.md"]
     problems = {(path, code) for path, code, _ in world.progress.problems}
-    assert ("CLAUDE.md", ProblemCode.TOO_LARGE) in problems
-    assert ("docs/AGENTS.md", ProblemCode.BINARY) in problems
+    assert {
+        ("CLAUDE.md", ProblemCode.TOO_LARGE),
+        ("docs/AGENTS.md", ProblemCode.BINARY),
+        ("docs/CLAUDE.md", ProblemCode.NOT_A_FILE),
+    } <= problems
+
+
+async def test_instruction_files_that_cannot_be_read_are_a_job_problem_not_a_failure(
+    tmp_path: Path,
+) -> None:
+    files = Files(held=_held(), error=RepositoryUnreachableError("down"))
+    world = _guided_world(tmp_path, Policy(keep=True), files)
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.instructions == ()
+    assert ("", ProblemCode.INSTRUCTION_FILES) in {
+        (path, code) for path, code, _ in world.progress.problems
+    }
+    assert not ProblemCode.INSTRUCTION_FILES.is_skip
 
 
 def test_candidates_are_the_root_and_the_selected_folders_shallowest_first_and_bounded() -> None:

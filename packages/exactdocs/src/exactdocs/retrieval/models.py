@@ -41,8 +41,9 @@ from exactdocs.retrieval.constants import (
     DEFAULT_SANDBOX_SUSPENSIONS,
     DNS_LABEL,
     EMBEDDING_INPUT_FORMAT,
+    GUIDANCE_ANGLES,
     GUIDANCE_CUT,
-    GUIDANCE_TAG,
+    GUIDANCE_IGNORABLE,
     HEADER_NAME,
     HEADING_SEPARATOR,
     INSTRUCTION_FILE_NAMES,
@@ -2984,12 +2985,25 @@ def _guidance_text(text: str) -> str:
         text: The file as the repository has it.
 
     Returns:
-        The text without control or format characters (newlines and tabs stay), with the ``<``
-        of anything that could open or close a ``<context>`` block written as ``&lt;``, cut at
-        ``MAX_GUIDANCE_FILE_CHARS`` (``GUIDANCE_CUT`` then says so).
+        The text NFKC-normalized (fullwidth and small forms fold), without control, format or
+        default-ignorable characters (newlines and tabs stay), with every ``<`` / ``>`` and
+        lookalike written as ``&lt;`` / ``&gt;`` (``GUIDANCE_ANGLES``), so no part of it can
+        open or close a block; cut at ``MAX_GUIDANCE_FILE_CHARS`` (``GUIDANCE_CUT`` says so).
     """
-    clean = "".join(c for c in text if c in "\n\t" or not unicodedata.category(c).startswith("C"))
-    clean = GUIDANCE_TAG.sub("&lt;", clean)
+
+    def visible(value: str) -> str:
+        """Drop control, format and default-ignorable characters; newlines and tabs stay.
+
+        Args:
+            value: The text.
+
+        Returns:
+            What is left.
+        """
+        kept = (c for c in value if c in "\n\t" or not unicodedata.category(c).startswith("C"))
+        return GUIDANCE_IGNORABLE.sub("", "".join(kept))
+
+    clean = visible(unicodedata.normalize("NFKC", visible(text))).translate(GUIDANCE_ANGLES)
     if len(clean) <= MAX_GUIDANCE_FILE_CHARS:
         return clean
     return clean[: MAX_GUIDANCE_FILE_CHARS - len(GUIDANCE_CUT)] + GUIDANCE_CUT

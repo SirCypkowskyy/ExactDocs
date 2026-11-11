@@ -147,7 +147,9 @@ MAX_INSTRUCTION_DIRS: Final[int] = 32
 """Folders looked in for instruction files: the root, then the selected files' folders, shallowest
 first (so at most twice as many files)."""
 MAX_INSTRUCTION_FILE_BYTES: Final[int] = 32 * 2**10
-"""A bigger instruction file is left out with a problem, unread."""
+"""A bigger instruction file is left out with a problem (cut off while it downloads)."""
+INSTRUCTIONS_NOT_READ: Final[str] = "the instruction files could not be read; the version has none"
+"""The job problem when no instruction file could be read (the error's class is added)."""
 MAX_CONTEXT7_RULES: Final[int] = 20
 """Rules read from a repository's ``context7.json``."""
 MAX_CONTEXT7_RULE_CHARS: Final[int] = 500

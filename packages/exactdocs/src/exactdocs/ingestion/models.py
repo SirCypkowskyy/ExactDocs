@@ -466,11 +466,18 @@ class ProblemCode(StrEnum):
     """The marker that says more files were skipped than ``MAX_JOB_PROBLEMS``."""
     CONTEXT7 = "context7"
     """The root ``context7.json`` cannot be used and was ignored; the import went on without it."""
+    INSTRUCTION_FILES = "instruction_files"
+    """The instruction files (repo guidance) could not be read; the version has none."""
 
     @property
     def is_skip(self) -> bool:
         """Whether the file was left out of the version (as opposed to imported with a note)."""
-        return self not in {ProblemCode.FRONT_MATTER, ProblemCode.TRUNCATED, ProblemCode.CONTEXT7}
+        return self not in {
+            ProblemCode.FRONT_MATTER,
+            ProblemCode.TRUNCATED,
+            ProblemCode.CONTEXT7,
+            ProblemCode.INSTRUCTION_FILES,
+        }
 
 
 class SyncErrorCode(StrEnum):
@@ -1329,6 +1336,8 @@ class FetchedFile:
 
     data: bytes | None = None
     problem: str | None = None
+    code: ProblemCode | None = None
+    """The problem's kind, when the reader names one (``TOO_LARGE``, ``NOT_A_FILE``)."""
 
 
 def parse_context7(data: bytes) -> Context7Config:

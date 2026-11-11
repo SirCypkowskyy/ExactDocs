@@ -64,6 +64,7 @@ from exactdocs.ingestion.ports.driven import (
     RecoveryHook,
     Removals,
     RenameSource,
+    RepositoryFiles,
     RepositoryTree,
     ScheduleSwitch,
     StoredArticleSource,
@@ -470,6 +471,7 @@ def import_job(
     checkpoints: Checkpoints | None = None,
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
     guidance: GuidancePolicy | None = None,
+    files: RepositoryFiles | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
@@ -480,7 +482,8 @@ def import_job(
     ``stored`` lets an import take the files earlier imports stored instead of parsing them.
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
     chunked); without it an interrupted import starts over. ``guidance`` says which libraries
-    keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08); without it none do.
+    keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08), read with
+    ``files``; without both none do.
     """
     importer = ImportVersionUseCase(
         gateway=gateway,
@@ -498,6 +501,7 @@ def import_job(
         batch_files=batch_files,
         tag_locks=tag_locks,
         guidance=guidance,
+        files=files,
     )
     if checkpoints is not None:
         importer = replace(importer, checkpoints=checkpoints)

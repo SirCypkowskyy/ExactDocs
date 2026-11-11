@@ -47,6 +47,7 @@ from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.spend import SpendLimitExceeded
 
 from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import (
+    UsageFloor,
     guidance_capabilities,
     guidance_workspace,
 )
@@ -56,6 +57,7 @@ from exactdocs.retrieval.constants import (
     EXPLORER_GUIDANCE,
     EXPLORER_INSTRUCTIONS,
     EXPLORER_TOOLS,
+    EXPLORER_TRUSTED_GUIDANCE,
     MAX_AGENT_PICKS,
     READ_FAILED,
     RUN_CODE,
@@ -67,6 +69,7 @@ from exactdocs.retrieval.models import (
     AgentPick,
     AgentRun,
     FallbackReason,
+    GuidanceFiles,
     OutlineNode,
 )
 from exactdocs.retrieval.ports.driven import DocsBrowser, SpendLedger
@@ -426,7 +429,7 @@ class _RunEnders(AbstractCapability[Reads]):
         return result
 
 
-def _instrumented(model: object) -> Model:
+def _instrumented(model: object) -> InstrumentedModel:
     """Narrow the factory's handle to a pydantic-ai model instrumented without content.
 
     Args:
@@ -447,6 +450,21 @@ def _instrumented(model: object) -> Model:
             return model
         model = model.wrapped
     return InstrumentedModel(model, InstrumentationSettings(include_content=False))
+
+
+def _guidance_words(guidance: GuidanceFiles | None) -> str:
+    """Say in the instructions how to take the repository's notes.
+
+    Args:
+        guidance: The run's files, if any.
+
+    Returns:
+        Nothing without guidance; the untrusted-note wording, and for a trusted library also
+        the wording that introduces its root file.
+    """
+    if guidance is None:
+        return ""
+    return EXPLORER_GUIDANCE + (EXPLORER_TRUSTED_GUIDANCE if guidance.trusted else "")
 
 
 def _code_mode(bounds: AgentBounds) -> CodeMode[Reads]:
@@ -503,12 +521,15 @@ async def explore(
         tool_calls_limit=bounds.max_tool_calls,
     )
     guidance = run.guidance
+    chat = _instrumented(model)
+    if guidance:  # it streams: a stream that reports no usage is counted by its characters
+        chat = InstrumentedModel(UsageFloor(chat.wrapped), chat.instrumentation_settings)
     agent = Agent(
-        _instrumented(model),
+        chat,
         name="exactdocs-explorer",
         deps_type=Reads,
         output_type=_Answer,
-        instructions=EXPLORER_INSTRUCTIONS + (EXPLORER_GUIDANCE if guidance else ""),
+        instructions=EXPLORER_INSTRUCTIONS + _guidance_words(guidance),
         tools=read_tools(),
         capabilities=[
             _code_mode(bounds),

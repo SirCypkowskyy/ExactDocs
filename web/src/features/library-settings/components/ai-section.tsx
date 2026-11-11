@@ -296,7 +296,7 @@ function AiForm({ owner, repo, r, providers, providersError, activity, onStart }
           label="Repository guidance (AGENTS.md / CLAUDE.md)"
           value={draft.repoGuidance}
           disabled={off}
-          hint={`${REPO_GUIDANCE.find((g) => g.value === draft.repoGuidance)?.hint ?? ""} Applies to versions imported from now on.`}
+          hint={`${REPO_GUIDANCE.find((g) => g.value === draft.repoGuidance)?.hint ?? ""} Turning it on re-imports this library's versions.`}
           onChange={(e) => edit({ repoGuidance: e.target.value as RepoGuidance })}
         >
           {REPO_GUIDANCE.map((g) => (

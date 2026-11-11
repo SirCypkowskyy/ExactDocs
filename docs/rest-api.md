@@ -320,11 +320,13 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
   `repo_guidance` is what the repository's `AGENTS.md` / `CLAUDE.md` do for agentic search (RET-08):
-  `off` (the default: imports keep none), `notes` (each version imported from now on keeps the
-  root's and the selected folders' files, even outside the selected paths, and a folder's file
-  reaches the agent as an untrusted user-channel note when it opens that folder) or `trusted` (as
-  `notes`, and the root's file is also part of the agent's system instructions). 422 for any other
-  value. Re-import a version to apply a change to it.
+  `off` (the default: imports keep none), `notes` (each version keeps the root's and the selected
+  folders' files, even outside the selected paths, and a folder's file reaches the agent as an
+  untrusted user-channel note when it opens that folder) or `trusted` (as `notes`, and the root's
+  file is also part of the agent's system instructions). 422 for any other value. Turning it on
+  (`off` to `notes` / `trusted`) queues a `reprocess` job of the library (see
+  `GET /libraries/{owner}/{repo}/jobs`), which re-imports every version at its commit so it keeps
+  its files; `notes` / `trusted` / `off` otherwise apply at the next search.
   `budgets` are the library's own spend limits per UTC day and month (`daily_usd`, `monthly_usd`,
   `daily_tokens`, `monthly_tokens`; `null`: not limited by the library). Each may be at most the
   instance's: the lowest of `[ai.budgets]`'s instance and `per_library_...` ceilings of that

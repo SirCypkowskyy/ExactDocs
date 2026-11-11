@@ -33,6 +33,7 @@ from exactdocs.ingestion.constants import (
     EMBED_RETRY_SECONDS,
     IMPORT_JOB,
     IMPORT_KINDS,
+    INSTRUCTIONS_NOT_READ,
     KNOWN_BATCH,
     LIBRARY_KINDS,
     MAX_CONTROL_RATIO,
@@ -202,6 +203,7 @@ from exactdocs.ingestion.ports.driven import (
     RecoveryHook,
     Removals,
     RenameSource,
+    RepositoryFiles,
     RepositoryTree,
     ScheduleSwitch,
     StoredArticleSource,
@@ -1648,6 +1650,8 @@ class ImportVersionUseCase:
     """Shared with ``TagArticleUseCase``: see there."""
     guidance: GuidancePolicy | None = None
     """Says whether the library keeps its instruction files (RET-08); without it none are kept."""
+    files: RepositoryFiles | None = None
+    """Reads the instruction files (RET-08); without it none are kept."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -1937,9 +1941,10 @@ class ImportVersionUseCase:
         """Keep the commit's instruction files when the library's repo guidance is on (a step).
 
         The root's and every selected file's folder's ``AGENTS.md`` / ``CLAUDE.md``, also
-        outside the selected paths, fetched in a literal-path checkout of their own; the ones
-        left out are listed as problems. Reading the setting is part of the step, so a resumed
-        import keeps what its first run decided.
+        outside the selected paths, each read on its own (``RepositoryFiles``): one too big, not
+        text or not a regular file is listed as a problem and the others are kept, and a read
+        that fails altogether is listed too (``instruction_files``). Reading the setting is part
+        of the step, so a resumed import keeps what its first run decided.
 
         Args:
             job: The import.
@@ -1957,6 +1962,8 @@ class ImportVersionUseCase:
         )
         for skip in found.skipped:
             await progress.problem(skip.path, skip.code, skip.reason)
+        if found.failure is not None:
+            await progress.problem("", ProblemCode.INSTRUCTION_FILES, found.failure)
         return found.files
 
     async def _fetch_instructions(
@@ -1980,26 +1987,32 @@ class ImportVersionUseCase:
         Returns:
             The files read and the ones turned away.
         """
-        if self.guidance is None or job.commit_sha is None or job.version is None:
+        if (
+            self.guidance is None
+            or self.files is None
+            or job.commit_sha is None
+            or job.version is None
+        ):
             return _Instructions()
         if await self.guidance.instruction_policy(job.library) is not InstructionPolicy.KEEP:
             return _Instructions()
         wanted = instruction_candidates(paths)
         try:
-            async with self.gateway.fetch_files(
+            found = await self.files.read_files(
                 source.url,
                 job.commit_sha,
                 wanted,
-                max_bytes=len(wanted) * MAX_INSTRUCTION_FILE_BYTES,
+                max_bytes=MAX_INSTRUCTION_FILE_BYTES,
                 refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
                 credential=credential,
-            ) as folder:
-                return await asyncio.to_thread(_read_instructions, folder, wanted)
-        except DomainError as error:  # expected: unreachable, auth, too large, ...
+            )
+        except DomainError as error:  # expected: unreachable, auth, ...
             log.warning("no instruction files for %s: %s", job.library, type(error).__name__)
+            return _Instructions(failure=f"{INSTRUCTIONS_NOT_READ} ({type(error).__name__})")
         except Exception:  # never a reason to fail an import
             log.exception("no instruction files for %s", job.library)
-        return _Instructions()
+            return _Instructions(failure=INSTRUCTIONS_NOT_READ)
+        return _instructions_of(wanted, found)
 
     async def _outside_images(
         self,
@@ -2386,38 +2399,35 @@ class _Instructions:
     """The files read, in the order looked for."""
     skipped: tuple[Skip, ...] = ()
     """The files that exist but cannot be kept, with why."""
+    failure: str | None = None
+    """Why none could be read at all (the error's class only), listed as a job problem."""
 
 
-def _read_instructions(folder: Path, paths: Sequence[str]) -> _Instructions:
-    """Read the instruction files ``folder`` holds; a missing one is not a problem.
+def _instructions_of(paths: Sequence[str], found: Mapping[str, FetchedFile]) -> _Instructions:
+    """Decode the instruction files read; a missing one is not a problem.
 
-    A file that is not a plain file (or lies behind a symlinked folder), is bigger than
-    ``MAX_INSTRUCTION_FILE_BYTES`` or is not text is turned away. The text is decoded as an
-    article's is and kept verbatim: it is untrusted, and retrieval frames it as such.
+    One that could not be read (too big, not a regular file, a link that leads nowhere usable)
+    or is not text is turned away. The text is decoded as an article's is and kept verbatim: it
+    is untrusted, and retrieval frames it as such.
 
     Args:
-        folder: The literal-path checkout.
-        paths: The repository paths looked for.
+        paths: The repository paths looked for, in order.
+        found: What the reader returned for them.
 
     Returns:
-        What was read and what was turned away.
+        What was kept and what was turned away.
     """
     files: list[ImportedInstruction] = []
     skipped: list[Skip] = []
     for path in paths:
-        if _through_a_link(folder, path):
-            skipped.append(
-                Skip(code=ProblemCode.NOT_A_FILE, reason="not a regular file", path=path)
-            )
+        read = found.get(path)
+        if read is None or (read.data is None and read.problem is None):
             continue
-        try:
-            data = _read(folder / path, MAX_INSTRUCTION_FILE_BYTES)
-        except FileNotFoundError, NotADirectoryError:
+        if read.data is None:
+            code = read.code or ProblemCode.UNREADABLE
+            skipped.append(Skip(code=code, reason=read.problem or "unreadable", path=path))
             continue
-        except OSError:
-            skipped.append(Skip(code=ProblemCode.UNREADABLE, reason="unreadable", path=path))
-            continue
-        text = data if isinstance(data, Skip) else _decode(data)
+        text = _decode(read.data)
         if isinstance(text, Skip):
             skipped.append(replace(text, path=path))
         else:

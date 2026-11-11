@@ -9197,7 +9197,7 @@
           },
           "repo_guidance": {
             "$ref": "#/components/schemas/RepoGuidance",
-            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the\ndefault): imports keep none. `notes`: each version imported from now on keeps the root's and\nthe selected folders' files, even outside the selected paths, and a folder's file reaches\nthe agent as an untrusted user-channel note when it opens that folder. `trusted`: as `notes`,\nand the root's file is also part of the agent's system instructions; only for a repository\nwhose content you trust as much as your own instructions.",
+            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the\ndefault): imports keep none. `notes`: each version keeps the root's and the selected\nfolders' files, even outside the selected paths, and a folder's file reaches the agent as an\nuntrusted user-channel note when it opens that folder. `trusted`: as `notes`, and the root's\nfile is also part of the agent's system instructions; only for a repository whose content you\ntrust as much as your own instructions. Turning it on queues a `reprocess` of the library\n(every version re-imported at its commit, so it keeps its files); the other changes apply at\nthe next search.",
             "default": "off"
           }
         },
@@ -9335,7 +9335,7 @@
           },
           "repo_guidance": {
             "$ref": "#/components/schemas/RepoGuidance",
-            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by\nno import), `notes` (each version keeps them; a folder's file reaches the agent as a\nuser-channel note when it opens the folder) or `trusted` (also the root's file as system\ninstructions). Imports from now on keep or drop them: re-import a version to apply it.",
+            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by\nno import), `notes` (each version keeps them; a folder's file reaches the agent as a\nuser-channel note when it opens the folder) or `trusted` (also the root's file as system\ninstructions). Turning it on re-imports the library's versions (a `reprocess` job) so they\nkeep their files; the other changes apply at the next search.",
             "default": "off"
           }
         },
@@ -10287,7 +10287,8 @@
           "image_budget",
           "missing_image",
           "truncated",
-          "context7"
+          "context7",
+          "instruction_files"
         ],
         "title": "ProblemCode",
         "description": "Why a file shows up in a job's problems; stable, clients may branch on it."

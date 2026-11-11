@@ -118,11 +118,13 @@ class LibraryRetrievalIn(BaseModel):
     """
     repo_guidance: RepoGuidance = RepoGuidance.OFF
     """What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the
-    default): imports keep none. `notes`: each version imported from now on keeps the root's and
-    the selected folders' files, even outside the selected paths, and a folder's file reaches
-    the agent as an untrusted user-channel note when it opens that folder. `trusted`: as `notes`,
-    and the root's file is also part of the agent's system instructions; only for a repository
-    whose content you trust as much as your own instructions.
+    default): imports keep none. `notes`: each version keeps the root's and the selected
+    folders' files, even outside the selected paths, and a folder's file reaches the agent as an
+    untrusted user-channel note when it opens that folder. `trusted`: as `notes`, and the root's
+    file is also part of the agent's system instructions; only for a repository whose content you
+    trust as much as your own instructions. Turning it on queues a `reprocess` of the library
+    (every version re-imported at its commit, so it keeps its files); the other changes apply at
+    the next search.
     """
 
 

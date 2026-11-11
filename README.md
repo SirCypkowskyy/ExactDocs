@@ -751,18 +751,25 @@ their docs are organized in these files; a library can let the agent use them wi
 | `repo_guidance` | What imports keep | What the agent gets |
 |---|---|---|
 | `off` (default) | nothing | nothing |
-| `notes` | each version's root `AGENTS.md` / `CLAUDE.md` and those of every folder holding a selected file, also outside the selected paths (at most 32 folders, 32 KiB a file) | a folder's file, once it opens that folder (lists it, or reads an article or a chunk in it), as an untrusted **user-channel** note in a `<context-file>` block, never as system instructions |
+| `notes` | each version's root `AGENTS.md` / `CLAUDE.md` and those of every folder holding a selected file, also outside the selected paths (at most 32 folders; a file over 32 KiB, not text, or a link that does not lead in one hop to a file inside the repository is left out and listed on the job, the others are kept; a link that does is kept as its target's text) | a folder's file, once it opens that folder (lists it, or reads an article or a chunk in it), as an untrusted **user-channel** note in a `<context-file>` block, never as system instructions |
 | `trusted` | the same | as `notes`, and the root's file is also part of its **system instructions**: only for a repository you trust as much as your own instructions |
 
 The files are repository content, so untrusted: they reach the agent through harness [Repo
 Context](https://pydantic.dev/docs/ai/harness/repo-context/) over a read-only workspace that holds
-only the searched version's files (read from the database, never a checkout), with every
-`<context>` tag and control character defused and at most 16 files / 24,000 characters per search.
+only the searched version's files (read from the database, never a checkout). The text is
+NFKC-normalized, control and invisible (default-ignorable) characters are dropped, and every `<` /
+`>` and lookalike (fullwidth, small form, angle brackets) is written `&lt;` / `&gt;`, so a file can
+neither close its block nor open one; at most 16 files / 24,000 characters per search.
 They cannot add a tool, reach another library or version, or lift a limit: the read tools, the
 pinned version and `[ai.agentic]` are fixed before the run, and every pick is still checked
 against the version. Their text counts toward the run's `max_tokens` and budgets like everything
-else sent to the model, and is never logged or put on a span. A changed setting applies to the
-versions imported from then on: re-import (or re-sync) a version to keep or drop its files.
+else sent to the model (a streamed response whose server reports no usage is counted at 4
+characters per token), and is never logged or put on a span. Turning guidance on (`off` to
+`notes` or `trusted`) queues a `reprocess` of the library: every version is re-imported at its
+commit and keeps its files, without a new upstream commit. Switching between `notes` and `trusted`,
+or back to `off`, takes effect at the next search (`off`: nothing is sent; the kept files go with
+the next import). Anyone who can edit the library's AI settings can mark it `trusted` until
+library roles exist (E12-05), which will make it admin-only.
 
 #### Local models
 

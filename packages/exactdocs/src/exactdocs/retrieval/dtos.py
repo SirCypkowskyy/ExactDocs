@@ -1004,7 +1004,8 @@ class LibraryRetrievalOut(_Dto):
     """What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by
     no import), `notes` (each version keeps them; a folder's file reaches the agent as a
     user-channel note when it opens the folder) or `trusted` (also the root's file as system
-    instructions). Imports from now on keep or drop them: re-import a version to apply it."""
+    instructions). Turning it on re-imports the library's versions (a `reprocess` job) so they
+    keep their files; the other changes apply at the next search."""
 
 
 class ForgetLibraryCommand(_Dto):

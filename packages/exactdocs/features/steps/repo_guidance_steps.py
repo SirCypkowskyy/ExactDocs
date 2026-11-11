@@ -1,8 +1,9 @@
 """Steps for repo guidance (#101): the real import, catalog and agent; a scripted LLM.
 
 The library is imported with only ``docs/`` selected, so the root ``AGENTS.md`` of the fixture
-repository lies outside the selection. Repo guidance is set over REST, then the version is
-imported again so that it keeps the file; the agent's model records every request it receives.
+repository lies outside the selection. Repo guidance is set over REST, which re-imports the
+version at the same commit (a queued ``reprocess``) so that it keeps the file; the agent's model
+records every request it receives.
 """
 
 from contextlib import ExitStack
@@ -18,7 +19,7 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings
 from scripted_explorer import Request, ScriptedModels, guided, scripted_ai
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE
-from steps.import_steps import LIBRARY, articles_of, import_version
+from steps.import_steps import LIBRARY, articles_of, import_version, wait_for_job
 
 REF = "v1.4.0"
 QUESTION = "how do I install the client"
@@ -58,7 +59,10 @@ def _serve_guided(context: Context) -> None:
 
 
 def _set_guidance(context: Context, guidance: str) -> None:
-    """Set the library's repo guidance, then import the version again so it keeps (or not) it.
+    """Set the library's repo guidance; turning it on re-imports the versions by itself.
+
+    No new commit and no re-import by hand: the ``reprocess`` the setting queued must bring the
+    already-imported version its instruction files.
 
     Args:
         context: The behave context.
@@ -70,8 +74,14 @@ def _set_guidance(context: Context, guidance: str) -> None:
     )
     assert response.status_code == HTTPStatus.OK, response.text
     assert response.json()["repo_guidance"] == guidance
-    import_version(context, REF)
-    assert context.job["state"] == "succeeded", context.job
+    jobs = context.client.get(f"/api/v1/libraries{LIBRARY}/jobs").json()["jobs"]
+    reprocesses = [job for job in jobs if job["kind"] == "reprocess"]
+    if guidance == "off":
+        assert reprocesses == [], jobs
+        return
+    (queued,) = reprocesses
+    job = wait_for_job(context, queued["id"])
+    assert job["state"] == "succeeded", job
 
 
 @given("the library's repository has an AGENTS.md describing its docs layout")

@@ -28,7 +28,7 @@ from pydantic_ai.models import (
     ModelRequestParameters,
     StreamedResponse,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
@@ -282,7 +282,44 @@ def _texts(
     return found
 
 
-def guided(code: str, seen: list[Request], *, picks: int = 2, after: str | None = None) -> Billed:
+def unbilled(script: Script, *, model_name: str) -> FunctionModel:
+    """A ``FunctionModel`` that streams and reports no input tokens, as some servers do.
+
+    Args:
+        script: What each request answers, streamed part by part.
+        model_name: The model's name.
+
+    Returns:
+        The model.
+    """
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncGenerator[DeltaToolCalls]:
+        """Stream the script's tool calls, each whole.
+
+        Args:
+            messages: The run so far.
+            info: The agent's tools.
+
+        Yields:
+            Each tool call.
+        """
+        for index, part in enumerate(script(messages, info).parts):
+            if isinstance(part, ToolCallPart):
+                yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    return FunctionModel(script, stream_function=stream, model_name=model_name)
+
+
+def guided(
+    code: str,
+    seen: list[Request],
+    *,
+    picks: int = 2,
+    after: str | None = None,
+    billed: bool = True,
+) -> Model:
     """An agent that runs ``code`` (it opens folders), then answers with its search hits.
 
     It records every request (``seen``), so a test can tell which channel an instruction
@@ -294,6 +331,8 @@ def guided(code: str, seen: list[Request], *, picks: int = 2, after: str | None 
         picks: How many hits it answers with.
         after: A second snippet it runs once it has seen the first one's result (as a model
             that does what a note told it to would), before answering.
+        billed: False: its stream reports no input tokens (``unbilled``), as a server that
+            ignores ``stream_options.include_usage`` does.
 
     Returns:
         The model.
@@ -332,6 +371,8 @@ def guided(code: str, seen: list[Request], *, picks: int = 2, after: str | None 
         ]
         return answer(info, [*told, *chosen[:picks]])
 
+    if not billed:
+        return unbilled(script, model_name="scripted-unbilled")
     return Billed(FunctionModel(script, model_name="scripted-guided"))
 
 

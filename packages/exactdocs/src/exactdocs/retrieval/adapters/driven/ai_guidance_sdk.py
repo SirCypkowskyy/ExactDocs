@@ -19,13 +19,22 @@ the bounds are fixed before the run, and the workspace only answers for the file
 """
 
 import posixpath
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Never
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
+from typing import Any, Never
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    ToolCallPart,
+)
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import (
     FileEntry,
@@ -38,6 +47,7 @@ from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.repo_context import RepoContext
 
 from exactdocs.retrieval.constants import (
+    CHARS_PER_TOKEN,
     GUIDANCE_CHUNK_READ,
     GUIDANCE_FOLDER_READS,
     GUIDANCE_LISTING,
@@ -356,3 +366,83 @@ def guidance_workspace(guidance: GuidanceFiles) -> Workspace:
         The workspace to run the agent in.
     """
     return ReadOnlyWorkspace(Workspace(GuidanceBackend.of(guidance)))
+
+
+def _estimated_tokens(text: bytes) -> int:
+    """Estimate tokens from text: ``CHARS_PER_TOKEN`` characters (here bytes) per token.
+
+    Args:
+        text: The serialized messages or response.
+
+    Returns:
+        At least one token.
+    """
+    return max(1, len(text) // CHARS_PER_TOKEN)
+
+
+class UsageFloor(WrapperModel):
+    """Counts a streamed response at least by its characters (RET-08).
+
+    Repo guidance makes every model request of the run stream (RepoContext listens to its
+    events). A server that ignores ``stream_options.include_usage`` reports zero (or a token
+    count it made up), so the run's ``UsageLimits`` and ``SpendLimits`` would count nothing for
+    exactly the runs that carry the most untrusted text. Each side of a streamed response
+    counts as the larger of what it reports and the decision record's estimate (4 characters
+    per token: input from the request's serialized messages, output from the response's
+    parts). The estimate undercounts real tokens (code, CJK), so an honest report is kept. The
+    stream is read whole before it is handed on (nothing of it is shown to anyone meanwhile).
+    """
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        """Stream the wrapped model's response, then replay it with its usage made countable.
+
+        Args:
+            messages: The request.
+            model_settings: Its settings.
+            model_request_parameters: Its tools and output.
+            run_context: The run.
+
+        Yields:
+            The response, as a stream of its parts.
+        """
+        async with self.wrapped.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as stream:
+            async for _ in stream:
+                pass
+            response = stream.get()
+        yield CompletedStreamedResponse(
+            _counted(response, messages),
+            model_request_parameters=model_request_parameters,
+            replay_events=True,
+        )
+
+
+def _counted(response: ModelResponse, messages: Sequence[ModelMessage]) -> ModelResponse:
+    """Count each side of a response as at least its character estimate.
+
+    Args:
+        response: What the stream gave.
+        messages: The request it answered.
+
+    Returns:
+        The response as it is when its usage covers the estimate, else with the estimate.
+    """
+    sent = _estimated_tokens(ModelMessagesTypeAdapter.dump_json(list(messages)))
+    received = _estimated_tokens(ModelMessagesTypeAdapter.dump_json([response]))
+    reported = response.usage
+    if reported.input_tokens >= sent and reported.output_tokens >= received:
+        return response
+    usage = replace(
+        reported,
+        input_tokens=max(reported.input_tokens, sent),
+        output_tokens=max(reported.output_tokens, received),
+    )
+    return replace(response, usage=usage)
