@@ -140,6 +140,12 @@ class ModeOutcome(_Model):
     """Answerable cases whose section was not in the top 10."""
     fallbacks: int = 0
     """Cases a cheaper mode answered."""
+    reranked: int = 0
+    """Cases a reranker reordered (0 without a reranker role)."""
+    rerank_fallbacks: int = 0
+    """Cases where a reranker was expected (its role is configured) and results came back, but
+    they were not reranked: the reranker failed or timed out, so the mode's own order was
+    measured. Counted whatever the fallback reason says (a mode's own fallback takes that field)."""
     baseline_recall_at_5: float | None = None
     recall_at_5_delta_points: float | None = None
     """recall@5 minus the baseline's, in points."""
@@ -220,7 +226,7 @@ def metrics_of(report: EvaluationReport[Question, Answer, CaseInfo]) -> ModeMetr
 
 
 async def evaluate_mode(
-    dataset: RetrievalDataset, mode: EvalMode, retriever: Retriever
+    dataset: RetrievalDataset, mode: EvalMode, retriever: Retriever, *, rerank: bool = False
 ) -> ModeOutcome:
     """Run every case through ``retriever`` and aggregate.
 
@@ -228,6 +234,8 @@ async def evaluate_mode(
         dataset: The cases.
         mode: The mode the retriever answers in.
         retriever: How to ask that mode.
+        rerank: A reranker role is configured: every case with results should come back
+            reranked, and one that does not counts in ``rerank_fallbacks``.
 
     Returns:
         The mode's metrics, the cases with a wrong version, the errors and the misses.
@@ -265,6 +273,10 @@ async def evaluate_mode(
         errors=sorted(failed),
         misses=sorted(misses),
         fallbacks=sum(1 for c in report.cases if c.output.answered_by not in {None, mode.mode}),
+        reranked=sum(1 for c in report.cases if c.output.reranked),
+        rerank_fallbacks=sum(1 for c in report.cases if c.output.hits and not c.output.reranked)
+        if rerank
+        else 0,
     )
 
 
@@ -391,7 +403,8 @@ async def run_modes(
                 commits=commits,
                 spent=spent,
             )
-            outcome = await evaluate_mode(dataset, mode, retriever)
+            rerank = ModelRole.RERANKER in status.configured_roles
+            outcome = await evaluate_mode(dataset, mode, retriever, rerank=rerank)
         outcomes.append(outcome)
     return outcomes
 
@@ -749,6 +762,12 @@ def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
     lines.extend(f"- **Failed:** {p}" for p in report.problems)
     lines.extend(f"- **Warning:** {w}" for w in report.warnings)
     for o in report.modes:
+        if o.reranked or o.rerank_fallbacks:
+            questions = o.metrics.questions if o.metrics else 0
+            lines.append(
+                f"- `{o.mode}` reranked {o.reranked} of {questions} questions; the reranker "
+                f"failed or timed out on {o.rerank_fallbacks}"
+            )
         lines.extend(f"- `{o.mode}` wrong version: {c}" for c in o.wrong_version_cases)
         lines.extend(f"- `{o.mode}` error: {c}" for c in o.errors)
         if o.misses:

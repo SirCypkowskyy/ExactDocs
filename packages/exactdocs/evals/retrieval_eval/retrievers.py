@@ -93,6 +93,10 @@ class SearchDocsRetriever:
             hits=hits,
             pinned_commit=self.commits.get(question.version),
             answered_by=result.retrieval_mode.value,
+            reranked=result.reranked,
+            fallback_reason=None
+            if result.fallback_reason is None
+            else result.fallback_reason.value,
             search_ms=elapsed_ms,
             tokens=after[0] - before[0],
             usd=after[1] - before[1],

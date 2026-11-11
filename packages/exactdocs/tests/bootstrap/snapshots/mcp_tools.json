@@ -979,7 +979,7 @@
           "description": "How much of the index the answer stands on.",
           "properties": {
             "candidates": {
-              "description": "Lower bound: matching chunks the search looked at (`bm25`: usually `limit` + 1 at most;\n`hybrid`: the chunks of its BM25 and vector halves, each counted once).",
+              "description": "Lower bound: matching chunks the search looked at (`bm25`: at most `limit` + 1, or the\nreranker's top N + 1 when that is more; `hybrid`: the chunks of its BM25 and vector halves,\neach counted once).",
               "type": "integer"
             },
             "complete": {
@@ -987,7 +987,7 @@
               "type": "boolean"
             },
             "reranked": {
-              "description": "Of those, how many a reranker reordered.",
+              "description": "Of those, how many a reranker reordered (0 when it failed or timed out).",
               "type": "integer"
             }
           },
@@ -1294,7 +1294,7 @@
           "description": "How much of the index the answer stands on.",
           "properties": {
             "candidates": {
-              "description": "Lower bound: matching chunks the search looked at (`bm25`: usually `limit` + 1 at most;\n`hybrid`: the chunks of its BM25 and vector halves, each counted once).",
+              "description": "Lower bound: matching chunks the search looked at (`bm25`: at most `limit` + 1, or the\nreranker's top N + 1 when that is more; `hybrid`: the chunks of its BM25 and vector halves,\neach counted once).",
               "type": "integer"
             },
             "complete": {
@@ -1302,7 +1302,7 @@
               "type": "boolean"
             },
             "reranked": {
-              "description": "Of those, how many a reranker reordered.",
+              "description": "Of those, how many a reranker reordered (0 when it failed or timed out).",
               "type": "integer"
             }
           },
@@ -1323,7 +1323,9 @@
                 "llm_budget_reached",
                 "llm_rate_limited",
                 "vector_store_unavailable",
-                "embedding_unavailable"
+                "embedding_unavailable",
+                "reranker_timeout",
+                "reranker_failed"
               ],
               "type": "string"
             },

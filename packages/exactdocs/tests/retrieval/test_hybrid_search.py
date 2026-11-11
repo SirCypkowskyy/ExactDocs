@@ -60,7 +60,7 @@ from exactdocs.retrieval.models import (
     reciprocal_rank_fusion,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports.driven import RetrievalPipeline
+from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline
 from exactdocs.retrieval.use_cases import SearchDocsUseCase
 
 LIB = "/acme/payments"
@@ -186,6 +186,18 @@ class ConceptModels:
         return ConceptEmbeddings(owner=self, name=name)
 
 
+@dataclass(slots=True)
+class ReversingReranker:
+    """``Reranker`` that scores the documents in reverse of the order it got them; records them."""
+
+    seen: list[list[str]] = field(default_factory=list)
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> Sequence[float]:
+        del query
+        self.seen.append(list(documents))
+        return [float(i) for i in range(len(documents))]
+
+
 class SealedKeyError(Exception):
     """What a secret box raises for a key it cannot open (not a domain error)."""
 
@@ -198,6 +210,7 @@ class Factory:
     """
 
     unsealable: bool = False
+    cross_encoder: ReversingReranker = field(default_factory=ReversingReranker)
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
@@ -212,8 +225,9 @@ class Factory:
             raise SealedKeyError(message)
         return object()
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
-        raise ProviderUnsupportedError(profile.name, model)
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
+        del profile, model
+        return self.cross_encoder
 
     async def release(self, name: str) -> None:
         del name
@@ -273,6 +287,7 @@ def _world(
     instance: RetrievalMode | None = RetrievalMode.HYBRID,
     embedding: str | None = "concepts",
     wait: float = 5.0,
+    reranker: bool = False,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -294,7 +309,8 @@ def _world(
         library_modes=modes,
         configured_profiles=[CORP],
         instance_roles=InstanceRoles(
-            embedding=None if embedding is None else ModelRef(profile="corp", model=embedding)
+            embedding=None if embedding is None else ModelRef(profile="corp", model=embedding),
+            reranker=ModelRef(profile="corp", model="cross") if reranker else None,
         ),
         models=factory,
         instance_mode=instance,
@@ -366,9 +382,12 @@ async def _embed(world: World, ref: str) -> None:
 
 
 async def _embedded_world(
-    *, instance: RetrievalMode | None = RetrievalMode.HYBRID, wait: float = 5.0
+    *,
+    instance: RetrievalMode | None = RetrievalMode.HYBRID,
+    wait: float = 5.0,
+    reranker: bool = False,
 ) -> World:
-    world = _world(instance=instance, wait=wait)
+    world = _world(instance=instance, wait=wait, reranker=reranker)
     await _import(world, "v1", "m1", OLD_GUIDE)
     await _import(world, "v2", "m2", GUIDE)
     await _embed(world, "v1")
@@ -508,6 +527,29 @@ async def test_a_tag_no_chunk_has_answers_nothing_in_both_halves() -> None:
     result = await _search(world, "retry", tags=["nothing-has-this"])
 
     assert (result.retrieval_mode, result.results) == (RetrievalMode.HYBRID, [])
+
+
+async def test_a_reranker_reorders_the_fused_candidates_after_the_hybrid_pipeline() -> None:
+    world = await _embedded_world(reranker=True)
+    fused = await _search(world, "repeat failed requests")  # reranked already: read its input
+    sent = world.factory.cross_encoder.seen[-1]
+
+    result = await _search(world, "repeat failed requests")
+
+    assert (result.retrieval_mode, result.reranked, result.fallback_reason) == (
+        RetrievalMode.HYBRID,
+        True,
+        None,
+    )
+    # The reranker got the fused candidates (vector-only ones included) and reversed them.
+    assert world.factory.cross_encoder.seen[-1] == sent
+    assert "Calls that time out are sent once more after a short pause (backoff)." in sent
+    assert [r.snippet for r in result.results] == list(reversed(sent))[: len(result.results)]
+    assert result.coverage.reranked == len(sent)
+    assert {r.commit_sha for r in result.results} == {"2" * 40}
+    assert fused.results == result.results
+    names = world.tracer.names
+    assert names.index("search_docs.embed_query") < names.index("search_docs.rerank")
 
 
 async def test_query_docs_runs_the_same_pipeline() -> None:

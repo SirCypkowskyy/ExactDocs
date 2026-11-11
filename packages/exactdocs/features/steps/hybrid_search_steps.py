@@ -8,7 +8,7 @@ import time
 from contextlib import ExitStack
 from http import HTTPStatus
 
-from behave import given, then, when
+from behave import given, then
 from behave.runner import Context
 from fastapi.testclient import TestClient
 
@@ -30,6 +30,7 @@ def step_hybrid_instance(context: Context, mode: str) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     context.endpoint = stack.enter_context(gateway(by_terms=True))
+    context.search_ref = REF  # 'an agent searches' (reranking_steps) searches this version
     ai = AiSettings.model_validate(
         {
             "mode": mode,
@@ -69,12 +70,6 @@ def step_embedded(context: Context, ref: str) -> None:
 @given("the embedding provider refuses every call")
 def step_provider_refuses(context: Context) -> None:
     context.endpoint.broken.set()
-
-
-@when('an agent searches "{query}"')
-def step_agent_searches(context: Context, query: str) -> None:
-    context.query = query
-    context.response = context.client.get(SEARCH, params={"q": query, "ref": REF})
 
 
 @then("no chunk from another version is returned")

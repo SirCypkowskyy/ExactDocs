@@ -539,9 +539,10 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   key or `auth = "entra"`), `google-vertex` (`project`, `location` and `credentials_file`, or
   `credentials = "adc"`, or an Express-mode key), `google` (Gemini API), `ollama`, `vllm`,
   `litellm`, pydantic-ai's OpenAI-API providers (`deepseek`, `together`, `fireworks`, `cerebras`,
-  `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`), and
-  `local` (#245). Groq, Mistral, Cohere, xAI and Bedrock are reached through their
-  OpenAI-compatible endpoint or LiteLLM.
+  `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`),
+  `tei` (Text Embeddings Inference serving a reranker: the `reranker` role only), and `local`
+  (#245). Groq, Mistral, Cohere, xAI and Bedrock are reached through their OpenAI-compatible
+  endpoint or LiteLLM.
 - **Roles:** `embedding`, `reranker`, `llm`, `judge` (defaults to `llm`).
 - **Explicit values only.** Every SDK client gets its endpoint, key (`unused` for a profile
   without one), project, region and API version from the profile; `OPENAI_API_KEY`,
@@ -573,8 +574,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   under their own key derivation) and never returned. Profiles of the environment or the file are
   read-only there. A stored key is dropped, not reused, when the profile's endpoint changes.
 - **Per library** (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`): AI on or off (off: nothing
-  of the library is ever sent to a provider, searches are BM25), and its own `llm`, `judge` and
-  `reranker`. The embedding model is instance-wide only.
+  of the library is ever sent to a provider, searches are BM25), its own `llm`, `judge` and
+  `reranker`, and its own `rerank_top_n`. The embedding model is instance-wide only.
 - **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
   prints the latency, the model that answered and an embedding's dimensions, never a key;
   `POST /api/v1/ai/providers/{name}/check` does the same for one profile.
@@ -596,6 +597,41 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   embed, an estimate of their tokens (4 characters per token, never a tokenizer) and of the US
   dollars from the bundled price list, without calling any model;
   `GET /api/v1/ai/embedding/estimate` is the same over REST.
+
+#### Reranker
+
+A cross-encoder reranker reorders the best candidates of every search (`search_docs`,
+`query_docs`, the REST search) for precision. It speaks one of two HTTP dialects:
+
+```toml
+[ai.providers.cohere]                   # Cohere-compatible POST <base_url>/rerank
+kind = "openai-compatible"
+base_url = "https://api.cohere.com/v2"  # Jina: https://api.jina.ai/v1, Voyage: https://api.voyageai.com/v1
+api_key_file = "/run/secrets/cohere_key"
+
+[ai.providers.tei]                      # Text Embeddings Inference: POST <base_url>/rerank
+kind = "tei"
+base_url = "http://tei:8080"
+
+[ai.reranker]
+model = "cohere:rerank-v3.5"            # or "tei:BAAI/bge-reranker-base" (TEI serves one model)
+top_n = 32                              # candidates reranked per search (1 to 200)
+timeout = 2.0                           # seconds for building the reranker and its call
+```
+
+A `tei` profile still needs the `exactdocs[ai]` extra, like every profile, although it only uses
+`httpx2`. vLLM and LiteLLM (`kind = "vllm"` / `"litellm"`, base URL ending in `/v1` or `/v2`) and Azure AI
+Foundry's Cohere deployments (`openai-compatible`) speak the Cohere-compatible dialect too. Only
+the query and the candidates' chunk text are sent (cut to 8000 characters each, in batches of 100,
+or 32 for TEI), never a library name, a version or a user. A reranker that times out, fails or
+answers something unusable never fails a search: results keep their order with `reranked: false`
+and `fallback_reason` `reranker_timeout` or `reranker_failed`, and the failure is logged without
+the query. With a `limit` above `top_n`, the reranked results come first and the rest follow in the
+mode's order, with the mode's scores (not comparable with the reranker's). With any
+provider profile other than `local` configured, the provider SDKs are loaded in a worker thread at
+start, so the first search never waits for them; a load that fails is a warning, never a stop. Whatever the reranker raises (an HTTP client closed under the
+call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. A hybrid search is
+reranked the same way, after the fusion.
 
 The hybrid pipeline is built (#92); the HyDE and agentic pipelines arrive with #94 and #98.
 

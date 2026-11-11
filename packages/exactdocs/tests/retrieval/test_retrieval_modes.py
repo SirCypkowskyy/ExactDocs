@@ -105,7 +105,7 @@ class FakePipeline:
             mode=BM25 if self.falls_back else self.mode,
             hits=found.hits,
             candidates=found.candidates,
-            reranked=len(found.hits) if request.rerank else 0,
+            reranked=0,  # reranking runs after the pipeline (tests/retrieval/test_reranking.py)
             complete=found.complete,
             fallback_reason=self.falls_back,
         )
@@ -377,13 +377,15 @@ async def test_a_pipeline_that_answers_with_a_cheaper_mode_says_why() -> None:
 # ---------------------------------------------------------------- what the result reports
 
 
-async def test_a_reranked_search_says_so_in_the_result_and_its_coverage() -> None:
+async def test_a_reranker_role_that_builds_no_reranker_keeps_the_order_and_says_why() -> None:
+    # The role is set, but resolves to no profile; hybrid is chosen (it is no default).
     world = await _build(EMBEDDING, RERANKER, instance=HYBRID)
 
     result = await world.module.search_docs(SearchDocsQuery(library=LIB, query="token"))
 
-    assert (result.retrieval_mode, result.reranked) == (HYBRID, True)
-    assert result.coverage.reranked == len(result.results) == 1
+    assert (result.retrieval_mode, result.reranked) == (HYBRID, False)
+    assert result.fallback_reason is FallbackReason.RERANKER_FAILED
+    assert (result.coverage.reranked, len(result.results)) == (0, 1)
 
 
 async def test_every_mode_gets_the_one_version_asked_for_and_nothing_from_another() -> None:

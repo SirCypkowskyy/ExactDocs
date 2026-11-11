@@ -16,6 +16,7 @@ from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.memory import HashEmbeddingModels
 from exactdocs.retrieval.errors import ProviderUnsupportedError
 from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile, RetrievalMode
+from exactdocs.retrieval.ports.driven import Reranker
 
 PROFILE = "offline"
 """The provider profile of the stand-in model."""
@@ -61,7 +62,7 @@ class MarkerFactory:
         del profile, model
         return object()
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
         """Refuse: no reranker is offline.
 
         Args:

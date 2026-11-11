@@ -216,7 +216,9 @@ When it fails:
    in CI) makes a new build fetch fresh package indexes, so it also picks up a fixed `git` or
    `openssh-client`. It does not upgrade the packages that come with the base image (`apt`,
    `libc6`, `dpkg`, ...): `apt-get install` leaves installed packages alone, so a finding in one
-   of those is fixed only by a newer base digest. Each runner VM caches its own Trivy DB, so the
+   of those is fixed by a newer base digest or, until one ships the fix, by an explicit
+   `apt-get install --only-upgrade <package>` in the `runtime-tools` stage (as for `zlib1g`,
+   #275; remove it once the base digest catches up). Each runner VM caches its own Trivy DB, so the
    same image can pass on one runner and fail on the other until both DBs know the advisory;
    the failing run is the real result.
    Because the week is part of the cache key, the first Docker build of each ISO week (Monday)

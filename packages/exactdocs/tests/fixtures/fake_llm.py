@@ -1,21 +1,25 @@
 """A fake model gateway on 127.0.0.1 for the AI provider tests (pytest and behave).
 
-It speaks just enough of three dialects for one minimal call each: OpenAI Chat Completions and
-Embeddings (``/v1/chat/completions``, ``/v1/embeddings``), Anthropic Messages (``/v1/messages``)
-and the Cohere-compatible rerank (``/v1/rerank``); a path with ``/broken/`` answers
-404. It records every request (method, path,
-headers, body), so a test can see what was sent and with which credentials. A second instance
-serves as a trap: pointed to by ``OPENAI_BASE_URL`` and the like, it must receive nothing.
-Given a ``hold`` event, it answers embedding requests only once the event is set, so a test can
-look at an instance while an embedding run is in progress. Embeddings are one fixed small vector,
-or ``term_vector``'s hashed bag of words with ``by_terms`` (texts sharing terms are near, so hybrid
-search can be tested end to end); setting ``FakeGateway.broken`` makes every embedding request
-fail with 400, as a provider that refuses the call.
+It speaks just enough of four dialects for one minimal call each: OpenAI Chat Completions and
+Embeddings (``/v1/chat/completions``, ``/v1/embeddings``), Anthropic Messages (``/v1/messages``),
+the Cohere-compatible rerank (``.../rerank`` with ``documents``) and TEI's ``/rerank`` (with
+``texts``). A reranker scores the documents in the reverse of the order they were sent (the last
+one best), so a test can tell a reranked order from the order it sent. A path with ``/broken/``
+answers 404; one with ``/slow/`` answers after ``SLOW_SECONDS`` (a reranker that times out). It
+records every request (method, path, headers, body), so a test can see what was sent and with
+which credentials. A second instance serves as a trap: pointed to by ``OPENAI_BASE_URL`` and the
+like, it must receive nothing. Given a ``hold`` event, it answers embedding requests only once the
+event is set, so a test can look at an instance while an embedding run is in progress. Embeddings
+are one fixed small vector, or ``term_vector``'s hashed bag of words with ``by_terms`` (texts
+sharing terms are near, so hybrid search can be tested end to end); setting
+``FakeGateway.broken`` makes every embedding request fail with 400, as a provider that refuses the
+call.
 """
 
 import hashlib
 import json
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -47,6 +51,22 @@ def term_vector(text: str) -> list[float]:
             digest = hashlib.blake2b(term.encode(), digest_size=8).digest()
             values[1 + int.from_bytes(digest) % (TERM_DIMENSIONS - 1)] += 1.0
     return values
+
+
+SLOW_SECONDS = 1.0
+"""How long a ``/slow/`` path takes to answer."""
+
+
+def reversed_scores(count: int) -> list[float]:
+    """The scores the fake reranker gives ``count`` documents: the last one sent is the best.
+
+    Args:
+        count: How many documents were sent.
+
+    Returns:
+        One score per document, in the order they were sent.
+    """
+    return [(i + 1) / count for i in range(count)]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -84,9 +104,26 @@ class FakeGateway:
         return f"{self.url}/v1"
 
 
+def _rerank(body: dict[str, Any]) -> dict[str, Any] | list[Any]:
+    """Answer a rerank in the dialect of its body, best first.
+
+    Args:
+        body: TEI's (``texts``) or the Cohere-compatible one (``documents``).
+
+    Returns:
+        TEI's bare list of ``index`` and ``score``, or Cohere's ``results``.
+    """
+    tei = "texts" in body
+    scores = reversed_scores(len(body["texts"] if tei else body.get("documents", [])))
+    ranked = sorted(enumerate(scores), key=lambda pair: -pair[1])
+    if tei:
+        return [{"index": i, "score": score} for i, score in ranked]
+    return {"results": [{"index": i, "relevance_score": score} for i, score in ranked]}
+
+
 def _answer(
     path: str, body: dict[str, Any], embed: Callable[[str], list[float]]
-) -> dict[str, Any] | None:
+) -> dict[str, Any] | list[Any] | None:
     model = body.get("model", "unknown")
     if "/broken/" in path:
         return None
@@ -129,8 +166,7 @@ def _answer(
             "usage": {"input_tokens": 5, "output_tokens": 1},
         }
     if path.endswith("/rerank"):
-        documents = body.get("documents", [])
-        return {"results": [{"index": i, "relevance_score": 0.9} for i in range(len(documents))]}
+        return _rerank(body)
     return None
 
 
@@ -173,6 +209,8 @@ def gateway(
                     body=body,
                 )
             )
+            if "/slow/" in self.path:
+                time.sleep(SLOW_SECONDS)
             embedding = self.path.split("?")[0].endswith("/embeddings")
             if hold is not None and embedding:
                 hold.wait(HOLD_SECONDS)
@@ -181,7 +219,7 @@ def gateway(
             else:
                 answer = _answer(self.path.split("?")[0], body, embed)
                 status = 200 if answer is not None else 404
-            payload = json.dumps(answer or {"error": "not found"}).encode()
+            payload = json.dumps({"error": "not found"} if answer is None else answer).encode()
             self.send_response(status)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(payload)))

@@ -142,7 +142,8 @@ most recently imported version.
 
 ## Retrieval modes
 
-BM25 and `hybrid` (BM25 and vectors fused with reciprocal rank fusion, #92) are built; the other
+BM25, `hybrid` (BM25 and vectors fused with reciprocal rank fusion, #92) and reranking are
+built; the other
 modes are the design for the *Next: AI retrieval* milestone. Which mode answers is decided per
 call (RET-06): the call's `mode`, else the library's mode, else the instance's
 (`EXACTDOCS_AI__MODE`), else the best default the configured model roles allow. A mode becomes a
@@ -157,6 +158,13 @@ vector store is missing). A hybrid search never fails for its model either: a ve
 not embedded yet answers BM25 with `embedding_in_progress`, and a query the model fails or times
 out on answers BM25 with `embedding_unavailable`.
 
+With a reranker configured, the mode's pipeline is asked for the reranker's top N candidates (32,
+or the library's own number) when that is more than the call's `limit`; the reranker receives the
+query and those candidates' chunk text, never a library name or version, and they are reordered by
+its scores before the `limit` is applied. A reranker that does not answer within its timeout (2 s),
+fails, or answers something unusable never fails the search: the candidates keep the mode's order
+with `reranked: false` and `fallback_reason` `reranker_timeout` or `reranker_failed`.
+
 ```mermaid
 flowchart TD
     q["query + library version"] --> asked{"mode in the call?"}
@@ -168,7 +176,11 @@ flowchart TD
     inst -->|yes| run
     inst -->|"none or not available"| best["best available default<br/>(BM25 until the eval suite makes another one)"]
     best --> run
-    run["the mode's pipeline, on this one version"] --> out["verbatim chunks + retrieval_mode + reranked<br/>+ coverage + fallback_reason"]
+    run["the mode's pipeline, on this one version"] --> rer{"reranker?"}
+    rer -->|no| out["verbatim chunks + retrieval_mode + reranked<br/>+ coverage + fallback_reason"]
+    rer -->|"yes: top N"| scored{"answered in time<br/>with one score each?"}
+    scored -->|yes| reorder["reorder the top N by score"] --> out
+    scored -->|"no"| keep["keep the mode's order<br/>reranker_timeout / reranker_failed"] --> out
 
     subgraph planned ["Planned: configured endpoints upgrade the pipeline"]
         direction TB

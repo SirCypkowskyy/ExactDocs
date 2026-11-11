@@ -1574,13 +1574,14 @@ export interface components {
         readonly CoverageOut: {
             /**
              * Candidates
-             * @description Lower bound: matching chunks the search looked at (`bm25`: usually `limit` + 1 at most;
-             *     `hybrid`: the chunks of its BM25 and vector halves, each counted once).
+             * @description Lower bound: matching chunks the search looked at (`bm25`: at most `limit` + 1, or the
+             *     reranker's top N + 1 when that is more; `hybrid`: the chunks of its BM25 and vector halves,
+             *     each counted once).
              */
             readonly candidates: number;
             /**
              * Reranked
-             * @description Of those, how many a reranker reordered.
+             * @description Of those, how many a reranker reordered (0 when it failed or timed out).
              */
             readonly reranked: number;
             /**
@@ -1726,7 +1727,7 @@ export interface components {
          * @description Why a search was answered by a cheaper mode than the one it would have used.
          * @enum {string}
          */
-        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable";
+        readonly FallbackReason: "mode_unavailable" | "embedding_in_progress" | "llm_budget_reached" | "llm_rate_limited" | "vector_store_unavailable" | "embedding_unavailable" | "reranker_timeout" | "reranker_failed";
         /**
          * FieldError
          * @description One invalid request field.
@@ -2034,6 +2035,12 @@ export interface components {
              *     is instance-wide only and cannot be set here.
              */
             readonly reranker?: string | null;
+            /**
+             * Rerank Top N
+             * @description How many of its best candidates the reranker reorders (1 to 200); null: the instance's
+             *     (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
+             */
+            readonly rerank_top_n?: number | null;
         };
         /**
          * LibraryRetrievalOut
@@ -2087,6 +2094,16 @@ export interface components {
              * @description The library's own reranker (`<profile>:<model>`); null: the instance's.
              */
             readonly reranker: string | null;
+            /**
+             * Rerank Top N
+             * @description How many of its best candidates the reranker reorders; null: the instance's.
+             */
+            readonly rerank_top_n: number | null;
+            /**
+             * Effective Rerank Top N
+             * @description How many candidates its searches rerank now: its own number, else the instance's.
+             */
+            readonly effective_rerank_top_n: number;
         };
         /**
          * LibrarySearchResultOut
@@ -2644,7 +2661,7 @@ export interface components {
          *     ``openai-compatible`` or through ``litellm``.
          * @enum {string}
          */
-        readonly ProviderKind: "openai-compatible" | "openai" | "openrouter" | "anthropic" | "azure" | "google-vertex" | "google" | "ollama" | "vllm" | "litellm" | "deepseek" | "together" | "fireworks" | "cerebras" | "github" | "vercel" | "moonshotai" | "heroku" | "nebius" | "ovhcloud" | "sambanova" | "alibaba" | "local";
+        readonly ProviderKind: "openai-compatible" | "openai" | "openrouter" | "anthropic" | "azure" | "google-vertex" | "google" | "ollama" | "vllm" | "litellm" | "deepseek" | "together" | "fireworks" | "cerebras" | "github" | "vercel" | "moonshotai" | "heroku" | "nebius" | "ovhcloud" | "sambanova" | "alibaba" | "tei" | "local";
         /**
          * ProviderListOut
          * @description Every provider profile: the configured ones first, then those stored over the API.
