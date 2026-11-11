@@ -82,12 +82,13 @@ jobs:
       # (--ratchet). When the dataset's fingerprint differs from develop's baseline, the branch's
       # baseline is the bar, the reset is a warning annotation, and develop's dataset is run too,
       # gated against develop's baseline (docs/evals.md, Changing the dataset). Hosted models are
-      # never called here (no secrets).
-      - name: Retrieval eval (BM25, gating)
+      # never called here (no secrets). Hybrid runs report-only on the in-process term-hash
+      # embedding (--offline-embedding): its wrong-version rate must still be 0.
+      - name: Retrieval eval (BM25 gating, hybrid on term-hash)
         run: |
           baseline=packages/exactdocs/evals/retrieval_eval/baseline.json
           dataset=packages/exactdocs/evals/retrieval_eval/dataset.yaml
-          flags=(--baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/retrieval.json)
+          flags=(--offline-embedding --baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/retrieval.json)
           if git -C .develop-baseline cat-file -e "HEAD:$baseline"; then
             cp ".develop-baseline/$baseline" "$RUNNER_TEMP/baseline.json"
             flags+=(--ratchet --reference-dataset ".develop-baseline/$dataset")

@@ -118,7 +118,12 @@ from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
 from exactdocs.retrieval.models import ProviderKind, RerankLimits, RetrievalMode
-from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
+from exactdocs.retrieval.ports.driven import (
+    EmbeddingModels,
+    ModelFactory,
+    ModelRoles,
+    RetrievalPipeline,
+)
 from exactdocs.retrieval.ports.driving import SaveProvider
 from exactdocs_kernel import DomainError, SystemClock
 
@@ -250,6 +255,8 @@ def _build_read_side(
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
+    model_factory: ModelFactory | None = None,
+    embedding_models: EmbeddingModels | None = None,
 ) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -261,6 +268,9 @@ def _build_read_side(
         model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
+        model_factory: Builds the models instead of pydantic-ai (tests and the eval suite).
+        embedding_models: Wraps the embedder instead of pydantic-ai (tests and the eval suite:
+            an in-process embedding, so no provider is called).
 
     Returns:
         The two modules (``StartupError`` when the AI configuration is invalid), and on
@@ -306,7 +316,7 @@ def _build_read_side(
         configured_profiles=ai.profiles,
         stored_profiles=SqliteProviderProfiles(engine=engine),
         instance_roles=ai.roles,
-        models=PydanticAiModels(keys=ai.keys, box=ai_box),
+        models=model_factory or PydanticAiModels(keys=ai.keys, box=ai_box),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
         rerank_limits=RerankLimits(
@@ -317,7 +327,7 @@ def _build_read_side(
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
         vectors=vectors,
-        embedding_models=PydanticAiEmbeddingModels(),
+        embedding_models=embedding_models or PydanticAiEmbeddingModels(),
         article_titles=CatalogArticleTitles(get_article_titles=catalog.get_article_titles),
         spend=SqliteSpendLedger(engine=engine),
         prices=GenaiPrices(),
@@ -514,6 +524,8 @@ class Container:
         model_roles: ModelRoles | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         vector_extension: Callable[[], str] | None = None,
+        model_factory: ModelFactory | None = None,
+        embedding_models: EmbeddingModels | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -524,8 +536,9 @@ class Container:
         ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
         ``model_roles`` stands in for the role resolution over the configured AI profiles and
         ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
-        extension (tests: one that cannot load). An invalid AI configuration (or one this
-        installation cannot call) is a ``StartupError``. A missing
+        extension (tests: one that cannot load); ``model_factory`` and ``embedding_models``
+        replace pydantic-ai (tests and the eval suite: an in-process embedding model). An invalid
+        AI configuration (or one this installation cannot call) is a ``StartupError``. A missing
         ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
         it, so the rest still runs.
         """
@@ -548,6 +561,8 @@ class Container:
             model_roles=model_roles,
             pipelines=pipelines,
             vector_extension=vector_extension,
+            model_factory=model_factory,
+            embedding_models=embedding_models,
         )
         index = RetrievalChunkIndex(
             index_manifest=read.retrieval.index_manifest,

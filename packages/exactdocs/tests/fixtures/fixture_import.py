@@ -17,6 +17,12 @@ from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.constants import IMPORT_JOB
 from exactdocs.ingestion.models import Job, JobId, RefKind
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
+from exactdocs.retrieval.dtos import (
+    EmbedBatchCommand,
+    EmbedVersionCommand,
+    FinishEmbeddingCommand,
+    UnembeddedVersionsQuery,
+)
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
 
@@ -24,6 +30,8 @@ LIBRARY = "/fixture/docs-repo"
 """The library ID the fixture repository is imported under."""
 VERSIONS = {"v1.3.0": RefKind.TAG, "v1.4.0": RefKind.TAG, "next": RefKind.BRANCH}
 """The versions imported, and what kind of ref each is."""
+MAX_BATCHES = 10_000
+"""A safety net: embedding one version never takes more batches than this."""
 
 
 class _Progress:
@@ -89,3 +97,38 @@ async def import_fixture(container: Container, docs_repo: DocsRepo) -> None:
             now=SystemClock().now(),
         )
         await importer(job, _Progress())
+
+
+async def embed_fixture(container: Container) -> int:
+    """Embed every version the configured embedding model does not cover yet, in this task.
+
+    As the ``embed`` jobs would (plan, batches, finish), so a container running without jobs
+    can search in a hybrid mode. Nothing happens without an embedding model.
+
+    Args:
+        container: The container, running.
+
+    Returns:
+        How many versions were embedded.
+    """
+    retrieval = container.retrieval
+    versions = (await retrieval.list_unembedded_versions(UnembeddedVersionsQuery())).versions
+    for version in versions:
+        planned = await retrieval.plan_embedding(
+            EmbedVersionCommand(library=version.library, ref=version.ref)
+        )
+        if planned.space_id is None or planned.manifest_id is None:
+            continue
+        for _ in range(MAX_BATCHES):
+            done = await retrieval.embed_batch(
+                EmbedBatchCommand(
+                    library=version.library,
+                    ref=version.ref,
+                    manifest_id=planned.manifest_id,
+                    space_id=planned.space_id,
+                )
+            )
+            if done.finished:
+                break
+        await retrieval.finish_embedding(FinishEmbeddingCommand(space_id=planned.space_id))
+    return len(versions)

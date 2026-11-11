@@ -20,6 +20,7 @@ just eval --modes bm25          # one mode
 just eval --report out.json     # JSON report elsewhere (default: reports/evals/retrieval.json)
 just eval --baseline develop.json --ratchet --reference-dataset develop.yaml   # what CI does
 just eval --configured-models --local-roles embedding,reranker   # local models from EXACTDOCS_AI__...
+just eval --offline-embedding   # hybrid on an in-process term-hash embedding (no model): what CI runs
 just eval --help
 ```
 
@@ -33,7 +34,17 @@ rather than counting as a miss.
 
 By default the run is **model-free**: the app is built with no model role, whatever
 `EXACTDOCS_AI__...` configures, so only BM25 runs. `--configured-models` uses the configured
-models instead. `uv run pytest` runs the same BM25 run
+models instead. Before the questions, every version is embedded the way the `embed` jobs would,
+when the embedding role may be called (`--local-roles embedding` or `--allow-providers`).
+
+`--offline-embedding` runs `hybrid` without any model: the embedding role is an in-process
+stand-in that hashes each term of a text into one dimension (`HashEmbeddingModels(by_terms=True)`,
+see `tests/fixtures/offline_embedding.py`). Texts sharing terms are near, so the run checks the
+fusion and the wrong-version gate of hybrid, end to end; it finds no paraphrase a real model would,
+so its recall says nothing about whether hybrid should be a default: the report gives hybrid's
+`eligible_as_default` as `null` with `not_judged: "offline embedding"`, the summary says so, and
+the flag refuses `--write-baseline` and `--configured-models`. Tokens and USD per question are what
+the spend ledger grew by during each search, so hybrid's include its query's embedding. `uv run pytest` runs the same BM25 run
 (`tests/evals/`), so a ranking change that breaks a gate also fails the tests.
 
 ## The dataset
@@ -73,7 +84,7 @@ content it needs is missing, extend the fixture as its README says. Then rewrite
 | MRR | the same | mean of 1 / its rank (0 when it is not in the top 10) |
 | wrong-version rate | every question | share of questions with at least one result of another version |
 | p50 / p95 latency | every question | time of the search alone (not the reads below), one question at a time |
-| tokens / USD per question | every question | what the models cost; 0 for BM25, and 0 for every mode until the AI modes report their spend |
+| tokens / USD per question | every question | what the models cost, read from the spend ledger around each search; 0 for BM25 |
 
 The version of a result is the version **of its chunk**, not the version the answer names: every
 returned chunk ID is read back with `read_chunk`, which serves it from the version the ID was issued
@@ -114,7 +125,10 @@ leaves the machine. Check `rerank_fallbacks` is 0: a reranker that timed out was
 - A question whose search raises fails the suite.
 - **A mode becomes a default only when the suite shows it beats BM25's recall@5 by at least
   5 points with a wrong-version rate of 0.** The report marks such a mode `eligible_as_default`;
-  changing the default order (`DEFAULT_MODE_ORDER`) without that is not accepted.
+  changing the default order (`DEFAULT_MODE_ORDER`) without that is not accepted. It holds only
+  `bm25` today: for `hybrid` only a real embedding model's run counts (#245), never the term-hash
+  stand-in's, whose report says `not judged (offline embedding)`; `hybrid_hyde` joins with #94's
+  eval result.
 
 The baseline is `packages/exactdocs/evals/retrieval_eval/baseline.json`: recall@1/5/10, MRR and
 the wrong-version rate of each mode that ran (no latency, which depends on the machine), and the
@@ -167,8 +181,8 @@ fixture). A fixture change has to keep BM25's recall@5 within those 2 points.
 
 | Tier | Modes | Where they run for real |
 |---|---|---|
-| every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25, gating)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 against the branch's baseline (#104), with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
-| local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | a CI job with the `[local]` extra and cached ONNX models, no secret, compared with the baseline on `develop`; added with the local models (#245) |
+| every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25 gating, hybrid on term-hash)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 against the branch's baseline (#104), with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
+| local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | on every PR in the same step on the term-hash stand-in (`--offline-embedding`): its wrong-version rate must be 0, its recall is not a measure of hybrid. With a real model: a CI job with the `[local]` extra and cached ONNX models, no secret, compared with the baseline on `develop`; added with the local models (#245) |
 | provider | `hybrid_hyde`, `agentic` | in tests with pydantic-ai's `TestModel` / `FunctionModel`; with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
 
 A mode whose model role is not configured is reported as `unavailable`, with the role it lacks.

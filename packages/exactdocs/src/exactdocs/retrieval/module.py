@@ -2,7 +2,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.retrieval.constants import DEFAULT_EMBEDDING_BATCH, DEFAULT_QUERY_DOCS_TOKEN_BUDGET
+from exactdocs.retrieval.constants import (
+    DEFAULT_EMBEDDING_BATCH,
+    DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    QUERY_EMBEDDING_TIMEOUT,
+)
 from exactdocs.retrieval.models import (
     InstanceRoles,
     ProviderProfile,
@@ -84,6 +88,7 @@ from exactdocs.retrieval.use_cases import (
     GetProviderUseCase,
     GetSearchIndexStateUseCase,
     GetVectorStoreStateUseCase,
+    HybridPipeline,
     IndexManifestUseCase,
     ListProvidersUseCase,
     ListRolesUseCase,
@@ -197,6 +202,7 @@ class RetrievalModule:
         prices: Prices | None = None,
         embedding_dimensions: int | None = None,
         embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH,
+        query_embedding_timeout: float = QUERY_EMBEDDING_TIMEOUT,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -213,6 +219,9 @@ class RetrievalModule:
         builds (nothing is embedded without it), ``article_titles`` gives the titles embedded
         with each chunk, ``spend`` records the usage and ``prices`` prices it;
         ``embedding_dimensions`` and ``embedding_batch_size`` are the embedding role's settings.
+        With a vector store, ``hybrid`` runs ``HybridPipeline`` (BM25 and vectors fused), whose
+        query embedding waits at most ``query_embedding_timeout`` seconds; a ``hybrid`` entry
+        of ``pipelines`` replaces it (tests).
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -237,8 +246,20 @@ class RetrievalModule:
             dimensions=embedding_dimensions,
             batch_size=embedding_batch_size,
         )
+        built: dict[RetrievalMode, RetrievalPipeline] = {
+            RetrievalMode.BM25: Bm25Pipeline(search=search)
+        }
+        if vectors is not None:
+            built[RetrievalMode.HYBRID] = HybridPipeline(
+                search=search,
+                vectors=vectors,
+                chunks=chunks,
+                runs=runs,
+                tracer=tracer,
+                timeout=query_embedding_timeout,
+            )
         modes = RetrievalModes(
-            pipelines={RetrievalMode.BM25: Bm25Pipeline(search=search), **(pipelines or {})},
+            pipelines={**built, **(pipelines or {})},
             roles=roles or ProfileModelRoles(providers=providers),
             library_modes=library_modes,
             instance_mode=instance_mode,

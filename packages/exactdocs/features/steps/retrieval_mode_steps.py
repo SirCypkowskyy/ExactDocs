@@ -1,5 +1,6 @@
-"""Steps for choosing the retrieval mode. Model roles are set directly until #241 configures them;
-the hybrid pipeline is a stand-in until #92 builds it."""
+"""Steps for choosing the retrieval mode. Model roles are set directly, and the hybrid pipeline
+is a stand-in (the real one is in ``hybrid_search_steps``): these scenarios are about which mode
+answers, not what it finds."""
 
 from contextlib import ExitStack
 from http import HTTPStatus

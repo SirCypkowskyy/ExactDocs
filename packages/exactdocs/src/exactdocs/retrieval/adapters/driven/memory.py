@@ -8,7 +8,12 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import batched
 
-from exactdocs.retrieval.constants import CHARS_PER_TOKEN, MEMORY_FORMAT
+from exactdocs.retrieval.constants import (
+    CHARS_PER_TOKEN,
+    MEMORY_FORMAT,
+    TERM_HASH_BIAS,
+    TERM_HASH_STOP_WORDS,
+)
 from exactdocs.retrieval.errors import (
     ChunkSetMismatchError,
     RetiredEmbeddingSpaceError,
@@ -795,7 +800,10 @@ class HashEmbeddings:
     """Implements ``ports.driven.Embeddings`` in process: a vector from each text's hash.
 
     The same text always gets the same vector, and different texts different ones, so tests can
-    tell what was embedded without any provider. ``usage`` is one token per 4 characters.
+    tell what was embedded without any provider. ``usage`` is one token per 4 characters. With
+    ``by_terms`` each term of the text is hashed into one dimension instead (a bag of words), so
+    texts sharing terms are near: a model-free stand-in that lets hybrid search be tested and
+    evaluated, though it finds no paraphrase a real model would.
     """
 
     name: str
@@ -808,6 +816,8 @@ class HashEmbeddings:
     """Every text embedded as a document, in order (shared with ``HashEmbeddingModels``)."""
     calls: list[str]
     """The model of every call, in order (shared with ``HashEmbeddingModels``)."""
+    by_terms: bool = False
+    """Hash each term into a dimension (texts sharing terms are near) instead of the whole text."""
 
     async def dimensions(self) -> int:
         """Say the vectors' size.
@@ -852,7 +862,10 @@ class HashEmbeddings:
         calls = list(batched(texts, self.batch_size, strict=False))
         self.calls.extend(self.name for _ in calls)
         return EmbeddedTexts(
-            vectors=tuple(_hash_vector(t, self.size) for t in texts),
+            vectors=tuple(
+                _term_vector(t, self.size) if self.by_terms else _hash_vector(t, self.size)
+                for t in texts
+            ),
             input_tokens=sum(-(-len(t) // CHARS_PER_TOKEN) for t in texts),
             requests=len(calls),
         )
@@ -872,6 +885,25 @@ def _hash_vector(text: str, size: int) -> tuple[float, ...]:
     return tuple(1.0 + digest[i % len(digest)] / 255 for i in range(size))
 
 
+def _term_vector(text: str, size: int) -> tuple[float, ...]:
+    """Count the text's terms, each in the dimension its hash picks (a hashed bag of words).
+
+    Args:
+        text: The text.
+        size: The dimensions; the first holds ``TERM_HASH_BIAS``, so no vector is all zeros.
+
+    Returns:
+        The vector.
+    """
+    values = [0.0] * size
+    values[0] = TERM_HASH_BIAS
+    for term in identifier_tokens(text).split():
+        if term not in TERM_HASH_STOP_WORDS:
+            digest = hashlib.blake2b(term.encode(), digest_size=8).digest()
+            values[1 + int.from_bytes(digest) % (size - 1)] += 1.0
+    return tuple(values)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class HashEmbeddingModels:
     """Implements ``ports.driven.EmbeddingModels`` with ``HashEmbeddings`` (tests, no provider).
@@ -885,6 +917,8 @@ class HashEmbeddingModels:
     """Every text embedded as a document, in order."""
     calls: list[str] = field(default_factory=list)
     """The model of every call, in order."""
+    by_terms: bool = False
+    """Hash terms rather than whole texts (see ``HashEmbeddings``)."""
 
     def bind(
         self, handle: object, *, name: str, dimensions: int | None, batch_size: int
@@ -907,6 +941,7 @@ class HashEmbeddingModels:
             batch_size=batch_size,
             sent=self.sent,
             calls=self.calls,
+            by_terms=self.by_terms,
         )
 
 

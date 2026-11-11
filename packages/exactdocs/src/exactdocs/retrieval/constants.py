@@ -111,6 +111,14 @@ DEFAULT_QUERY_DOCS_TOKEN_BUDGET: Final[int] = 10_000
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""
+TERM_HASH_STOP_WORDS: Final[frozenset[str]] = frozenset(
+    {"a", "an", "and", "are", "can", "do", "does", "for", "how", "i", "in", "is", "it", "my"}
+    | {"of", "on", "or", "the", "to", "what", "when", "which", "with", "why", "you"}
+)
+"""Words the term-hash embedding (``HashEmbeddings`` with ``by_terms``) leaves out: a question's
+filler would otherwise make every chunk look alike."""
+TERM_HASH_BIAS: Final[float] = 0.01
+"""The constant first value of a term-hash vector, so a text without terms is not all zeros."""
 
 # ---------------------------------------------------------------- adapters.driven.sqlite_fts
 FORMAT: Final[int] = 2
@@ -532,10 +540,34 @@ SEARCH_DURATION_BUCKETS: Final[tuple[float, ...]] = (
 """Bucket bounds of the search duration histogram, in seconds (a stage can take a millisecond)."""
 
 # ---------------------------------------------------------------- models (retrieval modes)
-DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("hybrid_hyde", "hybrid", "bm25")
-"""The default mode when neither the call, the library nor the instance names one: the first that
-can run. Agentic is never a default; a call, a library or the instance must choose it.
+DEFAULT_MODE_ORDER: Final[tuple[str, ...]] = ("bm25",)
+"""The default modes when neither the call, the library nor the instance names one, best first:
+the first that can run. Agentic is never a default; a call, a library or the instance must choose
+it.
+
+A mode is listed only once the eval suite marks it ``eligible_as_default`` (its recall@5 beats
+BM25's by 5 points with a wrong-version rate of 0, docs/evals.md). No mode is yet: ``hybrid`` has
+not been evaluated with a real embedding model in CI (the local models are #245), and
+``hybrid_hyde`` has no pipeline (#94 adds it with its eval result). Until then an operator
+chooses a mode (``EXACTDOCS_AI__MODE``, a library's mode or the call).
 """
+
+# ---------------------------------------------------------------- models (hybrid search, #92)
+SEARCH_DOCS: Final[str] = "search_docs"
+"""The search ``search_docs`` runs: the prefix of its spans' names (``search_docs.<stage>``), the
+same in the use case and in the pipeline's own stages (``PipelineRequest.search``)."""
+QUERY_DOCS: Final[str] = "query_docs"
+"""The search ``query_docs`` runs: the prefix of its spans' names (``query_docs.<stage>``)."""
+RRF_K: Final[int] = 60
+"""Reciprocal rank fusion's ``k``: a chunk scores ``1 / (k + rank)`` in each half it is in."""
+RRF_DEPTH: Final[int] = 50
+"""How many of each half (BM25, vectors) are fused; a search asks for at most 50 results."""
+VECTOR_SNIPPET_WORDS: Final[int] = 24
+"""Words of a chunk's start shown as the snippet of a chunk only the vectors found (BM25 marks
+the matches of the others), as FTS5's ``snippet(..., 24)``: a shorter text is returned whole."""
+QUERY_EMBEDDING_TIMEOUT: Final[float] = 5.0
+"""Seconds a search waits for its query's embedding before answering with BM25
+(``embedding_unavailable``): a slow provider makes a search no slower than this."""
 
 # ---------------------------------------------------------------- models (AI providers, #241)
 PROFILE_NAME_PATTERN: Final[str] = r"^[a-z0-9][a-z0-9_-]{0,62}$"

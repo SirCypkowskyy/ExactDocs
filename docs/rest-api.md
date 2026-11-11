@@ -305,7 +305,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null,
   "rerank_top_n": 16}` replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
-  `EXACTDOCS_AI__MODE` applies, else the best mode configured); it must be available with the
+  `EXACTDOCS_AI__MODE` applies, else the best default mode configured, which is BM25 unless a
+  mode the eval suite made a default can run, and none is yet); it must be available with the
   settings sent: 422 `mode_unavailable` names the model role it needs that is not configured, or
   says the vector store is unavailable (its extension cannot be loaded: sqlite-vec on SQLite,
   pgvector's `vector` on PostgreSQL; `fallback_reason` `vector_store_unavailable` where a setting
@@ -320,7 +321,13 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
   `available_modes`, the `configured_roles` of the library and the `effective_rerank_top_n`. 404 for an unknown library. A
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
-  one is a 422 `mode_unavailable` as well.
+  one is a 422 `mode_unavailable` as well. A `hybrid` search fuses the version's 50 best BM25
+  chunks with its 50 nearest by vector (reciprocal rank fusion, `k` = 60); its `coverage.candidates`
+  counts the chunks of both, once each. The vector half always runs, so a word no chunk of the
+  version contains still gets the version's nearest chunks (never another version's). It never
+  fails for its model: BM25 answers instead, with
+  `fallback_reason` `embedding_in_progress` while the version is not embedded with the configured
+  model, or `embedding_unavailable` when the model fails or times out on the query.
 - **Reranking** (RET-02): with a `reranker` role, a search's best candidates are reordered by the
   reranker (`reranked: true`, `coverage.reranked` counts them, and each reranked result's `score`
   is the reranker's). When `limit` is more than the top N, the reranked results come first and the

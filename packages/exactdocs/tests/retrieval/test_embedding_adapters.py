@@ -4,12 +4,13 @@ pydantic-ai's ``TestEmbeddingModel`` stands in for a real model: CI never calls 
 """
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings import TestEmbeddingModel
+from pydantic_ai.embeddings import EmbeddingResult, TestEmbeddingModel
 from pydantic_ai.exceptions import ModelHTTPError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -119,6 +120,24 @@ async def test_a_failed_call_says_whether_asking_again_may_help(
         await model.embed_documents(["text"])
 
     assert raised.value.transient is transient
+
+
+@pytest.mark.parametrize("embeddings", [[], [["0.1", "not a number"]], [[0.1], [0.2]]])
+async def test_an_answer_without_one_numeric_vector_is_a_failed_call(embeddings: list) -> None:
+    test = TestEmbeddingModel("e5", dimensions=2)
+    answer = replace(await Embedder(test).embed_query("query"), embeddings=embeddings)
+
+    async def odd(*args: object, **kwargs: object) -> EmbeddingResult:
+        del args, kwargs
+        return answer
+
+    with (
+        patch.object(Embedder, "embed_query", odd),
+        pytest.raises(EmbeddingFailedError) as raised,
+    ):
+        await _model(test).embed_query("query")
+
+    assert "corp:e5" in str(raised.value)
 
 
 async def test_a_handle_that_is_no_embedder_is_refused() -> None:
