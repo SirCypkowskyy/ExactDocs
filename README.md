@@ -805,13 +805,17 @@ the same tag filter, the same `llm` model and the same `[ai.agentic]` limits; ea
 is looked up again in the version, under the call's tags, before it is returned, and an answer
 none of whose chunks are left runs the agent. **Only a question asked again hits: the same
 content words in the same order.** Filler such as "how", "do", "I", "I want" or "behaviour" is
-dropped, and inflections fold ("configure"/"configuration", "migrate"/"migration", "retry"/
-"retries", "logging"/"log", "rows"/"row"), so "how do I configure retries", "how to configure
-retry behaviour" and "I want to configure retries" are one question; question words stay
-("when" is not "why"). Order is part of the question, so every swap misses: "replace requests
+dropped, and only plurals fold ("retries"/"retry", "rows"/"row"), with `-ing` and `-ed` when at
+least four letters remain ("connecting"/"connect", while "setting", "logging" and "during" stay
+whole), so "how do I configure retries", "how to configure retry behaviour" and "I want to
+configure retries" are one question. Nothing else folds: "migration" is not "migrate" and
+"format" is never "form", because a wrong fold serves a wrong answer and a missing one only
+costs a miss. Question words ("when" is not "why"), prepositions and conjunctions ("build for
+arm" is not "build on arm") stay. Order is part of the question, so every swap misses: "replace requests
 with httpx" is not "replace httpx with requests", "from v1 to v2" is not "to v1 from v2". That
 also makes an order-flipped re-ask ("retry configuration" for "configure retries") a miss,
-which is accepted. Numbers and versions (with their sign: `-1` is not `1`), words with digits
+which is accepted. Numbers and versions (with their sign and a comparison or range operator right before them:
+`-1` is not `1`, `>= 3.8` is not `< 3.8`, `~1.2` is not `^1.2`), words with digits
 (`python3`, `oauth2`, `E42`) and negations ("not", "never", "without", "can't", "dont"...) must
 match exactly. A question with a word the other lacks never hits, a paraphrase in other words
 included: neither words nor embeddings tell "enable" from "disable" or "client" from "server"

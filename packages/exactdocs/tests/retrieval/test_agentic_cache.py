@@ -524,6 +524,16 @@ async def test_the_threshold_is_configurable(threshold: float, hit: bool) -> Non
         ("does the cache expire before the token", "does the token expire before the cache"),
         ("how to go from v1 to v2", "how to go to v1 from v2"),
         ("upgrade from v2", "upgrade to v2"),
+        ("requires python >= 3.8", "requires python < 3.8"),
+        ("pin the version ~1.2", "pin the version ^1.2"),
+        ("x != 1", "x == 1"),
+        ("requires python>=3.8", "requires python<=3.8"),
+        ("validate the form", "validate the format"),
+        ("logs during the build", "logs duration of the build"),
+        ("list the settings", "list the sets"),
+        ("build for arm", "build on arm"),
+        ("should I use postgres or mysql", "should I use postgres and mysql"),
+        ("how to treat warnings", "how to tree warnings"),
     ],
 )
 def test_questions_that_ask_something_else_never_match_by_words(asked: str, again: str) -> None:
@@ -543,14 +553,14 @@ def test_questions_that_ask_something_else_never_match_by_words(asked: str, agai
         ("how do I not retry on v2", "how not to retry on v2"),
         ("change the settings", "change the setting"),
         ("dont retry uploads", "do not retry uploads"),
-        ("migrate from postgres to mysql", "migrating from Postgres to MySQL"),
+        ("migrate from postgres to mysql", "Migrate from Postgres to MySQL"),
         ("how to configure retries", "how do I configure retries"),
         ("how to connect to postgres", "connecting to postgres"),
-        ("how do I upgrade to v2", "upgrading to v2"),
+        ("how do I upgrade to v2", "how to upgrade to v2"),
         ("I want to configure retries", "how do I configure retries"),
-        ("database migration", "database migrate"),
+        ("requires python>=3.8", "requires python >= 3.8"),
         ("delete rows", "delete a row"),
-        ("enable logging", "enable logs"),
+        ("enable logs", "enable the log"),
     ],
 )
 def test_the_same_question_asked_again_matches(asked: str, again: str) -> None:
@@ -565,6 +575,9 @@ def test_the_same_question_asked_again_matches(asked: str, again: str) -> None:
         ("retry configuration", "configure retries"),
         ("check the status of https", "check https status"),
         ("on v2, how not to retry", "how not to retry on v2"),
+        ("database migration", "migrate the database"),
+        ("how do I upgrade to v2", "upgrading to v2"),
+        ("enable logging", "enable logs"),
     ],
 )
 def test_a_re_ask_in_another_order_misses_by_design(asked: str, again: str) -> None:
@@ -576,31 +589,57 @@ def test_a_re_ask_in_another_order_misses_by_design(asked: str, again: str) -> N
 @pytest.mark.parametrize(
     ("word", "other"),
     [
-        ("migration", "migrate"),
-        ("validation", "validate"),
-        ("authentication", "authenticate"),
-        ("creation", "create"),
-        ("created", "creates"),
-        ("configuration", "configure"),
-        ("configuring", "configured"),
         ("rows", "row"),
         ("workflows", "workflow"),
         ("views", "view"),
         ("flows", "flow"),
-        ("logging", "log"),
         ("logs", "log"),
-        ("mapping", "map"),
-        ("setting", "set"),
-        ("settings", "setting"),
-        ("cookies", "cookie"),
         ("retries", "retry"),
-        ("retried", "retry"),
+        ("policies", "policy"),
+        ("matches", "match"),
+        ("boxes", "box"),
+        ("classes", "class"),
+        ("connecting", "connect"),
+        ("connected", "connect"),
+        ("configuring", "configured"),
+        ("stopping", "stop"),
         ("called", "call"),
-        ("added", "add"),
+        ("installed", "install"),
+        ("settings", "setting"),
+        ("strings", "string"),
     ],
 )
 def test_inflections_fold_to_one_term(word: str, other: str) -> None:
     assert question_terms(word) == question_terms(other)
+
+
+@pytest.mark.parametrize(
+    ("word", "other"),
+    [
+        ("format", "form"),
+        ("during", "duration"),
+        ("settings", "sets"),
+        ("setting", "set"),
+        ("form", "formation"),
+        ("logging", "log"),
+        ("mapping", "map"),
+        ("string", "str"),
+        ("thing", "th"),
+        ("morning", "morn"),
+        ("ceiling", "ceil"),
+        ("treat", "tree"),
+        ("migration", "migrate"),
+        ("validation", "validate"),
+        ("authentication", "authenticate"),
+        ("creation", "create"),
+        ("deployment", "deploy"),
+        ("configuration", "configure"),
+        ("cookies", "cookie"),
+        ("added", "add"),
+    ],
+)
+def test_the_fold_is_minimal_and_these_stay_apart_on_purpose(word: str, other: str) -> None:
+    assert question_terms(word) != question_terms(other)
 
 
 @pytest.mark.parametrize(
@@ -1097,11 +1136,11 @@ async def test_a_failing_question_embedding_compares_words_only_and_logs_no_ques
 
 
 def test_question_terms_fold_plurals_and_verb_endings_and_drop_filler() -> None:
-    assert question_terms(FIRST) == ("configur", "retri")
+    assert question_terms(FIRST) == ("configure", "retry")
     assert question_terms("Configuring the retry_policy, retried calls") == (
         "configur",
-        "retri",
-        "polici",
+        "retry",
+        "policy",
         "retri",
         "call",
     )

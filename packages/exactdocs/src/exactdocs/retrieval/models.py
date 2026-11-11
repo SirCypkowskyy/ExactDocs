@@ -20,14 +20,14 @@ from exactdocs.retrieval.constants import (
     _KIND_FIELDS,
     _LANGUAGE_ALIASES,
     _OPTIONAL_KIND_FIELDS,
-    _QUESTION_SUFFIXES,
+    _PLURALS,
     _SELF_HOSTED_KINDS,
-    _SHORTEST_AT_FOLD,
-    _SHORTEST_E_FOLD,
-    _SHORTEST_FOLD,
+    _SHORTEST_PLURAL,
+    _SHORTEST_STEM,
     _UNDOUBLED,
     _UNFOLDED_S_ENDINGS,
     _UNFOLDED_WORDS,
+    _VERB_ENDINGS,
     _WORD,
     AGENT_CACHE_FORMAT,
     AGENT_CACHE_TERM_HASH_CHARS,
@@ -3525,39 +3525,36 @@ class LlmStep:
 
 
 def _folded(word: str) -> str:
-    """Fold a word's inflection, so ``retries`` and ``retry`` count as one term.
+    """Fold a word's plural, and its ``-ing`` or ``-ed`` when enough of it remains.
+
+    The fold is minimal on purpose: a wrong fold serves a wrong answer ("format" read as
+    "form"), a missing one only costs a miss.
 
     Args:
         word: A case-folded word.
 
     Returns:
-        The word without its endings (``_QUESTION_SUFFIXES``, until none applies), then without
-        a final ``e``, a final doubled consonant undoubled (``_UNDOUBLED``), without a final
-        ``at`` and with a final ``y`` read as ``i``. A final ``s`` stays after
-        ``_UNFOLDED_S_ENDINGS``, and ``_UNFOLDED_WORDS`` stay as they are.
+        The word with its plural ending folded (``_PLURALS``, from ``_SHORTEST_PLURAL`` letters,
+        never after ``_UNFOLDED_S_ENDINGS``), then without ``-ing``/``-ed`` and a final doubled
+        consonant undoubled, if that leaves at least ``_SHORTEST_STEM`` letters.
+        ``_UNFOLDED_WORDS`` stay as they are.
     """
     if word in _UNFOLDED_WORDS:
         return word
-    changed = True
-    while changed:
-        changed = False
-        for suffix, replacement, shortest in _QUESTION_SUFFIXES:
-            if len(word) < shortest or not word.endswith(suffix):
-                continue
-            if suffix == "s" and word.endswith(_UNFOLDED_S_ENDINGS):
-                continue
-            if word.endswith("ss"):
-                continue
-            word = word[: -len(suffix)] + replacement
-            changed = True
-            break
-    if len(word) > _SHORTEST_E_FOLD and word.endswith("e"):
-        word = word[:-1]
-    if len(word) > _SHORTEST_FOLD and word[-1] == word[-2] and word[-1] in _UNDOUBLED:
-        word = word[:-1]
-    if len(word) >= _SHORTEST_AT_FOLD and word.endswith("at"):
-        word = word[:-2]
-    return word[:-1] + "i" if len(word) > _SHORTEST_FOLD and word.endswith("y") else word
+    if len(word) >= _SHORTEST_PLURAL and not word.endswith(_UNFOLDED_S_ENDINGS):
+        for suffix, replacement in _PLURALS:
+            if word.endswith(suffix):
+                word = word[: -len(suffix)] + replacement
+                break
+    if word in _UNFOLDED_WORDS:
+        return word
+    for ending in _VERB_ENDINGS:
+        if word.endswith(ending):
+            stem = word[: -len(ending)]
+            if len(stem) > 1 and stem[-1] == stem[-2] and stem[-1] in _UNDOUBLED:
+                stem = stem[:-1]
+            return stem if len(stem) >= _SHORTEST_STEM else word
+    return word
 
 
 def _question_text(query: str) -> str:
@@ -3582,14 +3579,14 @@ def _question_tokens(query: str) -> list[tuple[str, bool]]:
         query: The question, as the caller sent it.
 
     Returns:
-        Each token and whether it is a number (``QUESTION_NUMBER``: its sign kept, without a
-        ``v``); words are split at anything but letters and digits (``_`` included), each of
-        ``QUESTION_NEGATIONS`` read as ``not``.
+        Each token and whether it is a number (``QUESTION_NUMBER``: its operator and sign kept,
+        without a ``v``); words are split at anything but letters and digits (``_``
+        included), each of ``QUESTION_NEGATIONS`` read as ``not``.
     """
     tokens = []
     for match in re.finditer(rf"{QUESTION_NUMBER}|[^\W_]+", _question_text(query)):
-        if match.group(2) is not None:
-            tokens.append((match.group(1) + match.group(2), True))
+        if match.group(3) is not None:
+            tokens.append(((match.group(1) or "") + match.group(2) + match.group(3), True))
         else:
             word = match.group(0)
             tokens.append(("not" if word in QUESTION_NEGATIONS else word, False))

@@ -1247,15 +1247,17 @@ normalized question; 0 when their `question_guards` differ (signed numbers and v
 order, words with digits such as `python3`, and the polarity words `not`, `no`, `never`,
 `without`..., with `n't`, `cannot` and the apostrophe-less `dont`, `cant`... read as `not`) or
 their `question_terms` differ as sequences: the content words in order, filler dropped
-(`how`, `do`, `I`, `want`...; question words such as `when` and `why` stay), each folded
-(plural and verb endings, `-ation`, a final `e`, `at` and doubled consonant, `y` read as `i`),
-numbers in their places (`#1`), and `to` kept except as an infinitive. Order is compared as is,
+(`how`, `do`, `I`, `want`...; question words such as `when` and `why`, prepositions and
+conjunctions stay), each folded minimally (plurals; `-ing`/`-ed` only when at least four letters
+remain after undoubling, a no-fold list such as `during`, `string`, `news`; never `-ation`,
+`-ate` or `-ment`), numbers in their places with a comparison operator right before them
+(`#>=3.8`), and `to` kept except as an infinitive. Order is compared as is,
 so a swap of any relation ("A with B", "A than B", "from v1 to v2") misses without a rule per
 word, and a re-ask in another word order misses too (accepted). Else 1, or the cosine of their
 embeddings when both have one. So an embedding only confirms a re-asked question and never bridges two
 questions with different terms: on `BAAI/bge-small-en-v1.5` opposites and siblings
 ("enable"/"disable", "client"/"server") score 0.85 to 0.96, as real paraphrases do, so no
-threshold separates them. `AGENT_CACHE_FORMAT` is 2: rows of the earlier term format are
+threshold separates them. `AGENT_CACHE_FORMAT` is 3: rows of an earlier term format are
 another scope. Words find the candidates first; with none, nothing is embedded;
 with some, the question is embedded to confirm them (as a query by the instance's embedding
 model, checked against the embedding budget and the instance's, library's and caller's budgets
