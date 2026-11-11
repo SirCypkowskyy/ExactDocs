@@ -154,7 +154,7 @@ dialect (Cohere, Jina, Voyage, vLLM, LiteLLM, Azure AI Foundry) or the TEI `/rer
 - **No download at run time.** `exactdocs models pull` is the only command that contacts the
   Hugging Face Hub; it stores models in **`EXACTDOCS_MODELS_DIR`** (default `<data dir>/models`;
   the `-local` image sets it to its read-only `/opt/exactdocs/models`). At run time models load
-  from that directory with `HF_HUB_OFFLINE=1`; a missing model disables the role at start with a message, it is
+  from that directory only (`specific_model_path`, `local_files_only`: fastembed never reaches Hub code, so `HF_HUB_OFFLINE` is not needed, #278); a missing model disables the role at start with a message, it is
   never fetched.
 - A local **LLM** is out of scope for in-process inference: use the `ollama` kind (or vLLM,
   llama.cpp's server, LM Studio as `openai-compatible`).
@@ -305,7 +305,7 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 | Nothing configured (any install) | No module of `[ai]` or `[local]` is imported, sqlite-vec is not loaded, no connection is opened except to git remotes | the model-free test, extended with a socket guard (#241) |
 | `[ai]` installed, nothing configured | Same as above | same test with the extra installed |
 | A provider configured | Connections only to that profile's base URL, plus its identity endpoints: for Vertex with a service-account file `oauth2.googleapis.com`, with ADC or workload identity the GCE metadata server (`metadata.google.internal` / `169.254.169.254`); for Azure with Entra ID `login.microsoftonline.com` (or the managed-identity endpoint, `169.254.169.254` / `IDENTITY_ENDPOINT`). No telemetry to any vendor (no Logfire); `genai-prices` data is the bundled copy, never updated over the network; tiktoken is never used (below) | socket-guard test allowing only the mock endpoint, with the SDKs' `*_API_KEY` / `*_BASE_URL` variables set (#241) |
-| `local` roles | No connection at all; models load from disk with `HF_HUB_OFFLINE=1`; only `exactdocs models pull` contacts the Hub | test with sockets blocked (#245); `-local` smoke test with `--network none` (#246) |
+| `local` roles | No connection at all; models load from their folder on disk (`specific_model_path`, `local_files_only`); only `exactdocs models pull` contacts the Hub | test with sockets blocked (#245); `-local` smoke test with `--network none` (#246) |
 | A library with AI off | No chunk, query or instruction file of it reaches any provider; its searches answer BM25 | scenario in #241 and #91 |
 
 **No tiktoken.** The `openai` extra installs tiktoken, which downloads its encoding files from
