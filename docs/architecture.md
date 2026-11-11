@@ -1177,7 +1177,9 @@ snippet caught the error. The guardrails of #99: `_RunEnders` also counts every 
 name and a hash of its arguments (pydantic-ai-harness 0.60.0 has no loop detection); the
 `max_repeated_calls`-th identical call (3 by default) ends the run with `agent_loop_detected`, a
 repeated `run_code` before it runs, a repeated read by raising the fixed `REPEATED_CALL` into the
-sandbox (so do the reads after it) and ending the run when the snippet returns. The harness
+sandbox (so do the reads after it) and ending the run when the snippet returns. A loop whose
+arguments change each time escapes the hash; it is bounded by Code Mode's per-snippet
+`max_tool_calls` and `UsageLimits.tool_calls_limit`, and ends with `agent_limit_reached`. The harness
 `OutputGuardrail` runs `DocsBrowser.admit` on the answer and replaces it with the admitted picks
 only (a host error in that check ends the run as `agent_failed`); the pipeline's own check after
 it stays, so the guarantee holds whatever the adapter does. Each read is also recorded through

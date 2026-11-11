@@ -1031,16 +1031,21 @@ async def test_the_output_guardrail_rejects_picks_the_caller_may_not_see(
     auth = (await world.module.search_docs(
         SearchDocsQuery(library=LIB, ref="v2", query="token downtime", mode="bm25")
     )).results[0].chunk_id  # fmt: skip
-    model = browsing(picks=2, extra=[foreign, "0" * 32, auth])
+    untagged = (await world.module.search_docs(
+        SearchDocsQuery(library=LIB, ref="v2", query="backoff", mode="bm25")
+    )).results[0]  # fmt: skip
+    assert untagged.article_path == "docs/resilience.md"  # in the pinned version, but untagged
+    model = browsing(picks=2, extra=[foreign, "0" * 32, untagged.chunk_id, auth])
 
     picks = await _explore(world, model, _browser(world, tags=["security"]))
 
     ids = [p.chunk_id for p in picks]
     assert foreign not in ids
     assert "0" * 32 not in ids
+    assert untagged.chunk_id not in ids  # the pinned version holds it; the caller's tags do not
     assert set(ids) == {auth}  # the search found it within the tags, and the agent added it too
     (warning,) = [r.getMessage() for r in caplog.records if "output guardrail" in r.getMessage()]
-    assert "rejected 2 pick(s)" in warning
+    assert "rejected 3 pick(s)" in warning
     assert foreign not in caplog.text
 
 

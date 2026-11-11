@@ -742,7 +742,8 @@ Passing any of them ends the run, and the search answers with the best mode with
 (BM25, or hybrid when an embedding model is set) and `fallback_reason: agent_limit_reached`; a
 budget reached during the run gives `llm_budget_reached`; an agent that makes the same call (the
 same tool with the same arguments, `run_code` or a read inside it) `max_repeated_calls` times,
-`agent_loop_detected` (the repeated read never runs); a model that fails or keeps answering
+`agent_loop_detected` (the repeated read never runs; a loop whose arguments change each time
+is not detected as one, and ends at `max_tool_calls` with `agent_limit_reached`); a model that fails or keeps answering
 something unusable, `agent_failed`, as does a read that fails on the server (the database, the
 catalog): its error is never shown to the model, only a fixed text, and the run ends. Failures
 are logged by kind, never with the question or the error's text. Traces

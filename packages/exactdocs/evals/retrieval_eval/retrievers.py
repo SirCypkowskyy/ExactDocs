@@ -31,7 +31,8 @@ class Retriever(Protocol):
 class RecordedReads:
     """Implements retrieval's ``AgentReads``: keeps the agentic explorer's reads for the suite.
 
-    The suite asks one question at a time, so the reads taken after a search are its run's.
+    The suite asks one question at a time (``max_concurrency=1`` in ``suite.evaluate_mode``), so
+    the reads taken after a search are its run's; running cases concurrently would mix traces.
     """
 
     reads: list[AgentRead] = field(default_factory=list)

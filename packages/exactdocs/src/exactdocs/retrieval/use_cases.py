@@ -3510,6 +3510,10 @@ class VersionBrowser:
     found. The browser is the agent's ``deps``: no tool argument can name a library, a version
     or a tag. ``admit`` is the output guardrail's check, by the same rules.
 
+    A library-level access check (ACL-02/04) does not belong here: the browser is already bound to
+    one version, so it goes where ``SearchDocs`` resolves the library and ref, before any pipeline
+    runs. Only per-article visibility would be added here, to the reads and to ``admit``.
+
     Each call is recorded as a step of the explored path (its argument is model-written text:
     control characters are dropped and it is cut at ``AGENT_STEP_ARGUMENT_CHARS``), and the first
     step that reached each article is remembered, so each result can say how the agent got to it.
