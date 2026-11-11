@@ -5,16 +5,20 @@ import asyncio
 import os
 import sys
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-from exactdocs.bootstrap.container import Container
 from exactdocs.retrieval.models import ModelRole, RetrievalMode
 from fixture_repo import DocsRepo, build
 from offline_embedding import offline_data_container
 from retrieval_eval.dataset import DATASET_FILE, fingerprint, load_dataset
-from retrieval_eval.fixture import configured_container, model_free_container, run_on_fixture
+from retrieval_eval.fixture import (
+    ContainerBuilder,
+    configured_container,
+    model_free_container,
+    run_on_fixture,
+)
 from retrieval_eval.suite import (
     BASELINE_FILE,
     MODES,
@@ -125,7 +129,7 @@ OFFLINE_NOT_JUDGED: Final[Mapping[RetrievalMode, str]] = {
 there only in tests, on a stand-in LLM, docs/evals.md)."""
 
 
-def _builder(args: argparse.Namespace) -> Callable[[Path], Container]:
+def _builder(args: argparse.Namespace) -> ContainerBuilder:
     """Pick how the app is built: model-free, the stand-in embedding, or the configured models.
 
     Args:

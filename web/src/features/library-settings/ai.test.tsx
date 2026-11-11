@@ -9,6 +9,7 @@ import {
   bodyOf,
   type LibraryRetrieval,
   modeOptions,
+  modeSource,
   pipelineSteps,
   profileOptions,
   retrievalDraftOf,
@@ -347,6 +348,19 @@ describe("retrieval model", () => {
       "Its picks are checked against this version, each with why it was picked",
     ]);
     expect(rolesInUse(r, ROLES as never).map((x) => x.role)).toEqual(["llm"]);
+  });
+
+  it("says in words why the agent's run ended", () => {
+    for (const [reason, words] of [
+      ["agent_limit_reached", "The agent ran past its limits, so a cheaper mode answered."],
+      ["agent_failed", "The agent could not finish, so a cheaper mode answered."],
+      [
+        "agent_loop_detected",
+        "The agent kept repeating the same call, so a cheaper mode answered.",
+      ],
+    ] as const) {
+      expect(modeSource({ ...HYBRID, fallback_reason: reason })).toBe(words);
+    }
   });
 
   it("keeps a stored mode that can't run visible but not choosable", () => {

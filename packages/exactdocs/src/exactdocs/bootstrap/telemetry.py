@@ -36,8 +36,11 @@ from exactdocs.bootstrap.rest import ErrorResponse
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.models import Job, JobKind
 from exactdocs.ingestion.ports.driven import JobHandler, JobProgress
-from exactdocs.retrieval.adapters.driven.opentelemetry import OpenTelemetrySearchTracer
-from exactdocs.retrieval.ports.driven import SearchTracer
+from exactdocs.retrieval.adapters.driven.opentelemetry import (
+    OpenTelemetryAgentReads,
+    OpenTelemetrySearchTracer,
+)
+from exactdocs.retrieval.ports.driven import AgentReads, SearchTracer
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +145,20 @@ def search_tracer(settings: Settings) -> SearchTracer | None:
     if not _observed(settings):
         return None
     return OpenTelemetrySearchTracer(record_query_text=settings.telemetry_query_text)
+
+
+def agent_reads(settings: Settings) -> AgentReads | None:
+    """Return what records the agentic explorer's reads in the trace when telemetry is on.
+
+    Args:
+        settings: The runtime configuration.
+
+    Returns:
+        The span-event recorder, or ``None`` (nothing is recorded) when both are off.
+    """
+    if not _observed(settings):
+        return None
+    return OpenTelemetryAgentReads()
 
 
 def traced_jobs(

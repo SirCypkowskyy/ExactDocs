@@ -8,6 +8,12 @@ from time import perf_counter
 from opentelemetry import metrics, trace
 
 from exactdocs.retrieval.constants import (
+    AGENT_PINNED_MANIFEST_ATTRIBUTE,
+    AGENT_PINNED_VERSION_ATTRIBUTE,
+    AGENT_READ_EVENT,
+    AGENT_SERVED_MANIFESTS_ATTRIBUTE,
+    AGENT_SERVED_VERSIONS_ATTRIBUTE,
+    AGENT_TOOL_ATTRIBUTE,
     ATTRIBUTE_PREFIX,
     ERROR_TYPE_ATTRIBUTE,
     FALLBACK_REASON_ATTRIBUTE,
@@ -22,6 +28,7 @@ from exactdocs.retrieval.constants import (
     TRACER_NAME,
     WHOLE_SEARCH,
 )
+from exactdocs.retrieval.models import AgentRead
 from exactdocs.retrieval.ports.driven import SearchSpan
 
 
@@ -151,3 +158,31 @@ class OpenTelemetrySearchTracer:
             raise
         finally:
             self._duration.record(max(0.0, perf_counter() - started), labels)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OpenTelemetryAgentReads:
+    """Implements ``ports.driven.AgentReads`` as events of the current span (the read tool's).
+
+    Each read of the agentic explorer becomes an ``exactdocs.agent.read`` event on the span it
+    runs in (pydantic-ai's ``execute_tool <read>``, inside ``run_code``): the tool, the version
+    and manifest it was bound to, and those of what it served. Never its arguments or the text
+    read, so the trace shows the run stayed in its version without holding any content.
+    """
+
+    def record(self, read: AgentRead) -> None:
+        """Add the read to the current span, if it records.
+
+        Args:
+            read: The read.
+        """
+        trace.get_current_span().add_event(
+            AGENT_READ_EVENT,
+            {
+                AGENT_TOOL_ATTRIBUTE: read.tool,
+                AGENT_PINNED_VERSION_ATTRIBUTE: read.pinned_version,
+                AGENT_PINNED_MANIFEST_ATTRIBUTE: read.pinned_manifest,
+                AGENT_SERVED_VERSIONS_ATTRIBUTE: list(read.served_versions),
+                AGENT_SERVED_MANIFESTS_ATTRIBUTE: list(read.served_manifests),
+            },
+        )

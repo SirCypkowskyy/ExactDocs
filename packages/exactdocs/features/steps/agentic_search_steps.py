@@ -5,6 +5,7 @@ The ``llm`` role resolves to a profile whose chat model is a pydantic-ai ``Funct
 the process.
 """
 
+import logging
 from contextlib import ExitStack
 from http import HTTPStatus
 from typing import Any
@@ -17,7 +18,8 @@ from pydantic_ai.models.function import FunctionModel
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings
-from scripted_explorer import ScriptedModels, browsing, greedy, scripted_ai
+from exactdocs.retrieval.adapters.driven import ai_explorer_sdk
+from scripted_explorer import ScriptedModels, browsing, greedy, looping, scripted_ai
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE
 from steps.search_steps import LIBRARY
 
@@ -120,3 +122,58 @@ def step_fell_back(context: Context, reason: str) -> None:
     assert (body["retrieval_mode"], body["fallback_reason"]) == ("bm25", reason), body
     assert body["results"], "BM25 answered"
     assert all(r["justification"] is None and r["explored_path"] == [] for r in body["results"])
+
+
+class _Records(logging.Handler):
+    """Keeps the log records it is given."""
+
+    def __init__(self) -> None:
+        """Start with none."""
+        super().__init__(logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Keep a record.
+
+        Args:
+            record: The record.
+        """
+        self.records.append(record)
+
+
+@when("the agent proposes an article that is not in the pinned version")
+def step_proposes_foreign(context: Context) -> None:
+    older = context.client.get(
+        f"/api/v1/libraries{LIBRARY}/search", params={"q": "snake_case", "ref": "v1.3.0"}
+    )
+    assert older.status_code == HTTPStatus.OK, older.text
+    context.foreign = older.json()["results"][0]["chunk_id"]
+    _serve(context, browsing(extra=[context.foreign]), scripted_ai("agentic"))
+    handler = _Records()
+    explorer_log = logging.getLogger(ai_explorer_sdk.__name__)
+    explorer_log.addHandler(handler)
+    context.add_cleanup(explorer_log.removeHandler, handler)
+    context.guardrail_log = handler
+    context.result = _search(context, f"{LIBRARY}/v1.4.0", "agentic")
+
+
+@then("the guardrail rejects it and it is not returned")
+def step_guardrail_rejected(context: Context) -> None:
+    body = context.result
+    assert (body["retrieval_mode"], body["fallback_reason"]) == ("agentic", None), body
+    assert body["results"], "the agent's own picks remain"
+    assert context.foreign not in [r["chunk_id"] for r in body["results"]], body
+    rejected = [r.getMessage() for r in context.guardrail_log.records]
+    assert any("output guardrail rejected 1 pick" in m for m in rejected), rejected
+    assert all(context.foreign not in m for m in rejected), "the log names no chunk"
+
+
+@when("the agent calls the same tool with the same arguments {times:d} times")
+def step_loops(context: Context, times: int) -> None:
+    _serve(context, looping(times), scripted_ai("agentic"))
+    context.result = _search(context, f"{LIBRARY}/v1.4.0", "agentic")
+
+
+@then('the run ends and the search falls back to BM25 with the reason "{reason}"')
+def step_fell_back_to_bm25(context: Context, reason: str) -> None:
+    step_fell_back(context, reason)

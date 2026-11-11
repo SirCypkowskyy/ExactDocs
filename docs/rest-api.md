@@ -359,8 +359,12 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `coverage.candidates` counts the chunks the agent saw. A run past one of its limits
   (`[ai.agentic]`: tool calls, model requests, tokens, the sandbox's time, memory or host calls,
   its timeout) is answered by the best mode without an LLM step with `fallback_reason`
-  `agent_limit_reached`; a budget reached during the run gives `llm_budget_reached`; a model
-  that fails or answers nothing usable, or a read that fails on the server, gives `agent_failed`.
+  `agent_limit_reached`; a budget reached during the run gives `llm_budget_reached`; the same
+  call (tool and arguments) made `max_repeated_calls` times (3 by default) gives
+  `agent_loop_detected`; a model that fails or answers nothing usable, or a read that fails on
+  the server, gives `agent_failed`. The agent's reads are bound to the version and the call's
+  tags (its `deps`, never a tool argument), and an output guardrail removes any pick outside
+  them before the answer is used.
 - **Reranking** (RET-02): with a `reranker` role, a search's best candidates are reordered by the
   reranker (`reranked: true`, `coverage.reranked` counts them, and each reranked result's `score`
   is the reranker's). When `limit` is more than the top N, the reranked results come first and the

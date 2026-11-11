@@ -31,13 +31,15 @@ from retrieval_eval.evaluators import (
     RECALL_AT,
     RECIPROCAL_RANK,
     RIGHT_VERSION,
+    STAYED_IN_VERSION,
     TOKENS,
     USD,
     Cost,
+    StayedInVersion,
     VersionAndRank,
     recall_key,
 )
-from retrieval_eval.retrievers import Retriever, SearchDocsRetriever
+from retrieval_eval.retrievers import RecordedReads, Retriever, SearchDocsRetriever
 
 MAX_RECALL_DROP_POINTS: Final[float] = 2.0
 """How far recall@5 may fall below the baseline, in percentage points."""
@@ -134,6 +136,11 @@ class ModeOutcome(_Model):
     metrics: ModeMetrics | None = None
     wrong_version_cases: list[str] = []
     """Cases with a result of another version, and the offending results."""
+    traced_runs: int = 0
+    """Cases whose run left a trace of its reads (agentic runs, when the app records them)."""
+    left_version_cases: list[str] = []
+    """Cases whose run's trace shows a read outside the version asked for, and those reads;
+    must be empty (#99)."""
     errors: list[str] = []
     """Cases whose search raised, with the error."""
     misses: list[str] = []
@@ -254,6 +261,11 @@ async def evaluate_mode(
         for c in report.cases
         if not c.assertions[RIGHT_VERSION].value
     ]
+    left = [
+        f"{c.name}: {c.assertions[STAYED_IN_VERSION].reason}"
+        for c in report.cases
+        if STAYED_IN_VERSION in c.assertions and not c.assertions[STAYED_IN_VERSION].value
+    ]
     misses = [
         c.name
         for c in report.cases
@@ -272,6 +284,8 @@ async def evaluate_mode(
         status="ran",
         metrics=metrics_of(report),
         wrong_version_cases=sorted(wrong),
+        traced_runs=sum(1 for c in report.cases if c.output.reads),
+        left_version_cases=sorted(left),
         errors=sorted(failed),
         misses=sorted(misses),
         fallbacks=sum(1 for c in report.cases if c.output.answered_by not in {None, mode.mode}),
@@ -289,10 +303,11 @@ def with_evaluators(dataset: RetrievalDataset) -> RetrievalDataset:
         dataset: The cases.
 
     Returns:
-        The same dataset, evaluating version, rank and cost.
+        The same dataset, evaluating version, rank, the agentic runs' traces and cost.
     """
     if not dataset.evaluators:
         dataset.add_evaluator(VersionAndRank())
+        dataset.add_evaluator(StayedInVersion())
         dataset.add_evaluator(Cost())
     return dataset
 
@@ -373,6 +388,7 @@ async def run_modes(
     allow_providers: bool = False,
     local_roles: frozenset[ModelRole] = frozenset(),
     spent: Callable[[], Awaitable[tuple[int, float]]] | None = None,
+    reads: RecordedReads | None = None,
 ) -> list[ModeOutcome]:
     """Run every mode the app can run now; record the others as unavailable or skipped.
 
@@ -386,6 +402,8 @@ async def run_modes(
         local_roles: The configured roles whose model runs on this machine; any other role is
             taken to call a hosted provider.
         spent: Reads the instance's spend so far (tokens, USD), for the cost per question.
+        reads: The agentic explorer's reads, as the app records them, so each run's trace is
+            checked (``StayedInVersion``); ``None``: no trace is checked.
 
     Returns:
         One outcome per mode, in order.
@@ -404,6 +422,7 @@ async def run_modes(
                 mode=mode.mode.value,
                 commits=commits,
                 spent=spent,
+                reads=reads,
             )
             rerank = ModelRole.RERANKER in status.configured_roles
             outcome = await evaluate_mode(dataset, mode, retriever, rerank=rerank)
@@ -573,6 +592,34 @@ def _points(value: float) -> float:
     return round(value * 100, 2)
 
 
+def _failed(outcome: ModeOutcome, metrics: ModeMetrics) -> list[str]:
+    """Say what fails the suite in a mode that ran, whatever its recall.
+
+    Args:
+        outcome: The mode's outcome.
+        metrics: Its metrics.
+
+    Returns:
+        A problem for results of another version, for runs whose traces read outside the version
+        asked for, and for questions that failed to run.
+    """
+    name = outcome.mode.value
+    problems = []
+    if outcome.wrong_version_cases:
+        problems.append(
+            f"{name}: {len(outcome.wrong_version_cases)} question(s) got a result of another "
+            f"version (wrong-version rate {metrics.wrong_version_rate:.3f}, must be 0)"
+        )
+    if outcome.left_version_cases:
+        problems.append(
+            f"{name}: {len(outcome.left_version_cases)} run(s) read outside the version asked "
+            "for (from their traces, must be none)"
+        )
+    if outcome.errors:
+        problems.append(f"{name}: {len(outcome.errors)} question(s) failed to run")
+    return problems
+
+
 def judge(
     dataset: str,
     cases: int,
@@ -598,7 +645,8 @@ def judge(
         search_engine: The full-text search engine that answered, kept in the report.
 
     Returns:
-        The report: passed only with no wrong version and no error in any mode, no recall@5
+        The report: passed only with no wrong version, no agentic run reading outside its
+        version (from its trace) and no error in any mode, no recall@5
         drop beyond the limit in a gating mode, and no lowered or unbacked stored baseline.
     """
     baseline = comparison.baseline
@@ -615,13 +663,7 @@ def judge(
             judged.append(outcome)
             continue
         name = outcome.mode.value
-        if outcome.wrong_version_cases:
-            problems.append(
-                f"{name}: {len(outcome.wrong_version_cases)} question(s) got a result of another "
-                f"version (wrong-version rate {metrics.wrong_version_rate:.3f}, must be 0)"
-            )
-        if outcome.errors:
-            problems.append(f"{name}: {len(outcome.errors)} question(s) failed to run")
+        problems.extend(_failed(outcome, metrics))
         base = baseline.get(name)
         if base is None and outcome.gating and baseline:  # no baseline at all: compare() says so
             warnings.append(f"{name}: no baseline to compare with, so its recall@5 is not gated")
@@ -637,7 +679,9 @@ def judge(
         if outcome.mode is not RetrievalMode.BM25 and bm25 is not None and unjudged is None:
             margin = _points(metrics.recall_at_5 - bm25.recall_at_5)
             eligible = (
-                margin >= DEFAULT_MARGIN_POINTS - _EPSILON and not outcome.wrong_version_cases
+                margin >= DEFAULT_MARGIN_POINTS - _EPSILON
+                and not outcome.wrong_version_cases
+                and not outcome.left_version_cases
             )
         judged.append(
             outcome.model_copy(
@@ -776,6 +820,7 @@ def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
                 f"failed or timed out on {o.rerank_fallbacks}"
             )
         lines.extend(f"- `{o.mode}` wrong version: {c}" for c in o.wrong_version_cases)
+        lines.extend(f"- `{o.mode}` read outside its version: {c}" for c in o.left_version_cases)
         lines.extend(f"- `{o.mode}` error: {c}" for c in o.errors)
         if o.misses:
             lines.append(f"- `{o.mode}` not in the top 10: " + "; ".join(o.misses))

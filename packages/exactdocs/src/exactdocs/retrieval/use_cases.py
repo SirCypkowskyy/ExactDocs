@@ -142,6 +142,7 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     AgentBounds,
     AgentPick,
+    AgentRead,
     AgentRun,
     AiCaller,
     ArticleEntry,
@@ -221,6 +222,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    AgentReads,
     ArticleSuggestions,
     ArticleTitles,
     CallRates,
@@ -295,6 +297,19 @@ class _UntracedSpan:
             mode: The mode that answered.
         """
         del mode
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnrecordedAgentReads:
+    """Implements ``ports.driven.AgentReads`` by recording nothing (no trace is kept)."""
+
+    def record(self, read: AgentRead) -> None:
+        """Record nothing.
+
+        Args:
+            read: The read.
+        """
+        del read
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3486,15 +3501,20 @@ class HybridPipeline:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VersionBrowser:
-    """Implements ``ports.driven.DocsBrowser``: the explorer's read tools on one pinned version.
+    """Implements ``ports.driven.DocsBrowser``: the explorer's read tools within the caller's scope.
 
-    Every read goes to ``version.manifest_id`` (chunks, outlines, BM25) or to the catalog's
-    articles of that same manifest, so nothing of another version can reach the agent. The
-    search's tag filter applies to every read: an article or chunk it excludes reads as not
-    found, so the agent never sees it. Each call is recorded as a step of the explored path (its
-    argument is model-written text: control characters are dropped and it is cut at
-    ``AGENT_STEP_ARGUMENT_CHARS``), and the first step that reached each article is remembered,
-    so each result can say how the agent got to it.
+    The scope is what the caller may see: the pinned version (``version.manifest_id``) and the
+    search's tag filter. Every read goes to that manifest (chunks, outlines, BM25) or to the
+    catalog's articles, of which an answer served from another manifest is dropped, so nothing of
+    another version reaches the agent; an article or chunk the tag filter excludes reads as not
+    found. The browser is the agent's ``deps``: no tool argument can name a library, a version
+    or a tag. ``admit`` is the output guardrail's check, by the same rules.
+
+    Each call is recorded as a step of the explored path (its argument is model-written text:
+    control characters are dropped and it is cut at ``AGENT_STEP_ARGUMENT_CHARS``), and the first
+    step that reached each article is remembered, so each result can say how the agent got to it.
+    Each is also a read of the run's trace (``reads``): the version and manifest it was bound to
+    and those of what it served, never its argument or the text.
     """
 
     version: SearchableVersion
@@ -3507,12 +3527,25 @@ class VersionBrowser:
     """Its articles' list and Markdown; without it the agent lists and reads none."""
     tag_filter: TagFilter = field(default_factory=TagFilter)
     """The search's tag filter."""
+    reads: AgentReads = field(default_factory=UnrecordedAgentReads)
+    """The run's trace."""
+    searched_by: str = SEARCH_DOCS
+    """The search the agent runs for, as its trace names it."""
     steps: list[str] = field(default_factory=list)
     """Every call made, in order (``read_chunk(<id>)``)."""
     reached: dict[str, int] = field(default_factory=dict)
     """The index in ``steps`` of the first call that reached each article path."""
     seen: set[ChunkId] = field(default_factory=set)
     """Every chunk a call returned or named."""
+
+    @property
+    def _pinned(self) -> str:
+        """Name the version searched as a chunk names its own.
+
+        Returns:
+            ``<library>/<ref>``.
+        """
+        return f"{self.version.library}/{self.version.version}"
 
     def _step(self, tool: str, argument: str, paths: Sequence[str] = ()) -> None:
         """Record a call and the articles it reached.
@@ -3525,6 +3558,24 @@ class VersionBrowser:
         self.steps.append(f"{tool}({model_text(argument, AGENT_STEP_ARGUMENT_CHARS)})")
         for path in paths:
             self.reached.setdefault(path, len(self.steps) - 1)
+
+    def _trace(self, tool: str, served: Sequence[tuple[str, str]]) -> None:
+        """Record a read in the run's trace.
+
+        Args:
+            tool: The read function.
+            served: ``(<library>/<ref>, manifest)`` of each thing it returned to the agent.
+        """
+        self.reads.record(
+            AgentRead(
+                search=self.searched_by,
+                tool=tool,
+                pinned_version=self._pinned,
+                pinned_manifest=self.version.manifest_id,
+                served_versions=tuple(dict.fromkeys(v for v, _ in served)),
+                served_manifests=tuple(dict.fromkeys(m for _, m in served)),
+            )
+        )
 
     def path_to(self, article_path: str) -> tuple[str, ...]:
         """Say how the agent reached an article: the calls up to the first that reached it.
@@ -3563,12 +3614,19 @@ class VersionBrowser:
             prefix: A folder; empty for every article.
 
         Returns:
-            At most ``AGENT_LIST_LIMIT`` articles.
+            At most ``AGENT_LIST_LIMIT`` articles; none when the catalog answered from another
+            manifest.
         """
         self._step("list_articles", prefix)
-        if self.articles is None:
+        page = None
+        if self.articles is not None:
+            page = await self.articles.list(self.version, prefix, AGENT_LIST_LIMIT, self.tag_filter)
+        if page is None or page.manifest_id != self.version.manifest_id:
+            self._trace("list_articles", ())
             return ()
-        return await self.articles.list(self.version, prefix, AGENT_LIST_LIMIT, self.tag_filter)
+        listed = page.articles[:AGENT_LIST_LIMIT]
+        self._trace("list_articles", [(self._pinned, page.manifest_id)] if listed else ())
+        return listed
 
     async def article_outline(self, path: str) -> Outline | None:
         """Read an article's heading tree from the version's chunk rows.
@@ -3583,6 +3641,8 @@ class VersionBrowser:
         if sections and not await self._kept(path):
             sections = []
         self._step("article_outline", path, [path] if sections else [])
+        served = [(self._pinned, self.version.manifest_id)] if sections else []
+        self._trace("article_outline", served)  # rows of this manifest's chunk store only
         if not sections:
             return None
         self.seen.update(s.chunk_id for s in sections)
@@ -3595,18 +3655,22 @@ class VersionBrowser:
             path: The article's path.
 
         Returns:
-            Its text, or ``None`` when the version has no such article.
+            Its text, or ``None`` when the version has no such article (or the catalog answered
+            from another manifest).
         """
-        content = None
+        served = None
         if self.articles is not None and await self._kept(path):
-            content = await self.articles.read(self.version, path)
-        self._step("read_article", path, [] if content is None else [path])
-        if content is None:
+            served = await self.articles.read(self.version, path)
+        if served is not None and served.manifest_id != self.version.manifest_id:
+            served = None  # a re-sync activated another manifest meanwhile
+        self._step("read_article", path, [] if served is None else [path])
+        self._trace("read_article", [] if served is None else [(self._pinned, served.manifest_id)])
+        if served is None:
             return None
         return ArticleText(
             path=path,
-            content=content[:AGENT_READ_CHARS],
-            truncated=len(content) > AGENT_READ_CHARS,
+            content=served.content[:AGENT_READ_CHARS],
+            truncated=len(served.content) > AGENT_READ_CHARS,
         )
 
     async def read_chunk(self, chunk_id: str) -> StoredChunk | None:
@@ -3622,6 +3686,9 @@ class VersionBrowser:
         if stored is not None and not self.tag_filter.keeps(stored.row.tags):
             stored = None
         self._step("read_chunk", chunk_id, [] if stored is None else [stored.row.article_path])
+        self._trace(
+            "read_chunk", [] if stored is None else [(stored.version_id, stored.manifest_id)]
+        )
         if stored is None:
             return None
         self.seen.add(stored.row.chunk_id)
@@ -3640,6 +3707,7 @@ class VersionBrowser:
         """
         if not query.strip():
             self._step("search_docs", query)
+            self._trace("search_docs", ())
             return ()
         wanted = min(max(limit, 1), AGENT_SEARCH_LIMIT)
         manifest = self.version.manifest_id
@@ -3647,8 +3715,22 @@ class VersionBrowser:
         stored = await self.chunks.get_many(manifest, [h.chunk_id for h in found])
         pairs = [(h, stored[h.chunk_id]) for h in found if h.chunk_id in stored]
         self._step("search_docs", query, [c.row.article_path for _, c in pairs])
+        self._trace("search_docs", [(c.version_id, c.manifest_id) for _, c in pairs])
         self.seen.update(h.chunk_id for h, _ in pairs)
         return pairs
+
+    async def admit(self, chunk_ids: Sequence[str]) -> Sequence[str]:
+        """Keep the chunk IDs the pinned version holds and the tag filter keeps.
+
+        Args:
+            chunk_ids: The agent's picks, as the model wrote them.
+
+        Returns:
+            The admitted IDs, in order, once each.
+        """
+        wanted = list(dict.fromkeys(ChunkId(c) for c in chunk_ids))
+        stored = await self.chunks.get_many(self.version.manifest_id, wanted) if wanted else {}
+        return [c for c in wanted if c in stored and self.tag_filter.keeps(stored[c].row.tags)]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3656,12 +3738,16 @@ class AgenticPipeline:
     """Implements ``ports.driven.RetrievalPipeline`` for ``agentic`` (RET-04).
 
     An LLM (the library's ``llm`` role) browses the version in Code Mode with the read tools of
-    a ``VersionBrowser`` and answers with chunk IDs and a justification each. Every pick is then
-    looked up in the pinned manifest, under the search's tag filter: an ID of another version, or
-    one the model made up, is dropped, so every result belongs to the version searched. A run
-    that passes a limit (``bounds``: tool calls, requests, tokens, the sandbox, its time), a
+    a ``VersionBrowser``, bound to what the caller may see (the pinned version and the search's
+    tag filter) and handed to the agent as its ``deps``, and answers with chunk IDs and a
+    justification each. The explorer's output guardrail drops any pick ``admit`` refuses; every
+    pick is then looked up again in the pinned manifest, under the tag filter: an ID of another
+    version, or one the model made up, is dropped, so every result belongs to the version
+    searched whatever the model or the adapter do. A run that passes a limit (``bounds``: tool
+    calls, requests, tokens, the sandbox, its time), repeats a call as a loop does, passes a
     spend budget, or fails, raises ``AgentStoppedError``: ``RetrievalModes.run`` then answers
     with the best mode without an LLM step and the reason. Failures are logged by class only.
+    Each read is recorded in ``reads``, the run's trace.
     """
 
     providers: AiProviders
@@ -3680,6 +3766,8 @@ class AgenticPipeline:
     """The run's limits."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Times the run (``<search>.agent``), without the query text."""
+    reads: AgentReads = field(default_factory=UnrecordedAgentReads)
+    """The runs' trace: every read the agent made."""
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         """Let the agent explore the version, then keep its picks that belong to it.
@@ -3698,6 +3786,8 @@ class AgenticPipeline:
             search=self.search,
             articles=self.articles,
             tag_filter=request.tag_filter,
+            reads=self.reads,
+            searched_by=request.search,
         )
         with self.tracer.span(f"{request.search}.{AGENT_STAGE}", mode=RetrievalMode.AGENTIC.value):
             picks = await self._explore(request, browser, library)

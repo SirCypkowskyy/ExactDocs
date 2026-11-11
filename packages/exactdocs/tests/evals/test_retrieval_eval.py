@@ -16,6 +16,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
 from exactdocs.retrieval.models import (
+    AgentRead,
     ChunkId,
     LibraryAi,
     ModelRole,
@@ -24,12 +25,21 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SearchHit,
 )
+from exactdocs.retrieval.ports.driven import AgentReads
 from fake_llm import gateway
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
 from offline_embedding import LLM, offline_data_container, offline_hyde_container
 from retrieval_eval.cli import OFFLINE_NOT_JUDGED, main
-from retrieval_eval.dataset import DATASET_FILE, Answer, Hit, Question, fingerprint, load_dataset
+from retrieval_eval.dataset import (
+    DATASET_FILE,
+    Answer,
+    Hit,
+    Question,
+    TracedRead,
+    fingerprint,
+    load_dataset,
+)
 from retrieval_eval.fixture import model_free_container, run_on_fixture
 from retrieval_eval.suite import (
     BASELINE_FILE,
@@ -38,6 +48,7 @@ from retrieval_eval.suite import (
     ModeMetrics,
     ModeOutcome,
     StoredBaseline,
+    SuiteReport,
     Tier,
     baseline_of,
     compare,
@@ -442,9 +453,12 @@ async def test_a_new_mode_plugs_in_and_hosted_ones_stay_off_without_permission(
 ) -> None:
     pipelines = {m: Silent(m) for m in RetrievalMode if m is not RetrievalMode.BM25}
 
-    def build(data_dir: Path) -> Container:
+    def build(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
         return Container.build(
-            Settings(data_dir=data_dir), model_roles=AllRoles(), pipelines=pipelines
+            Settings(data_dir=data_dir),
+            model_roles=AllRoles(),
+            pipelines=pipelines,
+            agent_reads=agent_reads,
         )
 
     local = frozenset({ModelRole.EMBEDDING, ModelRole.RERANKER})
@@ -469,9 +483,12 @@ async def test_a_local_tier_mode_on_a_hosted_model_is_skipped_without_permission
 ) -> None:
     pipelines = {m: Silent(m) for m in RetrievalMode if m is not RetrievalMode.BM25}
 
-    def build(data_dir: Path) -> Container:
+    def build(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
         return Container.build(
-            Settings(data_dir=data_dir), model_roles=EmbeddingOnly(), pipelines=pipelines
+            Settings(data_dir=data_dir),
+            model_roles=EmbeddingOnly(),
+            pipelines=pipelines,
+            agent_reads=agent_reads,
         )
 
     report = await run_on_fixture(docs_repo, tmp_path / "data", build=build)
@@ -498,8 +515,8 @@ async def test_a_configured_reranker_is_evaluated_only_with_permission(
             }
         )
 
-        def build(data_dir: Path) -> Container:
-            return Container.build(Settings(data_dir=data_dir, ai=ai))
+        def build(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
+            return Container.build(Settings(data_dir=data_dir, ai=ai), agent_reads=agent_reads)
 
         modes = [m for m in MODES if m.mode is RetrievalMode.BM25]
         held = await run_on_fixture(docs_repo, tmp_path / "data", build=build, modes=modes)
@@ -1069,18 +1086,23 @@ async def test_hybrid_hyde_runs_through_the_suite_on_a_stand_in_llm(
 # ---------------------------------------------------------------- agentic on a scripted model
 
 
-def scripted_agentic_container(data_dir: Path) -> Container:
+def scripted_agentic_container(
+    data_dir: Path, *, agent_reads: AgentReads | None = None
+) -> Container:
     """The app with the ``llm`` role on a scripted pydantic-ai ``FunctionModel`` (no provider).
 
     Args:
         data_dir: The data directory.
+        agent_reads: Records the explorer's reads (the suite's trace check).
 
     Returns:
         The container: ``agentic`` runs its real pipeline, Code Mode and limits.
     """
     ai = AiSettings.model_validate(scripted_ai(mode=None))
     return Container.build(
-        Settings(data_dir=data_dir, ai=ai), model_factory=ScriptedModels(model=browsing())
+        Settings(data_dir=data_dir, ai=ai),
+        model_factory=ScriptedModels(model=browsing()),
+        agent_reads=agent_reads,
     )
 
 
@@ -1104,6 +1126,9 @@ async def test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version
     # Every question ran the agent, and none of its answers left the version asked for.
     assert agentic.metrics.wrong_version_rate == 0
     assert agentic.wrong_version_cases == []
+    # Its traces: every run left one, and none read outside the version asked for (#99).
+    assert agentic.traced_runs == agentic.metrics.questions
+    assert agentic.left_version_cases == []
     assert agentic.errors == []
     assert agentic.metrics.recall_at_10 > 0
     # Its spend went through the harness SpendLimits into the ledger the suite reads.
@@ -1137,3 +1162,133 @@ def test_the_offline_embedding_never_meets_real_models_or_the_baseline(other: st
 
     assert main(["--offline-embedding", other]) == 2
     assert BASELINE_FILE.read_text(encoding="utf-8") == before
+
+
+# ---------------------------------------------------------------- the agentic runs' traces (#99)
+
+
+def _read(version: str, *, served: str | None = None, manifest: str = "m-asked") -> TracedRead:
+    """A traced read bound to ``version`` that served ``served`` (``version`` by default)."""
+    return TracedRead(
+        tool="read_chunk",
+        pinned_version=f"{LIBRARY}/{version}",
+        pinned_manifest=manifest,
+        served_versions=[f"{LIBRARY}/{served or version}"],
+        served_manifests=[manifest],
+    )
+
+
+@dataclass
+class Traced:
+    """An agentic stand-in: the ideal hits, with a trace that ``stray`` reads leave for one case."""
+
+    stray: list[TracedRead] = field(default_factory=list)
+    strays_on: Question = field(default_factory=lambda: Question(query="docker", version="v1.4.0"))
+
+    async def answer(self, question: Question) -> Answer:
+        reads = [_read(question.version)]
+        if question == self.strays_on:
+            reads += self.stray
+        return Answer(hits=_ideal(question), answered_by="agentic", library=LIBRARY, reads=reads)
+
+
+async def _judged_agentic(retriever: Any) -> tuple[ModeOutcome, SuiteReport]:
+    dataset = with_evaluators(load_dataset())
+    outcome = await evaluate_mode(dataset, AGENTIC, retriever)
+    report = judge(dataset.name, len(dataset.cases), [outcome], Comparison())
+    return report.modes[0], report
+
+
+async def test_a_run_that_stayed_in_its_version_passes_the_trace_check() -> None:
+    outcome, report = await _judged_agentic(Traced())
+
+    assert report.passed, report.problems
+    assert outcome.left_version_cases == []
+    assert outcome.traced_runs == len(load_dataset().cases)
+
+
+@pytest.mark.parametrize(
+    ("stray", "named"),
+    [
+        (_read("v1.3.0"), f"read_chunk read {LIBRARY}/v1.3.0"),
+        (_read("v1.4.0", served="v1.3.0"), f"read_chunk read {LIBRARY}/v1.3.0"),
+        (_read("v1.4.0", manifest="m-other"), "more than one manifest"),
+    ],
+    ids=["bound to another version", "served another version", "another manifest"],
+)
+async def test_a_read_outside_the_asked_version_fails_the_suite_though_every_hit_is_right(
+    stray: TracedRead, named: str
+) -> None:
+    outcome, report = await _judged_agentic(Traced(stray=[stray]))
+
+    assert not report.passed
+    assert outcome.wrong_version_cases == []  # the hits are all of the version
+    (case,) = outcome.left_version_cases
+    assert case.startswith("v1.4.0: docker: ")
+    assert named in case
+    assert any("read outside the version asked for" in p for p in report.problems)
+    assert "read outside its version" in markdown(report)
+
+
+async def test_an_agentic_answer_without_a_trace_fails_the_suite() -> None:
+    @dataclass
+    class Untraced:
+        async def answer(self, question: Question) -> Answer:
+            return Answer(hits=_ideal(question), answered_by="agentic", library=LIBRARY, reads=[])
+
+    outcome, report = await _judged_agentic(Untraced())
+
+    assert not report.passed
+    answered = sum(1 for c in load_dataset().cases if c.expected_output and c.expected_output.hits)
+    assert len(outcome.left_version_cases) == answered
+    assert all("without a trace" in c for c in outcome.left_version_cases)
+
+
+@dataclass
+class StrayingPipeline:
+    """An agentic stand-in whose agent was bound to ``v1.3.0`` whatever the question asked, yet
+    answers with nothing: only its trace tells."""
+
+    reads: AgentReads
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        self.reads.record(
+            AgentRead(
+                search=request.search,
+                tool="search_docs",
+                pinned_version=f"{request.version.library}/v1.3.0",
+                pinned_manifest="m-old",
+            )
+        )
+        return PipelineAnswer(
+            mode=RetrievalMode.AGENTIC, hits=(), candidates=0, reranked=0, complete=True
+        )
+
+
+async def test_the_suite_reads_the_app_s_trace_of_every_agentic_run(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    def build(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
+        assert agent_reads is not None  # the suite always hands the app its recorder
+        return Container.build(
+            Settings(data_dir=data_dir),
+            model_roles=AllRoles(),
+            pipelines={RetrievalMode.AGENTIC: StrayingPipeline(reads=agent_reads)},
+            agent_reads=agent_reads,
+        )
+
+    report = await run_on_fixture(
+        docs_repo,
+        tmp_path / "data",
+        build=build,
+        modes=[AGENTIC],
+        local_roles=frozenset(ModelRole),  # the stand-ins call nothing
+    )
+
+    (agentic,) = report.modes
+    assert agentic.status == "ran", agentic.reason
+    assert not report.passed
+    assert agentic.wrong_version_cases == []
+    # Every question not pinned to v1.3.0 shows the stray read in its trace.
+    others = sum(1 for c in load_dataset().cases if c.inputs.version != "v1.3.0")
+    assert len(agentic.left_version_cases) == others

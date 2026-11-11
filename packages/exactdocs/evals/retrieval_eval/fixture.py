@@ -1,9 +1,10 @@
 """Run the suite on the fixture docs repository, imported for real into the app's container."""
 
 import dataclasses
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from functools import partial
 from pathlib import Path
+from typing import Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -13,10 +14,12 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.sqlite import ai_spend
 from exactdocs.retrieval.constants import MICROS_PER_USD, SPEND_SCOPE_INSTANCE
 from exactdocs.retrieval.models import ModelRole, RetrievalMode, SpendWindow
+from exactdocs.retrieval.ports.driven import AgentReads
 from exactdocs.retrieval.use_cases import NoModelRoles
 from fixture_import import LIBRARY, commits, embed_fixture, import_fixture
 from fixture_repo import DocsRepo, git_bytes, headings
 from retrieval_eval.dataset import DATASET_FILE, RetrievalDataset, fingerprint, load_dataset
+from retrieval_eval.retrievers import RecordedReads
 from retrieval_eval.suite import (
     MODES,
     Comparison,
@@ -28,28 +31,49 @@ from retrieval_eval.suite import (
 )
 
 
-def configured_container(data_dir: Path) -> Container:
+class ContainerBuilder(Protocol):
+    """Builds the app's container the suite runs on."""
+
+    def __call__(self, data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
+        """Build the container.
+
+        Args:
+            data_dir: An empty data directory.
+            agent_reads: Records the agentic explorer's reads, so the suite checks each run's
+                trace; pass it to ``Container.build``.
+
+        Returns:
+            The container.
+        """
+        ...
+
+
+def configured_container(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
     """Build the app's container as an instance with this data directory would.
 
     Args:
         data_dir: An empty data directory.
+        agent_reads: Records the agentic explorer's reads.
 
     Returns:
         The container; its model roles come from the environment (``EXACTDOCS_AI__...``).
     """
-    return Container.build(Settings(data_dir=data_dir))
+    return Container.build(Settings(data_dir=data_dir), agent_reads=agent_reads)
 
 
-def model_free_container(data_dir: Path) -> Container:
+def model_free_container(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
     """Build the app's container with no model role, whatever the environment configures.
 
     Args:
         data_dir: An empty data directory.
+        agent_reads: Records the agentic explorer's reads (none run here).
 
     Returns:
         The container: only BM25 can run, and nothing can call a model.
     """
-    return Container.build(Settings(data_dir=data_dir), model_roles=NoModelRoles())
+    return Container.build(
+        Settings(data_dir=data_dir), model_roles=NoModelRoles(), agent_reads=agent_reads
+    )
 
 
 def missing_sections(dataset: RetrievalDataset, docs_repo: DocsRepo) -> list[str]:
@@ -87,7 +111,7 @@ async def run_on_fixture(
     docs_repo: DocsRepo,
     data_dir: Path,
     *,
-    build: Callable[[Path], Container] = model_free_container,
+    build: ContainerBuilder = model_free_container,
     modes: Sequence[EvalMode] = MODES,
     allow_providers: bool = False,
     local_roles: frozenset[ModelRole] = frozenset(),
@@ -103,7 +127,8 @@ async def run_on_fixture(
         data_dir: An empty data directory for the container.
         build: Builds the container: model-free by default; ``configured_container`` uses the
             environment's models, ``offline_data_container`` the in-process term-hash
-            embedding, tests pass model roles and pipelines.
+            embedding, tests pass model roles and pipelines. It is given the recorder of the
+            agentic explorer's reads, so every agentic run's trace is checked.
         modes: The modes to try.
         allow_providers: Run modes that call a hosted model.
         local_roles: The configured roles whose model runs on this machine.
@@ -121,7 +146,8 @@ async def run_on_fixture(
     missing = missing_sections(dataset, docs_repo)
     comparison = comparison or Comparison()
     comparison = dataclasses.replace(comparison, problems=(*missing, *comparison.problems))
-    container = build(data_dir)
+    reads = RecordedReads()
+    container = build(data_dir, agent_reads=reads)
     async with container.running(jobs=False):
         await import_fixture(container, docs_repo)
         engine = (await container.retrieval.get_search_index_state()).engine
@@ -139,6 +165,7 @@ async def run_on_fixture(
             allow_providers=allow_providers,
             local_roles=local_roles,
             spent=partial(instance_spend, container.engine),
+            reads=reads,
         )
     return judge(
         dataset.name,
