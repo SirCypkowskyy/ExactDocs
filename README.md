@@ -745,8 +745,8 @@ postgres_fts`), which passes the same ranking suite as SQLite, and hybrid search
 in pgvector from the `extensions` schema. CI runs the scenarios below and the ranking suite on the
 `supabase/postgres` image, over SSL, with the role this setup creates.
 
-1. **Set up a role and schemas** once, in the SQL editor (as `postgres`), with a password of your
-   own. ExactDocs gets a login role without `CREATEDB`, its tables in schema `exactdocs` and DBOS's
+1. **Set up a role and schemas** once, in the SQL editor (as `postgres`). ExactDocs gets a login
+   role without `CREATEDB`, its tables in schema `exactdocs` and DBOS's
    in schema `dbos` (neither is exposed by the Data API unless you add it there), and pgvector's
    `vector` in `extensions` (the role cannot create it: Supabase lets only `postgres` do that):
 
@@ -755,8 +755,9 @@ in pgvector from the `extensions` schema. CI runs the scenarios below and the ra
 -- ExactDocs on Supabase (README, "Supabase"): run once in the SQL editor, as `postgres`.
 -- A login role of its own, without CREATEDB, owning one schema for ExactDocs' tables and one
 -- for DBOS's. Neither schema is exposed by Supabase's Data API unless you add it there.
+-- Then give the role a password of your own, in a statement of its own (README, step 2).
 CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
-CREATE ROLE exactdocs LOGIN NOCREATEDB NOCREATEROLE PASSWORD 'change-me';
+CREATE ROLE exactdocs LOGIN NOCREATEDB NOCREATEROLE; -- no password yet: it cannot sign in
 GRANT exactdocs TO postgres; -- lets `postgres` hand the schemas to it (PostgreSQL 16 and newer)
 CREATE SCHEMA exactdocs AUTHORIZATION exactdocs;
 CREATE SCHEMA dbos AUTHORIZATION exactdocs;
@@ -765,7 +766,13 @@ ALTER ROLE exactdocs SET search_path = exactdocs, extensions;
 ```
 <!-- supabase.sql: end -->
 
-2. **Connect with a session**, never the pooler's transaction mode: ExactDocs' jobs (DBOS's
+2. **Give the role a password**, in a statement of its own: the script sets none, so the role
+   cannot sign in until you do, and a pasted script never leaves a known password behind.
+   Generate one (`openssl rand -hex 24`) and run, with it in place of the placeholder,
+   `ALTER ROLE exactdocs PASSWORD '<the generated password>';`. From `psql`, keep it out of your
+   shell history with `\set password <the generated password>` and then
+   `ALTER ROLE exactdocs PASSWORD :'password';`.
+3. **Connect with a session**, never the pooler's transaction mode: ExactDocs' jobs (DBOS's
    `LISTEN`, the executor slots' advisory locks) and psycopg's prepared statements need the same
    session from one statement to the next. A URL on port 6543 of a Supabase host (Supavisor's or
    the dedicated pooler's transaction mode) is refused at start, saying so. Use either
@@ -777,9 +784,10 @@ ALTER ROLE exactdocs SET search_path = exactdocs, extensions;
      `postgresql://exactdocs.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require`.
      Each ExactDocs process keeps a few connections open (a pool, its executor slot and DBOS's):
      size the pooler's session limit for every process.
-3. **Keep `sslmode=require`** (or `verify-full` with Supabase's CA certificate): without it on a
-   Supabase host, the server logs a WARNING that the connection may not be encrypted.
-4. Set `EXACTDOCS_SECRET_KEY` as for any PostgreSQL instance, and start ExactDocs. `/api/health`
+4. **Keep `sslmode=require`** (or `verify-full` with Supabase's CA certificate), in the URL or in
+   `PGSSLMODE`: without either on a Supabase host, the server logs a WARNING that the connection
+   may not be encrypted.
+5. Set `EXACTDOCS_SECRET_KEY` as for any PostgreSQL instance, and start ExactDocs. `/api/health`
    reports `search_engine: postgres_fts`; with an embedding model configured, `vector_store_missing`
    stays empty. Without `GRANT USAGE ON SCHEMA extensions`, the log says that pgvector is in a
    schema the role may not use (and which `GRANT` fixes), `/api/health` names `vector` in

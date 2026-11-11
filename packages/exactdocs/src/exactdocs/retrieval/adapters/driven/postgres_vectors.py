@@ -456,7 +456,8 @@ class PostgresVectorIndex:
             reason = (
                 f'the PostgreSQL extension "{self.extension}" (pgvector) is not created yet in '
                 "this database, and this process only reads: waiting for the ExactDocs server to "
-                f"create it (or a superuser: CREATE EXTENSION {self.extension})"
+                f"create it (or a superuser: CREATE EXTENSION {self.extension}; on Supabase, "
+                f"CREATE EXTENSION {self.extension} WITH SCHEMA {EXTENSIONS_SCHEMA}, as postgres)"
             )
             raise VectorStoreUnavailableError(reason)
         if schema is None:
@@ -482,8 +483,8 @@ class PostgresVectorIndex:
             reason = (
                 f'the PostgreSQL extension "{self.extension}" (pgvector) is in schema '
                 f'"{found.schema}", which this role may not use: run GRANT USAGE ON SCHEMA '
-                f"{found.schema} TO {found.role} (then restart ExactDocs); until then hybrid "
-                "search answers with BM25"
+                f"{self._quote(str(found.schema))} TO {self._quote(str(found.role))} (then "
+                "restart ExactDocs); until then hybrid search answers with BM25"
             )
             self._found["missing"] = reason
             logger.warning("vector search is off: %s", reason)

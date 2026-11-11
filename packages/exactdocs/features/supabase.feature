@@ -34,5 +34,5 @@ Feature: ExactDocs runs on Supabase, with BM25 that works without pg_search
     And the vectors are a column of type "extensions.vector"
 
   Scenario: The transaction-mode pooler is refused at start
-    When ExactDocs starts on "postgresql://postgres.abcdefghijklmnop:secret@aws-0-test-0.pooler.supabase.com:6543/postgres"
+    When ExactDocs starts on "postgresql://postgres.abcdefghijklmnop:pw-7c1e9b@aws-0-test-0.pooler.supabase.com:6543/postgres"
     Then it refuses to start, naming the session pooler on port 5432 and the direct connection

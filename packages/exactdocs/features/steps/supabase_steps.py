@@ -19,6 +19,7 @@ import httpx
 from behave import given, then, when
 from behave.runner import Context
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import make_url
 
 from databases import SECRET_KEY, SUPABASE_SQL, supabase_role
 from exactdocs.bootstrap.container import Container
@@ -47,7 +48,7 @@ def step_set_up(context: Context, script: str) -> None:
 @given('ExactDocs serves from it with "{option}", as a role that cannot create databases')
 def step_serves(context: Context, option: str) -> None:
     url = context.supabase.url
-    assert option in url, url
+    assert option in url, make_url(url).render_as_string()  # hides the password
     assert query_as(url, "SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user") == [
         (False,)
     ]
@@ -211,4 +212,4 @@ def step_refused(context: Context) -> None:
     assert "transaction mode" in output, output
     assert "port 5432" in output, output
     assert "direct connection" in output, output
-    assert "secret" not in output, output  # the password is never echoed
+    assert "pw-7c1e9b" not in output, output  # the password is never echoed

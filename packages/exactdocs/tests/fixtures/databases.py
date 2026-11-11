@@ -145,6 +145,8 @@ if SUPABASE_URL is None and os.environ.get("EXACTDOCS_REQUIRE_SUPABASE") == "1":
 
 SUPABASE_SQL = Path(__file__).parents[4] / "deploy" / "supabase.sql"
 """The setup the README tells operators to run on Supabase."""
+SUPABASE_SQL_ROLE_NAMES = 6
+"""How often the script names the role or its schema (``exactdocs``), at least."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -176,11 +178,18 @@ def supabase_role() -> Generator[SupabaseRole]:
     suffix = secrets.token_hex(6)
     role, dbos_schema, password = f"exactdocs_{suffix}", f"dbos_{suffix}", secrets.token_hex(16)
     script = SUPABASE_SQL.read_text(encoding="utf-8")
-    script = re.sub(r"\bexactdocs\b", role, script)
-    script = re.sub(r"\bdbos\b", dbos_schema, script)
-    script = script.replace("'change-me'", f"'{password}'")
+    # The README's script, checked: it names the role and its schema in every statement but the
+    # extension's, DBOS's schema once, and sets no password (the README's next step does).
+    assert not re.search(r"\bPASSWORD\s+'", script, re.IGNORECASE), "it must set no password"
+    script, roles = re.subn(r"\bexactdocs\b", role, script)
+    script, dbos = re.subn(r"\bdbos\b", dbos_schema, script)
+    assert roles >= SUPABASE_SQL_ROLE_NAMES, f"{roles} mentions of the role in {SUPABASE_SQL}"
+    assert dbos == 1, f"{dbos} mentions of schema dbos in {SUPABASE_SQL}"
     with _supabase_admin() as admin:
         admin.execute(script.encode())  # no parameters: several statements in one call
+        admin.execute(
+            sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(password))
+        )
     url = make_url(SUPABASE_URL or "").set(
         drivername="postgresql+psycopg", username=role, password=password
     )

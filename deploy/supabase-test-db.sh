@@ -11,15 +11,25 @@
 set -euo pipefail
 
 name=${1:?usage: supabase-test-db.sh <container name>}
-# supabase/postgres 17.6.1.044 (amd64 and arm64), the PostgreSQL that Supabase projects run.
-image=supabase/postgres:17.6.1.044@sha256:74d0c29b7cac2edb075f8995415144700010e36a5a87d3caa3173e7905094fbd
+# supabase/postgres 17.11.0.008 (pushed 2026-10-27; amd64 and arm64): the 17.11 line new
+# Supabase projects run. Bump it with the release, at least 14 days after it is pushed.
+image=supabase/postgres:17.11.0.008@sha256:fef2654e52424e2748b1cd6763b73afcb2618c6ec696bd3af5ad572687be1dc7
 password=$(openssl rand -hex 16)
 
+# The image has no openssl (17.11 is built with Nix): the certificate is made here and handed
+# over in the environment, then written where only the server's user can read it.
+certs=$(mktemp -d)
+trap 'rm -rf "$certs"' EXIT
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=localhost \
+  -keyout "$certs/server.key" -out "$certs/server.crt" 2>/dev/null
+
 docker run -d --name "$name" -e POSTGRES_PASSWORD="$password" -p 127.0.0.1::5432 \
+  -e SSL_CERT="$(cat "$certs/server.crt")" -e SSL_KEY="$(cat "$certs/server.key")" \
   --entrypoint bash "$image" -c '
-    openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=localhost \
-      -keyout /tmp/server.key -out /tmp/server.crt 2>/dev/null
-    chown postgres /tmp/server.key /tmp/server.crt && chmod 600 /tmp/server.key
+    printf "%s\n" "$SSL_CERT" > /tmp/server.crt
+    (umask 077 && printf "%s\n" "$SSL_KEY" > /tmp/server.key)
+    chown postgres /tmp/server.key /tmp/server.crt
+    unset SSL_CERT SSL_KEY
     exec docker-entrypoint.sh postgres -D /etc/postgresql \
       -c ssl=on -c ssl_cert_file=/tmp/server.crt -c ssl_key_file=/tmp/server.key' >/dev/null
 
@@ -36,6 +46,6 @@ for _ in $(seq 120); do
   fi
   sleep 1
 done
-docker logs "$name" >&2
+docker logs --tail 50 "$name" >&2  # the server's log: it never contains the URL
 echo "supabase/postgres did not get ready" >&2
 exit 1

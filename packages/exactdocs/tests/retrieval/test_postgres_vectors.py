@@ -221,6 +221,18 @@ async def test_a_role_that_may_not_use_the_extension_s_schema_is_told_to_grant_i
     assert f"GRANT USAGE ON SCHEMA extensions TO {without_vector.name}" in message
 
 
+async def test_the_grant_hint_quotes_names_that_need_it(without_vector: PostgresDatabase) -> None:
+    _as_admin(without_vector, 'CREATE SCHEMA "Vec-Ext"')
+    _as_admin(without_vector, 'CREATE EXTENSION vector WITH SCHEMA "Vec-Ext"')
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        vectors = PostgresVectorIndex(engine=container.engine)
+        with pytest.raises(VectorStoreUnavailableError) as error:
+            await vectors.create_space(SPEC, T0)
+
+    assert 'GRANT USAGE ON SCHEMA "Vec-Ext" TO ' in str(error.value)
+
+
 @pytest.mark.usefixtures("without_vector")
 async def test_a_role_that_may_not_create_the_extension_gets_a_clear_error() -> None:
     container = Container.build(Settings())
@@ -327,6 +339,7 @@ async def test_a_read_only_process_waits_for_the_extension_instead_of_giving_up(
             with pytest.raises(VectorStoreUnavailableError, match="not created yet") as error:
                 await store.create_space(SPEC, T0)
             assert "restart" not in str(error.value)
+            assert "WITH SCHEMA extensions" in str(error.value)  # Supabase's form too
 
             assert await PostgresVectorIndex(engine=container.engine).available()  # the server
             seen = await store.available()

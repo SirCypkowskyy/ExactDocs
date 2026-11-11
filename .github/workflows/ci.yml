@@ -50,6 +50,8 @@ jobs:
       - name: Start supabase/postgres
         run: |
           url=$(deploy/supabase-test-db.sh "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          password=${url#postgresql://postgres:}
+          echo "::add-mask::${password%%@*}" # on its own: a log may show it outside the URL
           echo "::add-mask::$url"
           echo "EXACTDOCS_TEST_SUPABASE_URL=$url" >> "$GITHUB_ENV"
       - name: ruff format
