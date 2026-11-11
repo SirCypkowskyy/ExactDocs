@@ -1138,7 +1138,9 @@ best of the same candidates that fit one bounded call (`models.judge_window`: at
 such as base64 at `DENSE_CHARS_PER_TOKEN`, 1.5, a code point above U+FFFF as its 4 UTF-8 bytes, and
 every other character, control characters included, as a token, since CJK runs at about one token
 per character), stays within `JUDGE_INPUT_TOKEN_BUDGET`,
-22,000, whose headroom covers ASCII code with escaped entities at about 1.7 characters per token
+18,500, whose headroom covers 3 real tokens per estimated one (ASCII code with escaped entities at
+about 1.7 characters per token, base64 broken by spaces at about 1.4, rare BMP scripts such as Yi at
+about 3 tokens a character)
 together with the largest output cap under the step's `LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
 sent, paid for and then refused) to the `CandidateJudge` driven port under `asyncio.timeout`
 (`[ai.judge] timeout`, 10 s), with an `LlmStep` whose budgets are

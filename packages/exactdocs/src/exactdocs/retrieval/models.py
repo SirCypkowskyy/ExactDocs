@@ -1258,7 +1258,8 @@ def estimated_tokens(text: str) -> int:
     (base64, hashes) counts at ``DENSE_CHARS_PER_TOKEN``, other ASCII at ``CHARS_PER_TOKEN``.
 
     This is not a bound everywhere: ASCII code with many escaped entities runs at about 1.7
-    characters per token, base64 at about 1.4, and a rare BMP symbol can take up to 3 tokens.
+    characters per token, base64 at about 1.4 (also when whitespace breaks it into runs too short
+    for the dense rule), and a rare BMP character (Yi, symbols) can take up to 3 tokens.
     Callers that must stay under a hard limit keep headroom for that
     (``JUDGE_INPUT_TOKEN_BUDGET``).
 

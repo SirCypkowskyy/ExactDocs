@@ -932,24 +932,33 @@ EXTENSION_B = "".join(chr(0x20000 + i % 700) for i in range(MAX_JUDGE_DOCUMENT_C
 """CJK Extension B: a tokenizer counts about 3.9 tokens per character (4 UTF-8 bytes each)."""
 BASE64 = base64.b64encode(b"".join(hashlib.sha256(bytes([i])).digest() for i in range(48))).decode()
 """Dense base64 (an inline ``data:`` image): about 0.7 tokens per character, no whitespace."""
+SPACED_BASE64 = " ".join(BASE64[i : i + 31] for i in range(0, len(BASE64), 31))
+"""Base64 broken by a space every 31 characters: no run is long enough for the dense rule, yet a
+tokenizer still counts about 1.4 characters a token."""
+YI = "".join(chr(0xA000 + i % 1165) for i in range(MAX_JUDGE_DOCUMENT_CHARS))
+"""Yi syllables (U+A000-A48C): a rare BMP script at about 3 tokens a character."""
 CONTROL = "".join(chr(c) for c in range(32) if chr(c) not in "\t\n\r") * 70
 """ASCII control characters: about a token each."""
-_DENSE_RUN = re.compile(r"[!-~]{32,}")
+_DENSE_WORD = re.compile(r"[!-~]{16,}")
+_COMMON_BMP = re.compile(r"[\u0080-\u07ff\u3000-\u30ff\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]")
+"""Two-byte scripts (Latin accents, Greek, Cyrillic, Arabic...) and CJK, kana, Hangul, fullwidth
+forms: about a token a character."""
 
 
 def _real_tokens(text: str) -> int:
     """A pessimistic stand-in tokenizer, at or above what o200k and cl100k count.
 
-    A code point above U+FFFF is 4 tokens (its UTF-8 bytes), any other non-ASCII character and
-    each ASCII control character 1, ASCII without whitespace for 32 characters or more 1.4
-    characters a token (base64 runs at about 0.7 tokens a character), other ASCII 1.7.
+    A code point above U+FFFF is 4 tokens (its UTF-8 bytes), a rare BMP character (Yi, symbols)
+    3, a common one (``_COMMON_BMP``) and each ASCII control character 1. ASCII without
+    whitespace for 16 characters or more (base64, hex, even when spaced out) counts at 1.4
+    characters a token (base64 runs at about 0.7 tokens a character), other ASCII at 1.7.
     """
-    dense = sum(len(run) for run in _DENSE_RUN.findall(text))
+    dense = sum(len(run) for run in _DENSE_WORD.findall(text))
     tokens = math.ceil(dense / 1.4)
     plain = 0
-    for c in _DENSE_RUN.sub("", text):
+    for c in _DENSE_WORD.sub("", text):
         if not c.isascii():
-            tokens += 4 if ord(c) > 0xFFFF else 1
+            tokens += 4 if ord(c) > 0xFFFF else 1 if _COMMON_BMP.match(c) else 3
         elif not c.isprintable() and c not in "\t\n\r":
             tokens += 1
         else:
@@ -977,8 +986,8 @@ def test_each_non_ascii_character_counts_as_at_least_one_token() -> None:
 
 @pytest.mark.parametrize(
     "text",
-    [CJK, ESCAPED_CODE, EXTENSION_B, BASE64, CONTROL],
-    ids=["cjk", "escaped-code", "extension-b", "base64", "control"],
+    [CJK, ESCAPED_CODE, EXTENSION_B, BASE64, SPACED_BASE64, YI, CONTROL],
+    ids=["cjk", "escaped-code", "extension-b", "base64", "base64-spaced", "yi", "control"],
 )
 def test_a_top_n_of_200_stays_under_the_step_limit_whatever_the_script(text: str) -> None:
     window, tokens = _sent_prompt(text)
@@ -1008,8 +1017,11 @@ def test_each_control_character_counts_as_at_least_one_token() -> None:
     assert estimated_tokens("a\nb\tc") == 2, "newlines and tabs are whitespace"
 
 
-def test_the_budget_covers_the_densest_ascii_with_the_largest_output_cap() -> None:
-    worst_input = math.ceil(JUDGE_INPUT_TOKEN_BUDGET * CHARS_PER_TOKEN / 1.7)
+def test_the_budget_covers_three_real_tokens_per_estimated_one_with_the_largest_output_cap() -> (
+    None
+):
+    # Spaced-out base64 runs at 4 / 1.4, about 2.86 real tokens per estimated one; Yi at about 3.
+    worst_input = JUDGE_INPUT_TOKEN_BUDGET * 3
 
     assert worst_input + judge_max_tokens(JUDGE_MAX_CANDIDATES) < LLM_TOKEN_LIMIT
 
@@ -1018,7 +1030,8 @@ def test_the_budget_covers_the_densest_ascii_with_the_largest_output_cap() -> No
 async def test_a_library_in_any_script_is_judged_in_one_call_within_the_step_limit(
     text: str,
 ) -> None:
-    sections = [f"retry {'retry ' * (200 - i)}{text}" for i in range(200)]
+    # The text first, so each candidate as cut is all of it.
+    sections = [f"{text} retry {'retry ' * (200 - i)}" for i in range(200)]
     world = await _world(
         rerank_with=RerankWith.JUDGE, limits=RerankLimits(top_n=200), sections=sections
     )
