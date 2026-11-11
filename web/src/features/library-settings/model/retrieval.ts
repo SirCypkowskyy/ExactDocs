@@ -29,7 +29,10 @@ const MODE_STEPS: Record<RetrievalMode, readonly string[]> = {
     "Vector search with the embedding model",
     "Results merged",
   ],
-  agentic: ["An LLM agent opens and reads the docs"],
+  agentic: [
+    "An LLM agent browses this version in a sandbox: outlines, articles, chunks and keyword search",
+    "Its picks are checked against this version, each with why it was picked",
+  ],
 };
 
 /** The model roles each mode's pipeline calls; the reranker is a stage of its own. */
@@ -41,6 +44,8 @@ const MODE_ROLES: Record<RetrievalMode, readonly ModelRole[]> = {
 };
 
 const FALLBACK_WORDS: Partial<Record<FallbackReason, string>> = {
+  agent_limit_reached: "The agent ran past its limits, so a cheaper mode answered.",
+  agent_failed: "The agent could not finish, so a cheaper mode answered.",
   mode_unavailable: "The mode set for it can't run now: a model role it needs is not configured.",
   vector_store_unavailable: "The vector store can't be loaded, so the vector modes are off.",
 };

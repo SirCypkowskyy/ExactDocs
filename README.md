@@ -703,7 +703,8 @@ path keeps at most 50 calls with each argument cut at 120.
 
 Only the question and what the agent reads are sent to the model, never a library name or a user.
 A run is bounded per search by `[ai.agentic]` (or `EXACTDOCS_AI__AGENTIC__...`) and by the
-budgets above (the harness `SpendLimits`, counted to the instance, the library and the caller):
+budgets above (the harness `SpendLimits`, counted to the instance, the library and the caller;
+a library's own budgets apply where they are tighter than the instance's):
 
 ```toml
 [ai.agentic]

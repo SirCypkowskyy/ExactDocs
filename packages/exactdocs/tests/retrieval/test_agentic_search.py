@@ -799,3 +799,30 @@ async def test_the_agent_uses_the_library_s_own_llm_read_once_for_the_search() -
     await _search(world)
 
     assert world.models.chat_models == ["corp:own"]
+
+
+async def test_a_library_s_own_tighter_budget_ends_the_agent_s_run() -> None:
+    modes = InMemoryLibraryModes()
+    own = BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=10)
+    await modes.save(LIB, None, LibraryAi(budgets=(own,)))
+    roomy = BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=1_000_000)
+    world = await _world(budgets=Budgets(limits=(roomy,)), modes=modes)
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.BM25,
+        FallbackReason.LLM_BUDGET_REACHED,
+    )
+    spent = [row for key, row in world.ledger.rows.items() if key.scope_kind == "library"]
+    assert spent
+    assert all(row.input_tokens > 10 for row in spent)  # the first request, then refused
+
+
+async def test_without_a_library_budget_the_instance_s_roomy_one_lets_the_agent_answer() -> None:
+    roomy = BudgetLimit(scope_kind="library", window=SpendWindow.DAY, tokens=1_000_000)
+    world = await _world(budgets=Budgets(limits=(roomy,)))
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.AGENTIC, None)
