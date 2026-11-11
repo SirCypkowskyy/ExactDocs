@@ -178,8 +178,8 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
   `pydantic-ai-harness[codemode]`: that extra also pulls a DuckDuckGo search client (`ddgs`,
   `primp`, `lxml`: about 27 MB) that Code Mode does not import.
 - CI builds the three targets of one Dockerfile and checks each budget (#246). CI (arm64,
-  PR #285) measured **387.0**, **520.2** and **867.6 MB** (amd64: 353.0, 492.0 and 847.9 MB), so
-  the budgets stay as set: 7.1 % of headroom for `-ai`, and 8.7 % for `-local`, kept on purpose as
+  PR #285) measured **387.1**, **520.4** and **866.5 MB** (amd64: 353.0, 492.0 and 847.9 MB), so
+  the budgets stay as set: 7.1 % of headroom for `-ai`, and 8.8 % for `-local`, kept on purpose as
   room for a default-model update. `docs/releasing.md`, *Size and model-free budgets*, has the
   reasoning. The `-local` models are baked in at build time (pulled at their pinned revisions,
   their ONNX files checked against pinned sha256 digests), not pulled at first start: the image

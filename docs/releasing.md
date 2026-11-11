@@ -159,14 +159,14 @@ release's *Scan image* jobs; the sizes land in the job summary):
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
 | wheel (with the UI) | 5 MB | 0.9 MB (CI, PR #237) | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 387.0 MB (CI, arm64, PR #285); 353.0 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
-| image `ai` (`<v>-ai`: `exactdocs[ai]`) | 560 MB | 520.2 MB (CI, arm64, PR #285: +133 MB); 492.0 MB on amd64 | as `base`, except that pydantic-ai(-slim) is allowed: it calls models over HTTP and runs none |
-| image `local` (`<v>-local`: `exactdocs[ai,local]` + default models) | 950 MB | 867.6 MB (CI, arm64, PR #285: +481 MB, of which 159 MB are the models); 847.9 MB on amd64 | of `ML_PACKAGES` only fastembed, onnxruntime, tokenizers, huggingface-hub and pydantic-ai(-slim) (no torch, transformers, onnx, ...); both default models at their pinned revisions in `/opt/exactdocs/models` (the server's own marker check) with the pinned sha256 of their ONNX files (`MODEL_SHA256`), their license `NOTICE`, a directory UID 10001 cannot write, and `EXACTDOCS_MODELS_DIR` set to it; model files nowhere else (but ONNX Runtime's own few-KB examples); no aiohttp |
+| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 387.1 MB (CI, arm64, PR #285); 353.0 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
+| image `ai` (`<v>-ai`: `exactdocs[ai]`) | 560 MB | 520.4 MB (CI, arm64, PR #285: +133 MB); 492.0 MB on amd64 | as `base`, except that pydantic-ai(-slim) is allowed: it calls models over HTTP and runs none |
+| image `local` (`<v>-local`: `exactdocs[ai,local]` + default models) | 950 MB | 866.5 MB (CI, arm64, PR #285: +479 MB, of which 159 MB are the models); 847.9 MB on amd64 | of `ML_PACKAGES` only fastembed, onnxruntime, tokenizers, huggingface-hub and pydantic-ai(-slim) (no torch, transformers, onnx, ...); both default models at their pinned revisions in `/opt/exactdocs/models` (the server's own marker check) with the pinned sha256 of their ONNX files (`MODEL_SHA256`), their license `NOTICE`, a directory UID 10001 cannot write, and `EXACTDOCS_MODELS_DIR` set to it; model files nowhere else (but ONNX Runtime's own few-KB examples); no aiohttp |
 
 **Why these budgets.** The decision record estimated 531 MB for `-ai` and 887 MB for `-local` from
 the extras' site-packages (measured 2026-11-07 on x86_64) and set 560 MB and 950 MB. CI (arm64,
-PR #285) measured 387.0, 520.2 and 867.6 MB: 7.1 % of headroom for `-ai`, the same margin as the
-base image's. `-local` keeps 950 MB, 8.7 % of headroom (930 MB would be about 7 %), on purpose: it
+PR #285, with Pillow 13) measured 387.1, 520.4 and 866.5 MB (387.0, 520.2 and 867.6 MB with Pillow 12.3): 7.1 % of headroom for `-ai`, the same margin as the
+base image's. `-local` keeps 950 MB, 8.8 % of headroom (930 MB would be about 7 %), on purpose: it
 is the decision record's figure, and the extra 20 MB is room for a default-model update (a newer
 revision or a slightly larger cross-encoder replaces 159 MB of weights, which no dependency
 trimming can offset). amd64 images are 20 to 34 MB smaller than arm64 ones (353.0, 492.0 and
