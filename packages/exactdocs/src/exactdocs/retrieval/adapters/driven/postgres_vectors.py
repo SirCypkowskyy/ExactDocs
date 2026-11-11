@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import bindparam, insert, select, text, update
+from sqlalchemy import Row, bindparam, insert, select, text, update
 from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.types import TypeEngine
@@ -36,6 +36,7 @@ from exactdocs.retrieval.adapters.driven.vector_tables import (
 from exactdocs.retrieval.constants import (
     _PG_EXTENSION_CREATE,
     _PG_EXTENSION_SCHEMA,
+    _PG_EXTENSIONS_SCHEMA_WRITABLE,
     _PG_READ_ONLY,
     _PG_VECTOR_ANALYZE,
     _PG_VECTOR_CREATE,
@@ -49,6 +50,7 @@ from exactdocs.retrieval.constants import (
     _VECTOR_DROP,
     _VECTOR_MISSING,
     _VECTOR_PENDING_ARTICLES,
+    EXTENSIONS_SCHEMA,
     PGVECTOR_EXTENSION,
     PGVECTOR_MODULE,
     POSTGRES_TAG_CONDITIONS,
@@ -462,6 +464,32 @@ class PostgresVectorIndex:
         self._found["schema"] = schema
         return schema
 
+    def _check_usable(self, found: Row[Any] | None) -> str | None:
+        """Return the quoted schema of the extension, or ``None`` when it is not there.
+
+        Args:
+            found: The extension's schema row (``_PG_EXTENSION_SCHEMA``), if any.
+
+        Returns:
+            The schema, quoted for SQL.
+
+        Raises:
+            VectorStoreUnavailableError: This role may not use that schema (kept).
+        """
+        if found is None:
+            return None
+        if not found.usable:
+            reason = (
+                f'the PostgreSQL extension "{self.extension}" (pgvector) is in schema '
+                f'"{found.schema}", which this role may not use: run GRANT USAGE ON SCHEMA '
+                f"{found.schema} TO {found.role} (then restart ExactDocs); until then hybrid "
+                "search answers with BM25"
+            )
+            self._found["missing"] = reason
+            logger.warning("vector search is off: %s", reason)
+            raise VectorStoreUnavailableError(reason)
+        return self._quote(str(found.schema))
+
     async def _look(self) -> tuple[str | None, bool]:
         """Read where the extension is, and whether this process's transactions are read-only.
 
@@ -474,15 +502,14 @@ class PostgresVectorIndex:
         """
         try:
             async with self.engine.connect() as connection:
-                schema = await connection.scalar(
-                    text(_PG_EXTENSION_SCHEMA), {"name": self.extension}
-                )
+                found = (
+                    await connection.execute(text(_PG_EXTENSION_SCHEMA), {"name": self.extension})
+                ).first()
                 read_only = await connection.scalar(text(_PG_READ_ONLY))
-                preparer = connection.dialect.identifier_preparer
         except DBAPIError as exc:
             reason = f"the database did not answer: {_first_line(exc)}"
             raise VectorStoreUnavailableError(reason) from exc
-        return (None if schema is None else preparer.quote(str(schema))), read_only == "on"
+        return self._check_usable(found), read_only == "on"
 
     async def _create(self) -> str:
         """Create the extension in a write turn (it may have been created meanwhile).
@@ -500,8 +527,9 @@ class PostgresVectorIndex:
             reason = (
                 f'the PostgreSQL extension "{self.extension}" (pgvector) is not in this database '
                 f"and could not be created: {_first_line(exc)}. "
-                f"A superuser can run CREATE EXTENSION {self.extension} in this database "
-                "(then restart ExactDocs); until then hybrid search answers with BM25"
+                f"A superuser can run CREATE EXTENSION {self.extension} in this database (on "
+                f"Supabase, CREATE EXTENSION {self.extension} WITH SCHEMA {EXTENSIONS_SCHEMA}, as "
+                "postgres), then restart ExactDocs; until then hybrid search answers with BM25"
             )
             if not _transient(exc):
                 self._found["missing"] = reason
@@ -523,13 +551,33 @@ class PostgresVectorIndex:
             The schema, quoted.
         """
         name = {"name": self.extension}
-        schema = await connection.scalar(text(_PG_EXTENSION_SCHEMA), name)
-        if schema is None:
-            quoted = connection.dialect.identifier_preparer.quote(self.extension)
-            await connection.exec_driver_sql(_PG_EXTENSION_CREATE.format(extension=quoted))
-            schema = await connection.scalar(text(_PG_EXTENSION_SCHEMA), name)
+        found = (await connection.execute(text(_PG_EXTENSION_SCHEMA), name)).first()
+        if found is None:
+            into = await connection.scalar(
+                text(_PG_EXTENSIONS_SCHEMA_WRITABLE), {"schema": EXTENSIONS_SCHEMA}
+            )
+            schema = f" WITH SCHEMA {self._quote(EXTENSIONS_SCHEMA)}" if into else ""
+            await connection.exec_driver_sql(
+                _PG_EXTENSION_CREATE.format(extension=self._quote(self.extension), schema=schema)
+            )
+            found = (await connection.execute(text(_PG_EXTENSION_SCHEMA), name)).first()
             logger.info("created the PostgreSQL extension %r for vector search", self.extension)
-        return connection.dialect.identifier_preparer.quote(str(schema))
+        schema = self._check_usable(found)
+        if schema is None:  # CREATE EXTENSION IF NOT EXISTS succeeded: it is there
+            reason = f'the PostgreSQL extension "{self.extension}" was not found once created'
+            raise VectorStoreUnavailableError(reason)
+        return schema
+
+    def _quote(self, name: str) -> str:
+        """Quote an identifier for SQL.
+
+        Args:
+            name: A schema or extension name.
+
+        Returns:
+            It, quoted where PostgreSQL needs it.
+        """
+        return self.engine.dialect.identifier_preparer.quote(name)
 
     async def _dimensions_of(self, space_id: EmbeddingSpaceId) -> int:
         """Return a space's dimensions, read once (a spec never changes).

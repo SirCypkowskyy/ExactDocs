@@ -1,0 +1,10 @@
+-- ExactDocs on Supabase (README, "Supabase"): run once in the SQL editor, as `postgres`.
+-- A login role of its own, without CREATEDB, owning one schema for ExactDocs' tables and one
+-- for DBOS's. Neither schema is exposed by Supabase's Data API unless you add it there.
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
+CREATE ROLE exactdocs LOGIN NOCREATEDB NOCREATEROLE PASSWORD 'change-me';
+GRANT exactdocs TO postgres; -- lets `postgres` hand the schemas to it (PostgreSQL 16 and newer)
+CREATE SCHEMA exactdocs AUTHORIZATION exactdocs;
+CREATE SCHEMA dbos AUTHORIZATION exactdocs;
+GRANT USAGE ON SCHEMA extensions TO exactdocs; -- pgvector's type and operators
+ALTER ROLE exactdocs SET search_path = exactdocs, extensions;

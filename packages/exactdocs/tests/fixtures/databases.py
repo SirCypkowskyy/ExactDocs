@@ -7,10 +7,12 @@ sets ``EXACTDOCS_REQUIRE_POSTGRES=1``, which makes a missing URL an error instea
 """
 
 import os
+import re
 import secrets
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import psycopg
 from psycopg import sql
@@ -131,3 +133,70 @@ def postgres_database(
             )
             if role is not None:
                 admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+
+SUPABASE_URL = os.environ.get("EXACTDOCS_TEST_SUPABASE_URL") or None
+"""The ``postgres`` role of a ``supabase/postgres`` server, with ``sslmode=require`` (CI starts
+one with SSL on). Without it the Supabase scenarios are skipped; ``EXACTDOCS_REQUIRE_SUPABASE=1``
+(CI) makes a missing URL an error instead."""
+if SUPABASE_URL is None and os.environ.get("EXACTDOCS_REQUIRE_SUPABASE") == "1":
+    message = "EXACTDOCS_REQUIRE_SUPABASE=1 but EXACTDOCS_TEST_SUPABASE_URL is not set"
+    raise RuntimeError(message)
+
+SUPABASE_SQL = Path(__file__).parents[4] / "deploy" / "supabase.sql"
+"""The setup the README tells operators to run on Supabase."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SupabaseRole:
+    """A role and its schemas, set up on the Supabase server for one test."""
+
+    role: str
+    dbos_schema: str
+    url: str
+    """The role's URL (``postgresql+psycopg://``), with the admin URL's query (``sslmode``)."""
+
+
+def _supabase_admin() -> psycopg.Connection:
+    assert SUPABASE_URL is not None, "EXACTDOCS_TEST_SUPABASE_URL is not set"
+    url = make_url(SUPABASE_URL).set(drivername="postgresql")
+    return psycopg.connect(url.render_as_string(hide_password=False), autocommit=True)
+
+
+@contextmanager
+def supabase_role() -> Generator[SupabaseRole]:
+    """Run ``deploy/supabase.sql`` with names of this test's own; drop it all afterwards.
+
+    Supabase has one database (``postgres``), so tests share it and each gets a role and schemas
+    named ``exactdocs_<hex>`` and ``dbos_<hex>`` instead of ``exactdocs`` and ``dbos``.
+
+    Yields:
+        The role, its DBOS schema and its URL.
+    """
+    suffix = secrets.token_hex(6)
+    role, dbos_schema, password = f"exactdocs_{suffix}", f"dbos_{suffix}", secrets.token_hex(16)
+    script = SUPABASE_SQL.read_text(encoding="utf-8")
+    script = re.sub(r"\bexactdocs\b", role, script)
+    script = re.sub(r"\bdbos\b", dbos_schema, script)
+    script = script.replace("'change-me'", f"'{password}'")
+    with _supabase_admin() as admin:
+        admin.execute(script.encode())  # no parameters: several statements in one call
+    url = make_url(SUPABASE_URL or "").set(
+        drivername="postgresql+psycopg", username=role, password=password
+    )
+    try:
+        yield SupabaseRole(
+            role=role, dbos_schema=dbos_schema, url=url.render_as_string(hide_password=False)
+        )
+    finally:
+        with _supabase_admin() as admin:
+            admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s",
+                (role,),
+            )
+            admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(role)))
+            admin.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(dbos_schema))
+            )
+            admin.execute(sql.SQL("DROP OWNED BY {} CASCADE").format(sql.Identifier(role)))
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))

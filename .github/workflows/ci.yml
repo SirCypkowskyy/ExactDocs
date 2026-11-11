@@ -44,6 +44,14 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked
+      # #244: Supabase's own PostgreSQL image, with SSL on (a throwaway certificate), for the
+      # @supabase scenarios and the ranking suite: its `postgres` role is no superuser, as on a
+      # Supabase project, and each scenario sets up a role of its own with deploy/supabase.sql.
+      - name: Start supabase/postgres
+        run: |
+          url=$(deploy/supabase-test-db.sh "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          echo "::add-mask::$url"
+          echo "EXACTDOCS_TEST_SUPABASE_URL=$url" >> "$GITHUB_ENV"
       - name: ruff format
         run: uv run ruff format --check --diff .
       - name: ruff check
@@ -61,7 +69,14 @@ jobs:
           EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_POSTGRES: "1"
           EXACTDOCS_TEST_PG_SEARCH: "1"
+          EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
+      # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
+      - name: Ranking suite on supabase/postgres
+        run: |
+          EXACTDOCS_TEST_POSTGRES_URL="$EXACTDOCS_TEST_SUPABASE_URL" EXACTDOCS_REQUIRE_POSTGRES=1 \
+            uv run pytest packages/exactdocs/tests/retrieval/ranking -k postgres_fts \
+            --junitxml=reports/pytest-supabase-ranking.xml
       # docs/evals.md: the baseline the eval compares with is develop's, so a pull request cannot
       # lower its own bar. Checked out on its own (that file, and the dataset it was measured on),
       # so the workspace clone is never changed, and a failed fetch fails the job instead of
@@ -118,6 +133,9 @@ jobs:
           EXACTDOCS_DATABASE_URL="${ADMIN_URL/postgresql:/postgresql+psycopg:}/exactdocs_eval" \
             uv run python packages/exactdocs/evals/run_retrieval_eval.py \
             --expect-engine pg_search --report reports/evals/retrieval-pg-search.json
+      - name: Stop supabase/postgres
+        if: ${{ always() }}
+        run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

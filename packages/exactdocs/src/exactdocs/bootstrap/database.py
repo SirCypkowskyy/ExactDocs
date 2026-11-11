@@ -8,6 +8,7 @@ The database is a SQLite file in the data directory (the default) or PostgreSQL
 (``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share.
 """
 
+import logging
 import sqlite3
 import tempfile
 import time
@@ -34,10 +35,15 @@ from exactdocs.bootstrap.constants import (
     MIN_POSTGRES,
     MIN_SQLITE,
     POSTGRES_DRIVER,
+    SECURE_SSLMODES,
+    SUPABASE_HOSTS,
+    SUPABASE_TRANSACTION_PORT,
     WRITE_LOCK,
     WRITE_LOCK_TIMEOUT_MS,
 )
 from exactdocs.bootstrap.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class StartupError(RuntimeError):
@@ -135,7 +141,7 @@ def _open_postgres(url: URL, settings: Settings, *, read_only: bool) -> AsyncEng
         The engine.
 
     Raises:
-        StartupError: Another PostgreSQL driver is named.
+        StartupError: Another PostgreSQL driver is named, or Supabase's pooler in transaction mode.
     """
     if url.drivername != POSTGRES_DRIVER:
         message = (
@@ -143,6 +149,7 @@ def _open_postgres(url: URL, settings: Settings, *, read_only: bool) -> AsyncEng
             "write the URL as postgresql+psycopg://... (or postgresql://...)."
         )
         raise StartupError(message)
+    _check_supabase(url)
     if not read_only:
         _prepare_directory(settings.data_dir)  # git's work folders and known_hosts live there
     options = "-c default_transaction_read_only=on" if read_only else None
@@ -153,6 +160,40 @@ def _open_postgres(url: URL, settings: Settings, *, read_only: bool) -> AsyncEng
     )
     event.listen(engine.sync_engine, "begin", _begin_postgres)
     return engine
+
+
+def _check_supabase(url: URL) -> None:
+    """Refuse Supabase's transaction-mode pooler; warn when its connection may be unencrypted.
+
+    In transaction mode a pooler hands each transaction to any server connection: psycopg's
+    prepared statements, the advisory locks of the executor slots and DBOS's ``LISTEN`` all need
+    the same session from one statement to the next. Only the URL is read; nothing connects.
+
+    Args:
+        url: The database URL.
+
+    Raises:
+        StartupError: The URL names Supabase's pooler in transaction mode (port 6543).
+    """
+    host = (url.host or "").lower()
+    if not host.endswith(SUPABASE_HOSTS):
+        return
+    if url.port == SUPABASE_TRANSACTION_PORT:
+        message = (
+            f"EXACTDOCS_DATABASE_URL names Supabase's connection pooler in transaction mode "
+            f"({host}:{SUPABASE_TRANSACTION_PORT}), which ExactDocs cannot use: its jobs and "
+            "prepared statements need a session. Use the session pooler (the same host, port "
+            "5432) or the direct connection (db.<project-ref>.supabase.co, port 5432; IPv6 only "
+            "unless the project has the IPv4 add-on), with ?sslmode=require."
+        )
+        raise StartupError(message)
+    sslmode = url.query.get("sslmode")
+    if sslmode not in SECURE_SSLMODES:
+        logger.warning(
+            "EXACTDOCS_DATABASE_URL names Supabase (%s) without sslmode=require: the connection "
+            "may not be encrypted. Add ?sslmode=require (or verify-full with Supabase's CA).",
+            host,
+        )
 
 
 def _begin_postgres(connection: Connection) -> None:
