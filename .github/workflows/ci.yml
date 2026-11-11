@@ -565,22 +565,39 @@ jobs:
         run: |
           head=$(python3 deploy/upgrade_check.py --print-head)
           echo "ALEMBIC_HEAD=$head" | tee -a "$GITHUB_ENV"
+      # The cache above starts empty, so uvx resolves and downloads every dependency first: 40 s
+      # and more on this runner. Done here, on its own, the readiness wait below times only the
+      # server's startup (a few seconds), and the later steps reuse what this one installed.
+      - name: Install the wheels with uvx (resolve and download, before any server starts)
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
+        run: |
+          start=$SECONDS
+          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
+            exactdocs --version
+          echo "uvx install: $((SECONDS - start))s"
       - name: uvx exactdocs serve answers /api/health
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: |
           export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
           port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
-            exactdocs serve --port "$port" &
+          log="$RUNNER_TEMP/smoke-server.log"
+          # --offline: installed by the step above, so nothing is downloaded inside the wait
+          uvx --offline --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
+            exactdocs serve --port "$port" >"$log" 2>&1 &
           pid=$!
-          trap 'kill $pid' EXIT
+          # on failure, show what the server said (or that it said nothing)
+          trap 'rc=$?; kill $pid 2>/dev/null || true; [ "$rc" = 0 ] || { echo "--- server log ---"; cat "$log"; }' EXIT
           # readiness, not liveness: /api/health answers before the database does
+          start=$SECONDS ready=
           for _ in $(seq 1 60); do
-            kill -0 "$pid" || { echo "::error::the server exited early"; exit 1; }
-            curl -fsS "http://127.0.0.1:$port/readyz" && break
+            kill -0 "$pid" 2>/dev/null || { echo "::error::the server exited early"; exit 1; }
+            curl -fsS "http://127.0.0.1:$port/readyz" 2>/dev/null && { ready=1; break; }
             sleep 1
           done
+          [ -n "$ready" ] || { echo "::error::the server did not answer /readyz in 60 s"; exit 1; }
+          echo "serve to /readyz: $((SECONDS - start))s"
           health=$(curl -fsS "http://127.0.0.1:$port/api/health")
           echo "$health"
           # the build under test, not a cached one: it migrated to this checkout's head
