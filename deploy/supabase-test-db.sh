@@ -16,20 +16,19 @@ name=${1:?usage: supabase-test-db.sh <container name>}
 image=supabase/postgres:17.11.0.008@sha256:fef2654e52424e2748b1cd6763b73afcb2618c6ec696bd3af5ad572687be1dc7
 password=$(openssl rand -hex 16)
 
-# The image has no openssl (17.11 is built with Nix): the certificate is made here and handed
-# over in the environment, then written where only the server's user can read it.
+# The image has no openssl (17.11 is built with Nix): the certificate is made here, mounted
+# read-only, and copied inside where only the server's user can read the key (never in `-e`,
+# which `docker inspect` would show).
 certs=$(mktemp -d)
 trap 'rm -rf "$certs"' EXIT
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=localhost \
   -keyout "$certs/server.key" -out "$certs/server.crt" 2>/dev/null
+chmod 755 "$certs" # the key stays 0600: root in the container reads it, then hands it over
 
 docker run -d --name "$name" -e POSTGRES_PASSWORD="$password" -p 127.0.0.1::5432 \
-  -e SSL_CERT="$(cat "$certs/server.crt")" -e SSL_KEY="$(cat "$certs/server.key")" \
-  --entrypoint bash "$image" -c '
-    printf "%s\n" "$SSL_CERT" > /tmp/server.crt
-    (umask 077 && printf "%s\n" "$SSL_KEY" > /tmp/server.key)
-    chown postgres /tmp/server.key /tmp/server.crt
-    unset SSL_CERT SSL_KEY
+  -v "$certs:/certs:ro" --entrypoint bash "$image" -c '
+    install -m 644 -o postgres /certs/server.crt /tmp/server.crt
+    install -m 600 -o postgres /certs/server.key /tmp/server.key
     exec docker-entrypoint.sh postgres -D /etc/postgresql \
       -c ssl=on -c ssl_cert_file=/tmp/server.crt -c ssl_key_file=/tmp/server.key' >/dev/null
 

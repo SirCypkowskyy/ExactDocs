@@ -28,7 +28,7 @@ Feature: ExactDocs runs on Supabase, with BM25 that works without pg_search
   Scenario: Hybrid search on Supabase
     Given a Supabase database set up with "deploy/supabase.sql"
     And ExactDocs runs on it with "vector" enabled in schema "extensions"
-    And an embedding model is configured and "v1.4.0" is embedded
+    And the operator chose retrieval mode "hybrid", an embedding model is configured and "v1.4.0" is embedded
     When an agent searches "how do I retry failed calls"
     Then the result says retrieval mode "hybrid"
     And the vectors are a column of type "extensions.vector"

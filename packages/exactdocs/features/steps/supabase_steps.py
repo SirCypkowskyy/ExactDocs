@@ -25,9 +25,7 @@ from databases import SECRET_KEY, SUPABASE_SQL, supabase_role
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings, Settings
-from exactdocs.retrieval.models import RetrievalMode
 from fake_llm import gateway
-from steps.embedding_steps import AnswersHybrid
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE, store_demo_catalog
 from steps.postgres_steps import CLI, import_fixture, query_as, rank_both, serve, signed_in
 from steps.search_steps import LIBRARY, import_versions
@@ -135,8 +133,11 @@ def step_runs_with_extension(context: Context, extension: str, schema: str) -> N
     asyncio.run(store_demo_catalog(context.settings))
 
 
-@given('an embedding model is configured and "{ref}" is embedded')
-def step_embedded(context: Context, ref: str) -> None:
+@given(
+    'the operator chose retrieval mode "{mode}", an embedding model is configured and "{ref}" '
+    "is embedded"
+)
+def step_embedded(context: Context, mode: str, ref: str) -> None:
     asyncio.run(import_versions(context, [ref]))
     stack = ExitStack()
     context.add_cleanup(stack.close)
@@ -145,12 +146,11 @@ def step_embedded(context: Context, ref: str) -> None:
         {
             "providers": {"corp": {"kind": "openai-compatible", "base_url": endpoint.v1}},
             "embedding": {"model": "corp:embed"},
+            "mode": mode,
         }
     )
-    container = Container.build(
-        context.settings.model_copy(update={"ai": ai}),
-        pipelines={RetrievalMode.HYBRID: AnswersHybrid()},
-    )
+    # The real hybrid pipeline: its vector query runs on pgvector in schema `extensions`.
+    container = Container.build(context.settings.model_copy(update={"ai": ai}))
     context.client = stack.enter_context(
         TestClient(
             create_app(container),
