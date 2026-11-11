@@ -1073,8 +1073,27 @@ the query. The HTTP adapter (`adapters/driven/http_reranker.py`, `HttpReranker`)
 Cohere-compatible `/rerank` (`openai-compatible`, `vllm`, `litellm` profiles; Voyage's `data`
 answer too) or TEI's (`tei` profiles), cuts the texts to `MAX_RERANK_*_CHARS`, sends batches the
 endpoint accepts concurrently (a `TaskGroup`: one failed batch cancels the rest), and turns every failure into a `RerankerError` without the URL, key
-or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client; the
-fastembed cross-encoder (#245) is another `Reranker` the factory returns for `local` profiles.
+or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client.
+
+**Local models (#245).** Bootstrap's `ModelFactory` is `AiModels`: `local` profiles go to
+`LocalModels` (`bootstrap/local_models.py`), every other kind to `PydanticAiModels`. `LocalModels`
+imports nothing heavy: a model is known by its folder in `EXACTDOCS_MODELS_DIR` and the marker
+`exactdocs models pull` (`bootstrap/models_pull.py`, the only code that contacts the Hub, at the
+commits `PINNED_MODEL_REVISIONS` fixes for the defaults) writes last, so at build time
+`_ai_configuration` turns off, with an error naming the pull command, every instance role whose
+local model is missing or was pulled at another pinned commit, and warns about a `local:` role
+with no `local` profile. Its first use, or `Container.running`'s warm-up for the instance's
+roles, imports `bootstrap/local_sdk.py` (fastembed) and loads the model in a worker thread (the
+load lock is only ever taken there) with `specific_model_path` and `local_files_only`, which
+never reach Hub code, half the cores for ONNX Runtime and no CPU memory arena, once per process.
+The adapters (`retrieval/adapters/driven/local_models.py`: `LocalEmbeddings`, `LocalReranker`)
+never import fastembed: they call the loaded model through small structural types, document
+batches (at most 16 texts) on a one-worker pool and query embeddings and reranks on a
+two-worker pool of their own, so a search never waits behind an embedding job; ONNX Runtime's
+errors become `EmbeddingFailedError` / `RerankerError`. `Container.running` shuts both pools down
+when it ends. An unset reranker timeout is 5 s when the instance's reranker is on a `local`
+profile, 2 s otherwise. `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a
+pydantic-ai `Embedder` with `PydanticAiEmbeddings`.
 
 **Agentic search (#98).** `AgenticPipeline` (in `use_cases`, registered for `agentic` when the
 module is given an `Explorer`, as bootstrap always does) resolves the library's `llm` role,

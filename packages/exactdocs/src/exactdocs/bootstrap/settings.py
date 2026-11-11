@@ -19,6 +19,7 @@ from sqlalchemy.exc import ArgumentError
 
 from exactdocs.bootstrap.constants import (
     LOCAL_HOSTS,
+    MODELS_SUBDIR,
     POSTGRES_DRIVER,
     POSTGRES_DRIVERS,
     SECRETS_REFUSED_IN_FILE,
@@ -31,7 +32,6 @@ from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_TOOL_CALLS,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_REQUEST_TIMEOUT,
-    DEFAULT_RERANK_TIMEOUT,
     DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
     DEFAULT_SANDBOX_MEMORY,
@@ -141,9 +141,10 @@ class RerankerSettings(RoleSettings):
     top_n: int = Field(default=DEFAULT_RERANK_TOP_N, ge=1, le=MAX_RERANK_TOP_N)
     """`EXACTDOCS_AI__RERANKER__TOP_N`: how many of a search's best candidates are reranked (a
     library may set its own)."""
-    timeout: float = Field(default=DEFAULT_RERANK_TIMEOUT, gt=0, le=MAX_RERANK_TIMEOUT)
+    timeout: float | None = Field(default=None, gt=0, le=MAX_RERANK_TIMEOUT)
     """`EXACTDOCS_AI__RERANKER__TIMEOUT`: seconds a search gives the reranker, to be built and to
-    answer (reading the candidates' text is not counted); after that, or on any reranker error,
+    answer (reading the candidates' text is not counted). Unset: 2 s, or 5 s when the reranker
+    runs on a `local` profile (a CPU is slower); after that, or on any reranker error,
     results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
     `reranker_failed`)."""
 
@@ -324,6 +325,12 @@ class Settings(BaseSettings):
     (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same).
     Several server processes can share a PostgreSQL database; a SQLite one has one server.
     """
+    models_dir: Path | None = None
+    """Where local models live (`exactdocs models pull` writes them, `local` profiles read them;
+    default `<data dir>/models`). Nothing is ever downloaded at run time: a model that is not here
+    turns its role off at start. The `-local` image sets it to its read-only
+    `/opt/exactdocs/models`.
+    """
     dbos_system_schema: str = Field(default="dbos", pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     """PostgreSQL only: the schema of the same database where DBOS keeps its workflows and their
     steps (SQLite keeps them in `<data dir>/jobs.sqlite`). ExactDocs never needs a second database.
@@ -432,7 +439,7 @@ class Settings(BaseSettings):
             raise ValueError(message)
         return value
 
-    @field_validator("secret_key", "secret_key_previous", mode="before")
+    @field_validator("secret_key", "secret_key_previous", "models_dir", mode="before")
     @classmethod
     def _blank_secret_key_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
@@ -480,6 +487,11 @@ class Settings(BaseSettings):
         elif url.drivername in POSTGRES_DRIVERS:
             url = url.set(drivername=POSTGRES_DRIVER)
         return url.render_as_string(hide_password=False)
+
+    @property
+    def effective_models_dir(self) -> Path:
+        """``EXACTDOCS_MODELS_DIR``, or ``models`` in the data directory."""
+        return self.models_dir or self.data_dir / MODELS_SUBDIR
 
     @property
     def uses_postgres(self) -> bool:

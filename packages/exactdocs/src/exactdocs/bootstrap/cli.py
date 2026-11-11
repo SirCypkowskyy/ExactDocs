@@ -54,6 +54,8 @@ from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.mcp_config import Client, render
+from exactdocs.bootstrap.models_pull import default_models
+from exactdocs.bootstrap.models_pull import pull as pull_models
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import start_telemetry
 from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
@@ -969,6 +971,48 @@ async def _ai_estimate(settings: Settings) -> EmbeddingEstimateOut:
     container = _build(settings)
     async with container.running(jobs=False):  # migrates first, as `serve` would
         return await container.retrieval.estimate_embedding()
+
+
+models = App(
+    name="models",
+    help="Local models (exactdocs[local]): fetched once by `pull`, never at run time.",
+)
+app.command(models)
+
+
+@models.command(name="pull", usage="Usage: exactdocs models pull [MODEL...]")
+def models_pull(
+    *model: Annotated[
+        str,
+        Parameter(
+            name="MODEL",
+            help="fastembed embedding models or cross-encoders, e.g. BAAI/bge-small-en-v1.5 "
+            "(default: BAAI/bge-small-en-v1.5 and Xenova/ms-marco-MiniLM-L-6-v2).",
+        ),
+    ],
+) -> None:
+    """Download local models from the Hugging Face Hub into EXACTDOCS_MODELS_DIR.
+
+    The only command that contacts the Hub: the server loads `local` profiles' models from that
+    directory (default: `models` in the data directory) and never downloads one. Run it where
+    the server runs, then set a profile of kind `local` and a role on it:
+    `EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local`,
+    `EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5`. A model already there is
+    skipped without contacting the Hub. Needs the [local] extra. Exits 1 when a model could not
+    be pulled.
+
+    Args:
+        model: fastembed embedding models or cross-encoders (default: the two defaults).
+    """
+    settings = Settings()
+    models_dir = settings.effective_models_dir
+    failed = False
+    for outcome in pull_models(model or default_models(), models_dir):
+        status = "ok" if outcome.ok else "error"
+        sys.stdout.write(f"{outcome.model}: {status}  {outcome.message}\n")
+        failed = failed or not outcome.ok
+    if failed:
+        raise SystemExit(EXIT_FAILED)
 
 
 @app.command

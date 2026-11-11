@@ -52,3 +52,6 @@ def test_a_configured_provider_is_reached_with_its_own_values_only(tmp_path: Pat
     # it, and no encoding is ever loaded (nothing counts tokens), so nothing is downloaded.
     assert not seen["tiktoken_after_chat"]
     assert seen["tiktoken_encodings"] == []
+    # A hosted provider never loads the `[local]` extra (#245).
+    loaded = {m.split(".")[0] for m in seen["modules"]}
+    assert not loaded & {"fastembed", "onnxruntime", "tokenizers", "huggingface_hub"}
