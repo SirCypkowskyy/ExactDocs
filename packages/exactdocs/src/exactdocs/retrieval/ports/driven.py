@@ -2,7 +2,7 @@
 
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
@@ -37,6 +37,7 @@ from exactdocs.retrieval.models import (
     SearchIndexState,
     SectionRef,
     SpendEntry,
+    SpendKey,
     StoredChunk,
     TagFilter,
     VectorCoverage,
@@ -321,6 +322,15 @@ class SearchTracer(Protocol):
 
         Returns:
             A context manager: the span lasts as long as its block.
+        """
+        ...
+
+    def fallback(self, *, mode: str, reason: str) -> None:
+        """Count a search answered by a cheaper mode (``exactdocs.ai.fallbacks``).
+
+        Args:
+            mode: The mode that answered.
+            reason: Why it did (a ``FallbackReason`` value).
         """
         ...
 
@@ -897,13 +907,58 @@ class ArticleTitles(Protocol):
 
 
 class SpendLedger(Protocol):
-    """What AI calls cost, per scope and UTC window (``retrieval_ai_spend``); budgets read it."""
+    """What AI calls cost, per scope and UTC window (``retrieval_ai_spend``); budgets read it.
+
+    Shared by every process of an instance: additions are atomic upserts, so they add up.
+    """
 
     async def add(self, entries: Sequence[SpendEntry]) -> None:
         """Add usage to the rows of these entries, atomically, creating rows as needed.
 
+        An entry with a replay ``token`` its row has already taken is skipped, so a replayed
+        response is counted once. All entries are applied in one transaction, or none.
+
         Args:
             entries: The usage to add, one entry per row.
+        """
+        ...
+
+    async def get(self, keys: Sequence[SpendKey]) -> Mapping[SpendKey, SpendEntry]:
+        """Read some rows.
+
+        Args:
+            keys: The rows.
+
+        Returns:
+            Each row that exists; a missing one has spent nothing.
+        """
+        ...
+
+    async def since(self, first: date) -> Sequence[SpendEntry]:
+        """Read every row of a window that starts on or after a day (for the usage report).
+
+        Args:
+            first: The earliest window start.
+
+        Returns:
+            The rows, by scope kind, scope ID, window and start.
+        """
+        ...
+
+
+class CallRates(Protocol):
+    """Counts recent calls per caller, for the LLM searches-per-minute limit."""
+
+    async def allow(self, key: str, limit: int, now: datetime) -> bool:
+        """Count a call unless the caller made ``limit`` calls in the last minute.
+
+        Args:
+            key: Whose calls (an account ID; empty for a caller without one).
+            limit: The most calls per minute.
+            now: The time of the call.
+
+        Returns:
+            True when the call is allowed (and counted), False when the limit is reached.
         """
         ...
 
@@ -920,5 +975,17 @@ class Prices(Protocol):
 
         Returns:
             US dollars per million input tokens, or ``None`` when the model is not listed.
+        """
+        ...
+
+    def output_usd_per_million(self, profile_kind: str, model: str) -> float | None:
+        """Look up a model's price for output tokens.
+
+        Args:
+            profile_kind: The provider profile's kind.
+            model: The model name.
+
+        Returns:
+            US dollars per million output tokens, or ``None`` when the model is not listed.
         """
         ...

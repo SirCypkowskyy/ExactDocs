@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from exactdocs.retrieval.constants import MAX_DATA_CHARS, MAX_HEADING_CHARS, MAX_HEADINGS
 from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
@@ -444,6 +445,46 @@ class EmbeddingFailedError(DomainError):
         super().__init__(f"embedding with {_data(model)} failed: {_data(reason)}")
         self.model = model
         self.transient = transient
+
+
+class AiBudgetReachedError(DomainError):
+    """A spend limit is used up: nothing more is sent to a provider until its window resets."""
+
+    code = "ai_budget_reached"
+
+    def __init__(self, what: str, resets_at: datetime) -> None:
+        """Say which budget stopped the call and when it resets.
+
+        Args:
+            what: The budget, e.g. ``the embedding budget``.
+            resets_at: When its window (a UTC day or month) ends.
+        """
+        super().__init__(f"{what} is used up until {resets_at.isoformat()}")
+        self.resets_at = resets_at
+
+
+class UnknownSpendKeyError(ValidationError):
+    """A spend key is not in the ledger's format, so it cannot be told which row it counts to."""
+
+    def __init__(self, key: str) -> None:
+        """Name the key.
+
+        Args:
+            key: The key as it was handed over.
+        """
+        super().__init__(f"not a spend ledger key: {_data(key)}")
+
+
+class InvalidBudgetError(ValidationError):
+    """A spend limit or rate limit that cannot be enforced as written."""
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong with it.
+
+        Args:
+            reason: A fixed text naming the problem.
+        """
+        super().__init__(f"invalid AI budget: {reason}")
 
 
 class RerankerError(DomainError):

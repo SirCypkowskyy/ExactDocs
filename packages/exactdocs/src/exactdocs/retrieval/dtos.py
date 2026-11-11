@@ -1,6 +1,6 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -28,11 +28,13 @@ from exactdocs.retrieval.constants import (
     MAX_TAG,
     MAX_TAGS,
     MAX_URL,
+    MICROS_PER_USD,
     PROFILE_NAME_PATTERN,
 )
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
+    BudgetLimit,
     Candidate,
     EmbeddingSkip,
     EmbeddingSpace,
@@ -54,6 +56,8 @@ from exactdocs.retrieval.models import (
     SearchHit,
     SearchIndexState,
     SpaceState,
+    SpendEntry,
+    SpendWindow,
     StoredChunk,
     TagMatch,
     VectorMetric,
@@ -1344,3 +1348,113 @@ class EmbeddingEstimateOut(_Dto):
     """The estimated tokens at that price; null without a price."""
     note: str = Field(default=ESTIMATE_NOTE)
     """How the numbers were made."""
+
+
+class SpentOut(_Dto):
+    """What one scope spent in one window, as the providers reported it."""
+
+    input_tokens: int
+    """Tokens sent (an LLM step's total, which the harness does not split, is counted here)."""
+    output_tokens: int
+    """Tokens received."""
+    tokens: int
+    """Both: what token budgets limit."""
+    requests: int
+    """Calls made."""
+    usd: float
+    """Their price in US dollars (whole millionths); unpriced calls add nothing."""
+    unpriced_requests: int
+    """Calls whose model had no known price."""
+
+    @classmethod
+    def from_model(cls, spent: SpendEntry) -> Self:
+        """Show a ledger row's totals.
+
+        Args:
+            spent: The row.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            input_tokens=spent.input_tokens,
+            output_tokens=spent.output_tokens,
+            tokens=spent.tokens,
+            requests=spent.requests,
+            usd=spent.usd_micros / MICROS_PER_USD,
+            unpriced_requests=spent.unpriced,
+        )
+
+
+class BudgetOut(_Dto):
+    """One limit on a scope, and what is left of it in the current window."""
+
+    window: SpendWindow
+    """`day` or `month` (UTC)."""
+    window_start: date
+    """The current window's first day."""
+    resets_at: datetime
+    """When the next window starts."""
+    usd_limit: float | None
+    """The ceiling in US dollars; null when dollars are not limited."""
+    usd_left: float | None
+    """Dollars left (never below 0); null when dollars are not limited."""
+    tokens_limit: int | None
+    """The ceiling in tokens; null when tokens are not limited."""
+    tokens_left: int | None
+    """Tokens left (never below 0); null when tokens are not limited."""
+    reached: bool
+    """The limit is used up: the scope's calls are skipped until `resets_at`."""
+
+    @classmethod
+    def from_model(cls, limit: BudgetLimit, spent: SpendEntry, at: datetime) -> Self:
+        """Show a limit against what its row spent.
+
+        Args:
+            limit: The limit.
+            spent: The row of the current window.
+            at: Now.
+
+        Returns:
+            The DTO.
+        """
+        usd_limit = limit.usd_micros
+        return cls(
+            window=limit.window,
+            window_start=limit.window.start(at),
+            resets_at=limit.window.resets_at(at),
+            usd_limit=None if usd_limit is None else usd_limit / MICROS_PER_USD,
+            usd_left=(
+                None if usd_limit is None else max(0, usd_limit - spent.usd_micros) / MICROS_PER_USD
+            ),
+            tokens_limit=limit.tokens,
+            tokens_left=None if limit.tokens is None else max(0, limit.tokens - spent.tokens),
+            reached=limit.reached(spent),
+        )
+
+
+class ScopeUsageOut(_Dto):
+    """What one scope spent today and this month, and its budgets."""
+
+    scope: str
+    """`instance`, `embedding` (embedding runs, instance-wide), `library` or `user`."""
+    id: str
+    """The library ID or the account ID; empty for `instance` and `embedding`."""
+    day: SpentOut
+    """Spent today (UTC)."""
+    month: SpentOut
+    """Spent this month (UTC)."""
+    budgets: list[BudgetOut]
+    """The limits on this scope; empty when none is set."""
+
+
+class AiUsageOut(_Dto):
+    """Spend and budget left per scope: the instance, embedding runs, each library and user."""
+
+    at: datetime
+    """When the totals were read."""
+    llm_searches_per_minute: int | None
+    """LLM searches each caller may make per minute; null when not limited."""
+    scopes: list[ScopeUsageOut]
+    """The instance and the embedding budget first, then each library and user that spent
+    something this month."""

@@ -7,7 +7,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import IntEnum, StrEnum
 from itertools import groupby
 from typing import NewType, NoReturn
@@ -21,6 +21,8 @@ from exactdocs.retrieval.constants import (
     _OPTIONAL_KIND_FIELDS,
     _SELF_HOSTED_KINDS,
     _WORD,
+    BUDGET_NOT_POSITIVE,
+    BUDGET_WITHOUT_CEILING,
     CHARS_PER_TOKEN,
     CREDENTIAL_HEADER_SUFFIXES,
     CREDENTIAL_HEADERS,
@@ -42,12 +44,18 @@ from exactdocs.retrieval.constants import (
     MAX_REQUEST_TIMEOUT,
     MAX_RETRIES,
     MICROS_PER_USD,
+    MONTHS_PER_YEAR,
     PROFILE_NAME,
+    RATE_LIMIT_BELOW_ONE,
+    REPLAY_RETAIN_DAYS,
     RRF_K,
     SEARCH_DOCS,
     SPEND_INSTANCE_ID,
+    SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
+    SPEND_SCOPE_KINDS,
     SPEND_SCOPE_LIBRARY,
+    SPEND_SCOPE_USER,
     STOP_WORDS,
     TOKENS_PER_MILLION,
     VECTOR_SNIPPET_WORDS,
@@ -55,11 +63,13 @@ from exactdocs.retrieval.constants import (
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
     EmptySearchTextError,
+    InvalidBudgetError,
     InvalidEmbeddingSpaceError,
     InvalidModelRefError,
     InvalidProviderError,
     InvalidVectorError,
     UnavailableModeError,
+    UnknownSpendKeyError,
     VectorDimensionError,
 )
 from exactdocs_kernel import section_link
@@ -681,6 +691,15 @@ class RetrievalMode(StrEnum):
         """
         return self in {RetrievalMode.HYBRID, RetrievalMode.HYBRID_HYDE}
 
+    @property
+    def needs_llm(self) -> bool:
+        """Say whether this mode has an LLM step (HyDE, the agentic explorer).
+
+        Returns:
+            True when budgets and the LLM search rate limit apply to it.
+        """
+        return ModelRole.LLM in self.roles
+
 
 class FallbackReason(StrEnum):
     """Why a search was answered by a cheaper mode than the one it would have used."""
@@ -720,6 +739,23 @@ class ModeChoice:
     library_ai: LibraryAi | None = None
     """The library's AI overrides as read for this search, so the reranker resolves from the same
     read; ``None`` when there is no reranking."""
+    caller: str | None = None
+    """The account the search counts to (set with the budgets, ``within_budget``); ``None`` for a
+    stdio MCP process."""
+    cheaper: RetrievalMode = RetrievalMode.BM25
+    """The best mode without an LLM step: what answers when a budget or the rate limit skips
+    the LLM step of ``mode``."""
+
+    def without_llm(self, reason: FallbackReason) -> ModeChoice:
+        """Fall back to the cheaper mode, saying why.
+
+        Args:
+            reason: ``llm_budget_reached`` or ``llm_rate_limited``.
+
+        Returns:
+            The cheaper choice, reranking as before.
+        """
+        return replace(self, mode=self.cheaper, fallback_reason=reason)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -861,20 +897,53 @@ class ModeRegistry:
         """
         rerank = ModelRole.RERANKER in self.roles
         if asked is not None:
-            return ModeChoice(mode=self.check(asked), rerank=rerank)
+            mode = self.check(asked)
+            return ModeChoice(mode=mode, rerank=rerank, cheaper=self.cheaper_than(mode))
         reason: FallbackReason | None = None
         for setting in (library, instance):
             if setting is None:
                 continue
             if self.is_available(setting):
-                return ModeChoice(mode=setting, rerank=rerank, fallback_reason=reason)
+                return ModeChoice(
+                    mode=setting,
+                    rerank=rerank,
+                    fallback_reason=reason,
+                    cheaper=self.cheaper_than(setting),
+                )
             reason = reason or self._skipped(setting)
         best = self.best()
         if reason is None and not self.vector_store:
             with_store = replace(self, vector_store=True)
             if with_store.best() != best:
                 reason = FallbackReason.VECTOR_STORE_UNAVAILABLE
-        return ModeChoice(mode=best, rerank=rerank, fallback_reason=reason)
+        return ModeChoice(
+            mode=best, rerank=rerank, fallback_reason=reason, cheaper=self.cheaper_than(best)
+        )
+
+    def cheaper_than(self, mode: RetrievalMode) -> RetrievalMode:
+        """Pick what answers when a budget or the rate limit skips ``mode``'s LLM step.
+
+        HyDE without its hypothetical answer is hybrid search, whether or not hybrid is a
+        default; any other mode falls to the best default that needs no LLM.
+
+        Args:
+            mode: The mode chosen.
+
+        Returns:
+            The mode without the LLM step.
+        """
+        no_llm = self.without_llm()
+        if mode is RetrievalMode.HYBRID_HYDE and no_llm.is_available(RetrievalMode.HYBRID):
+            return RetrievalMode.HYBRID
+        return no_llm.best()
+
+    def without_llm(self) -> ModeRegistry:
+        """Return the registry as it would be with no LLM: what a budget leaves to run.
+
+        Returns:
+            The same registry without the ``llm`` and ``judge`` roles.
+        """
+        return replace(self, roles=self.roles - {ModelRole.LLM, ModelRole.JUDGE})
 
 
 class SourceHost(StrEnum):
@@ -932,6 +1001,9 @@ class PipelineRequest:
     of models it is another model's. ``None`` when no embedding model resolves (BM25 modes)."""
     search: str = SEARCH_DOCS
     """The search this runs in (``search_docs``, ``query_docs``): names the spans of its stages."""
+    caller: str | None = None
+    """The account the search counts to (``ModeChoice.caller``): a paid call the pipeline makes
+    (the query's embedding) is checked against and recorded to its budgets too."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2130,25 +2202,88 @@ class SpendWindow(StrEnum):
         day = at.astimezone(UTC).date()
         return day if self is SpendWindow.DAY else day.replace(day=1)
 
+    def kept_since(self, latest: date) -> date:
+        """Find the oldest window start whose replay tokens are still kept.
+
+        A response is replayed within the hour: a day's tokens are kept ``REPLAY_RETAIN_DAYS``
+        days, a month's until the month after it ends.
+
+        Args:
+            latest: The newest window start being written.
+
+        Returns:
+            Tokens of windows starting before it can be dropped.
+        """
+        if self is SpendWindow.DAY:
+            return latest - timedelta(days=REPLAY_RETAIN_DAYS)
+        return (latest.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+    def resets_at(self, at: datetime) -> datetime:
+        """Find when the window that holds ``at`` ends: the next UTC midnight or first of month.
+
+        Args:
+            at: An aware time.
+
+        Returns:
+            The first moment of the next window, in UTC.
+        """
+        first = self.start(at)
+        if self is SpendWindow.DAY:
+            following = first + timedelta(days=1)
+        elif first.month == MONTHS_PER_YEAR:
+            following = first.replace(year=first.year + 1, month=1)
+        else:
+            following = first.replace(month=first.month + 1)
+        return datetime(following.year, following.month, following.day, tzinfo=UTC)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpendKey:
+    """The ledger's own row key: (scope kind, scope ID, window, window start).
+
+    Our format, not the harness's: its ``SpendEntry.key`` is parsed into this one by the
+    ``BatchSpendStore`` adapter, so a harness that changed its keys could not split the spend
+    over two sets of rows.
+    """
+
+    scope_kind: str
+    """``instance``, ``library``, ``user`` or ``embedding``."""
+    scope_id: str
+    """The library ID, the account ID, or empty for the instance-wide kinds."""
+    window: SpendWindow
+    """Day or month."""
+    window_start: date
+    """The window's first day (UTC)."""
+
+    def __post_init__(self) -> None:
+        """Refuse a scope kind the ledger does not have.
+
+        Raises:
+            UnknownSpendKeyError: The kind is not one of ``SPEND_SCOPE_KINDS``.
+        """
+        if self.scope_kind not in SPEND_SCOPE_KINDS:
+            raise UnknownSpendKeyError(self.scope_kind)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SpendEntry:
     """Usage to add to one row of the spend ledger: one scope in one window.
 
     A row is keyed by (scope kind, scope ID, window, window start); the ledger adds an entry to
-    its row atomically. Budgets (#95) read the same rows.
+    its row atomically. Budgets read the same rows. Read back, an entry is a row's totals.
     """
 
     scope_kind: str
-    """``embedding`` for embedding runs; instance, library and user scopes come with #95."""
+    """``instance``, ``library``, ``user`` or ``embedding`` (``SPEND_SCOPE_KINDS``)."""
     scope_id: str
-    """Who spent: ``instance`` for embedding runs."""
+    """Who spent: a library ID, an account ID, or empty for the instance-wide kinds."""
     window: SpendWindow
     """Day or month."""
     window_start: date
     """The window's first day (UTC)."""
     input_tokens: int = 0
-    """Tokens sent, as the provider reported them."""
+    """Tokens sent, as the provider reported them. The harness reports one total per response,
+    which is booked here."""
     output_tokens: int = 0
     """Tokens received (none for embeddings)."""
     requests: int = 0
@@ -2157,6 +2292,326 @@ class SpendEntry:
     """Their price in millionths of a US dollar; 0 when the price is unknown."""
     unpriced: int = 0
     """Of ``requests``, those whose price is unknown (so ``usd_micros`` leaves them out)."""
+    token: str | None = None
+    """Identifies the response the entry comes from: an entry whose token its row has already
+    taken is not added again (a replayed accrual). ``None``: always added."""
+
+    @classmethod
+    def empty(cls, key: SpendKey) -> SpendEntry:
+        """Start a row with nothing spent.
+
+        Args:
+            key: The row.
+
+        Returns:
+            Its totals, all zero.
+        """
+        return cls(
+            scope_kind=key.scope_kind,
+            scope_id=key.scope_id,
+            window=key.window,
+            window_start=key.window_start,
+        )
+
+    @property
+    def key(self) -> SpendKey:
+        """The row this entry adds to.
+
+        Returns:
+            Its key.
+        """
+        return SpendKey(
+            scope_kind=self.scope_kind,
+            scope_id=self.scope_id,
+            window=self.window,
+            window_start=self.window_start,
+        )
+
+    @property
+    def tokens(self) -> int:
+        """Count the tokens in both directions, which token budgets limit.
+
+        Returns:
+            Input plus output tokens.
+        """
+        return self.input_tokens + self.output_tokens
+
+    def plus(self, other: SpendEntry) -> SpendEntry:
+        """Add another entry's counters to these (the same row).
+
+        Args:
+            other: The usage to add.
+
+        Returns:
+            The sums, without a replay token.
+        """
+        return replace(
+            self,
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            requests=self.requests + other.requests,
+            usd_micros=self.usd_micros + other.usd_micros,
+            unpriced=self.unpriced + other.unpriced,
+            token=None,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelPrice:
+    """What a model costs, in US dollars per million tokens."""
+
+    input_usd_per_million: float
+    """Tokens sent."""
+    output_usd_per_million: float = 0.0
+    """Tokens received."""
+
+    def usd_micros(self, input_tokens: int, output_tokens: int = 0) -> int:
+        """Price some tokens in millionths of a US dollar.
+
+        Args:
+            input_tokens: Tokens sent.
+            output_tokens: Tokens received.
+
+        Returns:
+            The price, rounded to a whole millionth.
+        """
+        usd = (
+            input_tokens * self.input_usd_per_million + output_tokens * self.output_usd_per_million
+        ) / TOKENS_PER_MILLION
+        return round(usd * MICROS_PER_USD)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AiCaller:
+    """Who an AI call is made for: the scopes it counts to and its rate limit key."""
+
+    library: str
+    """The library searched or embedded."""
+    user: str | None = None
+    """The account (an API token's or a session's); ``None`` for a stdio MCP process."""
+
+    def scopes(self) -> tuple[tuple[str, str], ...]:
+        """Name the ledger scopes an LLM or a rerank call counts to.
+
+        Returns:
+            (kind, ID) of the instance, the library and, with an account, the user.
+        """
+        scopes = [(SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID), (SPEND_SCOPE_LIBRARY, self.library)]
+        if self.user is not None:
+            scopes.append((SPEND_SCOPE_USER, self.user))
+        return tuple(scopes)
+
+    def embedding_scopes(self) -> tuple[tuple[str, str], ...]:
+        """Name the ledger scopes an embedding batch counts to (never a user's).
+
+        Returns:
+            (kind, ID) of the embedding budget, the instance and the library.
+        """
+        return (
+            (SPEND_SCOPE_EMBEDDING, SPEND_INSTANCE_ID),
+            (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID),
+            (SPEND_SCOPE_LIBRARY, self.library),
+        )
+
+    @property
+    def rate_key(self) -> str:
+        """Whose LLM searches per minute are counted together.
+
+        Returns:
+            The account ID; empty for callers without one (one stdio process).
+        """
+        return self.user or ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BudgetLimit:
+    """A ceiling on one kind of scope in one window: each scope of the kind has its own."""
+
+    scope_kind: str
+    """The scopes it limits: ``instance``, every ``library``, every ``user``, or ``embedding``."""
+    window: SpendWindow
+    """Per UTC day or month."""
+    usd_micros: int | None = None
+    """The most millionths of a US dollar; ``None``: US dollars are not limited."""
+    tokens: int | None = None
+    """The most tokens (input and output); ``None``: tokens are not limited."""
+
+    def __post_init__(self) -> None:
+        """Refuse a limit that limits nothing, or nothing at all.
+
+        Raises:
+            InvalidBudgetError: No ceiling, or a ceiling below one.
+            UnknownSpendKeyError: The scope kind is not one of ``SPEND_SCOPE_KINDS``.
+        """
+        if self.scope_kind not in SPEND_SCOPE_KINDS:
+            raise UnknownSpendKeyError(self.scope_kind)
+        if self.usd_micros is None and self.tokens is None:
+            raise InvalidBudgetError(BUDGET_WITHOUT_CEILING)
+        if (self.usd_micros is not None and self.usd_micros < 1) or (
+            self.tokens is not None and self.tokens < 1
+        ):
+            raise InvalidBudgetError(BUDGET_NOT_POSITIVE)
+
+    def key(self, scope_id: str, at: datetime) -> SpendKey:
+        """Find the row this limit reads for one scope at a time.
+
+        Args:
+            scope_id: The scope.
+            at: An aware time.
+
+        Returns:
+            The row of the window holding ``at``.
+        """
+        return SpendKey(
+            scope_kind=self.scope_kind,
+            scope_id=scope_id,
+            window=self.window,
+            window_start=self.window.start(at),
+        )
+
+    def reached(self, spent: SpendEntry) -> bool:
+        """Say whether a row has used this limit up.
+
+        Args:
+            spent: The row's totals.
+
+        Returns:
+            True at or past either ceiling.
+        """
+        return (self.usd_micros is not None and spent.usd_micros >= self.usd_micros) or (
+            self.tokens is not None and spent.tokens >= self.tokens
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReachedBudget:
+    """A limit a scope has used up, and when its window resets."""
+
+    limit: BudgetLimit
+    """The limit."""
+    scope_id: str
+    """The scope that used it up."""
+    resets_at: datetime
+    """The end of its window."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Budgets:
+    """The instance's spend limits and its LLM search rate limit (docs/decisions/ai-retrieval.md).
+
+    Limits are checked before each call or batch, so a burst can overshoot by the calls already
+    in flight. With no limits nothing is refused; spend is still recorded.
+    """
+
+    limits: tuple[BudgetLimit, ...] = ()
+    """Every ceiling."""
+    llm_searches_per_minute: int | None = None
+    """LLM searches each caller may make per minute; ``None``: not limited."""
+
+    def __post_init__(self) -> None:
+        """Refuse a rate limit below one.
+
+        Raises:
+            InvalidBudgetError: ``llm_searches_per_minute`` is below one.
+        """
+        if self.llm_searches_per_minute is not None and self.llm_searches_per_minute < 1:
+            raise InvalidBudgetError(RATE_LIMIT_BELOW_ONE)
+
+    @property
+    def limits_usd(self) -> bool:
+        """Say whether any limit is in US dollars (then every model must have a price).
+
+        Returns:
+            True when one is.
+        """
+        return any(limit.usd_micros is not None for limit in self.limits)
+
+    def keys(self, scopes: Sequence[tuple[str, str]], at: datetime) -> tuple[SpendKey, ...]:
+        """List the rows the limits on these scopes read.
+
+        Args:
+            scopes: (kind, ID) of each scope a call counts to.
+            at: When the call would be made.
+
+        Returns:
+            One key per limit and scope of its kind, without repeats.
+        """
+        keys = {
+            limit.key(scope_id, at): None
+            for limit in self.limits
+            for kind, scope_id in scopes
+            if kind == limit.scope_kind
+        }
+        return tuple(keys)
+
+    def reached(
+        self,
+        scopes: Sequence[tuple[str, str]],
+        rows: Mapping[SpendKey, SpendEntry],
+        at: datetime,
+    ) -> ReachedBudget | None:
+        """Find a limit one of these scopes has used up.
+
+        Args:
+            scopes: (kind, ID) of each scope a call counts to.
+            rows: The rows ``keys`` named, as read; a missing row has spent nothing.
+            at: When the call would be made.
+
+        Returns:
+            The used-up limit whose window resets last, or ``None`` when every one has room.
+        """
+        found: ReachedBudget | None = None
+        for limit in self.limits:
+            for kind, scope_id in scopes:
+                if kind != limit.scope_kind:
+                    continue
+                key = limit.key(scope_id, at)
+                if not limit.reached(rows.get(key) or SpendEntry.empty(key)):
+                    continue
+                resets_at = limit.window.resets_at(at)
+                if found is None or resets_at > found.resets_at:
+                    found = ReachedBudget(limit=limit, scope_id=scope_id, resets_at=resets_at)
+        return found
+
+
+def spend_entries(
+    at: datetime,
+    scopes: Sequence[tuple[str, str]],
+    *,
+    input_tokens: int,
+    output_tokens: int = 0,
+    requests: int,
+    price: ModelPrice | None,
+) -> tuple[SpendEntry, ...]:
+    """Write one call's usage as ledger entries: one per scope and UTC window.
+
+    Args:
+        at: When the calls were made.
+        scopes: (kind, ID) of each scope they count to.
+        input_tokens: Tokens the provider reported sending.
+        output_tokens: Tokens it reported receiving.
+        requests: Calls made.
+        price: The model's price, if known.
+
+    Returns:
+        One entry per scope and window (day, month).
+    """
+    micros = 0 if price is None else price.usd_micros(input_tokens, output_tokens)
+    return tuple(
+        SpendEntry(
+            scope_kind=kind,
+            scope_id=scope_id,
+            window=window,
+            window_start=window.start(at),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            requests=requests,
+            usd_micros=micros,
+            unpriced=requests if price is None else 0,
+        )
+        for kind, scope_id in scopes
+        for window in SpendWindow
+    )
 
 
 def embedding_spend(
@@ -2167,10 +2622,11 @@ def embedding_spend(
     requests: int,
     usd_per_million: float | None,
 ) -> tuple[SpendEntry, ...]:
-    """Write one embedding batch's usage as ledger entries: the instance's and the library's rows.
+    """Write one embedding batch's usage as ledger entries.
 
-    The same rows LLM spend uses (docs/decisions/ai-retrieval.md, *Cost and budgets*): one per
-    scope and UTC window, so budgets per instance and per library see embedding runs too.
+    The same rows LLM spend uses (docs/decisions/ai-retrieval.md, *Cost and budgets*), the
+    instance's and the library's, plus the instance-wide ``embedding`` rows the separate
+    embedding budget reads.
 
     Args:
         at: When the calls were made.
@@ -2180,22 +2636,13 @@ def embedding_spend(
         usd_per_million: The model's input price per million tokens, if known.
 
     Returns:
-        One entry per scope (instance, library) and window (day, month).
+        One entry per scope (embedding, instance, library) and window (day, month).
     """
-    usd = estimated_usd(input_tokens, usd_per_million)
-    micros = 0 if usd is None else round(usd * MICROS_PER_USD)
-    scopes = ((SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID), (SPEND_SCOPE_LIBRARY, library))
-    return tuple(
-        SpendEntry(
-            scope_kind=kind,
-            scope_id=scope_id,
-            window=window,
-            window_start=window.start(at),
-            input_tokens=input_tokens,
-            requests=requests,
-            usd_micros=micros,
-            unpriced=requests if usd is None else 0,
-        )
-        for kind, scope_id in scopes
-        for window in SpendWindow
+    price = None if usd_per_million is None else ModelPrice(input_usd_per_million=usd_per_million)
+    return spend_entries(
+        at,
+        AiCaller(library=library).embedding_scopes(),
+        input_tokens=input_tokens,
+        requests=requests,
+        price=price,
     )

@@ -10,6 +10,8 @@ from opentelemetry import metrics, trace
 from exactdocs.retrieval.constants import (
     ATTRIBUTE_PREFIX,
     ERROR_TYPE_ATTRIBUTE,
+    FALLBACK_REASON_ATTRIBUTE,
+    FALLBACKS_METRIC,
     MODE_ATTRIBUTE,
     QUERY_ATTRIBUTE,
     SEARCH_ATTRIBUTE,
@@ -61,9 +63,11 @@ class OpenTelemetrySearchTracer:
     """Where the durations go; ``None``: the global provider (what ``start_telemetry`` set up)."""
     _duration: metrics.Histogram = field(init=False, repr=False)
     """The histogram, created once: a proxy until ``start_telemetry`` sets the global provider."""
+    _fallbacks: metrics.Counter = field(init=False, repr=False)
+    """Searches answered by a cheaper mode, by mode and reason."""
 
     def __post_init__(self) -> None:
-        """Create the histogram."""
+        """Create the histogram and the counter."""
         meter = metrics.get_meter(TRACER_NAME, meter_provider=self.meter_provider)
         duration = meter.create_histogram(
             SEARCH_DURATION_METRIC,
@@ -71,7 +75,22 @@ class OpenTelemetrySearchTracer:
             description="How long ExactDocs searches, and each of their stages, took.",
             explicit_bucket_boundaries_advisory=list(SEARCH_DURATION_BUCKETS),
         )
+        fallbacks = meter.create_counter(
+            FALLBACKS_METRIC,
+            unit="{search}",
+            description="Searches answered by a cheaper retrieval mode, by mode and reason.",
+        )
         object.__setattr__(self, "_duration", duration)  # frozen: set once, here
+        object.__setattr__(self, "_fallbacks", fallbacks)
+
+    def fallback(self, *, mode: str, reason: str) -> None:
+        """Count a search a cheaper mode answered; never with the library, user or query.
+
+        Args:
+            mode: The mode that answered.
+            reason: Why it did.
+        """
+        self._fallbacks.add(1, {MODE_ATTRIBUTE: mode, FALLBACK_REASON_ATTRIBUTE: reason})
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None

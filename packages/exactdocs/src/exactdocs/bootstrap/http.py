@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -25,6 +25,7 @@ from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, sta
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
 from exactdocs.identity.constants import SESSION_COOKIE
+from exactdocs.identity.dtos import AccountSummary
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 
@@ -112,6 +113,17 @@ def create_app(container: Container) -> FastAPI:
     )
     protected = APIRouter(dependencies=[Depends(current_caller)])
 
+    async def caller_id(account: Annotated[AccountSummary, Depends(current_caller)]) -> str:
+        """Name the account of the request (FastAPI runs ``current_caller`` once per request).
+
+        Args:
+            account: The caller.
+
+        Returns:
+            Its ID: whom AI spend and LLM searches are counted to.
+        """
+        return account.id
+
     async def require_session(request: Request) -> None:
         """Sign-in by cookie only (401 otherwise): for what an API token must not do."""
         await session_caller(request.cookies.get(SESSION_COOKIE))
@@ -138,6 +150,7 @@ def create_app(container: Container) -> FastAPI:
             article_outline=container.retrieval.article_outline,
             resolve_library_id=container.retrieval.resolve_library_id,
             query_docs=container.retrieval.query_docs,
+            caller=caller_id,
         )
     )
     protected.include_router(
@@ -156,6 +169,7 @@ def create_app(container: Container) -> FastAPI:
             check_provider=container.retrieval.check_provider,
             list_roles=container.retrieval.list_roles,
             estimate_embedding=container.retrieval.estimate_embedding,
+            get_ai_usage=container.retrieval.get_ai_usage,
         )
     )
     protected.include_router(

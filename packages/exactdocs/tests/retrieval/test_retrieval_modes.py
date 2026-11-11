@@ -596,3 +596,11 @@ async def test_asking_for_hybrid_without_the_vector_store_fails_clearly() -> Non
 
     with pytest.raises(UnavailableModeError, match="extension, sqlite-vec or pgvector, cannot"):
         await _mode_of(world, "hybrid")
+
+
+def test_hyde_over_budget_falls_back_to_hybrid_although_hybrid_is_no_default() -> None:
+    registry = ModeRegistry(roles=frozenset({EMBEDDING, LLM}), pipelines=EVERY_PIPELINE)
+
+    assert registry.best() is BM25
+    assert registry.cheaper_than(HYDE) is HYBRID
+    assert registry.cheaper_than(AGENTIC) is BM25
