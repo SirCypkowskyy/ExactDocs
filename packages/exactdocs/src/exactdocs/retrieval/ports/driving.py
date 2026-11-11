@@ -31,6 +31,7 @@ from exactdocs.retrieval.dtos import (
     ProviderListOut,
     ProviderNameQuery,
     ProviderOut,
+    PrunedHypothesesOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -536,5 +537,20 @@ class GetAiUsage(Protocol):
 
         Returns:
             The instance, the embedding budget, then every library and user that spent this month.
+        """
+        ...
+
+
+class PruneHypotheses(Protocol):
+    """Delete HyDE's cached answers older than the TTL or of models no longer configured.
+
+    Run once a day by the server (one process on PostgreSQL), and by every collection.
+    """
+
+    async def __call__(self) -> PrunedHypothesesOut:
+        """Run the use case.
+
+        Returns:
+            How many answers were deleted.
         """
         ...

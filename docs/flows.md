@@ -156,7 +156,10 @@ error naming the missing role; a library or instance mode that is not available 
 result says so (`fallback_reason: mode_unavailable`, or `vector_store_unavailable` when only the
 vector store is missing). A hybrid search never fails for its model either: a version its model has
 not embedded yet answers BM25 with `embedding_in_progress`, and a query the model fails or times
-out on answers BM25 with `embedding_unavailable`.
+out on answers BM25 with `embedding_unavailable`. A `hybrid_hyde` search first has the LLM write a
+short hypothetical answer (cached per query, version and model) and embeds that instead of the
+query; without it (a budget, the rate limit, an LLM error or timeout) it answers `hybrid`, saying
+why (`llm_budget_reached`, `llm_rate_limited`, `llm_unavailable`).
 
 With a reranker configured, the mode's pipeline is asked for the reranker's top N candidates (32,
 or the library's own number) when that is more than the call's `limit`; the reranker receives the

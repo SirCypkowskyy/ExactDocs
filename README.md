@@ -408,7 +408,7 @@ and instance modes are: their scores must compare across libraries.
 | reranker | BM25 → rerank | planned |
 | embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
-| embedding model + LLM (+ reranker) | hybrid with HyDE → rerank (a default only once the eval suite shows it beats BM25) | planned |
+| embedding model + LLM (+ reranker) | HyDE (`hybrid_hyde`): the LLM writes a short hypothetical answer, whose embedding searches the vector half while BM25 keeps the query; cached per query, version and model; within the budgets, else hybrid with `fallback_reason` `llm_budget_reached`, `llm_rate_limited` or `llm_unavailable` (an LLM error or timeout) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid_hyde`; a default only once the eval suite shows it beats BM25) |
 | LLM + agentic mode | a pydantic-ai agent browses the documentation tree and returns the articles that answer the question, with a justification; similar past questions are served from a cache | planned |
 
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
@@ -431,7 +431,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, e.g. `sqlite:////srv/exactdocs.db` (opened in WAL mode), or a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](#postgresql) and [Supabase](#supabase)). The schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
 | `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | PostgreSQL only: the schema of the same database where DBOS keeps the durable steps of jobs (SQLite keeps them in `<data dir>/jobs.sqlite`) |
 | `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
-| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
+| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were. HyDE's cached answers are keyed with the current key only, so after a rotation every cached answer is a miss (the LLM is asked again) until the TTL prunes the old rows |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
@@ -439,6 +439,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` section above); the environment wins over it. It may not hold keys or `secret_key`: those come from the environment or `api_key_file` |
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
+| `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` (30 days) | How long a HyDE hypothetical answer stays cached (seconds or an ISO 8601 duration). Once a day (just after UTC midnight, and at start; one process on PostgreSQL), and after every collection, the server deletes older answers and those of an `llm` model no longer configured; answers are also deleted when their version's manifest is collected |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -765,7 +766,7 @@ docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
   embedding job (queued again when the window resets). A search's query embedding and rerank on
   a local model are never refused by a budget: only paid calls are checked.
 
-The hybrid pipeline is built (#92); the HyDE and agentic pipelines arrive with #94 and #98.
+The hybrid (#92) and HyDE (#94) pipelines are built; the agentic pipeline arrives with #98.
 
 ### PostgreSQL
 

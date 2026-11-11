@@ -45,6 +45,7 @@ from exactdocs.bootstrap.bridges import (
 from exactdocs.bootstrap.constants import (
     AI_KEYS_PURPOSE,
     CREDENTIALS_KEY_PURPOSE,
+    HYDE_CACHE_PURPOSE,
     JOBS_FILE,
     KEY_FILE,
     KNOWN_HOSTS_FILE,
@@ -63,7 +64,7 @@ from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
-from exactdocs.bootstrap.secret_box import FernetSecretBox
+from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
@@ -112,13 +113,19 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
-from exactdocs.retrieval.adapters.driven.memory import InMemoryCallRates, ReadOnlySpendLedger
+from exactdocs.retrieval.adapters.driven.memory import (
+    InMemoryCallRates,
+    ReadOnlyHypothesisCache,
+    ReadOnlySpendLedger,
+)
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteChunkRepository,
+    SqliteHypothesisCache,
     SqliteLibraryModes,
     SqliteProviderProfiles,
     SqliteSpendLedger,
@@ -139,6 +146,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import (
     EmbeddingModels,
+    HypotheticalAnswerCache,
     ModelFactory,
     ModelRoles,
     RetrievalPipeline,
@@ -155,7 +163,9 @@ type LocalRoles = tuple[tuple[ProviderProfile, ModelRole, str], ...]
 """The instance roles on ``local`` profiles: ``(profile, role, model)``."""
 
 
-def _ai_configuration(settings: Settings, local: LocalModels) -> ConfiguredAi:
+def _ai_configuration(
+    settings: Settings, local: LocalModels, probe: ModelFactory | None = None
+) -> ConfiguredAi:
     """Read the AI profiles and roles of the environment and the TOML file, refusing bad ones.
 
     A role on a ``local`` profile whose model is not in the models directory is turned off, with
@@ -164,6 +174,8 @@ def _ai_configuration(settings: Settings, local: LocalModels) -> ConfiguredAi:
     Args:
         settings: The runtime configuration.
         local: Knows which local models were pulled (reading their markers only).
+        probe: The model factory the instance calls models with, which says what it cannot call;
+            the instance's own by default (tests and the eval suite pass the one they build with).
 
     Returns:
         The configuration.
@@ -176,7 +188,7 @@ def _ai_configuration(settings: Settings, local: LocalModels) -> ConfiguredAi:
         configured = configured_ai(settings.ai)
     except DomainError as error:  # fixed texts and names: never a key
         raise StartupError(str(error)) from None
-    probe = AiModels(local=local)
+    probe = probe or AiModels(local=local)
     for profile in configured.profiles:
         if (reason := probe.unsupported(profile)) is not None:
             message = f"AI provider {profile.name!r}: {reason}"
@@ -331,6 +343,30 @@ def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
         raise StartupError(str(error)) from None
 
 
+def _hyde_cache_key(settings: Settings, *, create: bool) -> bytes | None:
+    """Derive the HMAC key of HyDE's cache from the instance's secret key (its own purpose).
+
+    Args:
+        settings: The runtime configuration.
+        create: Generate the key file when there is none (never in a read-only process).
+
+    Returns:
+        The key, or ``None`` when there is no secret key and none may be created.
+
+    Raises:
+        StartupError: The key or the key file is unusable.
+    """
+    try:
+        if settings.secret_key:
+            return derived_key(settings.secret_key.get_secret_value(), HYDE_CACHE_PURPOSE)
+        path = settings.data_dir / KEY_FILE
+        if not create and not path.is_file():
+            return None
+        return derived_key(read_key_file(path), HYDE_CACHE_PURPOSE)
+    except ValueError as error:  # fixed texts: they never repeat a key
+        raise StartupError(str(error)) from None
+
+
 def _existing_secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox | None:
     """Build the secret box only when a key exists (read-only processes never create one).
 
@@ -389,6 +425,7 @@ def _build_read_side(
     settings: Settings,
     *,
     ai_box: FernetSecretBox | None,
+    hyde_key: bytes | None = None,
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
@@ -404,6 +441,7 @@ def _build_read_side(
         settings: The runtime configuration.
         ai_box: Seals and opens the provider keys stored over the REST API; ``None``: none can be
             stored or opened.
+        hyde_key: The HMAC key of the queries in HyDE's cache; ``None``: nothing is cached.
         model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
@@ -419,7 +457,7 @@ def _build_read_side(
         PostgreSQL the search engine to choose at start.
     """
     local = LocalModels(models_dir=settings.effective_models_dir)
-    ai = _ai_configuration(settings, local)
+    ai = _ai_configuration(settings, local, model_factory)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -439,8 +477,10 @@ def _build_read_side(
         )
     vectors = vector_index(engine, sqlite_extension=vector_extension)
     spend: SpendLedger = SqliteSpendLedger(engine=engine)
+    hypotheses: HypotheticalAnswerCache = SqliteHypothesisCache(engine=engine)
     if read_only:
         spend = ReadOnlySpendLedger(shared=spend)
+        hypotheses = ReadOnlyHypothesisCache(shared=hypotheses)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
@@ -482,6 +522,10 @@ def _build_read_side(
         clock=clock,
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
+        hypotheses=PydanticAiHypotheticalAnswers(ledger=spend),
+        hypothesis_cache=hypotheses,
+        hyde_cache_key=hyde_key,
+        hyde_cache_ttl=settings.ai.hyde.cache_ttl,
     )
     return _ReadSide(
         catalog=catalog,
@@ -617,7 +661,13 @@ class ReadOnlyContainer:
         engine = open_database(settings, read_only=True)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
-        read = _build_read_side(engine, settings, ai_box=ai_box, read_only=True)
+        read = _build_read_side(
+            engine,
+            settings,
+            ai_box=ai_box,
+            hyde_key=_hyde_cache_key(settings, create=False),
+            read_only=True,
+        )
         return cls(
             settings=settings,
             engine=engine,
@@ -726,6 +776,7 @@ class Container:
             engine,
             settings,
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
+            hyde_key=_hyde_cache_key(settings, create=True),
             model_roles=model_roles,
             pipelines=pipelines,
             vector_extension=vector_extension,
@@ -880,9 +931,20 @@ class Container:
                 await queueing
 
     async def _queue_embedding_daily(self) -> None:
-        """Queue the missing embedding now, then after every UTC midnight (one process does)."""
+        """Run the nightly upkeep now, then after every UTC midnight (one process does)."""
+        await self.nightly()
+        await requeue_daily(engine=self.engine, queue=self.nightly)
+
+    async def nightly(self) -> None:
+        """Queue the missing embedding, then prune HyDE's cache (its TTL, retired models).
+
+        Each part is logged on failure and never stops the other or the server.
+        """
         await self.queue_embedding()
-        await requeue_daily(engine=self.engine, queue=self.queue_embedding)
+        try:
+            await self.retrieval.prune_hypotheses()
+        except Exception:
+            logger.exception("pruning HyDE's cache failed; it runs again tomorrow")
 
     async def queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.

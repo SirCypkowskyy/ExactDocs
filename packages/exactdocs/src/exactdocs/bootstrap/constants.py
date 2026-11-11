@@ -281,6 +281,12 @@ AI_KEYS_PURPOSE: Final[bytes] = b"exactdocs ai provider keys v1"
 Its own context: a provider key never opens with the credentials' key, nor the reverse. Never
 change it: every stored provider key is sealed with the key derived from it.
 """
+HYDE_CACHE_PURPOSE: Final[bytes] = b"exactdocs hyde cache v1"
+"""HKDF context (``purpose``) of the key of the HMAC that hashes the queries in HyDE's cache.
+
+Its own context: the hashes cannot be checked against a list of likely queries without the
+instance's secret key. Changing it (or the secret key) only makes every cached answer a miss.
+"""
 _OWNER_ONLY: Final[int] = 0o600
 """File mode of the secret key file: readable by its owner only."""
 

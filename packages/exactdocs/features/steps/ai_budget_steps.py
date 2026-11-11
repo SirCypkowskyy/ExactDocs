@@ -1,9 +1,10 @@
 """Steps for AI budgets and the LLM search rate limit (#95).
 
-No LLM pipeline exists yet (HyDE is #94, the agentic mode #98): a stand-in ``agentic`` pipeline
-is the search that "needs an LLM step", and a stand-in BM25 pipeline reports whether it was asked
-to rerank. Spend is put in the ledger directly, as earlier calls would have recorded it; the
-retrieval clock is fixed, so a scenario can move it past a window's end.
+The agentic mode (#98) does not exist yet: a stand-in ``agentic`` pipeline is the search that
+"needs an LLM step" (HyDE's own budget scenario is in hyde.feature), and a stand-in BM25
+pipeline reports whether it was asked to rerank. Spend is put in the ledger directly, as earlier
+calls would have recorded it; the retrieval clock is fixed, so a scenario can move it past a
+window's end.
 """
 
 import math
@@ -36,6 +37,7 @@ from exactdocs.retrieval.ports.driven import RetrievalPipeline
 from fake_llm import FakeGateway, gateway
 from steps.embedding_steps import AnswersHybrid, wait_for_embedding
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE
+from steps.hyde_steps import use_up_the_daily_budget
 from steps.search_steps import LIBRARY
 
 SEARCH = f"/api/v1/libraries{LIBRARY}/search"
@@ -141,6 +143,9 @@ def _search(context: Context, mode: str | None = None) -> dict[str, Any]:
 
 @given("the instance's daily LLM budget is used up")
 def step_daily_budget_used_up(context: Context) -> None:
+    if getattr(context, "hyde", False):  # hyde.feature: the instance is configured already
+        use_up_the_daily_budget(context)
+        return
     serve_budgets(
         context,
         {"budgets": {"daily_usd": 1}},

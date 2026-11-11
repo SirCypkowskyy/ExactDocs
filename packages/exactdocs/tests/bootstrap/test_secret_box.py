@@ -15,9 +15,10 @@ from sqlalchemy import text
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap import secret_box
 from exactdocs.bootstrap.constants import CREDENTIALS_KEY_PURPOSE as CREDENTIALS
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.constants import HYDE_CACHE_PURPOSE, KEY_FILE
+from exactdocs.bootstrap.container import Container, _hyde_cache_key
 from exactdocs.bootstrap.database import StartupError, migrate, open_database
-from exactdocs.bootstrap.secret_box import FernetSecretBox
+from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
@@ -374,3 +375,19 @@ def test_the_alternative_names_of_github_and_bitbucket_are_pinned(tmp_path: Path
             capture_output=True, text=True, check=True,
         ).stdout  # fmt: skip
         assert fingerprint in out, name
+
+
+def test_the_hyde_cache_key_is_derived_for_its_own_purpose_and_never_created_read_only(
+    tmp_path: Path,
+) -> None:
+    secret = "s" * 40
+    keyed = Settings(data_dir=tmp_path / "a", secret_key=SecretStr(secret))
+    assert _hyde_cache_key(keyed, create=False) == derived_key(secret, HYDE_CACHE_PURPOSE)
+    assert derived_key(secret, HYDE_CACHE_PURPOSE) != derived_key(secret, CREDENTIALS)
+
+    fresh = Settings(data_dir=tmp_path / "b")
+    assert _hyde_cache_key(fresh, create=False) is None  # a read-only process creates no key
+    assert not (tmp_path / "b" / KEY_FILE).exists()
+    created = _hyde_cache_key(fresh, create=True)
+    assert created is not None
+    assert _hyde_cache_key(fresh, create=False) == created
