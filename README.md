@@ -1264,6 +1264,8 @@ wait for a starting instance, poll `/readyz`: liveness answers before the databa
 A probe stops waiting for the database when its budget is up, even while a statement still
 runs; that check ends in the background, and later probes wait for it instead of starting
 another: however often they are called, a stuck database holds at most one connection for each.
+So a probe may get the result of a check an earlier probe started. A stopping instance waits up
+to 2 s for such a check, then cancels it, before it closes its database connections.
 
 The probes answer whatever the `Host` header says, so a Kubernetes `httpGet` probe (which sends
 the pod IP) needs no extra header. Only exact `GET`/`HEAD` requests on these three paths skip the

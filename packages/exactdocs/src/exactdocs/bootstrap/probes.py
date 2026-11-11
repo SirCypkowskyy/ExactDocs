@@ -9,15 +9,18 @@ Each probe asks the database in a task of its own and waits for it no longer tha
 (#298). Cancelling the check instead would not work: SQLAlchemy then closes the connection by
 waiting, shielded from the cancellation, for the driver, which first finishes the statement. A
 check the probe stopped waiting for runs to its end, and the next probe waits for it rather than
-starting another: however often it is called, each probe holds at most one connection.
+starting another: however often it is called, each probe holds at most one connection. When the
+app stops, ``Probes.settle`` waits for those checks before the engine is disposed, so none is
+left holding a connection of a discarded pool (#291).
 """
 
 import asyncio
+import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from functools import partial
 from http import HTTPStatus
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict
@@ -33,6 +36,7 @@ from exactdocs.bootstrap.constants import (
     LIVENESS_PATH,
     PROBE_METHODS,
     PROBE_PATHS,
+    PROBE_SETTLE_SECONDS,
     READINESS_PATH,
     READINESS_TIMEOUT_SECONDS,
     READINESS_UNREACHABLE,
@@ -41,6 +45,8 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import current_revision, database_file_missing, schema_head
 from exactdocs.retrieval.models import SearchEngine
+
+logger = logging.getLogger(__name__)
 
 
 class Alive(BaseModel):
@@ -91,14 +97,37 @@ class Readiness(BaseModel):
     """Why it is not ready, as a short sentence; null when ready."""
 
 
-def build_probe_router(container: Container) -> APIRouter:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Probes:
+    """The probes' router, and the database checks they may leave running."""
+
+    router: APIRouter
+    """Serves ``/healthz`` (and its alias ``/api/health``) and ``/readyz``."""
+    checks: tuple[_OneCheckAtATime[Any], ...]
+    """Each probe's check runner."""
+
+    async def settle(self, grace: float = PROBE_SETTLE_SECONDS) -> None:
+        """Wait for the checks still in flight; cancel those that outlast ``grace``.
+
+        Call it before the engine is disposed: a check left running would give its connection
+        back to the discarded pool, which never closes it. (A grace, not an ``asyncio.timeout``
+        around the call: cancelling ``settle`` itself would leave the checks running.)
+
+        Args:
+            grace: Seconds each check gets to finish before it is cancelled.
+        """
+        await asyncio.gather(*(check.settle(grace) for check in self.checks))
+
+
+def build_probes(container: Container) -> Probes:
     """Liveness and readiness probes, outside ``/api/v1``: no sign-in, no setup guard.
 
     Args:
         container: The instance whose database the probes ask.
 
     Returns:
-        The router serving ``/healthz`` (and its alias ``/api/health``) and ``/readyz``.
+        The router serving ``/healthz`` (and its alias ``/api/health``) and ``/readyz``, and
+        what settles their checks when the app stops.
     """
     router = APIRouter(tags=["system"])
     head = schema_head()
@@ -148,7 +177,7 @@ def build_probe_router(container: Container) -> APIRouter:
         response.status_code = HTTPStatus.SERVICE_UNAVAILABLE
         return Readiness(status="not_ready", reason=reason)
 
-    return router
+    return Probes(router=router, checks=(details, readiness_check))
 
 
 def _unknown() -> Health:
@@ -174,7 +203,8 @@ class _OneCheckAtATime[T]:
 
     A check still running when the budget is up is left to finish on its own: a later call waits
     for that same check instead of starting a new one, so a stuck database never holds more
-    than one connection for it.
+    than one connection for it. A call may therefore get the result of a check an earlier call
+    started; it is fresh when it arrives. ``settle`` ends the check in flight when the app stops.
     """
 
     check: Callable[[], Coroutine[object, object, T]]
@@ -194,8 +224,6 @@ class _OneCheckAtATime[T]:
             TimeoutError: The check did not finish within the budget (it goes on running).
         """
         task = self.pending
-        if task is not None and task.get_loop() is not asyncio.get_running_loop():
-            task = None  # left behind by an event loop that is gone: it will never finish here
         if task is None:
             task = asyncio.create_task(self.check())
             task.add_done_callback(self._finished)
@@ -205,16 +233,41 @@ class _OneCheckAtATime[T]:
             raise TimeoutError
         return task.result()
 
+    async def settle(self, grace: float) -> None:
+        """Wait for the check in flight at most ``grace`` seconds, then cancel and await it.
+
+        No check is left running once this returns. A cancelled check still waits for its
+        connection to close, which SQLAlchemy does shielded once the statement ends.
+
+        Args:
+            grace: Seconds the check gets to finish on its own.
+        """
+        task = self.pending
+        if task is None:
+            return
+        await asyncio.wait({task}, timeout=grace)
+        if not task.done():
+            logger.warning(
+                "a probe's database check was still running after %s s at shutdown; cancelling it",
+                grace,
+            )
+            task.cancel()
+            await asyncio.wait({task})
+
     def _finished(self, task: asyncio.Task[T]) -> None:
-        """Let the next call start a new check, and take the task's error so none goes unseen.
+        """Let the next call start a new check, and log the task's error so none goes unseen.
 
         Args:
             task: The check that just finished.
         """
         if self.pending is task:
             self.pending = None
-        if not task.cancelled():
-            task.exception()  # a probe that was waiting raised it; nobody else needs it
+        if task.cancelled():
+            return
+        # The check answers for every error it expects: this is a bug, and the probe may have
+        # stopped waiting for it, so it is logged here (and taken, so asyncio does not warn).
+        if (error := task.exception()) is not None:
+            logger.error("a probe's database check failed", exc_info=error)
 
 
 async def _database_details(container: Container) -> Health:

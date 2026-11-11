@@ -19,7 +19,7 @@ from exactdocs.bootstrap.constants import (
 )
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
-from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probe_router
+from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probes
 from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, start_telemetry
 from exactdocs.catalog.adapters.driving import http as catalog_http
@@ -45,10 +45,18 @@ def create_app(container: Container) -> FastAPI:
         allowed_origins=settings.allowed_origins or None,
     )
 
+    probes = build_probes(container)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-        async with container.running(), mcp_app.lifespan(mcp_app):
-            yield
+        async with container.running():
+            try:
+                async with mcp_app.lifespan(mcp_app):
+                    yield
+            finally:
+                # Before `running()` disposes the engine: a probe's check left running would
+                # strand its connection in the discarded pool (#291).
+                await probes.settle()
 
     app = FastAPI(
         title="ExactDocs",
@@ -79,7 +87,7 @@ def create_app(container: Container) -> FastAPI:
 
     api = APIRouter(prefix="/api")
 
-    app.include_router(build_probe_router(container))
+    app.include_router(probes.router)
     if settings.metrics:
         app.include_router(build_metrics_router(token=settings.metrics_token))
 

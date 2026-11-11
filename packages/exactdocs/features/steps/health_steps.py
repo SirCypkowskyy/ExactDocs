@@ -19,8 +19,6 @@ from slow_database import SlowDatabase
 
 DATABASE_DIR = "database"
 """Folder of the data directory that holds only the database, so it can disappear on its own."""
-RECOVERY_SECONDS = 2.0
-"""How long the database may take to answer again once a held statement is over."""
 
 
 @given("ExactDocs is running on its own database")
@@ -79,29 +77,15 @@ def step_probes(context: Context, live: str, ready: str, state: str) -> None:
 
 @given("a database statement that takes {seconds:d} seconds is running")
 def step_slow_statement(context: Context, seconds: int) -> None:
-    """Hold every database statement until ``seconds`` from now, then wait for it at the end.
+    """Hold every database statement until ``seconds`` from now.
+
+    The instance's lifespan waits for the check the probe leaves running when it stops.
 
     Args:
         context: The behave context.
         seconds: How long the statement runs.
     """
     context.slow_database.stall(seconds)
-    # Registered after the client's cleanup, so it runs first: the instance stops once the
-    # statement is over and the check the probe left behind has finished.
-    context.add_cleanup(_until_the_database_answers, context)
-
-
-def _until_the_database_answers(context: Context) -> None:
-    """Wait for the held statement to end and liveness to see the database again.
-
-    Args:
-        context: The behave context.
-    """
-    time.sleep(context.slow_database.remaining())
-    deadline = time.monotonic() + RECOVERY_SECONDS
-    while not context.client.get(LIVENESS_PATH).json()["database_reachable"]:
-        assert time.monotonic() < deadline, "the database did not answer again"
-        time.sleep(0.05)
 
 
 @when("the liveness probe is called")

@@ -3,18 +3,26 @@
 SQLAlchemy closes a connection whose statement was cancelled by waiting, shielded, for
 aiosqlite's ``close()``, and that waits for the statement. So the probes must not wait for the
 database themselves: they give it their budget and answer, and the check finishes on its own.
+When the app stops, it waits for that check before it disposes of the engine (#291).
+
+How one check at a time is run is tested on a fake check in ``test_probe_checks.py``.
 """
 
 import asyncio
+import gc
+import sys
 import time
+import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
 
+from app_lifespan import serving
 from exactdocs.bootstrap.constants import (
     LIVENESS_PATH,
     READINESS_PATH,
@@ -27,18 +35,16 @@ from slow_database import SlowDatabase
 
 FAST_SECONDS = 1.0
 """Kubernetes' default probe timeout: liveness must answer well within it."""
-SLOW_STATEMENT_SECONDS = 3.0
-"""How long the held statement runs: far beyond the liveness budget."""
-SLOWER_STATEMENT_SECONDS = 4.0
+LIVENESS_STALL_SECONDS = 2.0
+"""How long the held statement runs for liveness: double Kubernetes' timeout."""
+READINESS_STALL_SECONDS = 3.0
 """How long the held statement runs for readiness: well beyond its 2 s budget."""
-MARGIN_SECONDS = 0.5
+SHUTDOWN_STALL_SECONDS = 1.0
+"""How long the held statement runs when the app stops: beyond liveness' budget."""
+SCHEMA_READ = "alembic_version"
+"""What the probes' statement reads; the app's own work at shutdown leaves it alone."""
+MARGIN_SECONDS = 1.0
 """Slack on top of a budget for the request itself."""
-REPEATS = 5
-"""Probes sent while the database is stuck."""
-RECOVERY_ATTEMPTS = 20
-"""Liveness probes the database gets to answer again once the statement is over."""
-RECOVERY_PAUSE_SECONDS = 0.05
-"""Pause between those probes."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -47,60 +53,29 @@ class Probed:
 
     client: httpx.AsyncClient
     """A client with no cookie and no token, like an orchestrator."""
-    container: Container
-    """The instance."""
     slow: SlowDatabase
     """Stalls the instance's database statements."""
 
 
 @pytest.fixture
 async def probed(tmp_path: Path) -> AsyncIterator[Probed]:
-    """A running instance whose statements can be held, left only once the database answers.
+    """An instance served through its app's lifespan, whose statements can be held.
 
     Args:
         tmp_path: The test's temporary directory, used as data directory.
 
     Yields:
-        The client, the instance and its switch.
+        The client and the switch.
     """
     container = Container.build(Settings(data_dir=tmp_path))
     slow = SlowDatabase.on(container.engine)
-    transport = httpx.ASGITransport(app=create_app(container))
+    app = create_app(container)
+    transport = httpx.ASGITransport(app=app)
     async with (
-        container.running(jobs=False),  # nothing else holds a connection
+        serving(app),  # its end settles the checks a probe left running
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        probed = Probed(client=client, container=container, slow=slow)
-        yield probed
-        await _until_the_database_answers(probed)
-
-
-async def _until_the_database_answers(probed: Probed) -> None:
-    """Wait for the held statement to end and liveness to see the database again.
-
-    Args:
-        probed: The instance.
-    """
-    await asyncio.sleep(probed.slow.remaining())
-    for _ in range(RECOVERY_ATTEMPTS):
-        if (await probed.client.get(LIVENESS_PATH)).json()["database_reachable"]:
-            return
-        await asyncio.sleep(RECOVERY_PAUSE_SECONDS)
-    pytest.fail("the database did not answer again once the statement was over")
-
-
-def _checked_out(container: Container) -> int:
-    """Count the connections the instance's pool has handed out and not had back.
-
-    Args:
-        container: The instance.
-
-    Returns:
-        The number of connections in use.
-    """
-    pool = container.engine.pool
-    assert isinstance(pool, QueuePool)
-    return pool.checkedout()
+        yield Probed(client=client, slow=slow)
 
 
 async def _timed(client: httpx.AsyncClient, path: str) -> tuple[httpx.Response, float]:
@@ -119,7 +94,7 @@ async def _timed(client: httpx.AsyncClient, path: str) -> tuple[httpx.Response, 
 
 
 async def test_liveness_answers_in_time_while_a_statement_runs(probed: Probed) -> None:
-    probed.slow.stall(SLOW_STATEMENT_SECONDS)
+    probed.slow.stall(LIVENESS_STALL_SECONDS)
 
     liveness, elapsed = await _timed(probed.client, LIVENESS_PATH)
 
@@ -133,17 +108,8 @@ async def test_liveness_answers_in_time_while_a_statement_runs(probed: Probed) -
     )
 
 
-async def test_liveness_sees_the_database_again_once_the_statement_ends(probed: Probed) -> None:
-    probed.slow.stall(SLOW_STATEMENT_SECONDS)
-    assert not (await probed.client.get(LIVENESS_PATH)).json()["database_reachable"]
-
-    await _until_the_database_answers(probed)
-
-    assert _checked_out(probed.container) == 0  # the abandoned check gave it back
-
-
 async def test_readiness_answers_within_its_budget_while_a_statement_runs(probed: Probed) -> None:
-    probed.slow.stall(SLOWER_STATEMENT_SECONDS)
+    probed.slow.stall(READINESS_STALL_SECONDS)
 
     readiness, elapsed = await _timed(probed.client, READINESS_PATH)
 
@@ -152,17 +118,40 @@ async def test_readiness_answers_within_its_budget_while_a_statement_runs(probed
     assert elapsed < READINESS_TIMEOUT_SECONDS + MARGIN_SECONDS
 
 
-async def test_repeated_probes_against_a_stuck_database_hold_one_connection_each(
-    probed: Probed,
+async def test_stopping_the_app_leaves_no_probe_check_holding_a_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    probed.slow.stall(SLOWER_STATEMENT_SECONDS)
-    tasks_before = len(asyncio.all_tasks())
+    container = Container.build(Settings(data_dir=tmp_path))
+    slow = SlowDatabase.on(container.engine)
+    app = create_app(container)
+    checked_out_at_dispose: list[int] = []
+    dispose = AsyncEngine.dispose
 
-    for _ in range(REPEATS):
-        liveness, elapsed = await _timed(probed.client, LIVENESS_PATH)
-        assert liveness.status_code == 200
-        assert elapsed < FAST_SECONDS
+    async def recording_dispose(engine: AsyncEngine, close: bool = True) -> None:
+        if engine is container.engine:
+            pool = engine.pool
+            assert isinstance(pool, QueuePool)
+            checked_out_at_dispose.append(pool.checkedout())
+        await dispose(engine, close)
 
-    # One liveness check in flight, whatever the number of probes.
-    assert _checked_out(probed.container) == 1
-    assert len(asyncio.all_tasks()) <= tasks_before + 1
+    monkeypatch.setattr(AsyncEngine, "dispose", recording_dispose)
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+
+    async with (
+        serving(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        # Only the probe's statement: the app's own work then stops at once, before the stall ends.
+        slow.stall(SHUTDOWN_STALL_SECONDS, only=SCHEMA_READ)
+        assert not (await client.get(LIVENESS_PATH)).json()["database_reachable"]
+    await asyncio.sleep(slow.remaining())  # a stranded check would hand its connection back now
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        gc.collect()
+
+    assert checked_out_at_dispose == [0]
+    assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
+    assert unraisable == []
