@@ -117,8 +117,12 @@ OFFLINE_NOTE: Final[str] = (
 """What the summary says of a run on the stand-in embedding."""
 
 
-OFFLINE_NOT_JUDGED: Final[Mapping[RetrievalMode, str]] = {RetrievalMode.HYBRID: "offline embedding"}
-"""Under ``--offline-embedding`` hybrid's eligibility as a default is not judged."""
+OFFLINE_NOT_JUDGED: Final[Mapping[RetrievalMode, str]] = {
+    RetrievalMode.HYBRID: "offline embedding",
+    RetrievalMode.HYBRID_HYDE: "offline embedding",
+}
+"""On the offline embedding the hybrid modes' eligibility as a default is not judged (HyDE runs
+there only in tests, on a stand-in LLM, docs/evals.md)."""
 
 
 def _builder(args: argparse.Namespace) -> Callable[[Path], Container]:

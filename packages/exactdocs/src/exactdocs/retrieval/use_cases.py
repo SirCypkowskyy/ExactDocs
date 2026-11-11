@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import math
-from collections.abc import Mapping, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Awaitable, Collection, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import NoReturn
@@ -19,6 +19,8 @@ from exactdocs.retrieval.constants import (
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     FOOTER_CHARS,
     FREE_PROFILE_KINDS,
+    HYDE_CACHE_TTL_DAYS,
+    HYDE_TIMEOUT,
     MAX_EXPLORED_STEPS,
     MAX_JUSTIFICATION_CHARS,
     MAX_RESOLVED,
@@ -80,6 +82,7 @@ from exactdocs.retrieval.dtos import (
     ProviderListOut,
     ProviderNameQuery,
     ProviderOut,
+    PrunedHypothesesOut,
     QueryDocsQuery,
     QueryDocsResult,
     ReadChunkQuery,
@@ -114,8 +117,11 @@ from exactdocs.retrieval.errors import (
     ArticleNotFoundError,
     ChunkNotFoundError,
     EmbeddingFailedError,
+    HypothesisCacheError,
     InvalidProviderError,
     InvalidVectorError,
+    LlmBudgetReachedError,
+    LlmFailedError,
     MovedSection,
     NothingToCheckError,
     ProviderExistsError,
@@ -157,10 +163,12 @@ from exactdocs.retrieval.models import (
     EmbeddingSpec,
     EmbeddingTarget,
     FallbackReason,
+    HydeKey,
     IndexedManifest,
     InstanceRoles,
     KeySource,
     LibraryAi,
+    LlmStep,
     ManifestChunk,
     ManifestPaths,
     ManifestStatus,
@@ -221,6 +229,8 @@ from exactdocs.retrieval.ports.driven import (
     EmbeddingModels,
     Embeddings,
     Explorer,
+    HypotheticalAnswerCache,
+    HypotheticalAnswers,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -403,6 +413,58 @@ class NoSpendLedger:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class NoHypothesisCache:
+    """Implements ``ports.driven.HypotheticalAnswerCache`` for a build that keeps none."""
+
+    async def get(self, key: HydeKey) -> str | None:
+        """Find nothing.
+
+        Args:
+            key: The key.
+
+        Returns:
+            ``None``.
+        """
+        del key
+        return None
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        """Keep nothing.
+
+        Args:
+            key: The key.
+            answer: The answer.
+            at: When it was written.
+        """
+        del key, answer, at
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete nothing.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            0.
+        """
+        del manifest_ids
+        return 0
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Delete nothing.
+
+        Args:
+            written_before: The cutoff.
+            keep_models: The models kept.
+
+        Returns:
+            0.
+        """
+        del written_before, keep_models
+        return 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PriceBook:
     """Prices models: the operator's price for a ``<profile>:<model>``, else the bundled list.
 
@@ -523,11 +585,11 @@ class AiSpend:
         return budgets.reached(scopes, await self.ledger.get(keys), now)
 
     def budgets_for(self, ai: LibraryAi) -> Budgets:
-        """Name the spend limits an LLM agent of a library's search runs under.
+        """Give the budgets an LLM step of a library runs within (``agent_limits``).
 
-        The library's own budgets (``LibraryAi.budgets``, from the overrides the search read
-        once) merged with the instance's, as every other budget check merges them: the agentic
-        explorer's harness ``SpendLimits`` take their ceilings from it.
+        The tighter of the library's own limits and the instance's apply, so the harness check
+        inside the agent (HyDE's writer, the agentic explorer) sees the same limits as
+        ``llm_step`` before it.
 
         Args:
             ai: The library's overrides, as read for the search.
@@ -854,6 +916,7 @@ class RetrievalModes:
             search=search,
             caller=choice.caller,
             library_ai=choice.library_ai,
+            hypothesis=choice.hypothesis,
         )
         if choice.mode.needs_vectors and self.embedded is not None:
             found = await self.embedded.search_space(version.manifest_id)
@@ -876,18 +939,27 @@ class RetrievalModes:
         return answer
 
     async def within_budget(
-        self, choice: ModeChoice, *, library: str, caller: str | None
+        self,
+        choice: ModeChoice,
+        *,
+        library: str,
+        caller: str | None,
+        version: SearchableVersion | None = None,
+        query: str | None = None,
     ) -> ModeChoice:
         """Skip the LLM step or the paid rerank a budget or the rate limit does not allow now.
 
         Called by the search use cases once the version resolved (a search of an unknown
         library or ref uses up nothing), before every later stage (the pipeline, a rerank),
-        which all see the same choice.
+        which all see the same choice. A HyDE search whose hypothetical answer is cached makes no
+        LLM call: it is neither refused by a budget nor counted against the rate limit.
 
         Args:
             choice: The mode picked by ``choose``.
             library: The library searched, any letter case.
             caller: The account searching; ``None`` for a stdio MCP process.
+            version: The version searched, to look for a cached hypothetical answer.
+            query: The query text, likewise.
 
         Returns:
             The choice, or the cheaper one without the LLM step, or the same without reranking,
@@ -898,7 +970,9 @@ class RetrievalModes:
             return choice
         who = AiCaller(library=library.casefold(), user=caller)
         own = None if choice.library_ai is None else choice.library_ai.budgets
-        if choice.mode.needs_llm and (reason := await self.spend.llm_step(who, own)) is not None:
+        if (hypothesis := await self._cached_hypothesis(choice, version, query)) is not None:
+            choice = replace(choice, hypothesis=hypothesis)  # no LLM call: no limit applies
+        elif choice.mode.needs_llm and (reason := await self.spend.llm_step(who, own)) is not None:
             choice = choice.without_llm(reason)
         if (
             choice.rerank
@@ -909,6 +983,24 @@ class RetrievalModes:
         ):
             choice = replace(choice, rerank=False, fallback_reason=choice.fallback_reason or reason)
         return choice
+
+    async def _cached_hypothesis(
+        self, choice: ModeChoice, version: SearchableVersion | None, query: str | None
+    ) -> str | None:
+        """Read a HyDE search's cached hypothetical answer, if it has one (no LLM call then).
+
+        Args:
+            choice: The mode picked.
+            version: The version searched, if known.
+            query: The query text, if known.
+
+        Returns:
+            The answer of a ``hybrid_hyde`` search whose answer is cached, else ``None``.
+        """
+        if choice.mode is not RetrievalMode.HYBRID_HYDE or version is None or query is None:
+            return None
+        hyde = self.pipelines.get(RetrievalMode.HYBRID_HYDE)
+        return await hyde.cached_answer(version, query) if isinstance(hyde, HydePipeline) else None
 
     async def _paid_rerank(self, library: str, ai: LibraryAi | None) -> bool:
         """Say whether the library's reranker costs money (any but an in-process one).
@@ -1246,7 +1338,9 @@ class SearchDocsUseCase:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         # Only a search that will run counts against the caller's limits; every stage after this
         # one sees the same choice.
-        choice = await self.modes.within_budget(choice, library=version.library, caller=caller)
+        choice = await self.modes.within_budget(
+            choice, library=version.library, caller=caller, version=version, query=text.value
+        )
         mode = choice.mode.value
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span(f"{SEARCH_DOCS}.rank", mode=mode) as rank:
@@ -1645,6 +1739,25 @@ class GetChunkSetsUseCase:
         )
 
 
+async def _removed(
+    chunks: ChunkRepository, hypotheses: HypotheticalAnswerCache, doomed: Sequence[str]
+) -> RemovedChunks:
+    """Remove manifests' chunks, then HyDE's answers for them (a changed version invalidates).
+
+    Args:
+        chunks: The chunk store.
+        hypotheses: HyDE's cached answers.
+        doomed: The manifests to remove.
+
+    Returns:
+        What was removed.
+    """
+    removed = await chunks.remove(doomed)
+    if doomed:
+        await hypotheses.forget(doomed)
+    return RemovedChunks.from_model(removed)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DiscardPendingChunksUseCase:
     """Implements ``ports.driving.DiscardPendingChunks``."""
@@ -1652,6 +1765,8 @@ class DiscardPendingChunksUseCase:
     manifests: ActiveManifests
     chunks: ChunkRepository
     clock: Clock
+    hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
+    """HyDE's cached answers: those of a removed manifest go with its chunks."""
 
     async def __call__(self, command: DiscardPendingChunksCommand) -> RemovedChunks:
         """Delete rows of matching manifests the catalog holds as pending, or dropped long ago."""
@@ -1663,16 +1778,23 @@ class DiscardPendingChunksUseCase:
             indexed_before=None if older is None else now - timedelta(seconds=older),
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=True)
-        return RemovedChunks.from_model(await self.chunks.remove(doomed))
+        return await _removed(self.chunks, self.hypotheses, doomed)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CollectChunksUseCase:
-    """Implements ``ports.driving.CollectChunks``."""
+    """Implements ``ports.driving.CollectChunks``.
+
+    Also prunes HyDE's cache (``PruneHypothesesUseCase``), as the server does once a day.
+    """
 
     manifests: ActiveManifests
     chunks: ChunkRepository
     clock: Clock
+    hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
+    """HyDE's cached answers: those of a removed manifest go with its chunks."""
+    prune: PruneHypothesesUseCase | None = None
+    """Prunes HyDE's cache by age and model; without it the cache is not pruned here."""
 
     async def __call__(self, command: CollectChunksCommand) -> RemovedChunks:
         """Run after the catalog's collection: its superseded manifests are gone, so are ours."""
@@ -1682,7 +1804,55 @@ class CollectChunksUseCase:
             manifest_id=None, library=None, indexed_before=cutoff
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=False)
-        return RemovedChunks.from_model(await self.chunks.remove(doomed))
+        removed = await _removed(self.chunks, self.hypotheses, doomed)
+        if self.prune is not None:
+            await self.prune()
+        return removed
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PruneHypothesesUseCase:
+    """Implements ``ports.driving.PruneHypotheses``.
+
+    Deletes HyDE's answers older than ``ttl``, and those of an ``llm`` model no longer
+    configured (neither the instance's nor any library's override, or its profile is gone).
+    """
+
+    hypotheses: HypotheticalAnswerCache
+    """HyDE's cached answers."""
+    providers: AiProviders
+    """Names the ``llm`` models still configured."""
+    clock: Clock
+    """Decides the TTL's cutoff."""
+    ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS)
+    """How long a cached hypothetical answer is kept (``[ai.hyde] cache_ttl``)."""
+
+    async def __call__(self) -> PrunedHypothesesOut:
+        """Prune the cache.
+
+        Returns:
+            How many answers were deleted.
+        """
+        kept = await _llm_models(self.providers)
+        deleted = await self.hypotheses.prune(self.clock.now() - self.ttl, kept)
+        if deleted:
+            logger.info("pruned %d cached hypothetical answers", deleted)
+        return PrunedHypothesesOut(deleted=deleted)
+
+
+async def _llm_models(providers: AiProviders) -> set[str]:
+    """Name the ``llm`` models a HyDE search may use now.
+
+    Args:
+        providers: The profiles, the instance's roles and the libraries' overrides.
+
+    Returns:
+        The instance's and every library override's ``<profile>:<model>`` whose profile exists.
+    """
+    refs = set(await providers.library_modes.llm_overrides())
+    if (instance := providers.roles.explicit(ModelRole.LLM)) is not None:
+        refs.add(str(instance))
+    return {r for r in refs if await providers.profile(ModelRef.parse(r).profile) is not None}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1691,14 +1861,14 @@ class RemoveChunksUseCase:
 
     manifests: ActiveManifests
     chunks: ChunkRepository
+    hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
+    """HyDE's cached answers: those of a removed manifest go with its chunks."""
 
     async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
         """Remove what the catalog has forgotten; keep every manifest it still knows."""
         asked = list(dict.fromkeys(command.manifest_ids))
         known = await self.manifests.statuses(asked)
-        return RemovedChunks.from_model(
-            await self.chunks.remove([i for i in asked if i not in known])
-        )
+        return await _removed(self.chunks, self.hypotheses, [i for i in asked if i not in known])
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1962,7 +2132,9 @@ class QueryDocsUseCase:
         if version is None:
             raise VersionNotIndexedError(library, ref or "(default version)")
         # Only a request that will run counts against the caller's limits.
-        choice = await self.modes.within_budget(choice, library=version.library, caller=caller)
+        choice = await self.modes.within_budget(
+            choice, library=version.library, caller=caller, version=version, query=text.value
+        )
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.rank", mode=mode) as rank:
             answer = await self.modes.run(
@@ -2412,13 +2584,29 @@ class AiProviders:
         Returns:
             The model and the kind, or ``None`` when the role does not resolve.
         """
+        found = await self.profile_for(role, library, ai)
+        return None if found is None else (found[0], found[1].kind.value)
+
+    async def profile_for(
+        self, role: ModelRole, library: str, ai: LibraryAi | None = None
+    ) -> tuple[ModelRef, ProviderProfile] | None:
+        """Find the model a role uses for a library, and its profile as it is now.
+
+        Args:
+            role: The role.
+            library: The library ID, any letter case.
+            ai: The library's overrides, when the caller read them already; ``None`` reads them.
+
+        Returns:
+            The model and the profile, or ``None`` when the role does not resolve.
+        """
         if ai is None:
             ai = await self.library_modes.ai_of(library)
         binding = bind_role(role, self.roles, ai)
         if binding is None:
             return None
         profile = await self.profile(binding.ref.profile)
-        return None if profile is None else (binding.ref, profile.kind.value)
+        return None if profile is None else (binding.ref, profile)
 
     async def model_for(self, role: ModelRole, library: str) -> object | None:
         """Build the model a role uses for a library, from the profile as it is now.
@@ -3112,20 +3300,42 @@ class HybridPipeline:
         Returns:
             The best fused hits, or BM25's with the reason the vectors were not used.
         """
+        return await self.fuse(request, embed=request.query, mode=RetrievalMode.HYBRID)
+
+    async def fuse(
+        self, request: PipelineRequest, *, embed: str, mode: RetrievalMode
+    ) -> PipelineAnswer:
+        """Fuse BM25 on the query with the vectors nearest to ``embed``'s embedding.
+
+        HyDE (``HydePipeline``) embeds its hypothetical answer instead of the query; BM25 always
+        searches the query itself, so exact identifiers keep their weight.
+
+        Args:
+            request: What to search; ``space`` is the space to search.
+            embed: The text whose embedding the vector half searches by.
+            mode: The mode a fused answer is reported as (``hybrid``, ``hybrid_hyde``).
+
+        Returns:
+            The best fused hits, or BM25's with the reason the vectors were not used.
+        """
         manifest = request.version.manifest_id
         # One more than is fused tells whether the BM25 half was cut short.
         depth = max(RRF_DEPTH, request.limit) + 1
         found = await self.search.search(manifest, request.query, request.tag_filter, depth)
-        near = await self._nearest(request)
+        near = await self._nearest(request, embed, mode)
         if isinstance(near, FallbackReason):
             return _bm25_answer(found, request.limit, near)
-        return await self._fused(request, found, near)
+        return await self._fused(request, found, near, mode)
 
-    async def _nearest(self, request: PipelineRequest) -> list[ChunkId] | FallbackReason:
-        """Embed the query and rank the version's chunks by their vectors' distance to it.
+    async def _nearest(
+        self, request: PipelineRequest, embed: str, mode: RetrievalMode
+    ) -> list[ChunkId] | FallbackReason:
+        """Embed ``embed`` and rank the version's chunks by their vectors' distance to it.
 
         Args:
             request: The search; its ``space`` is the one searched.
+            embed: The text embedded: the query, or HyDE's hypothetical answer.
+            mode: The mode searching, which labels the embedding's span.
 
         Returns:
             The best ``RRF_DEPTH`` chunks, nearest first, or why the vectors cannot be used.
@@ -3133,7 +3343,7 @@ class HybridPipeline:
         space = request.space
         if space is None:  # no embedding model resolved when the gate looked
             return FallbackReason.EMBEDDING_UNAVAILABLE
-        vector = await self._query_vector(request, space)
+        vector = await self._query_vector(request, space, embed, mode)
         if isinstance(vector, FallbackReason):
             return vector
         try:
@@ -3149,13 +3359,15 @@ class HybridPipeline:
         return [h.chunk_id for h in near]
 
     async def _query_vector(
-        self, request: PipelineRequest, space: EmbeddingSpace
+        self, request: PipelineRequest, space: EmbeddingSpace, embed: str, mode: RetrievalMode
     ) -> tuple[float, ...] | FallbackReason:
-        """Embed the query with the model that made ``space``.
+        """Embed the query (or HyDE's answer) with the model that made ``space``.
 
         Args:
             request: The search.
             space: The space searched.
+            embed: The text embedded.
+            mode: The mode searching.
 
         Returns:
             The query's vector, or why there is none.
@@ -3173,7 +3385,7 @@ class HybridPipeline:
         if spend is not None and paid and await spend.reached(scopes) is not None:
             return FallbackReason.LLM_BUDGET_REACHED  # as a paid rerank over budget (#95)
         try:
-            embedded = await self._embedded(request, configured)
+            embedded = await self._embedded(request, configured, embed, mode)
         except EmbeddingFailedError, ProviderUnsupportedError, TimeoutError:
             return FallbackReason.EMBEDDING_UNAVAILABLE
         if spend is not None:  # the one record of this call: the use case records no embedding
@@ -3190,12 +3402,16 @@ class HybridPipeline:
             else FallbackReason.EMBEDDING_UNAVAILABLE
         )
 
-    async def _embedded(self, request: PipelineRequest, configured: _Configured) -> EmbeddedTexts:
+    async def _embedded(
+        self, request: PipelineRequest, configured: _Configured, embed: str, mode: RetrievalMode
+    ) -> EmbeddedTexts:
         """Embed the query, in its span; ``TimeoutError`` after ``timeout`` seconds.
 
         Args:
             request: The search.
             configured: The embedding role, which made the space searched.
+            embed: The text embedded: the query, or HyDE's hypothetical answer.
+            mode: The mode searching, which labels the span.
 
         Returns:
             The query's vector and usage.
@@ -3208,17 +3424,18 @@ class HybridPipeline:
             ProviderUnsupportedError: This process cannot call the model.
         """
         stage = f"{request.search}.embed_query"
-        with self.tracer.span(stage, mode=RetrievalMode.HYBRID.value):
+        with self.tracer.span(stage, mode=mode.value):
             async with asyncio.timeout(self.timeout):
                 try:
                     model = await self.runs.model(configured)
-                    return await model.embed_query(request.query)
+                    return await model.embed_query(embed)
                 except EmbeddingFailedError, ProviderUnsupportedError:
                     raise
                 except Exception as error:  # never a failed search (RET-01)
                     # The class only: the message may echo a request, a key or the query.
                     logger.warning(
-                        "hybrid search answers BM25: the query embedding raised %s",
+                        "%s search answers BM25: the query embedding raised %s",
+                        mode.value,
                         type(error).__name__,
                     )
                     raise EmbeddingFailedError(str(configured.ref), type(error).__name__) from error
@@ -3228,6 +3445,7 @@ class HybridPipeline:
         request: PipelineRequest,
         found: Sequence[SearchHit],
         near: Sequence[ChunkId],
+        mode: RetrievalMode,
     ) -> PipelineAnswer:
         """Fuse the top ``RRF_DEPTH`` of both halves and give each kept chunk its snippet.
 
@@ -3235,9 +3453,10 @@ class HybridPipeline:
             request: The search.
             found: The BM25 half, best first; one more than ``RRF_DEPTH`` when it was cut short.
             near: The vector half, nearest first.
+            mode: The mode the answer is reported as.
 
         Returns:
-            The ``hybrid`` answer; ``candidates`` counts the chunks of both halves, once each.
+            The fused answer; ``candidates`` counts the chunks of both halves, once each.
         """
         fused = reciprocal_rank_fusion([h.chunk_id for h in found[:RRF_DEPTH]], near)
         by_id = {h.chunk_id: h for h in found}
@@ -3257,7 +3476,7 @@ class HybridPipeline:
                 hits.append(leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms))
         cut = len(found) > RRF_DEPTH or len(near) >= RRF_DEPTH
         return PipelineAnswer(
-            mode=RetrievalMode.HYBRID,
+            mode=mode,
             hits=tuple(hits),
             candidates=len(fused),
             reranked=0,
@@ -3592,6 +3811,194 @@ class AgenticPipeline:
             reranked=0,
             complete=len(kept) <= request.limit,
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HydePipeline:
+    """Implements ``ports.driven.RetrievalPipeline`` for ``hybrid_hyde`` (RET-03).
+
+    The ``llm`` role writes a short hypothetical answer to the query (HyDE, Gao et al. 2022); its
+    embedding, closer to the docs' wording than the question's, searches the vector half, while
+    BM25 keeps the query itself (``HybridPipeline.fuse``). The answer is cached per normalized
+    query (an HMAC under ``cache_key``), manifest and model, so a repeated query of the same
+    version calls no LLM; a cache hit is no LLM call, so ``RetrievalModes.within_budget`` lets it
+    through even with a budget used up or the rate limit reached, and does not count it. A cache
+    that cannot be read is a miss, one that cannot be written costs a call next time only.
+
+    A call runs within the budgets of #95: ``within_budget`` checked them and the rate limit
+    before, and the harness ``SpendLimits`` checks them at the request itself. Whatever stops the
+    step never fails the search: a budget answers hybrid with ``llm_budget_reached``, an LLM
+    error, an unusable answer or no answer within ``timeout`` with ``llm_unavailable``. When the
+    hybrid answer itself falls back too (its query embedding failed), the reason given is
+    hybrid's, as it names the mode that really answered (BM25). A timeout that strikes after the
+    provider answered may cancel ``SpendLimits`` while it records the spend, which is then lost:
+    as rare as the in-flight overshoot the decision record already accepts. Cache hits are not
+    counted as a metric yet (``exactdocs.ai.cache_hits`` comes with the answer cache, #100).
+    Nothing of a library with AI off is sent. Spans and logs never hold the query or the answer.
+    """
+
+    hybrid: HybridPipeline
+    """Fuses BM25 on the query with the vectors nearest to the hypothetical answer."""
+    providers: AiProviders
+    """Resolves and builds the library's ``llm`` role, from the profile as it is now."""
+    writer: HypotheticalAnswers
+    """Writes the hypothetical answer (pydantic-ai)."""
+    cache: HypotheticalAnswerCache
+    """Hypothetical answers already written."""
+    cache_key: bytes
+    """The instance's key for the HMAC of the queries in ``cache`` (from its secret key)."""
+    spend: AiSpend
+    """The budgets, the prices and the clock of the step."""
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Times the step (``<search>.hyde``), without the query text."""
+    timeout: float = HYDE_TIMEOUT
+    """Seconds to wait for the hypothetical answer before answering with hybrid alone."""
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Search by the query's hypothetical answer, or by the query when there is none.
+
+        Args:
+            request: What to search; ``space`` is the space to search.
+
+        Returns:
+            The ``hybrid_hyde`` answer; or hybrid's (BM25's when the vectors cannot be used),
+            with the reason the hypothetical answer was not used (hybrid's own when it has one).
+        """
+        hypothesis = request.hypothesis or await self._hypothesis(request)
+        if isinstance(hypothesis, FallbackReason):
+            answer = await self.hybrid.run(request)
+            return answer if answer.fallback_reason else replace(answer, fallback_reason=hypothesis)
+        return await self.hybrid.fuse(request, embed=hypothesis, mode=RetrievalMode.HYBRID_HYDE)
+
+    async def cached_answer(self, version: SearchableVersion, query: str) -> str | None:
+        """Read the query's cached hypothetical answer for the version (no LLM call).
+
+        Args:
+            version: The version searched.
+            query: The query text.
+
+        Returns:
+            The answer, or ``None`` when there is none (or AI is off for the library).
+        """
+        ai = await self.providers.library_modes.ai_of(version.library)
+        if not ai.enabled:
+            return None
+        found = await self.providers.profile_for(ModelRole.LLM, version.library, ai)
+        if found is None:
+            return None
+        return await self._cached(
+            HydeKey.of(version.manifest_id, found[0], query, key=self.cache_key)
+        )
+
+    async def _cached(self, key: HydeKey) -> str | None:
+        """Read a cached answer; a cache that cannot be read is a miss.
+
+        Args:
+            key: The answer's key.
+
+        Returns:
+            The answer, or ``None``.
+        """
+        try:
+            return await self._cache_call(self.cache.get(key))
+        except HypothesisCacheError:  # never a failed search: the LLM is asked instead
+            return None
+
+    async def _cache_call[T](self, call: Awaitable[T]) -> T:
+        """Await a call to the cache, turning any failure into ``HypothesisCacheError``.
+
+        Args:
+            call: The call.
+
+        Returns:
+            Its result.
+
+        Raises:
+            HypothesisCacheError: The call failed; only the error's class is logged, never its
+                message, which may hold the stored answer.
+        """
+        try:
+            return await call
+        except Exception as error:
+            logger.warning("the HyDE cache failed: %s", type(error).__name__)
+            raise HypothesisCacheError(type(error).__name__) from error
+
+    async def _hypothesis(self, request: PipelineRequest) -> str | FallbackReason:
+        """Read the cached hypothetical answer, or have the ``llm`` role write it.
+
+        Args:
+            request: The search.
+
+        Returns:
+            The answer, or why there is none.
+        """
+        library = request.version.library
+        ai = await self.providers.library_modes.ai_of(library)
+        if not ai.enabled:
+            return FallbackReason.MODE_UNAVAILABLE  # AI off: the query is never sent
+        found = await self.providers.profile_for(ModelRole.LLM, library, ai)
+        if found is None:  # the role went away since the mode was chosen
+            return FallbackReason.MODE_UNAVAILABLE
+        ref, profile = found
+        key = HydeKey.of(request.version.manifest_id, ref, request.query, key=self.cache_key)
+        if (cached := await self._cached(key)) is not None:
+            return cached
+        step = LlmStep(
+            caller=AiCaller(library=library.casefold(), user=request.caller),
+            budgets=self.spend.budgets_for(ai),
+            price=self.spend.prices.price(ref, profile.kind.value),
+            clock=self.spend.clock.now,
+        )
+        try:
+            with self.tracer.span(f"{request.search}.hyde", mode=RetrievalMode.HYBRID_HYDE.value):
+                async with asyncio.timeout(self.timeout):
+                    text = await self._written(request.query, ref, profile, step)
+        except LlmBudgetReachedError:
+            return FallbackReason.LLM_BUDGET_REACHED
+        except LlmFailedError, ProviderUnsupportedError, TimeoutError:
+            return FallbackReason.LLM_UNAVAILABLE
+        # A cache that cannot be written costs a call next time only.
+        with suppress(HypothesisCacheError):
+            await self._cache_call(self.cache.put(key, text, self.spend.clock.now()))
+        return text
+
+    async def _written(
+        self, query: str, ref: ModelRef, profile: ProviderProfile, step: LlmStep
+    ) -> str:
+        """Build the ``llm`` role's model and have it write the hypothetical answer.
+
+        Args:
+            query: The query text.
+            ref: The role's model.
+            profile: Its profile, as it is now.
+            step: Who it counts to and the budgets it runs within.
+
+        Returns:
+            The answer, stripped.
+
+        Raises:
+            LlmBudgetReachedError: A budget refused the request.
+            LlmFailedError: The model failed, answered nothing, or anything else went wrong
+                building or calling it; only the error's type is kept, never its message,
+                which may echo a request, a key or the query. ``CancelledError`` is no
+                ``Exception``, so cancelling a search still propagates.
+            ProviderUnsupportedError: This process cannot call the model.
+        """
+        try:
+            model = await self.providers.factory.chat_model(profile, ref.model)
+            written = await self.writer.write(model, query, step=step)
+        except LlmBudgetReachedError, LlmFailedError, ProviderUnsupportedError:
+            raise
+        except Exception as error:  # never a failed search (RET-03)
+            logger.warning(
+                "hybrid_hyde search answers hybrid: the hypothetical answer raised %s",
+                type(error).__name__,
+            )
+            raise LlmFailedError(str(ref), type(error).__name__) from error
+        text = written.text.strip()
+        if not text:
+            raise LlmFailedError(str(ref), "an empty answer")
+        return text
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,10 +1,9 @@
 """Check that the vector store works in a built image's Python (#242).
 
-Run inside the image, with the sqlite-vec wheel of the image's platform on PYTHONPATH (the base
-image does not ship the `[ai]` extra; the `-ai` image of #246 will):
+Run inside the `-ai` image (#246), which has the `[ai]` extra and so sqlite-vec:
 
-    docker run --rm -i --network none -v "$vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
-        --entrypoint python exactdocs:ci - < deploy/check_sqlite_vec.py
+    docker run --rm -i --network none --entrypoint python exactdocs:ci-ai - \
+        < deploy/check_sqlite_vec.py
 
 It proves what the decision record could only check on uv's Python: the image's Python
 (python:3.14-slim-trixie) loads SQLite extensions, and ExactDocs' own loader finds sqlite-vec,

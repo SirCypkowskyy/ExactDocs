@@ -1,6 +1,8 @@
 # Keeps ghcr.io/sircypkowskyy/exactdocs small: the 5 newest dev images (X.Y.Z.devN) and the 10
-# newest stable images (X.Y.Z). Multi-arch indexes, their platform images, cosign signatures and
-# SBOM/provenance attestations are removed together; untagged leftovers are deleted.
+# newest stable images (X.Y.Z) of each variant (base, -ai, -local: #246), counted per variant so
+# that one release's three images do not push out older releases of another variant. Multi-arch
+# indexes, their platform images, cosign signatures and SBOM/provenance attestations are removed
+# together; untagged leftovers are deleted.
 # See docs/releasing.md.
 name: GHCR retention
 
@@ -30,31 +32,53 @@ env:
   KEEP_STABLE: 10
 
 jobs:
+  # One pass per variant and channel. `exclude-tags` keeps everything outside the pass out of it
+  # (JavaScript regular expressions): the base passes exclude every -ai/-local tag, a variant's
+  # passes exclude every tag that is not that variant's dev (or stable) tag. The action tests the
+  # patterns against every tag and then every digest (`sha256:...`, and `sha256-....sig` tags):
+  # a digest that matches is dropped from the pass, so a variant's "not this" lookahead starts
+  # with `(?!sha256[:-])`, or it would match every digest and the pass would delete nothing.
+  # packages/exactdocs/tests/bootstrap/test_ghcr_retention.py checks them on sample tags.
   cleanup:
     runs-on: [self-hosted, linux, ARM64, exactdocs]
+    strategy:
+      max-parallel: 1 # one deletion at a time on the same package
+      matrix:
+        include:
+          - variant: base
+            not-dev: '^(latest|\d+\.\d+|\d+\.\d+\.\d+)$|-(ai|local)$'
+            not-stable: '(^dev$|\.dev\d+)|-(ai|local)$'
+          - variant: ai
+            not-dev: '^(?!sha256[:-])(?!(.*\.dev\d+.*|dev)-ai$)'
+            not-stable: '^(?!sha256[:-])(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-ai$)'
+          - variant: local
+            not-dev: '^(?!sha256[:-])(?!(.*\.dev\d+.*|dev)-local$)'
+            not-stable: '^(?!sha256[:-])(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-local$)'
     steps:
-      - name: Dev images (X.Y.Z.devN), keep the newest ${{ env.KEEP_DEV }}
+      - name: Dev images (X.Y.Z.devN) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_DEV }}
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2 # upstream has no floating major tag
         with:
           package: exactdocs
           use-regex: true
-          # stable images are not considered in this pass
-          exclude-tags: '^(latest|\d+\.\d+|\d+\.\d+\.\d+)$'
+          exclude-tags: ${{ matrix.not-dev }}
           keep-n-tagged: ${{ env.KEEP_DEV }}
           delete-untagged: false
           dry-run: ${{ inputs.dry-run || false }}
 
-      - name: Stable images (X.Y.Z), keep the newest ${{ env.KEEP_STABLE }}
+      - name: Stable images (X.Y.Z) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_STABLE }}
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
           package: exactdocs
           use-regex: true
-          # dev images are not considered in this pass
-          exclude-tags: '(^dev$|\.dev\d+)'
+          exclude-tags: ${{ matrix.not-stable }}
           keep-n-tagged: ${{ env.KEEP_STABLE }}
           delete-untagged: false
           dry-run: ${{ inputs.dry-run || false }}
 
+  leftovers:
+    needs: cleanup
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    steps:
       - name: Untagged leftovers, orphaned signatures and partial images
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:

@@ -447,6 +447,57 @@ class EmbeddingFailedError(DomainError):
         self.transient = transient
 
 
+class LlmFailedError(DomainError):
+    """The LLM did not answer as expected (an error, a refusal, an empty answer).
+
+    Never fails a search: HyDE answers with plain hybrid search (``llm_unavailable``).
+    """
+
+    code = "llm_failed"
+
+    def __init__(self, model: str, reason: str) -> None:
+        """Name the model and what went wrong.
+
+        Args:
+            model: ``<profile>:<model>``.
+            reason: A short reason (an error type), never a key, a prompt or an answer.
+        """
+        super().__init__(f"the LLM {_data(model)} failed: {_data(reason)}")
+        self.model = model
+
+
+class LlmBudgetReachedError(DomainError):
+    """A budget refused the LLM step while it ran (the harness ``SpendLimits``).
+
+    Never fails a search: HyDE answers with plain hybrid search (``llm_budget_reached``).
+    """
+
+    code = "llm_budget_reached"
+
+    def __init__(self, model: str) -> None:
+        """Name the model whose step was refused.
+
+        Args:
+            model: ``<profile>:<model>``.
+        """
+        super().__init__(f"a budget stopped the LLM {_data(model)}")
+        self.model = model
+
+
+class HypothesisCacheError(DomainError):
+    """HyDE's cache could not be read or written; never fails a search (a miss, or no entry)."""
+
+    code = "hypothesis_cache_failed"
+
+    def __init__(self, reason: str) -> None:
+        """Say what went wrong.
+
+        Args:
+            reason: The error's class name, never its message (it may hold the stored text).
+        """
+        super().__init__(f"the HyDE cache failed: {_data(reason)}")
+
+
 class AiBudgetReachedError(DomainError):
     """A spend limit is used up: nothing more is sent to a provider until its window resets."""
 

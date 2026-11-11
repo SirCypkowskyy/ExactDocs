@@ -22,8 +22,11 @@ from exactdocs.retrieval.models import (
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
+    HydeKey,
+    HypotheticalAnswer,
     IndexedManifest,
     LibraryAi,
+    LlmStep,
     ManifestChunk,
     ManifestHit,
     ManifestPaths,
@@ -416,6 +419,14 @@ class LibraryModes(Protocol):
             library: The library ID as the catalog spells it.
             mode: The mode; ``None`` for the instance's.
             ai: The AI overrides; the defaults with no mode remove the library's row.
+        """
+        ...
+
+    async def llm_overrides(self) -> frozenset[str]:
+        """Name every ``llm`` model a library overrides the instance's with.
+
+        Returns:
+            Each ``<profile>:<model>`` once.
         """
         ...
 
@@ -1158,5 +1169,84 @@ class Explorer(Protocol):
         Raises:
             AgentStoppedError: The run ended without an answer: a limit, a budget, or a failure;
                 its ``reason`` is the fallback reason to show.
+        """
+        ...
+
+
+class HypotheticalAnswers(Protocol):
+    """Writes HyDE's hypothetical answer to a query with the ``llm`` role's chat model (#94).
+
+    The adapter runs a pydantic-ai ``Agent(output_type=str)`` with fixed instructions and a token
+    cap, inside the harness ``SpendLimits`` over the spend ledger and pydantic-ai's
+    ``UsageLimits`` (``agent_limits``), so its spend lands in the same rows the budgets read. It
+    receives the query text only, never a library name, a version or a user.
+    """
+
+    async def write(self, model: object, query: str, *, step: LlmStep) -> HypotheticalAnswer:
+        """Write a short documentation passage that would answer the query.
+
+        Args:
+            model: What ``ModelFactory.chat_model`` returned for the ``llm`` role.
+            query: The query text.
+            step: Who it counts to and the budgets it runs within.
+
+        Returns:
+            The passage and its usage.
+
+        Raises:
+            LlmBudgetReachedError: A budget refused the request.
+            LlmFailedError: The model failed or answered nothing usable.
+        """
+        ...
+
+
+class HypotheticalAnswerCache(Protocol):
+    """HyDE's hypothetical answers by query, manifest and model (``retrieval_hyde_answers``).
+
+    A repeated query of the same version with the same model reuses its answer instead of calling
+    the LLM again. Keys hold a hash of the query, never its text.
+    """
+
+    async def get(self, key: HydeKey) -> str | None:
+        """Read a stored answer.
+
+        Args:
+            key: The query, the manifest and the model.
+
+        Returns:
+            The answer, or ``None``.
+        """
+        ...
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        """Store an answer, replacing one stored under the same key.
+
+        Args:
+            key: The query, the manifest and the model.
+            answer: The hypothetical answer.
+            at: When it was written.
+        """
+        ...
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of manifests whose chunks were removed.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        ...
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Delete the answers written before a time, and those of models no longer configured.
+
+        Args:
+            written_before: Answers written earlier are deleted (the TTL's cutoff).
+            keep_models: The ``<profile>:<model>`` still configured; the others' are deleted.
+
+        Returns:
+            How many answers were deleted.
         """
         ...

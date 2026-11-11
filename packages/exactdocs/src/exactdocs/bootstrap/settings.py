@@ -1,5 +1,6 @@
 import os
 import tomllib
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -37,6 +38,7 @@ from exactdocs.retrieval.constants import (
     DEFAULT_SANDBOX_MEMORY,
     DEFAULT_SANDBOX_SECONDS,
     DEFAULT_SANDBOX_SUSPENSIONS,
+    HYDE_CACHE_TTL_DAYS,
     MAX_AGENT_REQUESTS,
     MAX_AGENT_TIMEOUT,
     MAX_AGENT_TOKENS,
@@ -268,6 +270,17 @@ class PriceSettings(BaseModel):
     """US dollars per million output tokens."""
 
 
+class HydeSettings(BaseModel):
+    """HyDE (``EXACTDOCS_AI__HYDE__<FIELD>`` or ``[ai.hyde]``, #94)."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True)
+
+    cache_ttl: timedelta = Field(default=timedelta(days=HYDE_CACHE_TTL_DAYS), gt=timedelta(0))
+    """`EXACTDOCS_AI__HYDE__CACHE_TTL`: how long a cached hypothetical answer is kept (seconds or
+    an ISO 8601 duration such as `P30D`); the collection job deletes older ones, and those of an
+    `llm` model no longer configured."""
+
+
 class AiSettings(BaseModel):
     """The ``ai`` section: AI retrieval, read from ``EXACTDOCS_AI__<FIELD>`` variables."""
 
@@ -291,6 +304,8 @@ class AiSettings(BaseModel):
     """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
     judge: RoleSettings = Field(default_factory=RoleSettings)
     """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`); the LLM role when unset."""
+    hyde: HydeSettings = Field(default_factory=HydeSettings)
+    """HyDE's cache (`EXACTDOCS_AI__HYDE__CACHE_TTL`)."""
     budgets: BudgetSettings = Field(default_factory=BudgetSettings)
     """Spend limits and the LLM search rate limit (`EXACTDOCS_AI__BUDGETS__...`)."""
     agentic: AgenticSettings = Field(default_factory=AgenticSettings)

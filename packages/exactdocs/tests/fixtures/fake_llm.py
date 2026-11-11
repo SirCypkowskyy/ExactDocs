@@ -13,7 +13,7 @@ event is set, so a test can look at an instance while an embedding run is in pro
 are one fixed small vector, or ``term_vector``'s hashed bag of words with ``by_terms`` (texts
 sharing terms are near, so hybrid search can be tested end to end); setting
 ``FakeGateway.broken`` makes every embedding request fail with 400, as a provider that refuses the
-call.
+call; ``FakeGateway.chat_broken`` does the same for chat completions.
 """
 
 import hashlib
@@ -93,6 +93,8 @@ class FakeGateway:
     """Every request, in order."""
     broken: threading.Event = field(default_factory=threading.Event)
     """Once set, every embedding request is refused with 400."""
+    chat_broken: threading.Event = field(default_factory=threading.Event)
+    """Once set, every chat completion is refused with 400."""
 
     @property
     def v1(self) -> str:
@@ -194,6 +196,7 @@ def gateway(
     """
     seen: list[Seen] = []
     broken = threading.Event()
+    chat_broken = threading.Event()
     embed = term_vector if by_terms else _fixed_vector
 
     class Handler(BaseHTTPRequestHandler):
@@ -214,7 +217,8 @@ def gateway(
             embedding = self.path.split("?")[0].endswith("/embeddings")
             if hold is not None and embedding:
                 hold.wait(HOLD_SECONDS)
-            if embedding and broken.is_set():
+            chat = self.path.split("?")[0].endswith("/chat/completions")
+            if (embedding and broken.is_set()) or (chat and chat_broken.is_set()):
                 answer, status = None, 400
             else:
                 answer = _answer(self.path.split("?")[0], body, embed)
@@ -239,7 +243,12 @@ def gateway(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield FakeGateway(url=f"http://127.0.0.1:{server.server_port}", seen=seen, broken=broken)
+        yield FakeGateway(
+            url=f"http://127.0.0.1:{server.server_port}",
+            seen=seen,
+            broken=broken,
+            chat_broken=chat_broken,
+        )
     finally:
         server.shutdown()
         server.server_close()

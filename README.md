@@ -40,6 +40,19 @@ uvx exactdocs serve
 Python and the Docker image have it, otherwise ExactDocs refuses to start). Then open <http://localhost:3000>. For an
 agent that only reads an existing database, `uvx exactdocs serve --stdio` needs no `git` and no port.
 
+The image comes in three variants, built from one Dockerfile; all three start as a BM25 server
+until a model role is configured:
+
+| Tag | Holds | For |
+|---|---|---|
+| `:<version>`, `:latest` | BM25 on SQLite or PostgreSQL; no model, no ML library | most installs |
+| `:<version>-ai`, `:latest-ai` | `exactdocs[ai]`: the hosted and self-hosted model providers, sqlite-vec, pgvector | [AI providers](#ai-providers-and-model-roles) over the network |
+| `:<version>-local`, `:latest-local` | `exactdocs[ai,local]` and the two default [local models](#local-models), read-only in `/opt/exactdocs/models` (their licenses, MIT and Apache-2.0, in its `NOTICE`) | air-gapped instances: hybrid search and reranking with no network |
+
+The `uvx` equivalents are `uvx --from 'exactdocs[ai]' exactdocs serve` and
+`uvx --from 'exactdocs[ai,local]' exactdocs serve` (then `exactdocs models pull`). Dev builds
+carry the same suffixes (`:dev-ai`, `:0.4.0.dev1-local`).
+
 A fresh instance offers nothing but its setup: until the first admin account exists, every
 `/api/v1` request is refused with `403 setup_required`. Open <http://localhost:3000> and create the
 admin on the setup page, or from the command line, or over the API:
@@ -395,7 +408,7 @@ and instance modes are: their scores must compare across libraries.
 | reranker | BM25 → rerank | planned |
 | embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
-| embedding model + LLM (+ reranker) | hybrid with HyDE → rerank (a default only once the eval suite shows it beats BM25) | planned |
+| embedding model + LLM (+ reranker) | HyDE (`hybrid_hyde`): the LLM writes a short hypothetical answer, whose embedding searches the vector half while BM25 keeps the query; cached per query, version and model; within the budgets, else hybrid with `fallback_reason` `llm_budget_reached`, `llm_rate_limited` or `llm_unavailable` (an LLM error or timeout) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid_hyde`; a default only once the eval suite shows it beats BM25) |
 | LLM + agentic mode | a pydantic-ai agent browses the version's tree (outlines, articles, chunks, BM25) in a sandbox and returns the chunks that answer the question, each with a `justification` and its `explored_path`; past a limit or a budget it answers with the best non-LLM mode (`fallback_reason: agent_limit_reached`, `llm_budget_reached`, `agent_failed`) | **available** (opt-in: `mode=agentic`, never a default; see [Agentic search](#agentic-search)) |
 | LLM + agentic mode, repeated questions | similar past questions are served from a cache | planned |
 
@@ -419,7 +432,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, e.g. `sqlite:////srv/exactdocs.db` (opened in WAL mode), or a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](#postgresql) and [Supabase](#supabase)). The schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
 | `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | PostgreSQL only: the schema of the same database where DBOS keeps the durable steps of jobs (SQLite keeps them in `<data dir>/jobs.sqlite`) |
 | `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
-| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were |
+| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were. HyDE's cached answers are keyed with the current key only, so after a rotation every cached answer is a miss (the LLM is asked again) until the TTL prunes the old rows |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
@@ -427,6 +440,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` section above); the environment wins over it. It may not hold keys or `secret_key`: those come from the environment or `api_key_file` |
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
+| `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` (30 days) | How long a HyDE hypothetical answer stays cached (seconds or an ISO 8601 duration). Once a day (just after UTC midnight, and at start; one process on PostgreSQL), and after every collection, the server deletes older answers and those of an `llm` model no longer configured; answers are also deleted when their version's manifest is collected |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -755,8 +769,21 @@ model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
 # 32 long candidates in about 0.2 to 2 s, more with fewer cores
 ```
 
+The `-local` image has both default models already, so the same settings in its environment are
+all it needs, even with no network at all (CI runs it with `--network none`):
+
+```bash
+docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
+  -e EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local \
+  -e EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5 \
+  -e EXACTDOCS_AI__RERANKER__MODEL=local:Xenova/ms-marco-MiniLM-L-6-v2 \
+  -e EXACTDOCS_AI__MODE=hybrid \
+  ghcr.io/sircypkowskyy/exactdocs:latest-local
+```
+
 - **Where models live:** `EXACTDOCS_MODELS_DIR` (default `<data dir>/models`; the `-local` image
-  sets its read-only `/opt/exactdocs/models`), one folder per model (`BAAI/bge-small-en-v1.5/`)
+  sets its read-only `/opt/exactdocs/models`, where the two defaults were pulled when the image
+  was built, so it needs no `models pull` and no network), one folder per model (`BAAI/bge-small-en-v1.5/`)
   with its ONNX file, its tokenizer and a marker `models pull` writes last. A model already there
   is skipped, so a cached directory makes the command offline.
 - **Pinned revisions:** the two defaults are pulled at a fixed Hub commit (bge-small's
@@ -786,7 +813,7 @@ model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
   embedding job (queued again when the window resets). A search's query embedding and rerank on
   a local model are never refused by a budget: only paid calls are checked.
 
-The hybrid (#92) and agentic (#98) pipelines are built; the HyDE pipeline arrives with #94.
+The hybrid (#92), HyDE (#94) and agentic (#98) pipelines are built.
 
 ### PostgreSQL
 

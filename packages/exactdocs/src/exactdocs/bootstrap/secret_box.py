@@ -58,27 +58,7 @@ class FernetSecretBox:
         A symlink or a file of another user is refused. One that others could read is made
         private again, but its key must be treated as exposed (logged as an error).
         """
-        if not path.is_symlink() and not path.exists():
-            _create_key_file(path)
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-            message = f"the secret key file {path} must be a regular file, not a link"
-            raise ValueError(message)
-        if hasattr(os, "getuid") and info.st_uid != os.getuid():
-            message = f"the secret key file {path} belongs to another user"
-            raise ValueError(message)
-        if stat.S_IMODE(info.st_mode) & 0o077:  # a copy or a restore may have loosened it
-            log.error(
-                "the secret key file %s was readable by other users: it is private again, but "
-                "treat the key as exposed and rotate it (see EXACTDOCS_SECRET_KEY_PREVIOUS)",
-                path,
-            )
-            path.chmod(_OWNER_ONLY)
-        try:
-            return cls.from_secret(path.read_text("utf-8").strip(), purpose=purpose)
-        except ValueError:
-            message = f"the secret key file {path} is empty or too short: delete it to generate one"
-            raise ValueError(message) from None
+        return cls.from_secret(read_key_file(path), purpose=purpose)
 
     def seal(self, plaintext: str) -> str:
         """Encrypt and authenticate ``plaintext``."""
@@ -96,18 +76,71 @@ class FernetSecretBox:
             raise SealedTextUnreadableError from None
 
 
-def _derive(secret: str, purpose: bytes) -> Fernet:
-    # The secret must be random (HKDF stretches nothing): `openssl rand -base64 32`.
+def derived_key(secret: str, purpose: bytes) -> bytes:
+    """Derive a 32-byte key for one use (HKDF-SHA256, ``purpose`` as its context).
+
+    Args:
+        secret: The instance's secret key (at least ``MIN_SECRET_KEY_LENGTH`` characters).
+        purpose: The HKDF context of this use, shared with no other.
+
+    Returns:
+        The key.
+
+    Raises:
+        ValueError: The secret is too short, or the purpose empty (fixed texts, no key).
+    """
     if len(secret) < MIN_SECRET_KEY_LENGTH:
         message = f"the secret key must have at least {MIN_SECRET_KEY_LENGTH} characters"
         raise ValueError(message)
     if not purpose:
         message = "a secret box needs a purpose: the HKDF context its key is derived for"
         raise ValueError(message)
-    raw = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=purpose).derive(
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=purpose).derive(
         secret.encode()
     )
-    return Fernet(base64.urlsafe_b64encode(raw))
+
+
+def read_key_file(path: Path) -> str:
+    """Read the secret key file; a missing one is created first (mode 0600, atomically).
+
+    A symlink or a file of another user is refused. One that others could read is made private
+    again, but its key must be treated as exposed (logged as an error).
+
+    Args:
+        path: The key file.
+
+    Returns:
+        The secret key.
+
+    Raises:
+        ValueError: The file is unusable (fixed texts naming the path, never the key).
+    """
+    if not path.is_symlink() and not path.exists():
+        _create_key_file(path)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        message = f"the secret key file {path} must be a regular file, not a link"
+        raise ValueError(message)
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        message = f"the secret key file {path} belongs to another user"
+        raise ValueError(message)
+    if stat.S_IMODE(info.st_mode) & 0o077:  # a copy or a restore may have loosened it
+        log.error(
+            "the secret key file %s was readable by other users: it is private again, but "
+            "treat the key as exposed and rotate it (see EXACTDOCS_SECRET_KEY_PREVIOUS)",
+            path,
+        )
+        path.chmod(_OWNER_ONLY)
+    secret = path.read_text("utf-8").strip()
+    if len(secret) < MIN_SECRET_KEY_LENGTH:
+        message = f"the secret key file {path} is empty or too short: delete it to generate one"
+        raise ValueError(message)
+    return secret
+
+
+def _derive(secret: str, purpose: bytes) -> Fernet:
+    # The secret must be random (HKDF stretches nothing): `openssl rand -base64 32`.
+    return Fernet(base64.urlsafe_b64encode(derived_key(secret, purpose)))
 
 
 def _create_key_file(path: Path) -> None:

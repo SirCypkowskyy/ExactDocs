@@ -1,10 +1,13 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Self
 
 from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    HYDE_CACHE_TTL_DAYS,
+    HYDE_TIMEOUT,
     QUERY_EMBEDDING_TIMEOUT,
 )
 from exactdocs.retrieval.models import (
@@ -25,6 +28,8 @@ from exactdocs.retrieval.ports.driven import (
     DefaultVersions,
     EmbeddingModels,
     Explorer,
+    HypotheticalAnswerCache,
+    HypotheticalAnswers,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -66,6 +71,7 @@ from exactdocs.retrieval.ports.driving import (
     ListUnembeddedVersions,
     OpenEmbeddingSpace,
     PlanEmbedding,
+    PruneHypotheses,
     QueryDocs,
     ReadChunk,
     RebuildSearchIndex,
@@ -101,10 +107,12 @@ from exactdocs.retrieval.use_cases import (
     GetSearchIndexStateUseCase,
     GetVectorStoreStateUseCase,
     HybridPipeline,
+    HydePipeline,
     IndexManifestUseCase,
     ListProvidersUseCase,
     ListRolesUseCase,
     ListUnembeddedVersionsUseCase,
+    NoHypothesisCache,
     NoModelFactory,
     NoSpendLedger,
     NoStoredProfiles,
@@ -112,6 +120,7 @@ from exactdocs.retrieval.use_cases import (
     PlanEmbeddingUseCase,
     PriceBook,
     ProfileModelRoles,
+    PruneHypothesesUseCase,
     QueryDocsUseCase,
     ReadChunkUseCase,
     RebuildSearchIndexUseCase,
@@ -186,6 +195,8 @@ class RetrievalModule:
     """How far each embedding space has got (``GET /api/v1/ai/embedding``)."""
     get_ai_usage: GetAiUsage
     """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
+    prune_hypotheses: PruneHypotheses
+    """Deletes HyDE's cached answers past their TTL or of models no longer configured."""
 
     @classmethod
     def build(
@@ -227,6 +238,11 @@ class RetrievalModule:
         explorer: Explorer | None = None,
         version_articles: VersionArticles | None = None,
         agent_bounds: AgentBounds | None = None,
+        hypotheses: HypotheticalAnswers | None = None,
+        hypothesis_cache: HypotheticalAnswerCache | None = None,
+        hyde_timeout: float = HYDE_TIMEOUT,
+        hyde_cache_key: bytes | None = None,
+        hyde_cache_ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS),
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -245,7 +261,12 @@ class RetrievalModule:
         ``embedding_dimensions`` and ``embedding_batch_size`` are the embedding role's settings.
         With a vector store, ``hybrid`` runs ``HybridPipeline`` (BM25 and vectors fused), whose
         query embedding waits at most ``query_embedding_timeout`` seconds; a ``hybrid`` entry
-        of ``pipelines`` replaces it (tests).
+        of ``pipelines`` replaces it (tests). With a vector store and ``hypotheses`` (the HyDE
+        writer), ``hybrid_hyde`` runs ``HydePipeline``: the ``llm`` role's hypothetical answer,
+        cached in ``hypothesis_cache`` under ``hyde_cache_key`` (the HMAC key of its queries;
+        without one nothing is cached), searches the vector half, and a search waits at most
+        ``hyde_timeout`` seconds for it. The collection job prunes the cache: answers older than
+        ``hyde_cache_ttl``, and those of an ``llm`` model no longer configured.
         Cost: ``price_overrides`` are the operator's prices by ``<profile>:<model>``, ``budgets``
         the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
         caller (without it they are not rate limited).
@@ -284,11 +305,15 @@ class RetrievalModule:
             dimensions=embedding_dimensions,
             batch_size=embedding_batch_size,
         )
+        hypotheses_cached = hypothesis_cache or NoHypothesisCache()
+        prune_hypotheses = PruneHypothesesUseCase(
+            hypotheses=hypotheses_cached, providers=providers, clock=clock, ttl=hyde_cache_ttl
+        )
         built: dict[RetrievalMode, RetrievalPipeline] = {
             RetrievalMode.BM25: Bm25Pipeline(search=search)
         }
         if vectors is not None:
-            built[RetrievalMode.HYBRID] = HybridPipeline(
+            hybrid = HybridPipeline(
                 search=search,
                 vectors=vectors,
                 chunks=chunks,
@@ -296,6 +321,18 @@ class RetrievalModule:
                 tracer=tracer,
                 timeout=query_embedding_timeout,
             )
+            built[RetrievalMode.HYBRID] = hybrid
+            if hypotheses is not None:
+                built[RetrievalMode.HYBRID_HYDE] = HydePipeline(
+                    hybrid=hybrid,
+                    providers=providers,
+                    writer=hypotheses,
+                    cache=hypotheses_cached if hyde_cache_key is not None else NoHypothesisCache(),
+                    cache_key=hyde_cache_key or b"",
+                    spend=ai_spend,
+                    tracer=tracer,
+                    timeout=hyde_timeout,
+                )
         if explorer is not None:
             built[RetrievalMode.AGENTIC] = AgenticPipeline(
                 providers=providers,
@@ -350,10 +387,19 @@ class RetrievalModule:
                 tracer=tracer,
             ),
             discard_pending_chunks=DiscardPendingChunksUseCase(
-                manifests=manifests, chunks=chunks, clock=clock
+                manifests=manifests, chunks=chunks, clock=clock, hypotheses=hypotheses_cached
             ),
-            collect_chunks=CollectChunksUseCase(manifests=manifests, chunks=chunks, clock=clock),
-            remove_chunks=RemoveChunksUseCase(manifests=manifests, chunks=chunks),
+            collect_chunks=CollectChunksUseCase(
+                manifests=manifests,
+                chunks=chunks,
+                clock=clock,
+                hypotheses=hypotheses_cached,
+                prune=prune_hypotheses,
+            ),
+            prune_hypotheses=prune_hypotheses,
+            remove_chunks=RemoveChunksUseCase(
+                manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached
+            ),
             retag_articles=RetagArticlesUseCase(chunks=chunks),
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
             get_vector_store_state=GetVectorStoreStateUseCase(modes=modes),

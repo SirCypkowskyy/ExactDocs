@@ -1053,6 +1053,53 @@ an unusable vector (or the key could not be opened), and `vector_store_unavailab
 cannot search. Reranking (below) runs after the pipeline, on the fused order, like for any
 mode; the pipeline is asked for the reranker's top N when that is more than the limit.
 
+**HyDE (#94).** `HydePipeline` (in `use_cases`, registered for `hybrid_hyde` when a vector store
+exists and a `HypotheticalAnswers` writer is given) resolves the library's `llm` role
+(`AiProviders.profile_for`, from the profile as it is now; nothing is sent for a library with AI
+off) and looks the answer up in the `HypotheticalAnswerCache` port by `HydeKey`: the searched
+manifest, the model (`<profile>:<model>`) and a SHA-256 of the normalized query (case folded,
+whitespace collapsed; never the text). A new manifest of the version is a new key, and the
+removal use cases (`CollectChunks`, `RemoveChunks`, `DiscardPendingChunks`) forget the answers of
+the manifests they remove. On a miss, in a `<search>.hyde` span without the query, within
+`HYDE_TIMEOUT` (10 s), it builds the chat model (`ModelFactory.chat_model`) and calls the
+writer: `ai_hyde.PydanticAiHypotheticalAnswers` loads `ai_hyde_sdk` only then, which runs one
+pydantic-ai `Agent(output_type=str)` with the fixed `HYDE_INSTRUCTIONS` and
+`max_tokens = HYDE_MAX_TOKENS`, inside `agent_limits`: the harness `SpendLimits` over the ledger
+(so its spend lands in the caller's instance, library and user rows, priced by the price book) and
+pydantic-ai's `UsageLimits`. The budgets it gets come from `AiSpend.budgets_for(library_ai)`, the
+seam where per-library budgets (#102) merge in. The answer is then embedded for the vector half
+(`HybridPipeline.fuse(embed=answer, mode=hybrid_hyde)`) while BM25 searches the query itself.
+Budgets and the rate limit are checked before (`within_budget` turns the choice into `hybrid`);
+a `SpendLimitExceeded` at the request answers `hybrid` with `llm_budget_reached`, and an LLM error,
+an empty answer, a model that cannot be built or a timeout answers `hybrid` with
+`llm_unavailable`; only the error's class is logged. When hybrid's own query embedding fails too,
+the reason given is hybrid's (it names the mode that answered, BM25). A timeout that strikes after
+the provider answered may cancel the harness while it records the spend, which is then lost: as
+rare as the in-flight overshoot the budgets already accept.
+
+The cache is `retrieval_hyde_answers` (`SqliteHypothesisCache`, SQLite and PostgreSQL); a
+read-only process (`serve --stdio`) reads it and keeps its own answers in a bounded LRU
+(`ReadOnlyHypothesisCache`, `HYDE_MEMORY_CACHE_SIZE`). A cache that cannot be read is a miss and
+one that cannot be written costs a call next time; only the error's class is logged. A cached
+answer is no LLM call: `RetrievalModes.within_budget` reads it first (`HydePipeline.cached_answer`)
+and passes it on in `ModeChoice.hypothesis` (one cache read per search), so a hit
+answers `hybrid_hyde` even with a budget used up, and is not counted against the LLM search rate
+limit. `PruneHypotheses` deletes answers older than `[ai.hyde] cache_ttl`
+(30 days) and those of an `llm` model no longer configured (neither the instance's nor any
+library's override, or its profile is gone). It runs at start and once a day just after UTC
+midnight with the embedding re-queue (`Container.nightly`, the same single leader on
+PostgreSQL as `requeue_daily`), and after every collection (`CollectChunks`). Cache hits are not
+a metric yet
+(`exactdocs.ai.cache_hits` comes with the answer cache, #100).
+
+*Data at rest.* The table stores the hypothetical answers in plain text; they are written from
+user queries and often restate them. The query itself is stored only as an HMAC-SHA256 of its
+normalized text, keyed with a key derived from the instance's secret key
+(`EXACTDOCS_SECRET_KEY` or the key file) for its own HKDF purpose, `exactdocs hyde cache v1`
+(`HYDE_CACHE_PURPOSE`), so the hashes cannot be checked against a list of likely queries without
+that key. A read-only process without a secret key caches nothing. Rotating the secret key only
+makes every cached answer a miss.
+
 **Reranker (#93).** Reranking is a flag on top of any mode (`ModeChoice.rerank`, with the
 library's `rerank_top_n` or the instance's `[ai.reranker] top_n`). `RetrievalModes.run` asks the
 pipeline for the top N when that is more than the call's limit; the search use cases then open a
