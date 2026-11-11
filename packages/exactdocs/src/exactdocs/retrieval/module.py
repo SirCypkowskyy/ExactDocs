@@ -8,7 +8,9 @@ from exactdocs.retrieval.constants import (
     QUERY_EMBEDDING_TIMEOUT,
 )
 from exactdocs.retrieval.models import (
+    Budgets,
     InstanceRoles,
+    ModelPrice,
     ProviderProfile,
     RerankLimits,
     RetrievalMode,
@@ -17,6 +19,7 @@ from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     ArticleSuggestions,
     ArticleTitles,
+    CallRates,
     ChunkRepository,
     DefaultVersions,
     EmbeddingModels,
@@ -47,6 +50,7 @@ from exactdocs.retrieval.ports.driving import (
     EstimateEmbedding,
     FinishEmbedding,
     ForgetLibrary,
+    GetAiUsage,
     GetChunkSets,
     GetLibraryRetrieval,
     GetProvider,
@@ -71,6 +75,7 @@ from exactdocs.retrieval.ports.driving import (
 )
 from exactdocs.retrieval.use_cases import (
     AiProviders,
+    AiSpend,
     ArticleOutlineUseCase,
     Bm25Pipeline,
     CheckProviderUseCase,
@@ -83,6 +88,7 @@ from exactdocs.retrieval.use_cases import (
     EstimateEmbeddingUseCase,
     FinishEmbeddingUseCase,
     ForgetLibraryUseCase,
+    GetAiUsageUseCase,
     GetChunkSetsUseCase,
     GetLibraryRetrievalUseCase,
     GetProviderUseCase,
@@ -94,9 +100,11 @@ from exactdocs.retrieval.use_cases import (
     ListRolesUseCase,
     ListUnembeddedVersionsUseCase,
     NoModelFactory,
+    NoSpendLedger,
     NoStoredProfiles,
     OpenEmbeddingSpaceUseCase,
     PlanEmbeddingUseCase,
+    PriceBook,
     ProfileModelRoles,
     QueryDocsUseCase,
     ReadChunkUseCase,
@@ -168,6 +176,8 @@ class RetrievalModule:
     """The versions to queue ``embed`` jobs for."""
     estimate_embedding: EstimateEmbedding
     """Chunks, tokens and US dollars of embedding what is not embedded yet."""
+    get_ai_usage: GetAiUsage
+    """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
 
     @classmethod
     def build(
@@ -200,6 +210,9 @@ class RetrievalModule:
         article_titles: ArticleTitles | None = None,
         spend: SpendLedger | None = None,
         prices: Prices | None = None,
+        price_overrides: Mapping[str, ModelPrice] | None = None,
+        budgets: Budgets | None = None,
+        call_rates: CallRates | None = None,
         embedding_dimensions: int | None = None,
         embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH,
         query_embedding_timeout: float = QUERY_EMBEDDING_TIMEOUT,
@@ -222,6 +235,9 @@ class RetrievalModule:
         With a vector store, ``hybrid`` runs ``HybridPipeline`` (BM25 and vectors fused), whose
         query embedding waits at most ``query_embedding_timeout`` seconds; a ``hybrid`` entry
         of ``pipelines`` replaces it (tests).
+        Cost: ``price_overrides`` are the operator's prices by ``<profile>:<model>``, ``budgets``
+        the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
+        caller (without it they are not rate limited).
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -233,6 +249,13 @@ class RetrievalModule:
             factory=models or NoModelFactory(),
             box=secret_box,
         )
+        ai_spend = AiSpend(
+            ledger=spend or NoSpendLedger(),
+            budgets=budgets or Budgets(),
+            rates=call_rates,
+            prices=PriceBook(listed=prices, overrides=dict(price_overrides or {})),
+            clock=clock,
+        )
         runs = EmbeddingRuns(
             providers=providers,
             vectors=vectors,
@@ -240,8 +263,8 @@ class RetrievalModule:
             manifests=manifests,
             models=embedding_models,
             titles=article_titles,
-            spend=spend,
-            prices=prices,
+            spend=ai_spend,
+            prices=ai_spend.prices,
             clock=clock,
             dimensions=embedding_dimensions,
             batch_size=embedding_batch_size,
@@ -268,6 +291,8 @@ class RetrievalModule:
                 providers=providers, chunks=chunks, limits=rerank_limits or RerankLimits()
             ),
             embedded=runs,
+            spend=ai_spend,
+            providers=providers,
         )
         return cls(
             search_docs=SearchDocsUseCase(
@@ -325,4 +350,5 @@ class RetrievalModule:
             finish_embedding=FinishEmbeddingUseCase(runs=runs),
             list_unembedded_versions=ListUnembeddedVersionsUseCase(runs=runs),
             estimate_embedding=EstimateEmbeddingUseCase(runs=runs),
+            get_ai_usage=GetAiUsageUseCase(spend=ai_spend),
         )

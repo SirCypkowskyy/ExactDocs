@@ -3,9 +3,10 @@
 pydantic-ai's ``TestEmbeddingModel`` stands in for a real model: CI never calls a provider.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 import pytest
@@ -37,6 +38,8 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import (
     EmbeddingSource,
+    SpendEntry,
+    SpendKey,
     SpendWindow,
     embedding_spend,
 )
@@ -219,6 +222,8 @@ async def test_the_sqlite_ledger_adds_usage_to_its_rows(engine: AsyncEngine) -> 
         (r.scope_kind, r.scope_id, r.window_kind, r.window_start, r.input_tokens, r.requests)
         for r in rows
     ] == [
+        ("embedding", "", "day", "2026-11-07", 150, 3),
+        ("embedding", "", "month", "2026-11-01", 150, 3),
         ("instance", "", "day", "2026-11-07", 150, 3),
         ("instance", "", "month", "2026-11-01", 150, 3),
         ("library", "/acme/x", "day", "2026-11-07", 150, 3),
@@ -227,7 +232,76 @@ async def test_the_sqlite_ledger_adds_usage_to_its_rows(engine: AsyncEngine) -> 
     # The first call is priced (2 micro-USD), the second's two requests are not.
     assert {(r.usd_micros, r.unpriced) for r in rows} == {(2, 2)}
     assert {(row.usd_micros, row.unpriced) for row in memory.rows.values()} == {(2, 2)}
-    assert {key[2] for key in memory.rows} == {SpendWindow.DAY, SpendWindow.MONTH}
+    assert {key.window for key in memory.rows} == {SpendWindow.DAY, SpendWindow.MONTH}
+
+
+async def test_the_sql_ledger_reads_rows_and_counts_a_replayed_entry_once(
+    engine: AsyncEngine,
+) -> None:
+    for ledger in (SqliteSpendLedger(engine=engine), InMemorySpendLedger()):
+        day = SpendKey(
+            scope_kind="user", scope_id="u1", window=SpendWindow.DAY, window_start=T0.date()
+        )
+        month = SpendKey(
+            scope_kind="user",
+            scope_id="u1",
+            window=SpendWindow.MONTH,
+            window_start=SpendWindow.MONTH.start(T0),
+        )
+        old = SpendKey(
+            scope_kind="user", scope_id="u1", window=SpendWindow.DAY, window_start=date(2026, 10, 1)
+        )
+        response = [
+            SpendEntry(
+                scope_kind=k.scope_kind,
+                scope_id=k.scope_id,
+                window=k.window,
+                window_start=k.window_start,
+                input_tokens=7,
+                output_tokens=3,
+                requests=1,
+                usd_micros=5,
+                token="resp-1",
+            )
+            for k in (day, month)
+        ]
+
+        await ledger.add(response)
+        await ledger.add(response)  # a replay: counted once
+        await ledger.add([replace(response[0], token="resp-2")])
+        await ledger.add([replace(response[0], window_start=old.window_start, token=None)])
+
+        rows = await ledger.get(
+            [
+                day,
+                month,
+                old,
+                SpendKey(
+                    scope_kind="user", scope_id="u2", window=SpendWindow.DAY, window_start=T0.date()
+                ),
+            ]
+        )
+        assert {k: (r.tokens, r.requests, r.usd_micros) for k, r in rows.items()} == {
+            day: (20, 2, 10),
+            month: (10, 1, 5),
+            old: (10, 1, 5),
+        }, type(ledger)
+        assert [(r.window, r.window_start) for r in await ledger.since(month.window_start)] == [
+            (SpendWindow.DAY, day.window_start),
+            (SpendWindow.MONTH, month.window_start),
+        ], type(ledger)
+
+
+async def test_the_sql_ledger_adds_up_across_concurrent_writers(engine: AsyncEngine) -> None:
+    ledgers = [SqliteSpendLedger(engine=engine) for _ in range(4)]
+    entries = embedding_spend(
+        T0, library="/acme/x", input_tokens=1, requests=1, usd_per_million=1.0
+    )
+
+    await asyncio.gather(*(ledger.add(entries) for ledger in ledgers for _ in range(5)))
+
+    rows = await ledgers[0].since(T0.date())
+    assert {r.requests for r in rows if r.window is SpendWindow.DAY} == {20}
 
 
 async def test_embedding_sources_are_read_on_every_sql_database(container: Container) -> None:

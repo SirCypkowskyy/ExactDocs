@@ -26,8 +26,12 @@ from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.models_pull import pull
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.local_models import LocalEmbedder
-from exactdocs.retrieval.errors import ProviderUnsupportedError
+from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
+from exactdocs.retrieval.errors import AiBudgetReachedError, ProviderUnsupportedError
 from exactdocs.retrieval.models import ModelRole, ProfileOrigin, ProviderKind, ProviderProfile
+from fixture_import import LIBRARY, embed_fixture, import_fixture
+from fixture_repo import DocsRepo
+from retrieval_eval.fixture import instance_spend
 from socket_guard import run_guarded
 
 OFFLINE = ProviderProfile(
@@ -501,3 +505,59 @@ def test_a_local_role_without_a_local_profile_is_warned_about_at_start(
     [warning] = [r.getMessage() for r in caplog.records]
     assert "AI role embedding names profile 'local', which is not configured" in warning
     assert "EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local" in warning
+
+
+# ---------------------------------------------------------------- budgets (#268) with local models
+
+
+async def _embedded_and_searched(
+    docs_repo: DocsRepo, data_dir: Path, models_dir: Path, budgets: dict
+) -> tuple[tuple[int, float], SearchDocsResult, tuple[int, float]]:
+    ai = AiSettings.model_validate(
+        {
+            "mode": "hybrid",
+            "providers": {"local": {"kind": "local"}},
+            "embedding": {"model": f"local:{EMBEDDING}"},
+            "reranker": {"model": f"local:{RERANKER}"},
+            "budgets": budgets,
+        }
+    )
+    container = Container.build(Settings(data_dir=data_dir, models_dir=models_dir, ai=ai))
+    async with container.running(jobs=False):
+        await import_fixture(container, docs_repo)
+        try:
+            await embed_fixture(container)
+        finally:
+            before = await instance_spend(container.engine)
+        answer = await container.retrieval.search_docs(
+            SearchDocsQuery(library=LIBRARY, ref="v1.4.0", query="how do I retry failed calls")
+        )
+        return before, answer, await instance_spend(container.engine)
+
+
+async def test_a_local_model_costs_nothing_so_a_usd_budget_starts_and_never_stops_it(
+    docs_repo: DocsRepo, tmp_path: Path, models_dir: Path
+) -> None:
+    budgets = {"daily_usd": 0.01, "daily_embedding_usd": 0.01}
+
+    embedded, answer, after = await _embedded_and_searched(
+        docs_repo, tmp_path / "data", models_dir, budgets
+    )
+
+    tokens, usd = embedded
+    assert tokens > 0  # the tokens count
+    assert usd == 0  # the price is 0, so the USD budget is never reached
+    assert (answer.retrieval_mode, answer.fallback_reason, answer.reranked) == (
+        "hybrid",
+        None,
+        True,
+    )
+    assert after[0] > tokens  # the query embedding is recorded too
+    assert after[1] == 0
+
+
+async def test_a_token_budget_stops_the_local_embedding_job(
+    docs_repo: DocsRepo, tmp_path: Path, models_dir: Path
+) -> None:
+    with pytest.raises(AiBudgetReachedError):
+        await _embedded_and_searched(docs_repo, tmp_path / "data", models_dir, {"daily_tokens": 1})

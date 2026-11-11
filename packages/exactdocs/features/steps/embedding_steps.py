@@ -120,7 +120,7 @@ def _embed_jobs(context: Context, library: str) -> list[dict]:
     return [job for job in response.json()["jobs"] if job["kind"] == "embed"]
 
 
-def _wait_for_embedding(context: Context, library: str) -> list[dict]:
+def wait_for_embedding(context: Context, library: str) -> list[dict]:
     """Wait until no embedding job of the library is queued or running.
 
     Args:
@@ -173,7 +173,7 @@ def _search(context: Context) -> dict:
 def step_embedded_with(context: Context, model: str) -> None:
     context.first = _gateway(context)
     _serve(context, _ai(context.first, model))
-    jobs = _wait_for_embedding(context, LIBRARY)
+    jobs = wait_for_embedding(context, LIBRARY)
     assert {job["version"] for job in jobs} == {"v1.3.0", "v1.4.0"}, jobs
     assert all(job["state"] == "succeeded" for job in jobs), jobs
     (space,) = _spaces(context)
@@ -201,7 +201,7 @@ def step_reembedded(context: Context, model: str) -> None:
         if any(s.spec.model == model and s.state is SpaceState.ACTIVE for s in spaces):
             break
         time.sleep(0.05)
-    jobs = _wait_for_embedding(context, LIBRARY)
+    jobs = wait_for_embedding(context, LIBRARY)
     assert all(job["state"] == "succeeded" for job in jobs), jobs
     old, new = _spaces(context)
     assert old.id == context.first_space.id, (old, new)
@@ -244,7 +244,7 @@ def step_jobs_run(context: Context) -> None:
     # Queued by hand as well: the job itself refuses a library with AI off.
     command = EnqueueJobCommand(kind="embed", library=context.library, version="v1.4.0")
     context.client.portal.call(context.container.ingestion.enqueue_job, command)
-    context.jobs = _wait_for_embedding(context, context.library)
+    context.jobs = wait_for_embedding(context, context.library)
 
 
 @then('no chunk of "{library}" is sent to the embedding provider')

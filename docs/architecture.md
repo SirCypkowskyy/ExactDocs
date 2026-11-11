@@ -369,14 +369,49 @@ only holds each process's git work folders and `known_hosts`. What changes:
   queues the embedding too (`bootstrap/embedding.py`), and the start queues what is missing in
   the background. `retrieval_ai_spend` is one row per (scope kind, scope ID, UTC window, window
   start) with an atomic upsert on SQLite and PostgreSQL: each batch adds to the instance's row
-  (`instance`, `""`) and its library's (`library`, the library ID) for the day and the month,
-  the rows the LLM spend and the budgets of #95 use; `unpriced` counts the requests whose model
-  has no known price. `exactdocs ai estimate` counts the distinct chunks without a vector
+  (`instance`, `""`), its library's (`library`, the library ID) and the embedding budget's
+  (`embedding`, `""`) for the day and the month; `unpriced` counts the requests whose model has
+  no known price. Before each batch `AiSpend.embedding_batch` checks the embedding, instance and
+  library budgets and raises `AiBudgetReachedError` (`ai_budget_reached`), which fails the job;
+  `ListUnembeddedVersions` leaves such a library out, and bootstrap queues the missing embedding
+  again just after each UTC midnight, when the windows reset (`requeue_daily`: a random delay of
+  up to five minutes; on PostgreSQL only the process holding a session advisory lock queues,
+  since `EmbeddingQueue` checks and inserts without one atomic step). The lock is checked again
+  every night (`RequeueLeader`): a session that failed is closed and a new one opened, and a
+  failed night is logged, so the loop only ends when the server stops. Each server process keeps one
+  pooled connection open for it (the lock lives in that session), so size the pool for it. A search uses up its
+  caller's LLM rate limit only once its version resolved. `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
   `genai-prices` data (a model the instance runs itself, `ollama`, `vllm` or `local`, is never
   priced from another provider's list). An instance without a vector store plans, queues and
   estimates nothing; one whose store cannot be loaded (sqlite-vec, or pgvector's `vector` not in
   the PostgreSQL database) skips each `embed` job with `vector_store_unavailable`.
+- **Budgets (RET-07, #95):** `AiSpend` (retrieval's use-case layer) reads and adds the ledger
+  rows through the `SpendLedger` port and holds the instance's `Budgets` (a `BudgetLimit` per
+  scope kind and window, in millionths of a US dollar and in tokens) and a `CallRates` port (an
+  in-memory sliding minute per caller, per process). The ledger owns its key format,
+  `SpendKey` (scope kind, scope ID, window, window start); scopes are `instance`, `library`,
+  `user` (an account ID) and `embedding`. The search use cases call
+  `RetrievalModes.within_budget` right after `choose`, with the caller (REST passes the
+  session's or token's account through a FastAPI dependency, HTTP MCP the token's `client_id`,
+  stdio `None`), so every later stage sees the same choice; it skips an LLM step (`llm_budget_reached`,
+  `llm_rate_limited`, answering in `ModeChoice.cheaper`, the best mode without an LLM) or a paid
+  rerank (any reranker profile but `local`). A rerank that ran (`RetrievalModes.rerank`, #93's
+  `Reranking`) is recorded for the caller's scopes (`ModeChoice.caller`): one request, its
+  tokens estimated from the characters sent, priced with the `PriceBook`. LLM agents get `agent_limits(...)`
+  (`adapters/driven/harness_spend.py`): the harness `SpendLimits` with one budget per caller
+  scope and window (a ceiling, or a plain counter) over `LedgerSpendStore`, which implements the
+  harness `BatchSpendStore` structurally and parses each harness key
+  (`<name>|<window>|<scope>|<bucket>`, pinned by a contract test) into a `SpendKey`; plus
+  pydantic-ai `UsageLimits` per step. The step's price comes from the caller's `PriceBook`
+  lookup (a `price` function for the harness; `None` falls back to genai-prices), and the clock
+  is read in UTC. Replay tokens of the harness are kept in
+  `retrieval_ai_spend_replays`, claimed in the same transaction as the addition. A read-only
+  stdio process reads the shared rows and keeps its own spend in memory (`ReadOnlySpendLedger`):
+  the server never sees it and it is lost on exit (#274). In memory, replay tokens of windows a
+  replay can no longer reach are dropped (`SpendWindow.kept_since`), as on SQL.
+  Prices: `PriceBook` (the operator's `[ai.prices]`, then free kinds, then the bundled list);
+  bootstrap refuses a US dollar budget at start when a configured role's model has no price.
 - **Adding a table:** `just migration "add jobs table"`, fill in `upgrade()`/`downgrade()`, set
   `down_revision` to the current head if you rebased over another revision (a test fails if the
   history ever has two heads), then write the adapter.
@@ -897,7 +932,10 @@ room for its 9 MB.)
   their way out: the query-text values in `url.query` become `REDACTED`, and exception events and
   error statuses lose their message and stack trace (a pydantic `ValidationError` quotes its
   `input_value`), keeping the exception type; FastMCP's `enduser.id` and `enduser.scope` (who
-  called) are dropped. Health and readiness probes (`PROBE_PATHS`) get no request span.
+  called) are dropped. Model spans always lose `PROMPT_SPAN_ATTRIBUTES` (`gen_ai.input.messages`,
+  `gen_ai.output.messages`, `gen_ai.system_instructions`, tool-call arguments and results), even
+  with the query text opted in (`without_prompts`): the second guard after pydantic-ai's
+  `include_content=False`. Health and readiness probes (`PROBE_PATHS`) get no request span.
 - **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
   for the search and one per stage (`version`, `rank`, `rerank` when a reranker is configured,
   `chunks`), in its mode. The query text is a
@@ -919,8 +957,11 @@ room for its 9 MB.)
   set, makes it require that bearer token (`hmac.compare_digest`, 401 otherwise). The reader
   sends nothing. Scrapes, like the probes, get no request span or metric
   (`UNTRACED_PATHS`). Off, the route does not exist and `prometheus_client` is not imported. Any
-  library that records through OpenTelemetry's global meter (pydantic-ai's
-  `gen_ai.client.token.usage`, once the AI modes exist) shows up without more wiring.
+  library that records through OpenTelemetry's global meter shows up without more wiring:
+  pydantic-ai's `gen_ai.client.token.usage` and `operation.cost`, recorded by every chat model and
+  embedder the `ModelFactory` builds (instrumented with `include_content=False`, labelled by
+  provider, model, operation and token type). `OpenTelemetrySearchTracer.fallback` counts
+  `exactdocs.ai.fallbacks` (by mode and reason) for each search a cheaper mode answered.
 
 ## AI retrieval (planned)
 
@@ -989,7 +1030,9 @@ unavailable and a setting that needs them falls back to BM25 with
 vector store exists: SQLite with sqlite-vec, PostgreSQL with pgvector) asks the `SearchIndex` for
 the version's best `RRF_DEPTH` (50) BM25 hits, embeds the query with the configured model
 (`Embeddings.embed_query`, in a `<search>.embed_query` span without the query text, within
-`QUERY_EMBEDDING_TIMEOUT` seconds, its tokens recorded in `retrieval_ai_spend`), asks
+`QUERY_EMBEDDING_TIMEOUT` seconds; a paid embedding model is first checked against the budgets
+of the embedding, instance, library and caller scopes, and its usage is recorded once to the same
+rows through `AiSpend.record`), asks
 `VectorIndex.nearest` for the 50 nearest chunks of the same manifest in `PipelineRequest.space`,
 and fuses the two rankings with reciprocal rank fusion (`reciprocal_rank_fusion`, `k` = 60; ties
 go to BM25's order, so an exact identifier stays first). Both halves are scoped to the version's
@@ -999,7 +1042,8 @@ hybrid answer has hits whenever the version has embedded chunks that pass the ta
 no similarity floor. A chunk only the vectors found gets the first 24 words of its text as its
 snippet; `coverage.candidates` counts the chunks of both halves once. The pipeline never fails a
 search: BM25 answers with `embedding_in_progress` when the space no longer matches the configured
-model (a switch of models), `embedding_unavailable` when the model failed, timed out or answered
+model (a switch of models), `llm_budget_reached` when a budget the query embedding counts to is
+used up (as a paid rerank over budget), `embedding_unavailable` when the model failed, timed out or answered
 an unusable vector (or the key could not be opened), and `vector_store_unavailable` when the store
 cannot search. Reranking (below) runs after the pipeline, on the fused order, like for any
 mode; the pipeline is asked for the reranker's top N when that is more than the limit.
@@ -1052,8 +1096,8 @@ Later modes plug in as pipelines; their models come through the ports below. The
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 
-- **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, a spend store
-  shaped like the harness `SpendStore` protocol, and ports for the HyDE writer, the judge and the
+- **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, the
+  `SpendLedger` (whose adapter also implements the harness `BatchSpendStore`), and ports for the HyDE writer, the judge and the
   agent explorer. Their adapters (pydantic-ai, fastembed, sqlite-vec, pgvector) live in
   `retrieval/adapters/driven/`, and the architecture test lists those libraries among the ones
   the core may not import. No new domain: every consumer is retrieval.

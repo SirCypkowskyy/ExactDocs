@@ -50,6 +50,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.cerebras import CerebrasModel
 from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, instrument_model
 from pydantic_ai.models.ollama import OllamaModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
@@ -603,7 +604,33 @@ def _bedrock_model(endpoint: Endpoint, model: str) -> Model:
     return AnthropicModel(model, provider=AnthropicProvider(anthropic_client=client))
 
 
+def instrumentation() -> InstrumentationSettings:
+    """Instrument model and embedding calls without their content (decision record, *Telemetry*).
+
+    Spans and the ``gen_ai.client.token.usage`` and ``operation.cost`` metrics go to the global
+    providers ``otel_sdk`` sets up; their labels are the provider, the model, the operation and
+    the token type, never a library, a user or the query. No prompt or completion is recorded.
+
+    Returns:
+        The settings.
+    """
+    return InstrumentationSettings(include_content=False)
+
+
 async def chat_model(endpoint: Endpoint, model: str) -> Model:
+    """Build the chat model of the profile's kind, instrumented (*Telemetry*).
+
+    Args:
+        endpoint: The profile's endpoint.
+        model: The model (an Azure deployment for ``azure``).
+
+    Returns:
+        The pydantic-ai model.
+    """
+    return instrument_model(await _chat_model(endpoint, model), instrumentation())
+
+
+async def _chat_model(endpoint: Endpoint, model: str) -> Model:
     """Build the chat model of the profile's kind (decision record, *Provider abstraction*).
 
     Args:
@@ -652,13 +679,17 @@ async def embedder(endpoint: Endpoint, model: str) -> Embedder:
     if not profile.kind.has_embeddings:
         raise ProviderUnsupportedError(profile.name, f"kind {profile.kind.value} has no embeddings")
     if profile.kind in {ProviderKind.GOOGLE, ProviderKind.GOOGLE_VERTEX}:
-        return Embedder(GoogleEmbeddingModel(model, provider=await _google_provider(endpoint)))
+        return Embedder(
+            GoogleEmbeddingModel(model, provider=await _google_provider(endpoint)),
+            instrument=instrumentation(),
+        )
     # Imported here: pydantic-ai's OpenAI embeddings module imports tiktoken at load. Only an
     # OpenAI-API embedding role loads it, and nothing ever calls it (no `count_tokens`), so no
     # encoding is ever fetched from openaipublic.blob.core.windows.net.
     openai_embeddings = importlib.import_module("pydantic_ai.embeddings.openai")
     return Embedder(
-        openai_embeddings.OpenAIEmbeddingModel(model, provider=_openai_provider(endpoint))
+        openai_embeddings.OpenAIEmbeddingModel(model, provider=_openai_provider(endpoint)),
+        instrument=instrumentation(),
     )
 
 

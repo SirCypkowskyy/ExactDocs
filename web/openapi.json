@@ -4675,6 +4675,96 @@
         ]
       }
     },
+    "/api/v1/ai/usage": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Get Ai Usage",
+        "description": "Show what AI calls spent today and this month, and the budget left, per scope.\n\nScopes: the instance, embedding runs (instance-wide), then every library and account\nthat spent something this month. Windows are UTC days and months. Tokens and requests\nare what the providers reported; `unpriced_requests` were calls to a model without a\nknown price.",
+        "operationId": "ai-get_ai_usage",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiUsageOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/settings": {
       "put": {
         "tags": [
@@ -6694,6 +6784,45 @@
         "title": "AddedVersion",
         "description": "The existing library, the commit the new version's ref was pinned to, and its import."
       },
+      "AiUsageOut": {
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At",
+            "description": "When the totals were read."
+          },
+          "llm_searches_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Searches Per Minute",
+            "description": "LLM searches each caller may make per minute; null when not limited."
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeUsageOut"
+            },
+            "type": "array",
+            "title": "Scopes",
+            "description": "The instance and the embedding budget first, then each library and user that spent\nsomething this month."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "at",
+          "llm_searches_per_minute",
+          "scopes"
+        ],
+        "title": "AiUsageOut",
+        "description": "Spend and budget left per scope: the instance, embedding runs, each library and user."
+      },
       "AnthropicPlatform": {
         "type": "string",
         "enum": [
@@ -7143,6 +7272,93 @@
         ],
         "title": "AzureAuth",
         "description": "How an Azure profile (Azure OpenAI, Claude on Foundry) signs its calls."
+      },
+      "BudgetOut": {
+        "properties": {
+          "window": {
+            "$ref": "#/components/schemas/SpendWindow",
+            "description": "`day` or `month` (UTC)."
+          },
+          "window_start": {
+            "type": "string",
+            "format": "date",
+            "title": "Window Start",
+            "description": "The current window's first day."
+          },
+          "resets_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Resets At",
+            "description": "When the next window starts."
+          },
+          "usd_limit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usd Limit",
+            "description": "The ceiling in US dollars; null when dollars are not limited."
+          },
+          "usd_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usd Left",
+            "description": "Dollars left (never below 0); null when dollars are not limited."
+          },
+          "tokens_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Limit",
+            "description": "The ceiling in tokens; null when tokens are not limited."
+          },
+          "tokens_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Left",
+            "description": "Tokens left (never below 0); null when tokens are not limited."
+          },
+          "reached": {
+            "type": "boolean",
+            "title": "Reached",
+            "description": "The limit is used up: the scope's calls are skipped until `resets_at`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "window",
+          "window_start",
+          "resets_at",
+          "usd_limit",
+          "usd_left",
+          "tokens_limit",
+          "tokens_left",
+          "reached"
+        ],
+        "title": "BudgetOut",
+        "description": "One limit on a scope, and what is left of it in the current window."
       },
       "C7ContextResponse": {
         "properties": {
@@ -10716,6 +10932,47 @@
         "title": "RoleSource",
         "description": "Where a role's model came from."
       },
+      "ScopeUsageOut": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "description": "`instance`, `embedding` (embedding runs, instance-wide), `library` or `user`."
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The library ID or the account ID; empty for `instance` and `embedding`."
+          },
+          "day": {
+            "$ref": "#/components/schemas/SpentOut",
+            "description": "Spent today (UTC)."
+          },
+          "month": {
+            "$ref": "#/components/schemas/SpentOut",
+            "description": "Spent this month (UTC)."
+          },
+          "budgets": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetOut"
+            },
+            "type": "array",
+            "title": "Budgets",
+            "description": "The limits on this scope; empty when none is set."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope",
+          "id",
+          "day",
+          "month",
+          "budgets"
+        ],
+        "title": "ScopeUsageOut",
+        "description": "What one scope spent today and this month, and its budgets."
+      },
       "SearchAllResult": {
         "properties": {
           "notice": {
@@ -11016,6 +11273,61 @@
         ],
         "title": "Span",
         "description": "A `[start, end)` range of characters."
+      },
+      "SpendWindow": {
+        "type": "string",
+        "enum": [
+          "day",
+          "month"
+        ],
+        "title": "SpendWindow",
+        "description": "A budget window of the spend ledger, in UTC."
+      },
+      "SpentOut": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "description": "Tokens sent (an LLM step's total, which the harness does not split, is counted here)."
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "description": "Tokens received."
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens",
+            "description": "Both: what token budgets limit."
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "description": "Calls made."
+          },
+          "usd": {
+            "type": "number",
+            "title": "Usd",
+            "description": "Their price in US dollars (whole millionths); unpriced calls add nothing."
+          },
+          "unpriced_requests": {
+            "type": "integer",
+            "title": "Unpriced Requests",
+            "description": "Calls whose model had no known price."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "tokens",
+          "requests",
+          "usd",
+          "unpriced_requests"
+        ],
+        "title": "SpentOut",
+        "description": "What one scope spent in one window, as the providers reported it."
       },
       "SyncStatus": {
         "type": "string",

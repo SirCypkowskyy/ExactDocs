@@ -3261,8 +3261,6 @@ packages/exactdocs/src/exactdocs/retrieval/ports/driving.py GetChunkSets.__call_
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py GetSearchIndexState.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py IndexManifest.__call__ docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py IndexManifest.__call__ docstring-missing-returns
-packages/exactdocs/src/exactdocs/retrieval/ports/driving.py QueryDocs.__call__ docstring-missing-args
-packages/exactdocs/src/exactdocs/retrieval/ports/driving.py QueryDocs.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py ReadChunk.__call__ docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py ReadChunk.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py RebuildSearchIndex.__call__ docstring-missing-returns
@@ -3274,8 +3272,6 @@ packages/exactdocs/src/exactdocs/retrieval/ports/driving.py RetagArticles.__call
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py RetagArticles.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py SearchAllLibraries.__call__ docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/ports/driving.py SearchAllLibraries.__call__ docstring-missing-returns
-packages/exactdocs/src/exactdocs/retrieval/ports/driving.py SearchDocs.__call__ docstring-missing-args
-packages/exactdocs/src/exactdocs/retrieval/ports/driving.py SearchDocs.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py CollectChunksUseCase.__call__ docstring-missing-args
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py CollectChunksUseCase.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py CollectChunksUseCase.chunks field-without-docstring
@@ -3298,8 +3294,6 @@ packages/exactdocs/src/exactdocs/retrieval/use_cases.py IndexManifestUseCase._bu
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py IndexManifestUseCase.chunks field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py IndexManifestUseCase.clock field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py IndexManifestUseCase.search field-without-docstring
-packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.__call__ docstring-missing-args
-packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.chunks field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.token_budget field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py QueryDocsUseCase.versions field-without-docstring
@@ -3334,8 +3328,6 @@ packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchAllLibrariesUseCas
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchAllLibrariesUseCase.defaults field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchAllLibrariesUseCase.search field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchAllLibrariesUseCase.versions field-without-docstring
-packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.__call__ docstring-missing-args
-packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.__call__ docstring-missing-returns
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.chunks field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py SearchDocsUseCase.versions field-without-docstring
 packages/exactdocs/src/exactdocs/retrieval/use_cases.py _confirmed_removals docstring-missing-args

@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
+from opentelemetry.sdk.metrics.export import (
+    HistogramDataPoint,
+    InMemoryMetricReader,
+    NumberDataPoint,
+)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -75,12 +79,16 @@ class RecordingTracer:
 
     opened: list[Opened] = field(default_factory=list)
     answered: dict[str, str] = field(default_factory=dict)
+    fallbacks: list[tuple[str, str]] = field(default_factory=list)
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
     ) -> AbstractContextManager[RecordedSpan]:
         self.opened.append(Opened(name=name, mode=mode, query=query, attributes=attributes))
         return nullcontext(RecordedSpan(name=name, answered=self.answered))
+
+    def fallback(self, *, mode: str, reason: str) -> None:
+        self.fallbacks.append((mode, reason))
 
     @property
     def names(self) -> list[str]:
@@ -344,3 +352,43 @@ def test_a_span_that_fell_back_carries_the_mode_that_answered() -> None:
 
     (span,) = exporter.get_finished_spans()
     assert (span.attributes or {})["exactdocs.retrieval.mode"] == "bm25"
+
+
+def test_fallbacks_are_counted_by_mode_and_reason_without_library_user_or_query() -> None:
+    reader = InMemoryMetricReader()
+    tracer = OpenTelemetrySearchTracer(
+        provider=TracerProvider(), meter_provider=MeterProvider(metric_readers=[reader])
+    )
+
+    tracer.fallback(mode="bm25", reason="llm_budget_reached")
+    tracer.fallback(mode="bm25", reason="llm_budget_reached")
+    tracer.fallback(mode="hybrid", reason="llm_rate_limited")
+
+    data = reader.get_metrics_data()
+    assert data is not None
+    points = {
+        (metric.name, tuple(sorted(dict(point.attributes or {}).items())), point.value)
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        for point in metric.data.data_points
+        if isinstance(point, NumberDataPoint)
+    }
+    assert points == {
+        (
+            "exactdocs.ai.fallbacks",
+            (
+                ("exactdocs.fallback.reason", "llm_budget_reached"),
+                ("exactdocs.retrieval.mode", "bm25"),
+            ),
+            2,
+        ),
+        (
+            "exactdocs.ai.fallbacks",
+            (
+                ("exactdocs.fallback.reason", "llm_rate_limited"),
+                ("exactdocs.retrieval.mode", "hybrid"),
+            ),
+            1,
+        ),
+    }

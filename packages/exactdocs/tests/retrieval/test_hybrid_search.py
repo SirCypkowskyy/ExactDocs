@@ -6,6 +6,7 @@ provider is ever called. Versions are embedded as the ``embed`` job does: plan, 
 """
 
 import asyncio
+import logging
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
@@ -36,6 +37,8 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import EmbeddingFailedError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
+    BudgetLimit,
+    Budgets,
     ChunkId,
     DocTarget,
     EmbeddedTexts,
@@ -55,6 +58,8 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SearchableVersion,
     SourceHost,
+    SpendEntry,
+    SpendWindow,
     TagFilter,
     identifier_tokens,
     reciprocal_rank_fusion,
@@ -121,12 +126,16 @@ class RecordingTracer:
     """A test double of ``SearchTracer``: what was opened, in order."""
 
     opened: list[Opened] = field(default_factory=list)
+    fallbacks: list[tuple[str, str]] = field(default_factory=list)
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
     ) -> AbstractContextManager[Span]:
         self.opened.append(Opened(name=name, mode=mode, query=query, attributes=attributes))
         return nullcontext(Span())
+
+    def fallback(self, *, mode: str, reason: str) -> None:
+        self.fallbacks.append((mode, reason))
 
     @property
     def names(self) -> list[str]:
@@ -288,6 +297,7 @@ def _world(
     embedding: str | None = "concepts",
     wait: float = 5.0,
     reranker: bool = False,
+    budgets: Budgets | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -320,6 +330,7 @@ def _world(
         embedding_models=models,
         article_titles=catalog,
         spend=ledger,
+        budgets=budgets,
         query_embedding_timeout=wait,
     )
     return World(
@@ -386,8 +397,9 @@ async def _embedded_world(
     instance: RetrievalMode | None = RetrievalMode.HYBRID,
     wait: float = 5.0,
     reranker: bool = False,
+    budgets: Budgets | None = None,
 ) -> World:
-    world = _world(instance=instance, wait=wait, reranker=reranker)
+    world = _world(instance=instance, wait=wait, reranker=reranker, budgets=budgets)
     await _import(world, "v1", "m1", OLD_GUIDE)
     await _import(world, "v2", "m2", GUIDE)
     await _embed(world, "v1")
@@ -582,7 +594,11 @@ async def test_the_query_embedding_is_recorded_in_the_spend_ledger() -> None:
     await _search(world, "repeat failed requests")
 
     after = sum(r.input_tokens for r in world.ledger.rows.values())
-    assert after - before == 7 * 4  # instance and library rows, per day and month
+    # Recorded once (by the pipeline, through the budgets' ledger): 7 tokens in each of the
+    # embedding, instance and library scopes (no user: a direct call), per day and per month.
+    assert after - before == 7 * 3 * 2
+    scopes = {(r.scope_kind, r.scope_id) for r in world.ledger.rows.values()}
+    assert {("embedding", ""), ("instance", ""), ("library", LIB)} <= scopes
 
 
 @pytest.mark.parametrize("behaviour", ["fail", "hang", "unsupported", "boom"])
@@ -609,16 +625,57 @@ async def test_cancelling_a_search_while_the_query_is_embedded_cancels_it() -> N
         await search
 
 
-async def test_a_key_that_cannot_be_opened_answers_bm25() -> None:
+async def test_a_key_that_cannot_be_opened_answers_bm25_and_logs_only_the_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     world = await _embedded_world()
     world.factory.unsealable = True
 
-    result = await _search(world, "RetryPolicy")
+    with caplog.at_level(logging.WARNING, logger="exactdocs.retrieval.use_cases"):
+        result = await _search(world, "RetryPolicy")
 
     assert (result.retrieval_mode, result.fallback_reason) == (
         RetrievalMode.BM25,
         FallbackReason.EMBEDDING_UNAVAILABLE,
     )
+    (record,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    message = record.getMessage()
+    assert "SealedKeyError" in message
+    assert "sk-secret-in-the-message" not in message  # the exception's text never
+    assert "RetryPolicy" not in message  # nor the query
+
+
+@pytest.mark.parametrize("scope_kind", ["embedding", "instance", "library"])
+async def test_a_used_up_budget_answers_bm25_without_embedding_the_query(scope_kind: str) -> None:
+    limit = BudgetLimit(scope_kind=scope_kind, window=SpendWindow.DAY, tokens=10_000)
+    world = await _embedded_world(budgets=Budgets(limits=(limit,)))
+    scope_id = LIB if scope_kind == "library" else ""
+    used = SpendEntry(
+        scope_kind=scope_kind,
+        scope_id=scope_id,
+        window=SpendWindow.DAY,
+        window_start=T0.date(),
+        input_tokens=10_000,
+    )
+    await world.ledger.add([used])  # what other searches spent today
+
+    result = await _search(world, "RetryPolicy")
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.BM25,
+        FallbackReason.LLM_BUDGET_REACHED,
+    )
+    assert world.models.queries == []
+    assert _texts(result)[0] == "Resilience/S0"  # BM25 still answers
+
+
+async def test_a_budget_not_reached_lets_the_query_be_embedded() -> None:
+    limit = BudgetLimit(scope_kind="instance", window=SpendWindow.DAY, tokens=1_000_000)
+    world = await _embedded_world(budgets=Budgets(limits=(limit,)))
+
+    result = await _search(world, "RetryPolicy")
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.HYBRID, None)
 
 
 async def test_a_version_not_embedded_yet_answers_bm25_without_embedding_the_query() -> None:
