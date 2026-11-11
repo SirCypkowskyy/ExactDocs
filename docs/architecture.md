@@ -1134,8 +1134,10 @@ by default); the judge reranks only when chosen and its role resolves (`judge`, 
 else the cross-encoder does when there is one (`ModeChoice.reranker`). `Reranking` then hands the
 best of the same candidates that fit one bounded call (`models.judge_window`: at most
 `JUDGE_MAX_CANDIDATES`, 64, while the input, the text as cut and escaped and estimated by
-`models.estimated_tokens` (ASCII at `CHARS_PER_TOKEN` per token, every other character as a token,
-since CJK runs at about one token per character), stays within `JUDGE_INPUT_TOKEN_BUDGET`,
+`models.estimated_tokens` (ASCII at `CHARS_PER_TOKEN` per token, long ASCII runs without whitespace
+such as base64 at `DENSE_CHARS_PER_TOKEN`, 1.5, a code point above U+FFFF as its 4 UTF-8 bytes, and
+every other character, control characters included, as a token, since CJK runs at about one token
+per character), stays within `JUDGE_INPUT_TOKEN_BUDGET`,
 22,000, whose headroom covers ASCII code with escaped entities at about 1.7 characters per token
 together with the largest output cap under the step's `LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
 sent, paid for and then refused) to the `CandidateJudge` driven port under `asyncio.timeout`
@@ -1311,7 +1313,7 @@ agent opens it; `Traversals` emits the harness's filesystem events after each re
 autoload (the root's file in the system instructions) only for `trusted`. The tools, the browser
 and `AgentBounds` are set before the run, so a file can change none of them. RepoContext listens to
 the run's events, so a run with guidance streams its model requests; its model is wrapped in
-`UsageFloor`, which counts each side of a streamed response as at least 4 characters per token,
+`UsageFloor`, which counts each side of a streamed response as at least `models.estimated_tokens`,
 so a server that reports no usage cannot switch off `UsageLimits` or the budgets. Turning
 guidance on for a library already imported is bootstrap's `SetRetrievalThenReprocess` (the REST
 setting): it queues a `reprocess`, which re-imports every version at its commit.

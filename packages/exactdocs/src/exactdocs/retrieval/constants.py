@@ -694,11 +694,28 @@ order after them."""
 JUDGE_INPUT_TOKEN_BUDGET: Final[int] = 22_000
 """Most input tokens one judge call may be estimated at (``models.estimated_tokens``, plus
 ``JUDGE_CANDIDATE_OVERHEAD_TOKENS`` per candidate): the best candidates that fit are judged, the
-rest keep their order after them. Non-ASCII text is estimated at a token per character, at or
-above what tokenizers give it; ASCII text at 4 characters per token, which entity-heavy code
-undercuts at about 1.7. The budget leaves room for that: 22,000 times 4 / 1.7 is about 51,800
-tokens, which with the largest output cap stays under ``LLM_TOKEN_LIMIT``, so the harness never
-stops a call it has already paid for."""
+rest keep their order after them. The estimate is at or above what tokenizers count for code
+points above U+FFFF (4, their UTF-8 bytes), control characters and common BMP scripts (CJK,
+Cyrillic, Arabic: a token each). It undercounts three kinds of text: ASCII prose and code at
+4 characters per token, which entity-heavy code undercuts at about 1.7; ASCII runs without
+whitespace at 1.5, which base64 undercuts at about 1.4; and rare BMP symbols, which can take up
+to 3 tokens each. The budget leaves room for about 2.5 real tokens per estimated one (22,000
+times 2.5 plus the largest output cap is about 58,600, under ``LLM_TOKEN_LIMIT``; entity-heavy
+code needs 4 / 1.7, about 2.35), so the harness never stops a call it has already paid for. Text
+made mostly of rare BMP symbols can still go past it."""
+DENSE_RUN_MIN_CHARS: Final[int] = 32
+"""ASCII without whitespace for this many characters or more (base64, hashes, minified code) is
+estimated at ``DENSE_CHARS_PER_TOKEN``, not ``CHARS_PER_TOKEN``."""
+DENSE_CHARS_PER_TOKEN: Final[float] = 1.5
+"""Characters per token of a long ASCII run without whitespace: tokenizers merge few of them
+(base64 runs at about 1.4)."""
+DENSE_RUN: Final[re.Pattern[str]] = re.compile(rf"[!-~]{{{DENSE_RUN_MIN_CHARS},}}")
+"""Printable ASCII without whitespace, long enough to count at ``DENSE_CHARS_PER_TOKEN``."""
+BMP_MAX: Final[int] = 0xFFFF
+"""The last code point of the Basic Multilingual Plane."""
+SUPPLEMENTARY_TOKENS: Final[int] = 4
+"""Tokens a code point above U+FFFF is estimated at: its UTF-8 bytes, which bound what a
+byte-level tokenizer gives it (CJK Extension B runs at about 3.9, emoji at 2 to 3)."""
 JUDGE_CANDIDATE_OVERHEAD_TOKENS: Final[int] = 16
 """Estimated input tokens of one candidate's delimiters and ID, beyond its text."""
 JUDGE_PROMPT_OVERHEAD_TOKENS: Final[int] = 64

@@ -28,6 +28,7 @@ from exactdocs.retrieval.constants import (
     _WORD,
     AGENT_CACHE_FORMAT,
     AGENT_CACHE_TERM_HASH_CHARS,
+    BMP_MAX,
     BUDGET_NOT_POSITIVE,
     BUDGET_WITHOUT_CEILING,
     CHARS_PER_TOKEN,
@@ -47,6 +48,8 @@ from exactdocs.retrieval.constants import (
     DEFAULT_SANDBOX_MEMORY,
     DEFAULT_SANDBOX_SECONDS,
     DEFAULT_SANDBOX_SUSPENSIONS,
+    DENSE_CHARS_PER_TOKEN,
+    DENSE_RUN,
     DNS_LABEL,
     EMBEDDING_INPUT_FORMAT,
     GUIDANCE_ANGLES,
@@ -110,6 +113,7 @@ from exactdocs.retrieval.constants import (
     SPEND_SCOPE_LIBRARY,
     SPEND_SCOPE_USER,
     STOP_WORDS,
+    SUPPLEMENTARY_TOKENS,
     TOKENS_PER_MILLION,
     VECTOR_SNIPPET_WORDS,
 )
@@ -1246,20 +1250,35 @@ def _escaped(text: str) -> str:
 def estimated_tokens(text: str) -> int:
     """Estimate, on the high side, the tokens a text takes, without any tokenizer.
 
-    ASCII characters count at ``CHARS_PER_TOKEN`` per token, every other character (CJK, Cyrillic,
-    emoji, accents) as a whole token: real tokenizers give CJK about 1 token per character, so
-    4 characters per token alone would undercount it fourfold. ASCII code with many escaped
-    entities runs at about 1.7 characters per token; callers that must stay under a hard limit
-    keep headroom for it (``JUDGE_INPUT_TOKEN_BUDGET``).
+    A code point above U+FFFF counts as ``SUPPLEMENTARY_TOKENS`` (its UTF-8 bytes, a bound for
+    byte-level tokenizers), every other non-ASCII character (CJK, Cyrillic, accents) and each
+    ASCII control character but tab, newline and carriage return as a token: real tokenizers give
+    common BMP scripts about a token per character, so 4 characters per token alone would
+    undercount them fourfold. ASCII without whitespace for ``DENSE_RUN_MIN_CHARS`` or more
+    (base64, hashes) counts at ``DENSE_CHARS_PER_TOKEN``, other ASCII at ``CHARS_PER_TOKEN``.
+
+    This is not a bound everywhere: ASCII code with many escaped entities runs at about 1.7
+    characters per token, base64 at about 1.4, and a rare BMP symbol can take up to 3 tokens.
+    Callers that must stay under a hard limit keep headroom for that
+    (``JUDGE_INPUT_TOKEN_BUDGET``).
 
     Args:
         text: The text.
 
     Returns:
-        ``ceil(ascii_chars / CHARS_PER_TOKEN) + non_ascii_chars``.
+        The estimated tokens.
     """
-    ascii_chars = sum(1 for c in text if c.isascii())
-    return -(-ascii_chars // CHARS_PER_TOKEN) + (len(text) - ascii_chars)
+    dense = sum(len(run) for run in DENSE_RUN.findall(text))
+    tokens = math.ceil(dense / DENSE_CHARS_PER_TOKEN)
+    plain = 0
+    for c in DENSE_RUN.sub("", text) if dense else text:
+        if not c.isascii():
+            tokens += SUPPLEMENTARY_TOKENS if ord(c) > BMP_MAX else 1
+        elif (c < " " and c not in "\t\n\r") or c == "\x7f":
+            tokens += 1
+        else:
+            plain += 1
+    return tokens + -(-plain // CHARS_PER_TOKEN)
 
 
 def judge_id(position: int) -> str:

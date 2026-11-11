@@ -33,6 +33,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySpendLedger,
 )
 from exactdocs.retrieval.constants import (
+    DENSE_RUN_MIN_CHARS,
     EXPLORER_GUIDANCE,
     EXPLORER_INSTRUCTIONS,
     EXPLORER_TRUSTED_GUIDANCE,
@@ -539,9 +540,10 @@ async def test_a_cjk_note_that_reports_no_usage_counts_a_token_per_character() -
     long = await _world(guided(OPEN_FOLDERS, [], billed=False), files=cjk)
     await _search(long)
 
-    # At 4 bytes per token the note would add about 1,425 tokens; a token a character, 1,900
-    # (less the small file's few it replaces).
-    assert _tokens(long.ledger) - _tokens(short.ledger) >= len(note) - len("docs/")
+    # At 4 bytes per token the note would add about 1,425 tokens; a token a character, 1,900,
+    # less the small file it replaces and the JSON on either side of it, which the note cuts out
+    # of a long run without whitespace (counted denser than the short pieces left).
+    assert _tokens(long.ledger) - _tokens(short.ledger) >= len(note) - 2 * DENSE_RUN_MIN_CHARS
 
 
 def test_the_usage_floor_reads_utf8_and_counts_non_ascii_as_whole_tokens() -> None:

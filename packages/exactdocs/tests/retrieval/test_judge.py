@@ -7,6 +7,8 @@ is asked for, an ID it was not given, a score out of bounds, an error or a hang.
 """
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import math
@@ -926,10 +928,33 @@ ESCAPED_CODE = "if (a << 2) > b && c < d: x = f<T>(y) >> 1 & mask\n" * 60
 """Code whose escaped entities a tokenizer counts at about 1.7 characters per token."""
 
 
+EXTENSION_B = "".join(chr(0x20000 + i % 700) for i in range(MAX_JUDGE_DOCUMENT_CHARS))
+"""CJK Extension B: a tokenizer counts about 3.9 tokens per character (4 UTF-8 bytes each)."""
+BASE64 = base64.b64encode(b"".join(hashlib.sha256(bytes([i])).digest() for i in range(48))).decode()
+"""Dense base64 (an inline ``data:`` image): about 0.7 tokens per character, no whitespace."""
+CONTROL = "".join(chr(c) for c in range(32) if chr(c) not in "\t\n\r") * 70
+"""ASCII control characters: about a token each."""
+_DENSE_RUN = re.compile(r"[!-~]{32,}")
+
+
 def _real_tokens(text: str) -> int:
-    """A pessimistic stand-in tokenizer: non-ASCII 1 token a character, ASCII 1.7 characters."""
-    ascii_chars = sum(1 for c in text if c.isascii())
-    return math.ceil(ascii_chars / 1.7) + len(text) - ascii_chars
+    """A pessimistic stand-in tokenizer, at or above what o200k and cl100k count.
+
+    A code point above U+FFFF is 4 tokens (its UTF-8 bytes), any other non-ASCII character and
+    each ASCII control character 1, ASCII without whitespace for 32 characters or more 1.4
+    characters a token (base64 runs at about 0.7 tokens a character), other ASCII 1.7.
+    """
+    dense = sum(len(run) for run in _DENSE_RUN.findall(text))
+    tokens = math.ceil(dense / 1.4)
+    plain = 0
+    for c in _DENSE_RUN.sub("", text):
+        if not c.isascii():
+            tokens += 4 if ord(c) > 0xFFFF else 1
+        elif not c.isprintable() and c not in "\t\n\r":
+            tokens += 1
+        else:
+            plain += 1
+    return tokens + math.ceil(plain / 1.7)
 
 
 def _sent_prompt(text: str) -> tuple[int, int]:
@@ -950,12 +975,37 @@ def test_each_non_ascii_character_counts_as_at_least_one_token() -> None:
     assert window * MAX_JUDGE_DOCUMENT_CHARS <= JUDGE_INPUT_TOKEN_BUDGET
 
 
-@pytest.mark.parametrize("text", [CJK, ESCAPED_CODE], ids=["cjk", "escaped-code"])
+@pytest.mark.parametrize(
+    "text",
+    [CJK, ESCAPED_CODE, EXTENSION_B, BASE64, CONTROL],
+    ids=["cjk", "escaped-code", "extension-b", "base64", "control"],
+)
 def test_a_top_n_of_200_stays_under_the_step_limit_whatever_the_script(text: str) -> None:
     window, tokens = _sent_prompt(text)
 
     assert window > 0
     assert tokens + judge_max_tokens(window) < LLM_TOKEN_LIMIT
+
+
+def test_a_code_point_above_the_bmp_counts_as_four_tokens() -> None:
+    assert estimated_tokens("\U00020000") == 4
+    assert estimated_tokens("😀") == 4
+    assert estimated_tokens(EXTENSION_B) == 4 * len(EXTENSION_B)
+    assert estimated_tokens(EXTENSION_B) >= _real_tokens(EXTENSION_B)
+
+
+def test_a_long_ascii_run_without_whitespace_counts_at_one_and_a_half_characters() -> None:
+    assert estimated_tokens("x" * 31) == 8, "a short run stays at 4 characters a token"
+    assert estimated_tokens("x" * 32) == math.ceil(32 / 1.5)
+    assert estimated_tokens(BASE64) == math.ceil(len(BASE64) / 1.5)
+    assert estimated_tokens(BASE64) >= len(BASE64) * 0.7 * 0.95, "within 5% of a real tokenizer"
+    assert estimated_tokens("word " * 400) == 500, "prose keeps 4 characters a token"
+
+
+def test_each_control_character_counts_as_at_least_one_token() -> None:
+    assert estimated_tokens("\x00\x01\x1f\x7f") == 4
+    assert estimated_tokens(CONTROL) >= len(CONTROL)
+    assert estimated_tokens("a\nb\tc") == 2, "newlines and tabs are whitespace"
 
 
 def test_the_budget_covers_the_densest_ascii_with_the_largest_output_cap() -> None:
@@ -964,8 +1014,11 @@ def test_the_budget_covers_the_densest_ascii_with_the_largest_output_cap() -> No
     assert worst_input + judge_max_tokens(JUDGE_MAX_CANDIDATES) < LLM_TOKEN_LIMIT
 
 
-async def test_a_cjk_library_is_judged_in_one_call_within_the_step_limit() -> None:
-    sections = [f"retry {'retry ' * (200 - i)}{CJK}" for i in range(200)]
+@pytest.mark.parametrize("text", [CJK, EXTENSION_B, BASE64], ids=["cjk", "extension-b", "base64"])
+async def test_a_library_in_any_script_is_judged_in_one_call_within_the_step_limit(
+    text: str,
+) -> None:
+    sections = [f"retry {'retry ' * (200 - i)}{text}" for i in range(200)]
     world = await _world(
         rerank_with=RerankWith.JUDGE, limits=RerankLimits(top_n=200), sections=sections
     )
