@@ -541,7 +541,7 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   `litellm`, pydantic-ai's OpenAI-API providers (`deepseek`, `together`, `fireworks`, `cerebras`,
   `github`, `vercel`, `moonshotai`, `heroku`, `nebius`, `ovhcloud`, `sambanova`, `alibaba`),
   `tei` (Text Embeddings Inference serving a reranker: the `reranker` role only), and `local`
-  (#245). Groq, Mistral, Cohere, xAI and Bedrock are reached through their OpenAI-compatible
+  (models in this process, see *Local models*). Groq, Mistral, Cohere, xAI and Bedrock are reached through their OpenAI-compatible
   endpoint or LiteLLM.
 - **Roles:** `embedding`, `reranker`, `llm`, `judge` (defaults to `llm`).
 - **Explicit values only.** Every SDK client gets its endpoint, key (`unused` for a profile
@@ -632,6 +632,49 @@ provider profile other than `local` configured, the provider SDKs are loaded in 
 start, so the first search never waits for them; a load that fails is a warning, never a stop. Whatever the reranker raises (an HTTP client closed under the
 call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. A hybrid search is
 reranked the same way, after the fusion.
+
+#### Local models
+
+An air-gapped instance, or one whose docs may not leave it, runs a small embedding model and a
+cross-encoder inside ExactDocs, on the CPU (fastembed on ONNX Runtime, no torch, no GPU). They
+come with the `exactdocs[local]` extra (`uvx --from 'exactdocs[ai,local]' exactdocs serve`) and
+are fetched **once**, by the one command that contacts the Hugging Face Hub:
+
+```bash
+exactdocs models pull        # BAAI/bge-small-en-v1.5 (67 MB) and Xenova/ms-marco-MiniLM-L-6-v2 (92 MB)
+exactdocs models pull BAAI/bge-base-en-v1.5   # or any fastembed embedding model or cross-encoder
+```
+
+```toml
+[ai.providers.local]
+kind = "local"                          # no endpoint, key, headers or proxy
+
+[ai.embedding]
+model = "local:BAAI/bge-small-en-v1.5"  # <profile>:<model>, 384 dimensions
+
+[ai.reranker]
+model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
+timeout = 5.0                           # a CPU reranks 32 long candidates in about 1 to 3 s
+```
+
+- **Where models live:** `EXACTDOCS_MODELS_DIR` (default `<data dir>/models`; the `-local` image
+  sets its read-only `/opt/exactdocs/models`), one folder per model (`BAAI/bge-small-en-v1.5/`)
+  with its ONNX file, its tokenizer and a marker `models pull` writes last. A model already there
+  is skipped, so a cached directory makes the command offline.
+- **Never downloaded at run time.** Models load from that folder only, with `HF_HUB_OFFLINE=1`.
+  A role whose model is not there is **turned off at start** with an error naming the command
+  (`AI role embedding (local:BAAI/bge-small-en-v1.5) is off: model ... is not in ...: run
+  `exactdocs models pull BAAI/bge-small-en-v1.5``); the server starts and answers BM25.
+- **In process, bounded:** each model is loaded once per process (at start for the instance's
+  roles), and calls run on a pool of 2 worker threads, never on the event loop; ONNX Runtime
+  uses the CPU's cores within each call. On a 4-core x86_64 machine, embedding the fixture
+  library (3 versions, 61 distinct chunks, batches of 64) with bge-small took 5.9 s (12.2 s of
+  CPU), and the whole process grew from 397 MB (app and model loaded) to 636 MB; reranking 32
+  candidates with MiniLM took about 0.2 to 1.2 s.
+- A local model cannot shorten its vectors: leave `[ai.embedding] dimensions` unset (or set to
+  the model's). A `local` profile runs no chat model; use `ollama` (or any `openai-compatible`
+  server) for a local LLM.
+- Nothing is sent anywhere, so nothing is priced; the tokens are counted as for any model.
 
 The hybrid pipeline is built (#92); the HyDE and agentic pipelines arrive with #94 and #98.
 

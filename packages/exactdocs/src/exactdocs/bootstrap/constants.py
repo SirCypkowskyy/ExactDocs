@@ -32,6 +32,7 @@ LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
         "admin reset-password",
         "ai check",
         "ai estimate",
+        "models pull",
     }
 )
 """CLI commands that work on the local data directory instead of calling a server."""
@@ -437,3 +438,40 @@ CHECK_MAX_TOKENS: Final[int] = 16
 """Output cap of a chat model check."""
 CHECK_TEXT: Final[str] = "ExactDocs connectivity check"
 """What a check embeds, and reranks against itself."""
+
+# ---------------------------------------------------------------- local models (#245)
+LOCAL_SDK_MODULE: Final[str] = "exactdocs.bootstrap.local_sdk"
+"""The module that imports fastembed (the ``[local]`` extra): loaded only once a local model is
+used."""
+LOCAL_EXTRA: Final[str] = (
+    "install exactdocs[local] (uvx --from 'exactdocs[local]' exactdocs, or the -local image)"
+)
+"""What a ``local`` profile needs when fastembed or ONNX Runtime is not installed."""
+LOCAL_MODULES: Final[tuple[str, ...]] = ("fastembed", "onnxruntime")
+"""The modules a ``local`` profile's models import."""
+DEFAULT_LOCAL_EMBEDDING: Final[str] = "BAAI/bge-small-en-v1.5"
+"""The default local embedding model (384 dimensions, 67 MB quantized ONNX)."""
+DEFAULT_LOCAL_RERANKER: Final[str] = "Xenova/ms-marco-MiniLM-L-6-v2"
+"""The default local cross-encoder (91 MB)."""
+MODELS_SUBDIR: Final[str] = "models"
+"""Where models live in the data directory unless ``EXACTDOCS_MODELS_DIR`` says otherwise."""
+MODEL_MARKER: Final[str] = "exactdocs-model.json"
+"""Written last by ``exactdocs models pull`` in a model's folder: the model is complete."""
+MODEL_NAME: Final[re.Pattern[str]] = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}(/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?"
+)
+"""A model name as fastembed lists it (``<org>/<name>``): also its folder in the models
+directory, so no ``..``, no absolute path."""
+LOCAL_MODEL_WORKERS: Final[int] = 2
+"""Local model calls that may run at once (each also uses ONNX Runtime's own threads)."""
+HUB_FILES: Final[tuple[str, ...]] = (
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+)
+"""The tokenizer and configuration files fetched with a model's ONNX file."""
+TOKENIZER_FILES: Final[tuple[str, ...]] = ("tokenizer.json", "tokenizer_config.json")
+"""Files a pulled model must have besides its ONNX file (the others are optional)."""
+HF_OFFLINE_VARIABLE: Final[str] = "HF_HUB_OFFLINE"
+"""Hugging Face's offline switch: set to 1 whenever a local model loads, so nothing downloads."""

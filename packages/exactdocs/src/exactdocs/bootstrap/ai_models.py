@@ -20,7 +20,10 @@ from types import ModuleType
 
 from exactdocs.bootstrap.ai_endpoint import Endpoint
 from exactdocs.bootstrap.constants import AI_SDK_MODULE, CHECK_TEXT
+from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.settings import AiSettings
+from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
+from exactdocs.retrieval.adapters.driven.local_models import LocalEmbedder, LocalEmbeddingModels
 from exactdocs.retrieval.constants import MASK, MAX_CHECK_ERROR
 from exactdocs.retrieval.errors import InvalidProviderError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
@@ -35,7 +38,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
 )
-from exactdocs.retrieval.ports.driven import Reranker, SecretBox
+from exactdocs.retrieval.ports.driven import Embeddings, Reranker, SecretBox
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +111,7 @@ class PydanticAiModels:
             What to install, or ``None``.
         """
         if profile.kind is ProviderKind.LOCAL:
-            return "local models arrive with the exactdocs[local] extra (#245)"
+            return "a local profile runs in this process (LocalModels), not through an SDK"
         return next((why for module, why in _needs(profile) if not _installed(module)), None)
 
     async def warm(self) -> None:
@@ -358,6 +361,126 @@ class PydanticAiModels:
         for secret in sorted(filter(None, secrets), key=len, reverse=True):
             text = text.replace(secret, MASK)
         return text if len(text) <= MAX_CHECK_ERROR else text[:MAX_CHECK_ERROR] + "..."
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AiModels:
+    """Implements ``retrieval.ports.driven.ModelFactory`` for every profile kind.
+
+    ``local`` profiles run in this process (``LocalModels``, fastembed); every other kind goes
+    through pydantic-ai (``PydanticAiModels``).
+    """
+
+    remote: PydanticAiModels = field(default_factory=PydanticAiModels)
+    """The profiles behind an endpoint."""
+    local: LocalModels
+    """The ``local`` profiles."""
+
+    def _of(self, profile: ProviderProfile) -> PydanticAiModels | LocalModels:
+        """Pick the factory of a profile's kind.
+
+        Args:
+            profile: The profile.
+
+        Returns:
+            ``local`` for a local profile, else ``remote``.
+        """
+        return self.local if profile.kind is ProviderKind.LOCAL else self.remote
+
+    def unsupported(self, profile: ProviderProfile) -> str | None:
+        """Say why this installation cannot call the profile.
+
+        Args:
+            profile: The profile.
+
+        Returns:
+            What to install, or ``None``.
+        """
+        return self._of(profile).unsupported(profile)
+
+    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+        """Build a chat model.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+
+        Returns:
+            The model.
+        """
+        return await self._of(profile).chat_model(profile, model)
+
+    async def embedder(self, profile: ProviderProfile, model: str) -> object:
+        """Build an embedder.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+
+        Returns:
+            A pydantic-ai ``Embedder``, or a ``LocalEmbedder``.
+        """
+        return await self._of(profile).embedder(profile, model)
+
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
+        """Build a reranker.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+
+        Returns:
+            The reranker.
+        """
+        return await self._of(profile).reranker(profile, model)
+
+    async def release(self, name: str) -> None:
+        """Close what was built for a deleted profile.
+
+        Args:
+            name: The profile's name.
+        """
+        await self.remote.release(name)
+        await self.local.release(name)
+
+    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+        """Make one minimal call as ``role`` uses the model.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+            role: The role.
+
+        Returns:
+            The outcome.
+        """
+        return await self._of(profile).check(profile, model, role)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AiEmbeddingModels:
+    """Implements ``retrieval.ports.driven.EmbeddingModels`` for both kinds of embedder."""
+
+    def bind(
+        self, handle: object, *, name: str, dimensions: int | None, batch_size: int
+    ) -> Embeddings:
+        """Wrap what ``AiModels.embedder`` built.
+
+        Args:
+            handle: A ``LocalEmbedder``, or a pydantic-ai ``Embedder``.
+            name: ``<profile>:<model>``.
+            dimensions: The configured dimensions, if any.
+            batch_size: The most texts per call.
+
+        Returns:
+            The model.
+        """
+        models = (
+            LocalEmbeddingModels()
+            if isinstance(handle, LocalEmbedder)
+            else PydanticAiEmbeddingModels()
+        )
+        return models.bind(handle, name=name, dimensions=dimensions, batch_size=batch_size)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -5,14 +5,20 @@ import signal
 import threading
 from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager, nullcontext, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
 from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.bootstrap.ai_models import ConfiguredAi, PydanticAiModels, configured_ai
+from exactdocs.bootstrap.ai_models import (
+    AiEmbeddingModels,
+    AiModels,
+    ConfiguredAi,
+    PydanticAiModels,
+    configured_ai,
+)
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
     CatalogArticleSuggestions,
@@ -53,6 +59,7 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
@@ -103,7 +110,6 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
-from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
@@ -117,7 +123,13 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
-from exactdocs.retrieval.models import ProviderKind, RerankLimits, RetrievalMode
+from exactdocs.retrieval.models import (
+    ModelRole,
+    ProviderKind,
+    ProviderProfile,
+    RerankLimits,
+    RetrievalMode,
+)
 from exactdocs.retrieval.ports.driven import (
     EmbeddingModels,
     ModelFactory,
@@ -130,11 +142,19 @@ from exactdocs_kernel import DomainError, SystemClock
 logger = logging.getLogger(__name__)
 
 
-def _ai_configuration(settings: Settings) -> ConfiguredAi:
+type LocalRoles = tuple[tuple[ProviderProfile, ModelRole, str], ...]
+"""The instance roles on ``local`` profiles: ``(profile, role, model)``."""
+
+
+def _ai_configuration(settings: Settings, local: LocalModels) -> ConfiguredAi:
     """Read the AI profiles and roles of the environment and the TOML file, refusing bad ones.
+
+    A role on a ``local`` profile whose model is not in the models directory is turned off, with
+    an error naming ``exactdocs models pull``: it is never downloaded (#245).
 
     Args:
         settings: The runtime configuration.
+        local: Knows which local models were pulled (reading their markers only).
 
     Returns:
         The configuration.
@@ -147,29 +167,56 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
         configured = configured_ai(settings.ai)
     except DomainError as error:  # fixed texts and names: never a key
         raise StartupError(str(error)) from None
-    probe = PydanticAiModels()
+    probe = AiModels(local=local)
     for profile in configured.profiles:
         if (reason := probe.unsupported(profile)) is not None:
             message = f"AI provider {profile.name!r}: {reason}"
             raise StartupError(message)
-    return configured
+    roles = configured.roles
+    for profile, role, model in _local_roles(configured):
+        if (reason := local.missing(model, role)) is not None:
+            logger.error("AI role %s (%s:%s) is off: %s", role.value, profile.name, model, reason)
+            roles = replace(roles, **{role.value: None})
+    return replace(configured, roles=roles)
 
 
-async def _warm_ai(retrieval: RetrievalModule) -> None:
-    """Load the provider SDKs in a worker thread at start when a model may be called.
+def _local_roles(configured: ConfiguredAi) -> LocalRoles:
+    """List the instance roles set to a model of a configured ``local`` profile.
+
+    Args:
+        configured: The configuration.
+
+    Returns:
+        ``(profile, role, model)`` of each.
+    """
+    local = {p.name: p for p in configured.profiles if p.kind is ProviderKind.LOCAL}
+    return tuple(
+        (local[ref.profile], role, ref.model)
+        for role in ModelRole
+        if (ref := configured.roles.explicit(role)) is not None and ref.profile in local
+    )
+
+
+async def _warm_ai(retrieval: RetrievalModule, local: LocalModels, local_roles: LocalRoles) -> None:
+    """Load the provider SDKs and the local models in worker threads at start.
 
     That is when a provider profile other than ``local`` exists (configured, or stored over the
     REST API): every role, the instance's or a library's own, names an existing profile, and
     ``local`` models (#245) need none of these SDKs. The first search that calls a model would
     otherwise import them (seconds) inside its reranker timeout. With no such profile nothing is
-    loaded (RUN-02). A failed load never stops the start (``PydanticAiModels.warm``).
+    loaded (RUN-02). A failed load never stops the start (``PydanticAiModels.warm``). The models
+    the instance roles name on ``local`` profiles are loaded too (fastembed, once per process);
+    a role a library sets on a local profile loads its model at its first call.
 
     Args:
         retrieval: Lists the provider profiles (reading them imports no SDK).
+        local: Loads the local models.
+        local_roles: The instance roles on local profiles whose model was pulled.
     """
     profiles = (await retrieval.list_providers()).providers
     if any(p.kind is not ProviderKind.LOCAL for p in profiles):
         await PydanticAiModels().warm()
+    await local.warm(local_roles)
 
 
 def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
@@ -245,6 +292,10 @@ class _ReadSide:
     """Retrieval."""
     search_choice: PostgresSearchChoice | None
     """On PostgreSQL: the search engine, chosen once the schema is migrated."""
+    local: LocalModels
+    """Runs the ``local`` profiles' models."""
+    local_roles: LocalRoles
+    """The instance roles on local profiles, loaded at start."""
 
 
 def _build_read_side(
@@ -276,7 +327,8 @@ def _build_read_side(
         The two modules (``StartupError`` when the AI configuration is invalid), and on
         PostgreSQL the search engine to choose at start.
     """
-    ai = _ai_configuration(settings)
+    local = LocalModels(models_dir=settings.effective_models_dir)
+    ai = _ai_configuration(settings, local)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -316,7 +368,8 @@ def _build_read_side(
         configured_profiles=ai.profiles,
         stored_profiles=SqliteProviderProfiles(engine=engine),
         instance_roles=ai.roles,
-        models=model_factory or PydanticAiModels(keys=ai.keys, box=ai_box),
+        models=model_factory
+        or AiModels(remote=PydanticAiModels(keys=ai.keys, box=ai_box), local=local),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
         rerank_limits=RerankLimits(
@@ -327,14 +380,20 @@ def _build_read_side(
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
         vectors=vectors,
-        embedding_models=embedding_models or PydanticAiEmbeddingModels(),
+        embedding_models=embedding_models or AiEmbeddingModels(),
         article_titles=CatalogArticleTitles(get_article_titles=catalog.get_article_titles),
         spend=SqliteSpendLedger(engine=engine),
         prices=GenaiPrices(),
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
     )
-    return _ReadSide(catalog=catalog, retrieval=retrieval, search_choice=choice)
+    return _ReadSide(
+        catalog=catalog,
+        retrieval=retrieval,
+        search_choice=choice,
+        local=local,
+        local_roles=_local_roles(ai),
+    )
 
 
 def _system_git(settings: Settings, engine: AsyncEngine) -> tuple[GitCli | MissingGit, Path | None]:
@@ -450,6 +509,10 @@ class ReadOnlyContainer:
     retrieval: RetrievalModule
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
     """On PostgreSQL: the search engine, chosen in ``running()``."""
+    local: LocalModels = field(repr=False)
+    """Runs the ``local`` profiles' models."""
+    local_roles: LocalRoles = field(default=(), repr=False)
+    """The instance roles on local profiles, loaded at start."""
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
@@ -465,6 +528,8 @@ class ReadOnlyContainer:
             catalog=read.catalog,
             retrieval=read.retrieval,
             search_choice=read.search_choice,
+            local=read.local,
+            local_roles=read.local_roles,
         )
 
     @asynccontextmanager
@@ -480,7 +545,7 @@ class ReadOnlyContainer:
             await check_schema_is_current(self.engine)
             if self.search_choice is not None:  # it may not make the BM25 index: it only reads
                 await self.search_choice.choose(create=False)
-            await _warm_ai(self.retrieval)
+            await _warm_ai(self.retrieval, self.local, self.local_roles)
             yield
         finally:
             try:
@@ -507,6 +572,10 @@ class Container:
     """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
     """On PostgreSQL: the search engine, chosen in ``running()`` once the schema is migrated."""
+    local: LocalModels = field(repr=False)
+    """Runs the ``local`` profiles' models."""
+    local_roles: LocalRoles = field(default=(), repr=False)
+    """The instance roles on local profiles, loaded at start."""
     # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
     # event loop) is refused as well.
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -657,6 +726,8 @@ class Container:
             engine=engine,
             work_owner=work_owner,
             search_choice=read.search_choice,
+            local=read.local,
+            local_roles=read.local_roles,
             catalog=read.catalog,
             identity=IdentityModule.build(
                 repository=SqliteAccountRepository(engine=engine),
@@ -739,7 +810,7 @@ class Container:
             await migrate(self.engine)
             if self.search_choice is not None:
                 await self.search_choice.choose(create=True)
-            await _warm_ai(self.retrieval)
+            await _warm_ai(self.retrieval, self.local, self.local_roles)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
                 stored = (

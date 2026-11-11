@@ -12,6 +12,9 @@ dev = [
     # The AI extra is installed for development and CI, so the tests prove it stays unimported
     # while no model is configured (RUN-02), and later AI tests can use pydantic-ai's test models.
     "exactdocs[ai]",
+    # The local-models extra too (#245): its tests run tiny ONNX models through fastembed, and the
+    # model-free tests prove it stays unimported until a `local` profile's role is configured.
+    "exactdocs[local]",
     "httpx>=0.28",
     # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):
     # exact pin, it moves with pydantic-ai-slim in the `ai` extra.
@@ -27,6 +30,10 @@ docs = ["zensical>=0.0.74"]
 [tool.uv]
 package = false
 default-groups = ["dev"]
+# A new dependency must be at least 14 days old. The `[local]` extra (#245) pulls these two
+# transitively, and their newest releases were younger than that when it was locked: hold them
+# at what was out by then. Drop an entry once a bump takes a release older than 14 days.
+exclude-newer-package = { filelock = "2026-10-28T00:00:00Z", hf-xet = "2026-10-28T00:00:00Z" }
 
 [tool.uv.workspace]
 members = ["packages/*"]

@@ -1026,8 +1026,21 @@ the query. The HTTP adapter (`adapters/driven/http_reranker.py`, `HttpReranker`)
 Cohere-compatible `/rerank` (`openai-compatible`, `vllm`, `litellm` profiles; Voyage's `data`
 answer too) or TEI's (`tei` profiles), cuts the texts to `MAX_RERANK_*_CHARS`, sends batches the
 endpoint accepts concurrently (a `TaskGroup`: one failed batch cancels the rest), and turns every failure into a `RerankerError` without the URL, key
-or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client; the
-fastembed cross-encoder (#245) is another `Reranker` the factory returns for `local` profiles.
+or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client.
+
+**Local models (#245).** Bootstrap's `ModelFactory` is `AiModels`: `local` profiles go to
+`LocalModels` (`bootstrap/local_models.py`), every other kind to `PydanticAiModels`. `LocalModels`
+imports nothing heavy: a model is known by its folder in `EXACTDOCS_MODELS_DIR` and the marker
+`exactdocs models pull` (`bootstrap/models_pull.py`, the only code that contacts the Hub) writes
+last, so at build time `_ai_configuration` turns off, with an error naming the pull command, every
+instance role whose local model is missing. Its first use, or `Container.running`'s warm-up for the
+instance's roles, sets `HF_HUB_OFFLINE=1`, imports `bootstrap/local_sdk.py` (fastembed) and loads
+the model in a worker thread with `specific_model_path` and `local_files_only`, once per process.
+The adapters (`retrieval/adapters/driven/local_models.py`: `LocalEmbeddings`, `LocalReranker`)
+never import fastembed: they call the loaded model through small structural types, on the
+factory's thread pool (2 workers), and turn ONNX Runtime's errors into `EmbeddingFailedError` /
+`RerankerError`. `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a pydantic-ai
+`Embedder` with `PydanticAiEmbeddings`.
 
 Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
