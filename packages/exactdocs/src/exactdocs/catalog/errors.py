@@ -202,6 +202,18 @@ class InvalidImageTypeError(ValidationError):
         super().__init__(f"{content_type!r} is not an image type the catalog stores")
 
 
+class InvalidInstructionFileError(ValidationError):
+    """An instruction file is too long, a manifest keeps too many, or one path twice."""
+
+    def __init__(self, path: str) -> None:
+        """Name the file.
+
+        Args:
+            path: Its repository path.
+        """
+        super().__init__(f"the instruction file {path!r} cannot be kept")
+
+
 class ConflictingImageError(ValidationError):
     """One batch gives different bytes or types for the same image blob SHA."""
 

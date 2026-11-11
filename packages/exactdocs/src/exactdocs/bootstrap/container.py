@@ -26,6 +26,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogCollector,
     CatalogDefaultVersions,
     CatalogImportedTags,
+    CatalogInstructionFiles,
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySettings,
@@ -41,6 +42,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionPublisher,
     RetrievalChunkIndex,
     RetrievalCollector,
+    RetrievalGuidancePolicy,
     RetrievalVersionEmbedder,
 )
 from exactdocs.bootstrap.constants import (
@@ -64,6 +66,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.local_models import LocalModels
+from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
@@ -74,6 +77,7 @@ from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteArticleTitles,
     SqliteImportedTags,
+    SqliteInstructionFiles,
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
@@ -112,6 +116,7 @@ from exactdocs.ingestion.ports.driven import (
     GitRemote,
     LibraryLocks,
     RenameSource,
+    RepositoryFiles,
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
@@ -157,7 +162,7 @@ from exactdocs.retrieval.ports.driven import (
     RetrievalPipeline,
     SpendLedger,
 )
-from exactdocs.retrieval.ports.driving import SaveProvider
+from exactdocs.retrieval.ports.driving import SaveProvider, SetLibraryRetrieval
 from exactdocs.retrieval.use_cases import PriceBook
 from exactdocs_kernel import Clock, DomainError, SystemClock
 
@@ -473,6 +478,7 @@ def _build_read_side(
         stored_articles=SqliteStoredArticles(engine=engine),
         copier=SqliteManifestCopier(engine=engine),
         article_titles=SqliteArticleTitles(engine=engine),
+        instruction_files=SqliteInstructionFiles(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -540,6 +546,9 @@ def _build_read_side(
         hypothesis_cache=hypotheses,
         hyde_cache_key=hyde_key,
         hyde_cache_ttl=settings.ai.hyde.cache_ttl,
+        instruction_files=CatalogInstructionFiles(
+            get_instruction_files=catalog.get_instruction_files
+        ),
     )
     return _ReadSide(
         catalog=catalog,
@@ -729,6 +738,9 @@ class Container:
     save_provider: SaveProvider
     """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
     changed (REST ``/ai/providers``)."""
+    set_library_retrieval: SetLibraryRetrieval
+    """Retrieval's ``set_library_retrieval``, then a ``reprocess`` queued when the library's repo
+    guidance was turned on (REST ``/libraries/{owner}/{repo}/retrieval``)."""
     work_owner: Path | None = field(default=None, repr=False)
     """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
@@ -750,6 +762,7 @@ class Container:
         gateway: GitGateway | None = None,
         renames: RenameSource | None = None,
         tree: RepositoryTree | None = None,
+        files: RepositoryFiles | None = None,
         chunker: Chunker | None = None,
         model_roles: ModelRoles | None = None,
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
@@ -763,9 +776,10 @@ class Container:
 
         Creates the data directory (``StartupError`` when it is unusable) but opens no
         connection; ``running()`` migrates the schema and releases the engine afterwards.
-        ``remote``, ``gateway`` and ``renames`` replace the system ``git`` for listing refs, for
-        fetching and for detecting renames (tests; a given ``gateway`` detects none unless
-        ``renames`` is given too); ``chunker`` replaces the Markdown chunker (tests);
+        ``remote``, ``gateway``, ``renames`` and ``files`` replace the system ``git`` for listing
+        refs, for fetching, for detecting renames and for reading instruction files (tests; a
+        given ``gateway`` detects none unless ``renames`` is given too); ``chunker`` replaces
+        the Markdown chunker (tests);
         ``model_roles`` stands in for the role resolution over the configured AI profiles and
         ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
         extension (tests: one that cannot load); ``model_factory`` and ``embedding_models``
@@ -785,6 +799,7 @@ class Container:
             renames = renames or (git if gateway is None else None)
             gateway = gateway or git
             tree = tree or git
+            files = files or git
         vault = SqliteCredentialVault(
             engine=engine, box=_secret_box(settings, CREDENTIALS_KEY_PURPOSE)
         )
@@ -839,6 +854,10 @@ class Container:
                 set_imported_tags_of=read.catalog.set_imported_tags,
             ),
             copier=CatalogVersionCopier(copy_manifest=read.catalog.copy_manifest),
+            guidance=RetrievalGuidancePolicy(
+                get_library_retrieval=read.retrieval.get_library_retrieval
+            ),
+            files=files,
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine=engine),
@@ -910,6 +929,11 @@ class Container:
             save_provider=SaveProviderThenEmbed(
                 save_provider=read.retrieval.save_provider,
                 queue_embedding=ingestion.queue_embedding,
+            ),
+            set_library_retrieval=SetRetrievalThenReprocess(
+                get_library_retrieval=read.retrieval.get_library_retrieval,
+                set_library_retrieval=read.retrieval.set_library_retrieval,
+                enqueue_job=ingestion.enqueue_job,
             ),
             job_worker=DbosJobWorker(
                 run_job=ingestion.run_job,

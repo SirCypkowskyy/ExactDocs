@@ -9,13 +9,14 @@ SCHEDULE: Final[str] = "exactdocs-scheduled-checks"
 """The DBOS schedule that ticks the scheduled checks (the worker creates it)."""
 WORKFLOW: Final[str] = "exactdocs.run_job"
 """Name of the DBOS workflow that runs one job."""
-STEPS_VERSION: Final[str] = "jobs-7"
+STEPS_VERSION: Final[str] = "jobs-8"
 """DBOS's application version: bump it when a job's steps change (names, order or results).
 ``jobs-2`` added the steps of ``reprocess`` and ``retag`` (#61); ``jobs-3`` gave ``ImportedRef``
 its ``origin`` and ``pinned`` (#81); ``jobs-4`` starts the import with "read the chunking
 settings" and added the steps of ``rechunk`` (#67); ``jobs-5`` counted the articles parsed and
 taken as stored (#164); ``jobs-6`` gave ``ArticleChunk`` its heading records (#251); ``jobs-7``
-added the steps of ``embed`` (#91). A workflow of another version is not resumed: its job
+added the steps of ``embed`` (#91); ``jobs-8`` added the import's "fetch the instruction files"
+and ``ImportedVersion.instructions`` (#101). A workflow of another version is not resumed: its job
 starts over from the beginning.
 """
 

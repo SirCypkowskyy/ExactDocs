@@ -14,6 +14,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
+    InMemoryInstructionFiles,
     InMemoryLibraryRepository,
     InMemoryManifestCopier,
     InMemoryManifestRepository,
@@ -21,6 +22,7 @@ from exactdocs.catalog.adapters.driven.memory import (
 )
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteImportedTags,
+    SqliteInstructionFiles,
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
@@ -46,6 +48,7 @@ from exactdocs.catalog.models import (
     ManifestEntry,
     ManifestId,
     ManifestImage,
+    ManifestInstruction,
     ManifestRename,
     ManifestState,
     ManualTag,
@@ -60,6 +63,7 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.ports import (
     ImportedTagWriter,
+    InstructionFileReader,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -130,6 +134,7 @@ class Stores:
     imported_tags: ImportedTagWriter
     copier: ManifestCopier
     stored_articles: StoredArticleFinder
+    instructions: InstructionFileReader
 
 
 @pytest.fixture(params=["memory", *SQL_BACKENDS])
@@ -148,6 +153,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
             InMemoryImportedTags(repository=manifests),
             InMemoryManifestCopier(repository=manifests),
             InMemoryStoredArticles(repository=manifests),
+            InMemoryInstructionFiles(repository=manifests),
         )
     else:
         if request.param == "postgres":
@@ -167,6 +173,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                 SqliteImportedTags(engine=container.engine),
                 SqliteManifestCopier(engine=container.engine),
                 SqliteStoredArticles(engine=container.engine),
+                SqliteInstructionFiles(engine=container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -1359,3 +1366,48 @@ async def test_sqlite_a_file_many_manifests_hold_is_read_once(sqlite: Container)
         PAYMENTS.id, VersionRef("v3"), 1, [(INSTALL, sha("b1"))]
     )
     assert [a.entry.path for a in found] == [INSTALL]
+
+
+# ---------------------------------------------------------------- instruction files (RET-08)
+
+ROOT_FILE = ManifestInstruction(path="AGENTS.md", content="Docs live in guide/.")
+GUIDE_FILE = ManifestInstruction(path="guide/CLAUDE.md", content="One H1 per page.")
+
+
+async def _instructions(stores: Stores, id_: str) -> list[ManifestInstruction]:
+    return list(await stores.instructions.list_instructions(ManifestId(id_)))
+
+
+async def test_instruction_files_are_kept_per_manifest_and_not_loaded_with_it(
+    stores: Stores,
+) -> None:
+    first = replace(
+        manifest("m1", "v1", "a1", entry(INSTALL, "a")), instructions=(GUIDE_FILE, ROOT_FILE)
+    )
+    other = ManifestInstruction(path="AGENTS.md", content="Another commit's notes.")
+    second = replace(manifest("m2", "v2", "b1", entry(INSTALL, "b")), instructions=(other,))
+    await store(stores, first)
+    await store(stores, second)
+
+    assert await _instructions(stores, "m1") == [ROOT_FILE, GUIDE_FILE]
+    assert await _instructions(stores, "m2") == [other]
+    assert await _instructions(stores, "nope") == []
+    assert (await fetch(stores.manifests, "m1")).instructions == ()
+
+
+async def test_a_copy_keeps_the_instruction_files_and_a_removal_takes_them(
+    stores: Stores,
+) -> None:
+    stored = replace(manifest("m1", "main", "a1", entry("a.md", "a")), instructions=(ROOT_FILE,))
+    await store(stores, stored)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    copied = await stores.copier.copy_active(
+        PAYMENTS.id, VersionRef("main"), ManifestId("m2"), at=T0, content_version=1
+    )
+
+    assert copied is not None
+    assert await _instructions(stores, "m2") == [ROOT_FILE]
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("main"))
+    assert await _instructions(stores, "m1") == []
+    assert await _instructions(stores, "m2") == []

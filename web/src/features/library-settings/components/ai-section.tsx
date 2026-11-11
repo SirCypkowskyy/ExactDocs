@@ -26,6 +26,8 @@ import {
   type OverridableRole,
   pipelineSteps,
   profileOptions,
+  REPO_GUIDANCE,
+  type RepoGuidance,
   type RetrievalDraft,
   retrievalDraftOf,
   rolesInUse,
@@ -289,6 +291,20 @@ function AiForm({ owner, repo, r, providers, providersError, activity, onStart }
             />
           </div>
         </fieldset>
+        <SelectField
+          id="ai-repoGuidance"
+          label="Repository guidance (AGENTS.md / CLAUDE.md)"
+          value={draft.repoGuidance}
+          disabled={off}
+          hint={`${REPO_GUIDANCE.find((g) => g.value === draft.repoGuidance)?.hint ?? ""} Turning it on re-imports this library's versions.`}
+          onChange={(e) => edit({ repoGuidance: e.target.value as RepoGuidance })}
+        >
+          {REPO_GUIDANCE.map((g) => (
+            <option key={g.value} value={g.value}>
+              {g.label}
+            </option>
+          ))}
+        </SelectField>
         <fieldset>
           <legend className="mb-1 text-sm font-medium">Spend limits</legend>
           <p className="text-sm text-muted-foreground">

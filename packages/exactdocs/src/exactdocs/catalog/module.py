@@ -3,13 +3,15 @@
 It does not pick adapters itself; the composition root (``exactdocs.bootstrap``) passes them in.
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
 
+from exactdocs.catalog.models import ManifestId, ManifestInstruction
 from exactdocs.catalog.ports.driven import (
     ArticleTitleFinder,
     ImportedTagWriter,
+    InstructionFileReader,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -29,6 +31,7 @@ from exactdocs.catalog.ports.driving import (
     GetArticle,
     GetArticleTitles,
     GetAsset,
+    GetInstructionFiles,
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
@@ -63,6 +66,7 @@ from exactdocs.catalog.use_cases import (
     GetArticleTitlesUseCase,
     GetArticleUseCase,
     GetAssetUseCase,
+    GetInstructionFilesUseCase,
     GetLibraryUseCase,
     GetManifestStatesUseCase,
     GetVersionTagsUseCase,
@@ -85,6 +89,22 @@ from exactdocs.catalog.use_cases import (
     UpdateLibraryUseCase,
 )
 from exactdocs_kernel import Clock, SystemClock
+
+
+class _NoInstructions:
+    """The default ``instruction_files`` of ``build``: no manifest keeps any."""
+
+    async def list_instructions(self, manifest_id: ManifestId) -> Sequence[ManifestInstruction]:
+        """Keep none.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            Nothing.
+        """
+        del manifest_id
+        return ()
 
 
 class _NoTitles:
@@ -127,6 +147,8 @@ class CatalogModule:
     get_article_titles: GetArticleTitles
     """Titles of a manifest's articles by path, for other domains (embedding input)."""
     get_active_manifest: GetActiveManifest
+    get_instruction_files: GetInstructionFiles
+    """The instruction files kept with a manifest, for other domains (agentic retrieval)."""
     list_default_manifests: ListDefaultManifests
     update_library: UpdateLibrary
     pin_default_version: PinDefaultVersion
@@ -153,13 +175,15 @@ class CatalogModule:
         copier: ManifestCopier,
         clock: Clock | None = None,
         article_titles: ArticleTitleFinder | None = None,
+        instruction_files: InstructionFileReader | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores,
         ``copier`` copies them and ``stored_articles`` finds their articles by what they were
         imported from. ``article_titles`` looks titles up by path for other domains; without
-        it none are known.
+        it none are known. ``instruction_files`` reads the instruction files ``manifests``
+        stores; without it none are read.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository=repository, manifests=manifests)
@@ -191,6 +215,9 @@ class CatalogModule:
             get_article_titles=GetArticleTitlesUseCase(titles=article_titles or _NoTitles()),
             get_active_manifest=GetActiveManifestUseCase(
                 repository=repository, manifests=manifests
+            ),
+            get_instruction_files=GetInstructionFilesUseCase(
+                reader=instruction_files or _NoInstructions()
             ),
             list_default_manifests=ListDefaultManifestsUseCase(
                 repository=repository, manifests=manifests

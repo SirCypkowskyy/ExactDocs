@@ -2270,6 +2270,18 @@ export interface components {
              *     the two applies. None by default.
              */
             readonly budgets?: components["schemas"]["LibraryBudgets"];
+            /**
+             * @description What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the
+             *     default): imports keep none. `notes`: each version keeps the root's and the selected
+             *     folders' files, even outside the selected paths, and a folder's file reaches the agent as an
+             *     untrusted user-channel note when it opens that folder. `trusted`: as `notes`, and the root's
+             *     file is also part of the agent's system instructions; only for a repository whose content you
+             *     trust as much as your own instructions. Turning it on queues a `reprocess` of the library
+             *     (every version re-imported at its commit, so it keeps its files); the other changes apply at
+             *     the next search.
+             * @default off
+             */
+            readonly repo_guidance: components["schemas"]["RepoGuidance"];
         };
         /**
          * LibraryRetrievalOut
@@ -2337,6 +2349,15 @@ export interface components {
             readonly budgets: components["schemas"]["LibraryBudgets"];
             /** @description The most each of the library's own limits may be (the instance's limits); null: any. */
             readonly budget_ceilings: components["schemas"]["LibraryBudgets"];
+            /**
+             * @description What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by
+             *     no import), `notes` (each version keeps them; a folder's file reaches the agent as a
+             *     user-channel note when it opens the folder) or `trusted` (also the root's file as system
+             *     instructions). Turning it on re-imports the library's versions (a `reprocess` job) so they
+             *     keep their files; the other changes apply at the next search.
+             * @default off
+             */
+            readonly repo_guidance: components["schemas"]["RepoGuidance"];
         };
         /**
          * LibrarySearchResultOut
@@ -2788,7 +2809,7 @@ export interface components {
          * @description Why a file shows up in a job's problems; stable, clients may branch on it.
          * @enum {string}
          */
-        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7";
+        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7" | "instruction_files";
         /**
          * ProfileOrigin
          * @description Who manages a profile.
@@ -3112,6 +3133,15 @@ export interface components {
              */
             readonly similarity: number;
         };
+        /**
+         * RepoGuidance
+         * @description What a library's ``AGENTS.md`` / ``CLAUDE.md`` files do for agentic retrieval (RET-08).
+         *
+         *     The files are repository content, so untrusted: they become system instructions only when
+         *     the owner says the library is trusted.
+         * @enum {string}
+         */
+        readonly RepoGuidance: "off" | "notes" | "trusted";
         /**
          * RepositoryHost
          * @description Where a repository is hosted, by exact host name; ``git`` is any other server.

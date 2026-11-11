@@ -59,7 +59,13 @@ from exactdocs.retrieval.dtos import (
     SearchDocsResult,
     SetLibraryRetrievalCommand,
 )
-from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, ModelRole, TagMatch
+from exactdocs.retrieval.models import (
+    AnthropicPlatform,
+    AzureAuth,
+    ModelRole,
+    RepoGuidance,
+    TagMatch,
+)
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
     CheckProvider,
@@ -109,6 +115,16 @@ class LibraryRetrievalIn(BaseModel):
     """The library's own spend limits per UTC day and month. Each may be at most the instance's
     (`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of
     the two applies. None by default.
+    """
+    repo_guidance: RepoGuidance = RepoGuidance.OFF
+    """What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the
+    default): imports keep none. `notes`: each version keeps the root's and the selected
+    folders' files, even outside the selected paths, and a folder's file reaches the agent as an
+    untrusted user-channel note when it opens that folder. `trusted`: as `notes`, and the root's
+    file is also part of the agent's system instructions; only for a repository whose content you
+    trust as much as your own instructions. Turning it on queues a `reprocess` of the library
+    (every version re-imported at its commit, so it keeps its files); the other changes apply at
+    the next search.
     """
 
 

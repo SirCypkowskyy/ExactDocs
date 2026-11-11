@@ -164,6 +164,7 @@ from exactdocs.retrieval.models import (
     EmbeddingSpec,
     EmbeddingTarget,
     FallbackReason,
+    GuidanceFiles,
     HydeKey,
     IndexedManifest,
     InstanceRoles,
@@ -188,6 +189,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     ReachedBudget,
+    RepoGuidance,
     RerankLimits,
     RetrievalMode,
     RoleBinding,
@@ -233,6 +235,7 @@ from exactdocs.retrieval.ports.driven import (
     Explorer,
     HypotheticalAnswerCache,
     HypotheticalAnswers,
+    InstructionFiles,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -2233,6 +2236,7 @@ async def _library_retrieval(
         budget_ceilings=LibraryBudgets.from_ceilings(
             budgets.ceiling(SpendWindow.DAY), budgets.ceiling(SpendWindow.MONTH)
         ),
+        repo_guidance=ai.repo_guidance,
     )
 
 
@@ -2297,6 +2301,7 @@ class SetLibraryRetrievalUseCase:
             reranker=_parse_ref(command.reranker),
             rerank_top_n=command.rerank_top_n,
             budgets=command.budgets.limits(),
+            repo_guidance=command.repo_guidance,
         )
         if self.modes.spend is not None:
             stored = await self.modes.library_modes.ai_of(library)
@@ -3772,6 +3777,8 @@ class AgenticPipeline:
     """Times the run (``<search>.agent``), without the query text."""
     reads: AgentReads = field(default_factory=UnrecordedAgentReads)
     """The runs' trace: every read the agent made."""
+    instructions: InstructionFiles | None = None
+    """The instruction files kept with each manifest (repo guidance, RET-08); without it none."""
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         """Let the agent explore the version, then keep its picks that belong to it.
@@ -3828,6 +3835,7 @@ class AgenticPipeline:
         )
         try:
             async with asyncio.timeout(self.bounds.timeout):
+                run = replace(run, guidance=await self._guidance(request.version, ai))
                 model = await self._model(library)
                 return await self.explorer.explore(
                     model, browser, run, ledger=self.spend.ledger, clock=self.spend.clock
@@ -3846,6 +3854,25 @@ class AgenticPipeline:
             kind_of = type(error).__name__
             logger.warning("the agentic search of %s failed: %s", library, kind_of)
             raise AgentStoppedError(FallbackReason.AGENT_FAILED.value, kind_of) from error
+
+    async def _guidance(self, version: SearchableVersion, ai: LibraryAi) -> GuidanceFiles | None:
+        """Read the searched version's instruction files, when the library's repo guidance is on.
+
+        Only the files kept with the version's own manifest, framed and bounded
+        (``GuidanceFiles.of``). A read that fails ends the run like any other failure
+        (``agent_failed``, logged by class only); their text is never logged.
+
+        Args:
+            version: The exact version searched.
+            ai: The library's AI settings.
+
+        Returns:
+            The files for the run, or ``None``.
+        """
+        if ai.repo_guidance is RepoGuidance.OFF or self.instructions is None:
+            return None
+        files = await self.instructions.of(version.manifest_id)
+        return GuidanceFiles.of(files, trusted=ai.repo_guidance is RepoGuidance.TRUSTED)
 
     async def _model(self, library: str) -> object:
         """Build the library's ``llm`` model from the profile as it is now.

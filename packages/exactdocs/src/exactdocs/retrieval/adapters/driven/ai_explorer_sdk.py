@@ -58,11 +58,18 @@ from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.guardrails import GuardrailResult, OutputGuardrail
 from pydantic_ai_harness.spend import SpendLimitExceeded
 
+from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import (
+    UsageFloor,
+    guidance_capabilities,
+    guidance_workspace,
+)
 from exactdocs.retrieval.adapters.driven.harness_spend import agent_limits
 from exactdocs.retrieval.constants import (
     AGENT_SEARCH_LIMIT,
+    EXPLORER_GUIDANCE,
     EXPLORER_INSTRUCTIONS,
     EXPLORER_TOOLS,
+    EXPLORER_TRUSTED_GUIDANCE,
     MAX_AGENT_PICKS,
     READ_FAILED,
     REPEATED_CALL,
@@ -75,6 +82,7 @@ from exactdocs.retrieval.models import (
     AgentPick,
     AgentRun,
     FallbackReason,
+    GuidanceFiles,
     OutlineNode,
 )
 from exactdocs.retrieval.ports.driven import DocsBrowser, SpendLedger
@@ -561,7 +569,7 @@ async def _admitted_only(ctx: RunContext[Reads], output: object) -> GuardrailRes
     return GuardrailResult.replace(_Answer(picks=kept))
 
 
-def _instrumented(model: object) -> Model:
+def _instrumented(model: object) -> InstrumentedModel:
     """Narrow the factory's handle to a pydantic-ai model instrumented without content.
 
     Args:
@@ -582,6 +590,21 @@ def _instrumented(model: object) -> Model:
             return model
         model = model.wrapped
     return InstrumentedModel(model, InstrumentationSettings(include_content=False))
+
+
+def _guidance_words(guidance: GuidanceFiles | None) -> str:
+    """Say in the instructions how to take the repository's notes.
+
+    Args:
+        guidance: The run's files, if any.
+
+    Returns:
+        Nothing without guidance; the untrusted-note wording, and for a trusted library also
+        the wording that introduces its root file.
+    """
+    if guidance is None:
+        return ""
+    return EXPLORER_GUIDANCE + (EXPLORER_TRUSTED_GUIDANCE if guidance.trusted else "")
 
 
 def _code_mode(bounds: AgentBounds) -> CodeMode[Reads]:
@@ -638,23 +661,30 @@ async def explore(
         total_tokens_limit=bounds.max_tokens,
         tool_calls_limit=bounds.max_tool_calls,
     )
+    guidance = run.guidance
+    chat = _instrumented(model)
+    if guidance:  # it streams: a stream that reports no usage is counted by its characters
+        chat = InstrumentedModel(UsageFloor(chat.wrapped), chat.instrumentation_settings)
     agent = Agent(
-        _instrumented(model),
+        chat,
         name="exactdocs-explorer",
         deps_type=Reads,
         output_type=_Answer,
-        instructions=EXPLORER_INSTRUCTIONS,
+        instructions=EXPLORER_INSTRUCTIONS + _guidance_words(guidance),
         tools=read_tools(),
         capabilities=[
             _code_mode(bounds),
             limits.spend,
             _RunEnders(),
+            *(guidance_capabilities(guidance) if guidance else ()),
             OutputGuardrail[Reads](guard=_admitted_only),
         ],
     )
     reads = Reads(browser=browser, max_repeated_calls=bounds.max_repeated_calls)
+    # Repo guidance (RET-08): only this version's files, in a read-only workspace of their own.
+    workspace = guidance_workspace(guidance) if guidance else None
     try:
-        result = await agent.run(run.question, deps=reads, usage_limits=usage)
+        result = await agent.run(run.question, deps=reads, usage_limits=usage, workspace=workspace)
     except SpendLimitExceeded as error:  # a UsageLimitExceeded too: checked first
         reason, detail = FallbackReason.LLM_BUDGET_REACHED, "spend limit"
         raise AgentStoppedError(reason.value, detail) from error
