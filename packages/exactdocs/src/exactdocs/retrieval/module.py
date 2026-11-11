@@ -1,10 +1,12 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Self
 
 from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    HYDE_CACHE_TTL_DAYS,
     HYDE_TIMEOUT,
     QUERY_EMBEDDING_TIMEOUT,
 )
@@ -224,6 +226,8 @@ class RetrievalModule:
         hypotheses: HypotheticalAnswers | None = None,
         hypothesis_cache: HypotheticalAnswerCache | None = None,
         hyde_timeout: float = HYDE_TIMEOUT,
+        hyde_cache_key: bytes | None = None,
+        hyde_cache_ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS),
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -244,8 +248,10 @@ class RetrievalModule:
         query embedding waits at most ``query_embedding_timeout`` seconds; a ``hybrid`` entry
         of ``pipelines`` replaces it (tests). With a vector store and ``hypotheses`` (the HyDE
         writer), ``hybrid_hyde`` runs ``HydePipeline``: the ``llm`` role's hypothetical answer,
-        cached in ``hypothesis_cache``, searches the vector half, and a search waits at most
-        ``hyde_timeout`` seconds for it.
+        cached in ``hypothesis_cache`` under ``hyde_cache_key`` (the HMAC key of its queries;
+        without one nothing is cached), searches the vector half, and a search waits at most
+        ``hyde_timeout`` seconds for it. The collection job prunes the cache: answers older than
+        ``hyde_cache_ttl``, and those of an ``llm`` model no longer configured.
         Cost: ``price_overrides`` are the operator's prices by ``<profile>:<model>``, ``budgets``
         the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
         caller (without it they are not rate limited).
@@ -299,7 +305,8 @@ class RetrievalModule:
                     hybrid=hybrid,
                     providers=providers,
                     writer=hypotheses,
-                    cache=hypotheses_cached,
+                    cache=hypotheses_cached if hyde_cache_key is not None else NoHypothesisCache(),
+                    cache_key=hyde_cache_key or b"",
                     spend=ai_spend,
                     tracer=tracer,
                     timeout=hyde_timeout,
@@ -350,7 +357,12 @@ class RetrievalModule:
                 manifests=manifests, chunks=chunks, clock=clock, hypotheses=hypotheses_cached
             ),
             collect_chunks=CollectChunksUseCase(
-                manifests=manifests, chunks=chunks, clock=clock, hypotheses=hypotheses_cached
+                manifests=manifests,
+                chunks=chunks,
+                clock=clock,
+                hypotheses=hypotheses_cached,
+                hyde_ttl=hyde_cache_ttl,
+                providers=providers,
             ),
             remove_chunks=RemoveChunksUseCase(
                 manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached

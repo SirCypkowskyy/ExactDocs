@@ -2,7 +2,7 @@ import hashlib
 import math
 import struct
 import sys
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -10,6 +10,7 @@ from itertools import batched
 
 from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
+    HYDE_MEMORY_CACHE_SIZE,
     MEMORY_FORMAT,
     RATE_WINDOW_SECONDS,
     TERM_HASH_BIAS,
@@ -414,6 +415,14 @@ class InMemoryLibraryModes:
             self.overrides.pop(key, None)
         else:
             self.overrides[key] = ai
+
+    async def llm_overrides(self) -> frozenset[str]:
+        """Name every ``llm`` model a library overrides the instance's with.
+
+        Returns:
+            Each ``<profile>:<model>`` once.
+        """
+        return frozenset(str(ai.llm) for ai in self.overrides.values() if ai.llm is not None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1145,13 +1154,17 @@ def _summed(
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryHypothesisCache:
-    """Implements ``ports.driven.HypotheticalAnswerCache`` with a dictionary."""
+    """Implements ``ports.driven.HypotheticalAnswerCache`` with a bounded dictionary (LRU)."""
 
-    answers: dict[HydeKey, str] = field(default_factory=dict)
-    """Each answer by its key."""
+    max_entries: int = HYDE_MEMORY_CACHE_SIZE
+    """The most answers kept; the least recently used goes first."""
+    answers: OrderedDict[HydeKey, str] = field(default_factory=OrderedDict)
+    """Each answer by its key, least recently used first."""
+    written: dict[HydeKey, datetime] = field(default_factory=dict)
+    """When each answer was written."""
 
     async def get(self, key: HydeKey) -> str | None:
-        """Read a stored answer.
+        """Read a stored answer (it becomes the most recently used).
 
         Args:
             key: The query, the manifest and the model.
@@ -1159,18 +1172,25 @@ class InMemoryHypothesisCache:
         Returns:
             The answer, or ``None``.
         """
-        return self.answers.get(key)
+        answer = self.answers.get(key)
+        if answer is not None:
+            self.answers.move_to_end(key)
+        return answer
 
     async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
-        """Store an answer.
+        """Store an answer; past ``max_entries`` the least recently used one is dropped.
 
         Args:
             key: The query, the manifest and the model.
             answer: The hypothetical answer.
             at: When it was written.
         """
-        del at
         self.answers[key] = answer
+        self.answers.move_to_end(key)
+        self.written[key] = at
+        while len(self.answers) > self.max_entries:
+            oldest, _ = self.answers.popitem(last=False)
+            self.written.pop(oldest, None)
 
     async def forget(self, manifest_ids: Collection[str]) -> int:
         """Delete the answers of these manifests.
@@ -1181,10 +1201,41 @@ class InMemoryHypothesisCache:
         Returns:
             How many answers were deleted.
         """
-        doomed = [key for key in self.answers if key.manifest_id in set(manifest_ids)]
-        for key in doomed:
+        doomed = set(manifest_ids)
+        return self._drop([key for key in self.answers if key.manifest_id in doomed])
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Delete the answers written before a time, and those of models not kept.
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+
+        Returns:
+            How many answers were deleted.
+        """
+        kept = set(keep_models)
+        return self._drop(
+            [
+                key
+                for key in self.answers
+                if key.model not in kept or self.written[key] < written_before
+            ]
+        )
+
+    def _drop(self, keys: Sequence[HydeKey]) -> int:
+        """Delete answers.
+
+        Args:
+            keys: Their keys.
+
+        Returns:
+            How many were deleted.
+        """
+        for key in keys:
             del self.answers[key]
-        return len(doomed)
+            self.written.pop(key, None)
+        return len(keys)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1230,3 +1281,15 @@ class ReadOnlyHypothesisCache:
             How many answers were deleted.
         """
         return await self.local.forget(manifest_ids)
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Prune this process's answers (the server's collection prunes the shared ones).
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+
+        Returns:
+            How many answers were deleted.
+        """
+        return await self.local.prune(written_before, keep_models)

@@ -22,7 +22,11 @@ def upgrade() -> None:
         sa.Column("answer", sa.Text, nullable=False),
         sa.Column("created_at", sa.Text, nullable=False),
     )
+    op.create_index(
+        "ix_retrieval_hyde_answers_created_at", "retrieval_hyde_answers", ["created_at"]
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("ix_retrieval_hyde_answers_created_at", table_name="retrieval_hyde_answers")
     op.drop_table("retrieval_hyde_answers")

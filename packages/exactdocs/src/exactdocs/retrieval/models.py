@@ -1,6 +1,7 @@
 """Retrieval value objects. Pure Python: no frameworks, no I/O."""
 
 import hashlib
+import hmac
 import json
 import math
 import re
@@ -2669,8 +2670,9 @@ class HydeKey:
 
     The manifest stands for the version as it is now: when the version's manifest changes (a new
     commit is imported), the key changes with it, so the old answer is never used again, and it
-    is deleted with the old manifest's chunks. The query is kept as a SHA-256 of its normalized
-    text, never as text.
+    is deleted with the old manifest's chunks. The query is kept as an HMAC-SHA256 of its
+    normalized text under the instance's own key (derived from its secret key), never as text,
+    so the stored hashes cannot be checked against a list of likely queries without that key.
     """
 
     manifest_id: str
@@ -2678,21 +2680,22 @@ class HydeKey:
     model: str
     """The ``llm`` role's ``<profile>:<model>`` that wrote it."""
     query_hash: str
-    """SHA-256 (hex) of ``normalized_query``."""
+    """HMAC-SHA256 (hex) of ``normalized_query`` under the instance's HyDE cache key."""
 
     @classmethod
-    def of(cls, manifest_id: str, model: ModelRef, query: str) -> HydeKey:
+    def of(cls, manifest_id: str, model: ModelRef, query: str, *, key: bytes) -> HydeKey:
         """Build the key of a search.
 
         Args:
             manifest_id: The searched version's manifest.
             model: The ``llm`` role's model.
             query: The query text, as the caller sent it.
+            key: The instance's HyDE cache key.
 
         Returns:
             The key.
         """
-        digest = hashlib.sha256(normalized_query(query).encode()).hexdigest()
+        digest = hmac.new(key, normalized_query(query).encode(), hashlib.sha256).hexdigest()
         return cls(manifest_id=manifest_id, model=str(model), query_hash=digest)
 
 

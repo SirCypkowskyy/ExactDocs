@@ -39,6 +39,7 @@ from exactdocs.bootstrap.bridges import (
 from exactdocs.bootstrap.constants import (
     AI_KEYS_PURPOSE,
     CREDENTIALS_KEY_PURPOSE,
+    HYDE_CACHE_PURPOSE,
     JOBS_FILE,
     KEY_FILE,
     KNOWN_HOSTS_FILE,
@@ -54,7 +55,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
-from exactdocs.bootstrap.secret_box import FernetSecretBox
+from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
@@ -241,6 +242,30 @@ def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
         raise StartupError(str(error)) from None
 
 
+def _hyde_cache_key(settings: Settings, *, create: bool) -> bytes | None:
+    """Derive the HMAC key of HyDE's cache from the instance's secret key (its own purpose).
+
+    Args:
+        settings: The runtime configuration.
+        create: Generate the key file when there is none (never in a read-only process).
+
+    Returns:
+        The key, or ``None`` when there is no secret key and none may be created.
+
+    Raises:
+        StartupError: The key or the key file is unusable.
+    """
+    try:
+        if settings.secret_key:
+            return derived_key(settings.secret_key.get_secret_value(), HYDE_CACHE_PURPOSE)
+        path = settings.data_dir / KEY_FILE
+        if not create and not path.is_file():
+            return None
+        return derived_key(read_key_file(path), HYDE_CACHE_PURPOSE)
+    except ValueError as error:  # fixed texts: they never repeat a key
+        raise StartupError(str(error)) from None
+
+
 def _existing_secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox | None:
     """Build the secret box only when a key exists (read-only processes never create one).
 
@@ -295,6 +320,7 @@ def _build_read_side(
     settings: Settings,
     *,
     ai_box: FernetSecretBox | None,
+    hyde_key: bytes | None = None,
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
@@ -310,6 +336,7 @@ def _build_read_side(
         settings: The runtime configuration.
         ai_box: Seals and opens the provider keys stored over the REST API; ``None``: none can be
             stored or opened.
+        hyde_key: The HMAC key of the queries in HyDE's cache; ``None``: nothing is cached.
         model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
@@ -392,6 +419,8 @@ def _build_read_side(
         embedding_batch_size=settings.ai.embedding.batch_size,
         hypotheses=PydanticAiHypotheticalAnswers(ledger=spend),
         hypothesis_cache=hypotheses,
+        hyde_cache_key=hyde_key,
+        hyde_cache_ttl=settings.ai.hyde.cache_ttl,
     )
     return _ReadSide(catalog=catalog, retrieval=retrieval, search_choice=choice)
 
@@ -517,7 +546,13 @@ class ReadOnlyContainer:
         engine = open_database(settings, read_only=True)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
-        read = _build_read_side(engine, settings, ai_box=ai_box, read_only=True)
+        read = _build_read_side(
+            engine,
+            settings,
+            ai_box=ai_box,
+            hyde_key=_hyde_cache_key(settings, create=False),
+            read_only=True,
+        )
         return cls(
             settings=settings,
             engine=engine,
@@ -619,6 +654,7 @@ class Container:
             engine,
             settings,
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
+            hyde_key=_hyde_cache_key(settings, create=True),
             model_roles=model_roles,
             pipelines=pipelines,
             vector_extension=vector_extension,

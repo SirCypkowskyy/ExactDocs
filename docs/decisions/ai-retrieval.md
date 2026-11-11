@@ -317,6 +317,11 @@ does not import it, and no encoding is ever loaded. (pydantic-ai 2.60.0's
 `pydantic_ai.embeddings.openai` imports tiktoken when it loads, so an OpenAI-API embedding role
 imports the module, but never calls it; found in #241.)
 
+What stays on the instance: HyDE's hypothetical answers (#94), written from user queries, are
+cached in `retrieval_hyde_answers` per manifest, model and an HMAC of the normalized query (keyed
+from the instance's secret key, never the query text), and deleted after `[ai.hyde] cache_ttl`
+(30 days), with their manifest, or once their model is no longer configured.
+
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
 **llm** (HyDE, agentic) receives query text and the docs the agent opens. Library names, user

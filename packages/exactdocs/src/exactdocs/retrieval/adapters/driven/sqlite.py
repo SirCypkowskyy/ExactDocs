@@ -197,7 +197,8 @@ hyde_answers = Table(
     Column("model", Text, primary_key=True),  # <profile>:<model>
     Column("query_hash", Text, primary_key=True),
     Column("answer", Text, nullable=False),
-    Column("created_at", Text, nullable=False),  # ISO 8601, UTC
+    Column("created_at", Text, nullable=False),  # ISO 8601, UTC: the TTL prunes by it
+    Index("ix_retrieval_hyde_answers_created_at", "created_at"),
 )
 # The replay tokens each row has taken (the harness's ``SpendEntry.token``): a response replayed
 # after a crash adds to a row once. Dropped once their window is over.
@@ -724,6 +725,19 @@ class SqliteLibraryModes:
                     )
                 )
 
+    async def llm_overrides(self) -> frozenset[str]:
+        """Name every ``llm`` model a library overrides the instance's with.
+
+        Returns:
+            Each ``<profile>:<model>`` once.
+        """
+        statement = select(distinct(library_settings.c.llm)).where(
+            library_settings.c.llm.is_not(None)
+        )
+        async with self.engine.connect() as connection:
+            texts = (await connection.execute(statement)).scalars().all()
+        return frozenset(str(ref) for text in texts if (ref := _stored_ref(text)) is not None)
+
 
 def _stored_ref(text: str | None) -> ModelRef | None:
     """Read a stored ``<profile>:<model>``; one that no longer parses is dropped.
@@ -1131,3 +1145,22 @@ class SqliteHypothesisCache:
                 )
                 deleted += result.rowcount
         return deleted
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Delete the answers written before a time, and those of models not kept.
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+
+        Returns:
+            How many answers were deleted.
+        """
+        cutoff = written_before.astimezone(UTC).isoformat()
+        # An empty list makes NOT IN true for every row: no model is configured, all go.
+        stale = or_(
+            hyde_answers.c.created_at < cutoff,
+            hyde_answers.c.model.not_in(sorted(set(keep_models))),
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(delete(hyde_answers).where(stale))).rowcount

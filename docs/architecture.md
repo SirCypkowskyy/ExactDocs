@@ -1067,9 +1067,29 @@ seam where per-library budgets (#102) merge in. The answer is then embedded for 
 Budgets and the rate limit are checked before (`within_budget` turns the choice into `hybrid`);
 a `SpendLimitExceeded` at the request answers `hybrid` with `llm_budget_reached`, and an LLM error,
 an empty answer, a model that cannot be built or a timeout answers `hybrid` with
-`llm_unavailable`; only the error's class is logged. The cache is `retrieval_hyde_answers`
-(`SqliteHypothesisCache`, SQLite and PostgreSQL); a read-only process (`serve --stdio`) reads it
-and keeps its own answers in memory (`ReadOnlyHypothesisCache`).
+`llm_unavailable`; only the error's class is logged. When hybrid's own query embedding fails too,
+the reason given is hybrid's (it names the mode that answered, BM25). A timeout that strikes after
+the provider answered may cancel the harness while it records the spend, which is then lost: as
+rare as the in-flight overshoot the budgets already accept.
+
+The cache is `retrieval_hyde_answers` (`SqliteHypothesisCache`, SQLite and PostgreSQL); a
+read-only process (`serve --stdio`) reads it and keeps its own answers in a bounded LRU
+(`ReadOnlyHypothesisCache`, `HYDE_MEMORY_CACHE_SIZE`). A cache that cannot be read is a miss and
+one that cannot be written costs a call next time; only the error's class is logged. A cached
+answer is no LLM call: `RetrievalModes.within_budget` asks `HydePipeline.is_cached` first, so a hit
+answers `hybrid_hyde` even with a budget used up, and is not counted against the LLM search rate
+limit. The collection job (`CollectChunks`) prunes answers older than `[ai.hyde] cache_ttl`
+(30 days) and those of an `llm` model no longer configured (neither the instance's nor any
+library's override, or its profile is gone). Cache hits are not a metric yet
+(`exactdocs.ai.cache_hits` comes with the answer cache, #100).
+
+*Data at rest.* The table stores the hypothetical answers in plain text; they are written from
+user queries and often restate them. The query itself is stored only as an HMAC-SHA256 of its
+normalized text, keyed with a key derived from the instance's secret key
+(`EXACTDOCS_SECRET_KEY` or the key file) for its own HKDF purpose, `exactdocs hyde cache v1`
+(`HYDE_CACHE_PURPOSE`), so the hashes cannot be checked against a list of likely queries without
+that key. A read-only process without a secret key caches nothing. Rotating the secret key only
+makes every cached answer a miss.
 
 **Reranker (#93).** Reranking is a flag on top of any mode (`ModeChoice.rerank`, with the
 library's `rerank_top_n` or the instance's `[ai.reranker] top_n`). `RetrievalModes.run` asks the

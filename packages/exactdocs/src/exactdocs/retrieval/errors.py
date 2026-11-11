@@ -484,6 +484,20 @@ class LlmBudgetReachedError(DomainError):
         self.model = model
 
 
+class HypothesisCacheError(DomainError):
+    """HyDE's cache could not be read or written; never fails a search (a miss, or no entry)."""
+
+    code = "hypothesis_cache_failed"
+
+    def __init__(self, reason: str) -> None:
+        """Say what went wrong.
+
+        Args:
+            reason: The error's class name, never its message (it may hold the stored text).
+        """
+        super().__init__(f"the HyDE cache failed: {_data(reason)}")
+
+
 class AiBudgetReachedError(DomainError):
     """A spend limit is used up: nothing more is sent to a provider until its window resets."""
 

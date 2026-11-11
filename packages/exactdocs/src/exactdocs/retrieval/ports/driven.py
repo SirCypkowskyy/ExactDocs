@@ -407,6 +407,14 @@ class LibraryModes(Protocol):
         """
         ...
 
+    async def llm_overrides(self) -> frozenset[str]:
+        """Name every ``llm`` model a library overrides the instance's with.
+
+        Returns:
+            Each ``<profile>:<model>`` once.
+        """
+        ...
+
 
 class ProviderProfiles(Protocol):
     """The provider profiles stored over the REST API (the environment's are given read-only).
@@ -1054,6 +1062,18 @@ class HypotheticalAnswerCache(Protocol):
 
         Args:
             manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        ...
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Delete the answers written before a time, and those of models no longer configured.
+
+        Args:
+            written_before: Answers written earlier are deleted (the TTL's cutoff).
+            keep_models: The ``<profile>:<model>`` still configured; the others' are deleted.
 
         Returns:
             How many answers were deleted.

@@ -7,11 +7,12 @@ the docs' terms lands near their chunks while the question's words do not.
 """
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -40,6 +41,7 @@ from exactdocs.retrieval.constants import HYDE_INSTRUCTIONS, HYDE_MAX_TOKENS
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
+    CollectChunksCommand,
     EmbedBatchCommand,
     EmbedVersionCommand,
     FinishEmbeddingCommand,
@@ -113,9 +115,16 @@ QUESTION = "what happens when my network is flaky"
 HYPOTHESIS = "The RetryPolicy retries a failed call with backoff."
 
 
+KEY = b"k" * 32
+"""The instance's HyDE cache key in these tests."""
+
+
+@dataclass(slots=True)
 class Clock:
+    at: datetime = T0
+
     def now(self) -> datetime:
-        return T0
+        return self.at
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -286,6 +295,33 @@ class SlowWriter:
 
 
 @dataclass(slots=True)
+class BrokenCache:
+    """A ``HypotheticalAnswerCache`` whose database fails, with a message holding stored text."""
+
+    answers: dict[HydeKey, str] = field(default_factory=dict)
+    reads: int = 0
+
+    async def get(self, key: HydeKey) -> str | None:
+        del key
+        self.reads += 1
+        message = f"database is locked while reading {HYPOTHESIS}"
+        raise OSError(message)
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        del key, at
+        message = f"database is locked while writing {answer}"
+        raise OSError(message)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        del manifest_ids
+        return 0
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        del written_before, keep_models
+        return 0
+
+
+@dataclass(slots=True)
 class RefusingWriter:
     """A ``HypotheticalAnswers`` whose budget check refuses at the request (``SpendLimits``)."""
 
@@ -301,7 +337,7 @@ class World:
     models: ConceptModels
     llm: Llm
     ledger: InMemorySpendLedger
-    cache: InMemoryHypothesisCache
+    cache: InMemoryHypothesisCache | BrokenCache
     tracer: RecordingTracer
     modes: InMemoryLibraryModes
 
@@ -314,6 +350,8 @@ def _world(
     budgets: Budgets | None = None,
     hyde_timeout: float = 5.0,
     embedding_profile: str = "corp",
+    cache: BrokenCache | None = None,
+    clock: Clock | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -321,7 +359,8 @@ def _world(
     models = ConceptModels()
     llm = llm or Llm()
     ledger = InMemorySpendLedger()
-    cache = InMemoryHypothesisCache()
+    store: InMemoryHypothesisCache | BrokenCache = cache or InMemoryHypothesisCache()
+    clock = clock or Clock()
     tracer = RecordingTracer()
     modes = InMemoryLibraryModes()
     module = RetrievalModule.build(
@@ -339,7 +378,7 @@ def _world(
         ),
         models=Factory(llm=llm),
         instance_mode=instance,
-        clock=Clock(),
+        clock=clock,
         tracer=tracer,
         vectors=InMemoryVectorIndex(chunks=chunks),
         embedding_models=models,
@@ -349,8 +388,10 @@ def _world(
         budgets=budgets,
         call_rates=InMemoryCallRates(),
         hypotheses=writer or PydanticAiHypotheticalAnswers(ledger=ledger),
-        hypothesis_cache=cache,
+        hypothesis_cache=store,
         hyde_timeout=hyde_timeout,
+        hyde_cache_key=KEY,
+        hyde_cache_ttl=timedelta(days=30),
     )
     return World(
         module=module,
@@ -358,7 +399,7 @@ def _world(
         models=models,
         llm=llm,
         ledger=ledger,
-        cache=cache,
+        cache=store,
         tracer=tracer,
         modes=modes,
     )
@@ -503,7 +544,7 @@ async def test_the_cache_holds_a_hash_of_the_query_never_its_text() -> None:
     await _search(world)
 
     (key,) = world.cache.answers
-    assert key == HydeKey.of("m2", WRITER, QUESTION)
+    assert key == HydeKey.of("m2", WRITER, QUESTION, key=KEY)
     assert QUESTION not in repr(key)
     assert world.cache.answers[key] == HYPOTHESIS
 
@@ -536,13 +577,15 @@ async def test_a_new_manifest_of_the_version_invalidates_and_collection_deletes(
 
 def test_queries_are_normalized_by_case_and_whitespace() -> None:
     assert normalized_query("  How   do I\tRETRY ") == "how do i retry"
-    assert HydeKey.of("m", WRITER, "Retry  calls") == HydeKey.of("m", WRITER, "retry calls")
+    assert HydeKey.of("m", WRITER, "Retry  calls", key=KEY) == HydeKey.of(
+        "m", WRITER, "retry calls", key=KEY
+    )
 
 
 async def test_a_read_only_process_reads_shared_answers_and_keeps_its_own() -> None:
     shared = InMemoryHypothesisCache()
-    key = HydeKey.of("m", WRITER, "q")
-    other = HydeKey.of("m", WRITER, "r")
+    key = HydeKey.of("m", WRITER, "q", key=KEY)
+    other = HydeKey.of("m", WRITER, "r", key=KEY)
     await shared.put(key, "shared", T0)
     cache = ReadOnlyHypothesisCache(shared=shared)
 
@@ -552,6 +595,98 @@ async def test_a_read_only_process_reads_shared_answers_and_keeps_its_own() -> N
     assert other not in shared.answers
     assert await cache.forget(["m"]) == 1
     assert key in shared.answers
+
+
+async def test_a_cache_that_cannot_be_read_is_a_miss_and_logs_only_the_error_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broken = BrokenCache()
+    world = await _ready(cache=broken)
+
+    with caplog.at_level(logging.DEBUG):
+        result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.HYBRID_HYDE, None)
+    assert broken.reads >= 1
+    assert world.llm.prompts == [QUESTION]  # asked instead, and the write failing is no error
+    assert "OSError" in caplog.text
+    assert HYPOTHESIS not in caplog.text
+    assert QUESTION not in caplog.text
+
+
+def test_the_query_hash_is_keyed_by_the_instance() -> None:
+    mine = HydeKey.of("m", WRITER, QUESTION, key=KEY)
+    other = HydeKey.of("m", WRITER, QUESTION, key=b"x" * 32)
+
+    assert mine.query_hash != other.query_hash
+    assert mine.query_hash != hashlib.sha256(normalized_query(QUESTION).encode()).hexdigest()
+
+
+async def test_the_in_memory_cache_keeps_the_most_recently_used_answers() -> None:
+    cache = InMemoryHypothesisCache(max_entries=2)
+    a, b, c = (HydeKey.of("m", WRITER, q, key=KEY) for q in ("a", "b", "c"))
+    await cache.put(a, "A", T0)
+    await cache.put(b, "B", T0)
+    assert await cache.get(a) == "A"  # a is now the most recently used
+
+    await cache.put(c, "C", T0)
+
+    assert (await cache.get(a), await cache.get(b), await cache.get(c)) == ("A", None, "C")
+
+
+async def test_collection_prunes_old_answers_and_those_of_models_no_longer_configured() -> None:
+    clock = Clock()
+    world = await _ready(clock=clock)
+    await _search(world)  # corp:writer, at T0
+    await world.modes.save(LIB, None, LibraryAi(llm=ModelRef(profile="corp", model="other")))
+    await _search(world)  # corp:other
+    await world.modes.save(LIB, None, LibraryAi(llm=ModelRef(profile="gone", model="x")))
+    stale = HydeKey.of("m2", ModelRef(profile="gone", model="x"), QUESTION, key=KEY)
+    await world.cache.put(stale, "orphan", T0)
+    await world.modes.save(LIB, None, LibraryAi())  # back to the instance's model
+    assert len(world.cache.answers) == 3
+
+    await world.module.collect_chunks(CollectChunksCommand(grace_seconds=0))
+
+    # corp:other is no library's model any more, and profile "gone" does not exist.
+    assert {k.model for k in world.cache.answers} == {"corp:writer"}
+
+    clock.at = T0 + timedelta(days=31)
+    await world.module.collect_chunks(CollectChunksCommand(grace_seconds=0))
+
+    assert world.cache.answers == {}
+
+
+async def test_a_library_override_keeps_its_answers_through_collection() -> None:
+    world = await _ready()
+    await world.modes.save(LIB, None, LibraryAi(llm=ModelRef(profile="corp", model="other")))
+    await _search(world)
+
+    await world.module.collect_chunks(CollectChunksCommand(grace_seconds=0))
+
+    assert {k.model for k in world.cache.answers} == {"corp:other"}
+
+
+async def test_cancelling_a_search_while_the_llm_writes_propagates_and_caches_nothing() -> None:
+    started = asyncio.Event()
+
+    @dataclass(slots=True)
+    class Waiting(Llm):
+        async def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            del messages, info
+            started.set()
+            await asyncio.sleep(10)
+            return ModelResponse(parts=[TextPart(content=HYPOTHESIS)])
+
+    world = await _ready(llm=Waiting())
+    task = asyncio.create_task(_search(world))
+    await asyncio.wait_for(started.wait(), timeout=5)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert world.cache.answers == {}
 
 
 # ---------------------------------------------------------------- budgets and failures
@@ -566,7 +701,8 @@ async def test_the_step_counts_to_the_callers_budgets_in_the_ledger() -> None:
     rows = {(k.scope_kind, k.window): row for k, row in world.ledger.rows.items()}
     assert {kind for kind, _ in rows} == {"embedding", "instance", "library"}
     day = rows["instance", SpendWindow.DAY]
-    # The query's embedding (7 tokens, unpriced) and the LLM step (priced) both count.
+    # The embedding of the hypothetical answer (7 tokens, unpriced) and the LLM step (priced)
+    # both count.
     assert day.requests == 2
     assert day.input_tokens > 7
     assert day.usd_micros > 0
@@ -599,6 +735,50 @@ async def test_a_used_up_budget_answers_hybrid_without_calling_the_llm() -> None
     )
     assert world.llm.prompts == []
     assert world.models.queries == [QUESTION]
+
+
+async def test_a_cached_answer_still_answers_hyde_when_the_budget_is_used_up() -> None:
+    budgets = Budgets(
+        limits=(BudgetLimit(scope_kind="instance", window=SpendWindow.DAY, tokens=10),)
+    )
+    world = await _ready(budgets=budgets, embedding_profile="box")
+    world.ledger.rows.clear()
+    await _search(world)  # written within the budget, which it then uses up
+    assert world.llm.prompts == [QUESTION]
+    await world.ledger.add(
+        [
+            SpendEntry(
+                scope_kind="instance",
+                scope_id="",
+                window=SpendWindow.DAY,
+                window_start=T0.date(),
+                input_tokens=10,
+            )
+        ]
+    )
+
+    again = await _search(world)
+
+    assert (again.retrieval_mode, again.fallback_reason) == (RetrievalMode.HYBRID_HYDE, None)
+    assert world.llm.prompts == [QUESTION]  # no second call
+    other = await _search(world, "something else entirely")
+    assert (other.retrieval_mode, other.fallback_reason) == (
+        RetrievalMode.HYBRID,
+        FallbackReason.LLM_BUDGET_REACHED,
+    )
+
+
+async def test_a_cache_hit_is_not_counted_against_the_rate_limit() -> None:
+    world = await _ready(budgets=Budgets(llm_searches_per_minute=1))
+    query = SearchDocsQuery(library=LIB, ref="v2", query=QUESTION, limit=3)
+
+    results = [await world.module.search_docs(query, caller="ada") for _ in range(3)]
+
+    assert [r.retrieval_mode for r in results] == [RetrievalMode.HYBRID_HYDE] * 3
+    assert world.llm.prompts == [QUESTION]
+    fresh = SearchDocsQuery(library=LIB, ref="v2", query="another question", limit=3)
+    limited = await world.module.search_docs(fresh, caller="ada")
+    assert limited.fallback_reason is FallbackReason.LLM_RATE_LIMITED
 
 
 async def test_a_budget_refusing_the_request_itself_answers_hybrid() -> None:
@@ -647,7 +827,7 @@ async def test_the_rate_limit_answers_hybrid() -> None:
     query = SearchDocsQuery(library=LIB, ref="v2", query=QUESTION, limit=3)
 
     first = await use_case(query, caller="ada")
-    second = await use_case(query, caller="ada")
+    second = await use_case(query.model_copy(update={"query": "another question"}), caller="ada")
 
     assert first.retrieval_mode is RetrievalMode.HYBRID_HYDE
     assert (second.retrieval_mode, second.fallback_reason) == (
@@ -768,9 +948,11 @@ async def cache(request: pytest.FixtureRequest) -> AsyncIterator[HypotheticalAns
 async def test_every_cache_stores_replaces_and_forgets_by_manifest(
     cache: HypotheticalAnswerCache,
 ) -> None:
-    first = HydeKey.of("m1", WRITER, "how do I retry")
-    other_model = HydeKey.of("m1", ModelRef(profile="corp", model="other"), "how do I retry")
-    second = HydeKey.of("m2", WRITER, "how do I retry")
+    first = HydeKey.of("m1", WRITER, "how do I retry", key=KEY)
+    other_model = HydeKey.of(
+        "m1", ModelRef(profile="corp", model="other"), "how do I retry", key=KEY
+    )
+    second = HydeKey.of("m2", WRITER, "how do I retry", key=KEY)
 
     assert await cache.get(first) is None
     await cache.put(first, "draft", T0)
@@ -779,8 +961,28 @@ async def test_every_cache_stores_replaces_and_forgets_by_manifest(
     await cache.put(second, "newer", T0)
 
     assert await cache.get(first) == "passage"
-    assert await cache.get(HydeKey.of("m1", WRITER, " HOW do i  RETRY")) == "passage"
+    assert await cache.get(HydeKey.of("m1", WRITER, " HOW do i  RETRY", key=KEY)) == "passage"
     assert await cache.get(other_model) == "another"
     assert await cache.forget(["m1", "m9"]) == 2
     assert await cache.forget([]) == 0
     assert (await cache.get(first), await cache.get(second)) == (None, "newer")
+
+
+async def test_every_cache_prunes_by_age_and_by_model(cache: HypotheticalAnswerCache) -> None:
+    old = HydeKey.of("m1", WRITER, "old", key=KEY)
+    fresh = HydeKey.of("m1", WRITER, "fresh", key=KEY)
+    retired = HydeKey.of("m1", ModelRef(profile="corp", model="retired"), "fresh", key=KEY)
+    await cache.put(old, "old", T0)
+    await cache.put(fresh, "fresh", T0 + timedelta(days=2))
+    await cache.put(retired, "retired", T0 + timedelta(days=2))
+
+    pruned = await cache.prune(T0 + timedelta(days=1), {str(WRITER)})
+
+    assert pruned == 2
+    assert (await cache.get(old), await cache.get(fresh), await cache.get(retired)) == (
+        None,
+        "fresh",
+        None,
+    )
+    assert await cache.prune(T0, ()) == 1  # no model configured: every answer goes
+    assert await cache.get(fresh) is None

@@ -588,6 +588,12 @@ HYDE_INSTRUCTIONS: Final[str] = (
 )
 """HyDE's fixed instructions: the hypothetical answer is embedded, never shown to anyone, so a
 plausible passage in the docs' own words is what helps the vector half (Gao et al. 2022)."""
+HYDE_CACHE_TTL_DAYS: Final[int] = 30
+"""Days a cached hypothetical answer is kept (``[ai.hyde] cache_ttl``); the collection job
+deletes older ones, and those of a model no longer configured."""
+HYDE_MEMORY_CACHE_SIZE: Final[int] = 10_000
+"""The most hypothetical answers an in-memory cache keeps (a stdio process's own); the least
+recently used goes first."""
 
 # ---------------------------------------------------------------- models (AI providers, #241)
 PROFILE_NAME_PATTERN: Final[str] = r"^[a-z0-9][a-z0-9_-]{0,62}$"
