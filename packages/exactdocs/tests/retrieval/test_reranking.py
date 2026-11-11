@@ -211,6 +211,9 @@ class RecordingTracer:
         self.opened.append(Opened(name=name, query=query, attributes=attributes))
         return nullcontext(_Span())
 
+    def fallback(self, *, mode: str, reason: str) -> None:
+        del mode, reason
+
 
 @dataclass(slots=True)
 class World:

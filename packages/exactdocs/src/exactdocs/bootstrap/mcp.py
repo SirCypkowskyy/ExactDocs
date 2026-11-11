@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError, ToolError
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from mcp.server.context import ServerRequestContext
 from mcp.shared.exceptions import MCPError
@@ -168,5 +169,16 @@ def _build(
         article_outline=retrieval.article_outline,
         resolve_library_id=retrieval.resolve_library_id,
         query_docs=retrieval.query_docs,
+        caller=_token_account,
     )
     return mcp
+
+
+def _token_account() -> str | None:
+    """Name the account of the current MCP request: its API token's (``ApiTokenVerifier``).
+
+    Returns:
+        The account ID; ``None`` over stdio and in-process clients, which carry no token.
+    """
+    token = get_access_token()
+    return None if token is None else token.client_id

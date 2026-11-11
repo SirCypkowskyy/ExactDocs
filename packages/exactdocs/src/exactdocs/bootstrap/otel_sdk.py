@@ -12,7 +12,7 @@ renders what it collects (``exposition``) when Prometheus asks.
 """
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from urllib.parse import parse_qsl, urlencode
 
 from opentelemetry import metrics, trace
@@ -31,6 +31,7 @@ from exactdocs import __version__
 from exactdocs.bootstrap.constants import (
     EXPORTER_VARIABLE,
     OTLP_ENDPOINT_VARIABLE,
+    PROMPT_SPAN_ATTRIBUTES,
     QUERY_TEXT_PARAMETERS,
     REDACTED,
     SCRUBBED_EXCEPTION_ATTRIBUTES,
@@ -64,7 +65,11 @@ def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> b
         if exports("TRACES"):
             exporter = OTLPSpanExporter()
             tracer_provider.add_span_processor(
-                BatchSpanProcessor(exporter if record_query_text else ScrubbingExporter(exporter))
+                BatchSpanProcessor(
+                    ScrubbingExporter(
+                        exporter, scrubber=without_prompts if record_query_text else scrub
+                    )
+                )
             )
         trace.set_tracer_provider(tracer_provider)
         if exports("METRICS"):
@@ -183,16 +188,54 @@ def scrub(span: ReadableSpan) -> ReadableSpan:
     )
 
 
-class ScrubbingExporter(SpanExporter):
-    """Hands spans to the OTLP exporter only once they are ``scrub``-bed."""
+def without_prompts(span: ReadableSpan) -> ReadableSpan:
+    """Return the span without what a model was sent or answered (``PROMPT_SPAN_ATTRIBUTES``).
 
-    def __init__(self, exporter: SpanExporter) -> None:
+    What the query-text opt-in keeps: it never turns prompts on.
+
+    Args:
+        span: A finished span.
+
+    Returns:
+        The span itself when it has none of them, else a copy without them.
+    """
+    attributes = span.attributes or {}
+    if not PROMPT_SPAN_ATTRIBUTES & attributes.keys():
+        return span
+    return ReadableSpan(
+        name=span.name,
+        context=span.context,
+        parent=span.parent,
+        resource=span.resource,
+        attributes={k: v for k, v in attributes.items() if k not in PROMPT_SPAN_ATTRIBUTES},
+        events=span.events,
+        links=span.links,
+        kind=span.kind,
+        status=span.status,
+        start_time=span.start_time,
+        end_time=span.end_time,
+        instrumentation_scope=span.instrumentation_scope,
+    )
+
+
+class ScrubbingExporter(SpanExporter):
+    """Hands spans to the OTLP exporter only once they are scrubbed."""
+
+    def __init__(
+        self,
+        exporter: SpanExporter,
+        *,
+        scrubber: Callable[[ReadableSpan], ReadableSpan] = scrub,
+    ) -> None:
         """Wrap the exporter.
 
         Args:
             exporter: Where the scrubbed spans go.
+            scrubber: ``scrub`` (everything), or ``without_prompts`` when the operator opted in to
+                the query text.
         """
         self._exporter = exporter
+        self._scrubber = scrubber
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         """Export the scrubbed copies.
@@ -203,7 +246,7 @@ class ScrubbingExporter(SpanExporter):
         Returns:
             What the OTLP exporter returned.
         """
-        return self._exporter.export([scrub(span) for span in spans])
+        return self._exporter.export([self._scrubber(span) for span in spans])
 
     def shutdown(self) -> None:
         """Shut the OTLP exporter down."""

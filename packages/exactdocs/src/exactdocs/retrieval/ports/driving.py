@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from exactdocs.retrieval.dtos import (
+    AiUsageOut,
     ArticleOutlineOut,
     ArticleOutlineQuery,
     CheckProviderCommand,
@@ -60,8 +61,19 @@ class SearchDocs(Protocol):
     gives an empty ``results``. Never answers from another version.
     """
 
-    async def __call__(self, query: SearchDocsQuery) -> SearchDocsResult:
-        """Run the use case."""
+    async def __call__(
+        self, query: SearchDocsQuery, *, caller: str | None = None
+    ) -> SearchDocsResult:
+        """Run the use case.
+
+        Args:
+            query: The search.
+            caller: The account searching (an API token's or a session's); ``None`` for a stdio
+                MCP process. Its LLM searches are rate limited and its spend counted to it.
+
+        Returns:
+            The results of the one version searched.
+        """
         ...
 
 
@@ -186,8 +198,18 @@ class QueryDocs(Protocol):
     with code in it first); it never filters, and a chunk ranked beyond the candidates is not seen.
     """
 
-    async def __call__(self, query: QueryDocsQuery) -> QueryDocsResult:
-        """Run the use case."""
+    async def __call__(
+        self, query: QueryDocsQuery, *, caller: str | None = None
+    ) -> QueryDocsResult:
+        """Run the use case.
+
+        Args:
+            query: The library ID and the question.
+            caller: The account asking; ``None`` for a stdio MCP process.
+
+        Returns:
+            Whole chunks of the one version, best first, within the budget.
+        """
         ...
 
 
@@ -489,5 +511,17 @@ class EstimateEmbedding(Protocol):
 
         Returns:
             The estimate.
+        """
+        ...
+
+
+class GetAiUsage(Protocol):
+    """Show what AI calls spent per scope today and this month, and the budgets left (admins)."""
+
+    async def __call__(self) -> AiUsageOut:
+        """Run the use case.
+
+        Returns:
+            The instance, the embedding budget, then every library and user that spent this month.
         """
         ...
