@@ -24,6 +24,8 @@ ML_PACKAGES = {
     "huggingface-hub",
     "onnx",
     "onnxruntime",
+    "fastembed",
+    "tokenizers",
     "model2vec",
     "pydantic-ai",
     "pydantic-ai-slim",

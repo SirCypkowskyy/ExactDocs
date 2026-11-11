@@ -6,6 +6,7 @@ The ``embedding`` role is a ``local`` profile served by the term-hash stand-in: 
 free, so an exhausted budget stops the LLM step and leaves hybrid search answering.
 """
 
+import json
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -16,8 +17,10 @@ from behave.runner import Context
 from fastapi.testclient import TestClient
 
 from exactdocs.bootstrap.ai_models import PydanticAiModels
+from exactdocs.bootstrap.constants import MODEL_MARKER
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
+from exactdocs.bootstrap.local_models import model_folder
 from exactdocs.bootstrap.settings import AiSettings
 from exactdocs.retrieval.adapters.driven.memory import HashEmbeddingModels
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
@@ -40,6 +43,8 @@ DIMENSIONS = 256
 DAILY_TOKENS = 10_000_000
 """The instance's daily token budget: far more than embedding the fixture takes."""
 HEADERS = {"X-Team": "docs"}
+STAND_IN = "stand-in/term-hash"
+"""The in-process embedding model's name on the ``local`` profile."""
 
 
 @dataclass(slots=True)
@@ -101,14 +106,20 @@ def step_hyde_instance(context: Context, mode: str) -> None:
                 },
                 "box": {"kind": "local"},
             },
-            "embedding": {"model": "box:term-hash", "dimensions": DIMENSIONS},
+            "embedding": {"model": f"box:{STAND_IN}", "dimensions": DIMENSIONS},
             "llm": {"model": "corp:writer"},
             "budgets": {"daily_tokens": DAILY_TOKENS},
         }
     )
     context.client.__exit__(None, None, None)  # one job worker per process
+    settings = context.settings.model_copy(update={"ai": ai})
+    # A `local` role needs its model pulled (#245): the stand-in's marker, as a pull writes it.
+    folder = model_folder(settings.effective_models_dir, STAND_IN)
+    folder.mkdir(parents=True, exist_ok=True)
+    marker = {"model": STAND_IN, "role": "embedding", "dimensions": DIMENSIONS}
+    (folder / MODEL_MARKER).write_text(json.dumps(marker), encoding="utf-8")
     container = Container.build(
-        context.settings.model_copy(update={"ai": ai}),
+        settings,
         model_factory=GatewayChatLocalEmbeddings(),
         embedding_models=HashEmbeddingModels(size=DIMENSIONS, by_terms=True),
     )

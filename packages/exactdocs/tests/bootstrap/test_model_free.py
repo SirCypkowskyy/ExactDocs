@@ -58,6 +58,11 @@ AI_MODULES = {
     "logfire",
     "logfire_api",
     "genai_prices",
+    # The `[local]` extra (#245).
+    "fastembed",
+    "onnxruntime",
+    "tokenizers",
+    "huggingface_hub",
 }
 
 SEARCH_WITHOUT_MODELS = """
@@ -86,10 +91,12 @@ print(json.dumps(sorted(sys.modules)))
 """
 
 
-def test_the_ai_extra_is_installed_for_the_tests() -> None:
+def test_the_ai_and_local_extras_are_installed_for_the_tests() -> None:
     """Otherwise the next test would pass for the wrong reason."""
     assert importlib.util.find_spec("pydantic_ai") is not None
     assert importlib.util.find_spec("sqlite_vec") is not None
+    assert importlib.util.find_spec("fastembed") is not None
+    assert importlib.util.find_spec("onnxruntime") is not None
 
 
 @pytest.mark.parametrize("script", [START_APP, SEARCH_WITHOUT_MODELS], ids=["start", "search"])
@@ -108,6 +115,31 @@ def test_with_no_model_configured_nothing_of_the_ai_extra_is_imported(
     top_level = {m.split(".")[0] for m in loaded}
 
     assert not (loaded | top_level) & AI_MODULES
+
+
+LOCAL_MODULES = {"fastembed", "onnxruntime", "tokenizers", "huggingface_hub"}
+
+
+@pytest.mark.parametrize("script", [START_APP, SEARCH_WITHOUT_MODELS], ids=["start", "search"])
+def test_a_local_profile_without_a_role_imports_nothing_of_the_local_extra(
+    tmp_path: Path, script: str
+) -> None:
+    """A `local` profile alone loads no model: only a role set on it does (#245)."""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "EXACTDOCS_DATA_DIR": str(tmp_path),
+            "EXACTDOCS_AI__PROVIDERS__OFFLINE__KIND": "local",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    loaded = {m.split(".")[0] for m in json.loads(result.stdout.splitlines()[-1])}
+
+    assert not loaded & LOCAL_MODULES
 
 
 def _lock(default: list[str], extra: list[str]) -> dict:

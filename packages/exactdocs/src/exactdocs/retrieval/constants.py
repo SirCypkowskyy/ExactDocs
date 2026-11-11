@@ -885,6 +885,26 @@ _VECTOR_ABSENT: Final[str] = "AND c.id NOT IN (SELECT chunk_key FROM {table})"
 """Narrows ``_VECTOR_PENDING`` to chunks without a vector in one space's table."""
 
 # ---------------------------------------------------------------- adapters/driven/ai_embeddings
+LOCAL_MODEL_ERRORS: Final[tuple[type[Exception], ...]] = (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    OSError,
+    MemoryError,
+)
+"""What a failing tokenizer or local model call raises; bootstrap adds ONNX Runtime's own errors
+(``Fail``, ``InvalidArgument``... which derive from ``Exception`` only)."""
+LOCAL_EMBEDDING_BATCH: Final[int] = 16
+"""Most texts a local model embeds per call, whatever ``batch_size`` says: a batch pads every
+text to its longest, and ONNX Runtime's working memory grows with it. Embedding the fixture
+library with bge-small peaked at 636 MB in batches of 64 and 510 MB in batches of 16, and took
+3.2 s instead of 4.3 s (#278)."""
+LOCAL_RERANK_TIMEOUT: Final[float] = 5.0
+"""The reranker timeout when the instance's reranker runs on a ``local`` profile and none is set:
+a CPU reranks 32 long candidates in about 0.2 to 2 s, more on fewer cores."""
+LOCAL_RERANK_BATCH: Final[int] = 8
+"""Candidates a local cross-encoder scores per ONNX call: smaller batches pad less (on a 4-core CPU
+32 candidates of 2,000 characters took 2.4 s in batches of 8, 3.5 s in one batch)."""
 EMBEDDINGS_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_embeddings_sdk"
 """The pydantic-ai side of the embedding adapter, imported once an embedding model is called."""
 
