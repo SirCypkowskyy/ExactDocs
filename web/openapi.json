@@ -8040,7 +8040,7 @@
           "candidates": {
             "type": "integer",
             "title": "Candidates",
-            "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1 (with a reranker, at\nmost its top N + 1 when that is more)."
+            "description": "Lower bound: matching chunks the search looked at (`bm25`: at most `limit` + 1, or the\nreranker's top N + 1 when that is more; `hybrid`: the chunks of its BM25 and vector halves,\neach counted once)."
           },
           "reranked": {
             "type": "integer",
@@ -8424,6 +8424,7 @@
           "llm_budget_reached",
           "llm_rate_limited",
           "vector_store_unavailable",
+          "embedding_unavailable",
           "reranker_timeout",
           "reranker_failed"
         ],

@@ -365,7 +365,7 @@ only holds each process's git work folders and `known_hosts`. What changes:
   the job fails and the next start or import queues the version again. A search in a hybrid
   mode answers BM25 with `embedding_in_progress` while the configured model's space does not
   cover the version; otherwise the pipeline is given that space (`PipelineRequest.space`) and
-  must search it, never the active one. Saving over REST the profile the embedding role uses
+  must search it, never the active one (*Hybrid search* below). Saving over REST the profile the embedding role uses
   queues the embedding too (`bootstrap/embedding.py`), and the start queues what is missing in
   the background. `retrieval_ai_spend` is one row per (scope kind, scope ID, UTC window, window
   start) with an atomic upsert on SQLite and PostgreSQL: each batch adds to the instance's row
@@ -1012,7 +1012,10 @@ registers `Bm25Pipeline` and any further pipelines it is given; `RetrievalModes`
 asks the `ModelRoles` port which roles the searched library may use (per library: one with AI off
 has none), builds a `ModeRegistry` (a mode can run when it
 has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
-port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best.
+port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best of
+`DEFAULT_MODE_ORDER`, which lists a mode only once the eval suite marks it `eligible_as_default`
+([Retrieval evals](evals.md#gates)): only `bm25` is listed yet, so an operator, a library or a
+call chooses `hybrid`.
 Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
 catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (create, activate and
 retire a space, upsert and delete vectors by `ChunkKey`, nearest within one manifest, a manifest's
@@ -1021,8 +1024,31 @@ store* under Persistence), one contract test for both (`tests/retrieval/test_vec
 which the pgvector adapter (#243) runs too. `OpenEmbeddingSpace` finds the space of a model or
 creates a new one when the model, its dimensions or the input format changed, so two models never
 share one. `RetrievalModes` asks `VectorIndex.available()` once an embedding role is configured:
-when its extension cannot load (sqlite-vec, or pgvector's `vector`), the hybrid modes are unavailable and a setting that needs them falls
-back to BM25 with `fallback_reason: vector_store_unavailable`.
+when its extension cannot load (sqlite-vec, or pgvector's `vector`), the hybrid modes are
+unavailable and a setting that needs them falls back to BM25 with
+`fallback_reason: vector_store_unavailable`.
+
+**Hybrid search (#92).** `HybridPipeline` (in `use_cases`, registered for `hybrid` whenever a
+vector store exists: SQLite with sqlite-vec, PostgreSQL with pgvector) asks the `SearchIndex` for
+the version's best `RRF_DEPTH` (50) BM25 hits, embeds the query with the configured model
+(`Embeddings.embed_query`, in a `<search>.embed_query` span without the query text, within
+`QUERY_EMBEDDING_TIMEOUT` seconds; a paid embedding model is first checked against the budgets
+of the embedding, instance, library and caller scopes, and its usage is recorded once to the same
+rows through `AiSpend.record`), asks
+`VectorIndex.nearest` for the 50 nearest chunks of the same manifest in `PipelineRequest.space`,
+and fuses the two rankings with reciprocal rank fusion (`reciprocal_rank_fusion`, `k` = 60; ties
+go to BM25's order, so an exact identifier stays first). Both halves are scoped to the version's
+manifest and filtered by tags before ranking, so no chunk of another version can come in. The
+vector half always runs, also when BM25 matches nothing (a synonym the docs never use), so a
+hybrid answer has hits whenever the version has embedded chunks that pass the tag filter; there is
+no similarity floor. A chunk only the vectors found gets the first 24 words of its text as its
+snippet; `coverage.candidates` counts the chunks of both halves once. The pipeline never fails a
+search: BM25 answers with `embedding_in_progress` when the space no longer matches the configured
+model (a switch of models), `llm_budget_reached` when a budget the query embedding counts to is
+used up (as a paid rerank over budget), `embedding_unavailable` when the model failed, timed out or answered
+an unusable vector (or the key could not be opened), and `vector_store_unavailable` when the store
+cannot search. Reranking (below) runs after the pipeline, on the fused order, like for any
+mode; the pipeline is asked for the reranker's top N when that is more than the limit.
 
 **Reranker (#93).** Reranking is a flag on top of any mode (`ModeChoice.rerank`, with the
 library's `rerank_top_n` or the instance's `[ai.reranker] top_n`). `RetrievalModes.run` asks the

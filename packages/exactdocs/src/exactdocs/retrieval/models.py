@@ -50,6 +50,8 @@ from exactdocs.retrieval.constants import (
     PROFILE_NAME,
     RATE_LIMIT_BELOW_ONE,
     REPLAY_RETAIN_DAYS,
+    RRF_K,
+    SEARCH_DOCS,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
@@ -58,6 +60,7 @@ from exactdocs.retrieval.constants import (
     SPEND_SCOPE_USER,
     STOP_WORDS,
     TOKENS_PER_MILLION,
+    VECTOR_SNIPPET_WORDS,
 )
 from exactdocs.retrieval.errors import (
     DuplicateChunkError,
@@ -436,6 +439,81 @@ def search_terms(query: str) -> list[str]:
     return list(dict.fromkeys(identifier_tokens(query).split()))
 
 
+def leading_hit(chunk_id: ChunkId, score: float, content: str, terms: Collection[str]) -> SearchHit:
+    """Build the hit of a chunk no full-text match marked: its snippet is the start of its text.
+
+    Args:
+        chunk_id: The chunk.
+        score: Its score in the search.
+        content: The chunk's verbatim text.
+        terms: The query's terms (``search_terms``), marked where they occur.
+
+    Returns:
+        The hit; its snippet is the first ``VECTOR_SNIPPET_WORDS`` words of the text, verbatim
+        (a shorter text is its own snippet).
+    """
+    words = list(re.finditer(r"\S+", content))
+    end = words[VECTOR_SNIPPET_WORDS - 1].end() if len(words) > VECTOR_SNIPPET_WORDS else None
+    snippet = content[:end].strip()
+    return SearchHit(
+        chunk_id=chunk_id, score=score, snippet=snippet, highlights=highlights(snippet, terms)
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FusedRank:
+    """A chunk's place after reciprocal rank fusion, and its place in each half."""
+
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """The sum of ``1 / (k + rank)`` over the halves it is in; higher is better."""
+    bm25_rank: int | None
+    """Its 1-based rank in the BM25 half, if it is there."""
+    vector_rank: int | None
+    """Its 1-based rank in the vector half, if it is there."""
+
+
+def reciprocal_rank_fusion(
+    bm25: Sequence[ChunkId], vectors: Sequence[ChunkId], k: int = RRF_K
+) -> list[FusedRank]:
+    """Fuse two rankings of one version's chunks (RRF, Cormack et al. 2009).
+
+    Only ranks count, never scores, so BM25 scores and cosine distances need no common scale.
+    Ties go to the chunk BM25 ranks higher (exact identifiers first), then to the one the vectors
+    rank higher, then to the chunk ID, so the order is reproducible.
+
+    Args:
+        bm25: The BM25 half, best first.
+        vectors: The vector half, nearest first.
+        k: The constant damping the weight of the first ranks.
+
+    Returns:
+        Every chunk of either half once, best first.
+    """
+    bm25_rank = {c: r for r, c in enumerate(dict.fromkeys(bm25), start=1)}
+    vector_rank = {c: r for r, c in enumerate(dict.fromkeys(vectors), start=1)}
+    fused = [
+        FusedRank(
+            chunk_id=c,
+            score=sum(1 / (k + r) for r in (bm25_rank.get(c), vector_rank.get(c)) if r),
+            bm25_rank=bm25_rank.get(c),
+            vector_rank=vector_rank.get(c),
+        )
+        for c in dict.fromkeys([*bm25_rank, *vector_rank])
+    ]
+    unranked = math.inf
+    fused.sort(
+        key=lambda f: (
+            -f.score,
+            f.bm25_rank or unranked,
+            f.vector_rank or unranked,
+            f.chunk_id,
+        )
+    )
+    return fused
+
+
 def highlights(text: str, terms: Collection[str]) -> tuple[tuple[int, int], ...]:
     """Return ``[start, end)`` offsets of the words of ``text`` that match any of ``terms``.
 
@@ -639,6 +717,8 @@ class FallbackReason(StrEnum):
     """Too many LLM searches in the last minute."""
     VECTOR_STORE_UNAVAILABLE = "vector_store_unavailable"
     """The vector store cannot be loaded here (sqlite-vec), so no hybrid mode can run."""
+    EMBEDDING_UNAVAILABLE = "embedding_unavailable"
+    """The embedding model failed or timed out on the query: BM25 answered alone."""
     RERANKER_TIMEOUT = "reranker_timeout"
     """The reranker did not answer in time: the candidates keep the order the mode found."""
     RERANKER_FAILED = "reranker_failed"
@@ -696,6 +776,8 @@ class ModeRegistry:
     """The modes this build has a pipeline for; BM25 always."""
     vector_store: bool = True
     """The vector store can search here; without it no mode that ``needs_vectors`` runs."""
+    defaults: tuple[RetrievalMode, ...] = tuple(RetrievalMode(m) for m in DEFAULT_MODE_ORDER)
+    """The modes a search may default to, best first (``DEFAULT_MODE_ORDER``); BM25 last."""
 
     def missing_roles(self, mode: RetrievalMode) -> tuple[ModelRole, ...]:
         """Name the roles ``mode`` needs that are not configured.
@@ -748,14 +830,15 @@ class ModeRegistry:
         return tuple(m for m in RetrievalMode if self.is_available(m))
 
     def best(self) -> RetrievalMode:
-        """Pick the default when nothing is set: HyDE, then hybrid, then BM25.
+        """Pick the default when nothing is set: the first of ``defaults`` that can run.
+
+        Only modes the eval suite made eligible are defaults (``DEFAULT_MODE_ORDER``): today
+        BM25 alone, so hybrid runs only when a call, a library or the instance chooses it.
 
         Returns:
-            The best available mode.
+            The best available default.
         """
-        return next(
-            RetrievalMode(m) for m in DEFAULT_MODE_ORDER if self.is_available(RetrievalMode(m))
-        )
+        return next(m for m in self.defaults if self.is_available(m))
 
     def check(self, name: str) -> RetrievalMode:
         """Turn a mode name (any letter case) into a mode that can run now.
@@ -816,24 +899,46 @@ class ModeRegistry:
             run fails (``check``).
         """
         rerank = ModelRole.RERANKER in self.roles
-        cheaper = self.without_llm().best()
         if asked is not None:
-            return ModeChoice(mode=self.check(asked), rerank=rerank, cheaper=cheaper)
+            mode = self.check(asked)
+            return ModeChoice(mode=mode, rerank=rerank, cheaper=self.cheaper_than(mode))
         reason: FallbackReason | None = None
         for setting in (library, instance):
             if setting is None:
                 continue
             if self.is_available(setting):
                 return ModeChoice(
-                    mode=setting, rerank=rerank, fallback_reason=reason, cheaper=cheaper
+                    mode=setting,
+                    rerank=rerank,
+                    fallback_reason=reason,
+                    cheaper=self.cheaper_than(setting),
                 )
             reason = reason or self._skipped(setting)
         best = self.best()
         if reason is None and not self.vector_store:
-            with_store = ModeRegistry(roles=self.roles, pipelines=self.pipelines)
+            with_store = replace(self, vector_store=True)
             if with_store.best() != best:
                 reason = FallbackReason.VECTOR_STORE_UNAVAILABLE
-        return ModeChoice(mode=best, rerank=rerank, fallback_reason=reason, cheaper=cheaper)
+        return ModeChoice(
+            mode=best, rerank=rerank, fallback_reason=reason, cheaper=self.cheaper_than(best)
+        )
+
+    def cheaper_than(self, mode: RetrievalMode) -> RetrievalMode:
+        """Pick what answers when a budget or the rate limit skips ``mode``'s LLM step.
+
+        HyDE without its hypothetical answer is hybrid search, whether or not hybrid is a
+        default; any other mode falls to the best default that needs no LLM.
+
+        Args:
+            mode: The mode chosen.
+
+        Returns:
+            The mode without the LLM step.
+        """
+        no_llm = self.without_llm()
+        if mode is RetrievalMode.HYBRID_HYDE and no_llm.is_available(RetrievalMode.HYBRID):
+            return RetrievalMode.HYBRID
+        return no_llm.best()
 
     def without_llm(self) -> ModeRegistry:
         """Return the registry as it would be with no LLM: what a budget leaves to run.
@@ -897,6 +1002,11 @@ class PipelineRequest:
     """The embedding space a mode that searches vectors must search: the configured model's, which
     the caller checked covers ``version``. Never look up the active space instead: during a switch
     of models it is another model's. ``None`` when no embedding model resolves (BM25 modes)."""
+    search: str = SEARCH_DOCS
+    """The search this runs in (``search_docs``, ``query_docs``): names the spans of its stages."""
+    caller: str | None = None
+    """The account the search counts to (``ModeChoice.caller``): a paid call the pipeline makes
+    (the query's embedding) is checked against and recorded to its budgets too."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,8 +1,9 @@
 """Steps for background embedding (#91).
 
 A fake gateway on loopback (``fake_llm``) is the embedding endpoint: it answers every text with
-the same small vector and records what it was sent. The hybrid pipeline is a stand-in until #92:
-it answers ``hybrid`` with no hits, so a scenario sees which mode a search ran in.
+the same small vector and records what it was sent. The hybrid pipeline is a stand-in (the real
+one is in ``hybrid_search_steps``): it answers ``hybrid`` with no hits, so a scenario sees which
+mode a search ran in. The instance's mode is ``hybrid``: it is not a default (docs/evals.md).
 """
 
 import asyncio
@@ -64,7 +65,7 @@ def start_gateway(context: Context, hold: threading.Event | None = None) -> Fake
 
 
 def embedding_ai(endpoint: FakeGateway, model: str) -> AiSettings:
-    """Configure one OpenAI-compatible profile and its embedding model.
+    """Configure one OpenAI-compatible profile, its embedding model and the ``hybrid`` mode.
 
     Args:
         endpoint: The fake gateway.
@@ -75,6 +76,7 @@ def embedding_ai(endpoint: FakeGateway, model: str) -> AiSettings:
     """
     return AiSettings.model_validate(
         {
+            "mode": "hybrid",
             "providers": {"corp": {"kind": "openai-compatible", "base_url": endpoint.v1}},
             "embedding": {"model": f"corp:{model}"},
         }

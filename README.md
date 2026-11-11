@@ -365,18 +365,21 @@ curl -H "Authorization: Bearer $EXACTDOCS_TOKEN" \
 
 ## Retrieval
 
-Today every search is **BM25** on SQLite FTS5, pinned to one version, with identifiers indexed whole
-and by their parts (`camelCase`, `snake_case`, `pkg.mod.fn`). The pipeline is built to upgrade
+By default every search is **BM25** on SQLite FTS5, pinned to one version, with identifiers indexed
+whole and by their parts (`camelCase`, `snake_case`, `pkg.mod.fn`); with an embedding model it can
+be **hybrid** (BM25 fused with vector search, still pinned to the version). The pipeline is built to upgrade
 itself to whatever you configure; the rows below that need an endpoint are **planned**
 ([Roadmap](#roadmap)), and [Flows](https://sircypkowskyy.github.io/ExactDocs/flows/) draws how
 the mode is chosen.
 
 Which mode answers a search: the call's `mode`, else the **library's** mode
 (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`), else the **instance's**
-(`EXACTDOCS_AI__MODE`), else the best mode the configured models allow. The modes are
+(`EXACTDOCS_AI__MODE`), else the best default the configured models allow. The modes are
 `bm25`, `hybrid` (needs an embedding model), `hybrid_hyde` (embedding model and LLM) and
-`agentic` (LLM, never a default); reranking is a flag on top of any mode when a reranker is
-configured. A call that asks for a mode that cannot run fails with `mode_unavailable`, naming the
+`agentic` (LLM, never a default). A mode becomes a default only once the [eval
+suite](https://sircypkowskyy.github.io/ExactDocs/evals/) shows it beats BM25, and none has yet, so
+BM25 is the default: set `EXACTDOCS_AI__MODE=hybrid` (or a library's mode) to use hybrid search.
+Reranking is a flag on top of any mode when a reranker is configured. A call that asks for a mode that cannot run fails with `mode_unavailable`, naming the
 missing model role; a library or instance mode that cannot run (its model was removed) never fails
 a search: the next one answers, with `fallback_reason: mode_unavailable` (or
 `vector_store_unavailable` when the hybrid modes cannot run because the vector store's extension
@@ -390,9 +393,9 @@ and instance modes are: their scores must compare across libraries.
 |---|---|---|
 | nothing | BM25 | **available** |
 | reranker | BM25 → rerank | planned |
-| embedding model | hybrid: BM25 + vector search | planned |
+| embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
-| embedding model + LLM (+ reranker) | hybrid with HyDE → rerank (the default when everything is configured) | planned |
+| embedding model + LLM (+ reranker) | hybrid with HyDE → rerank (a default only once the eval suite shows it beats BM25) | planned |
 | LLM + agentic mode | a pydantic-ai agent browses the documentation tree and returns the articles that answer the question, with a justification; similar past questions are served from a cache | planned |
 
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
@@ -422,7 +425,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
 | `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` section above); the environment wins over it. It may not hold keys or `secret_key`: those come from the environment or `api_key_file` |
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
-| `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best mode the configured models allow (BM25 while none is). An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
+| `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -677,8 +680,10 @@ the query. With a `limit` above `top_n`, the reranked results come first and the
 mode's order, with the mode's scores (not comparable with the reranker's). With any
 provider profile other than `local` configured, the provider SDKs are loaded in a worker thread at
 start, so the first search never waits for them; a load that fails is a warning, never a stop. Whatever the reranker raises (an HTTP client closed under the
-call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. The hybrid, HyDE
-and agentic pipelines arrive with #92 onwards.
+call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. A hybrid search is
+reranked the same way, after the fusion.
+
+The hybrid pipeline is built (#92); the HyDE and agentic pipelines arrive with #94 and #98.
 
 ### PostgreSQL
 

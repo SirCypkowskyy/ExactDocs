@@ -783,7 +783,7 @@ def _providers(world: World, roles: InstanceRoles | None = None) -> AiProviders:
 async def test_a_library_with_ai_off_answers_bm25_and_sends_nothing() -> None:
     world = _world(roles=InstanceRoles(embedding=EMBED, llm=CHAT))
     before = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
-    assert before.effective_mode is RetrievalMode.HYBRID
+    assert RetrievalMode.HYBRID in before.available_modes
 
     after = await world.module.set_library_retrieval(
         SetLibraryRetrievalCommand(library=LIB, ai_enabled=False)

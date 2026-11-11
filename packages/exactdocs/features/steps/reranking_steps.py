@@ -96,7 +96,12 @@ def step_library_top_n(context: Context, top_n: int) -> None:
 
 @when('an agent searches "{query}"')
 def step_agent_searches(context: Context, query: str) -> None:
-    context.response = context.client.get(SEARCH, params={"q": query, "limit": LIMIT})
+    # Shared with hybrid_search.feature, whose Background pins the version (``search_ref``).
+    params: dict[str, Any] = {"q": query, "limit": LIMIT}
+    if ref := getattr(context, "search_ref", None):
+        params["ref"] = ref
+    context.query = query
+    context.response = context.client.get(SEARCH, params=params)
 
 
 def _body(context: Context) -> dict[str, Any]:

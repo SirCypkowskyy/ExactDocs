@@ -17,11 +17,15 @@ from exactdocs.retrieval.constants import (
     MAX_SEARCHED_LIBRARIES,
     NO_VECTOR_STORE,
     POINTER_TEXT,
+    QUERY_DOCS,
     QUERY_DOCS_CANDIDATES,
+    QUERY_EMBEDDING_TIMEOUT,
     QUERY_HITS_CAP,
+    RRF_DEPTH,
     RULE_FRAMING_CHARS,
     RULES_FRAMING_CHARS,
     RULES_SHARE,
+    SEARCH_DOCS,
     SECTION_FRAMING_CHARS,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
@@ -100,7 +104,9 @@ from exactdocs.retrieval.errors import (
     AiBudgetReachedError,
     ArticleNotFoundError,
     ChunkNotFoundError,
+    EmbeddingFailedError,
     InvalidProviderError,
+    InvalidVectorError,
     MovedSection,
     NothingToCheckError,
     ProviderExistsError,
@@ -114,6 +120,7 @@ from exactdocs.retrieval.errors import (
     UnknownEmbeddingSpaceError,
     UnknownLibraryError,
     UnknownProviderError,
+    VectorDimensionError,
     VectorStoreUnavailableError,
     VersionNotIndexedError,
 )
@@ -129,6 +136,7 @@ from exactdocs.retrieval.models import (
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    EmbeddedTexts,
     EmbeddingSkip,
     EmbeddingSpace,
     EmbeddingSpaceId,
@@ -160,6 +168,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
+    SearchHit,
     SearchText,
     SectionRef,
     SpaceState,
@@ -177,10 +186,13 @@ from exactdocs.retrieval.models import (
     embedding_text,
     estimated_usd,
     language_first,
+    leading_hit,
     name_match,
     outline,
     rank_matches,
+    reciprocal_rank_fusion,
     reorder,
+    search_terms,
     spend_entries,
 )
 from exactdocs.retrieval.ports.driven import (
@@ -774,6 +786,8 @@ class RetrievalModes:
         query: str,
         tag_filter: TagFilter,
         limit: int,
+        *,
+        search: str = SEARCH_DOCS,
     ) -> PipelineAnswer:
         """Run the chosen mode's pipeline on one version.
 
@@ -786,6 +800,7 @@ class RetrievalModes:
             query: The query text.
             tag_filter: Which chunks may be returned.
             limit: How many hits the caller shows at most.
+            search: The search it runs in, which names the spans of the pipeline's stages.
 
         Returns:
             The pipeline's answer; the choice's fallback reason unless the pipeline gave one
@@ -801,6 +816,8 @@ class RetrievalModes:
             tag_filter=tag_filter,
             limit=depth,
             rerank=choice.rerank,
+            search=search,
+            caller=choice.caller,
         )
         if choice.mode.needs_vectors and self.embedded is not None:
             found = await self.embedded.search_space(version.manifest_id)
@@ -1149,7 +1166,7 @@ class SearchDocsUseCase:
         text = SearchText(value=query.query)
         choice = await self.modes.choose(asked=query.mode, library=query.library)
         with self.tracer.span(
-            "search_docs",
+            SEARCH_DOCS,
             mode=choice.mode.value,
             query=text.value,
             library=query.library,
@@ -1178,7 +1195,7 @@ class SearchDocsUseCase:
             The results of the one version searched.
         """
         mode = choice.mode.value
-        with self.tracer.span("search_docs.version", mode=mode):
+        with self.tracer.span(f"{SEARCH_DOCS}.version", mode=mode):
             version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
@@ -1187,18 +1204,18 @@ class SearchDocsUseCase:
         choice = await self.modes.within_budget(choice, library=version.library, caller=caller)
         mode = choice.mode.value
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
-        with self.tracer.span("search_docs.rank", mode=mode) as rank:
+        with self.tracer.span(f"{SEARCH_DOCS}.rank", mode=mode) as rank:
             answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
         read: Mapping[ChunkId, StoredChunk] = {}
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
-            with self.tracer.span("search_docs.rerank", mode=answer.mode.value):
+            with self.tracer.span(f"{SEARCH_DOCS}.rerank", mode=answer.mode.value):
                 answer, read = await self.modes.rerank(choice, version, text.value, answer)
         answer = answer.cut(query.limit)
         if answer.fallback_reason is not None:
             self.tracer.fallback(mode=answer.mode.value, reason=answer.fallback_reason.value)
-        with self.tracer.span("search_docs.chunks", mode=answer.mode.value):
+        with self.tracer.span(f"{SEARCH_DOCS}.chunks", mode=answer.mode.value):
             stored = await _chunks_of(self.chunks, version, answer, read)
         # A chunk gone since the search (the manifest was collected) leaves no result, and is not
         # counted as a candidate either, so results and coverage stay consistent.
@@ -1866,7 +1883,7 @@ class QueryDocsUseCase:
         # context7's tool has no mode argument: the library's mode, else the instance's (C7-02).
         choice = await self.modes.choose(asked=None, library=library)
         with self.tracer.span(
-            "query_docs", mode=choice.mode.value, query=text.value, library=library, ref=ref
+            QUERY_DOCS, mode=choice.mode.value, query=text.value, library=library, ref=ref
         ) as whole:
             return await self._answer(query, text, library, ref, choice, whole, caller)
 
@@ -1895,31 +1912,32 @@ class QueryDocsUseCase:
             The packed sections of the one version searched.
         """
         mode = choice.mode.value
-        with self.tracer.span("query_docs.version", mode=mode):
+        with self.tracer.span(f"{QUERY_DOCS}.version", mode=mode):
             version = await self.versions.find(library, ref)
         if version is None:
             raise VersionNotIndexedError(library, ref or "(default version)")
         # Only a request that will run counts against the caller's limits.
         choice = await self.modes.within_budget(choice, library=version.library, caller=caller)
         mode = choice.mode.value
-        with self.tracer.span("query_docs.rank", mode=mode) as rank:
+        with self.tracer.span(f"{QUERY_DOCS}.rank", mode=mode) as rank:
             answer = await self.modes.run(
                 choice,
                 version,
                 text.value,
                 TagFilter(tags=(), match=TagMatch.ANY),
                 QUERY_DOCS_CANDIDATES,
+                search=QUERY_DOCS,
             )
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
         read: Mapping[ChunkId, StoredChunk] = {}
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
-            with self.tracer.span("query_docs.rerank", mode=answer.mode.value):
+            with self.tracer.span(f"{QUERY_DOCS}.rerank", mode=answer.mode.value):
                 answer, read = await self.modes.rerank(choice, version, text.value, answer)
         answer = answer.cut(QUERY_DOCS_CANDIDATES)
         if answer.fallback_reason is not None:
             self.tracer.fallback(mode=answer.mode.value, reason=answer.fallback_reason.value)
-        with self.tracer.span("query_docs.chunks", mode=answer.mode.value):
+        with self.tracer.span(f"{QUERY_DOCS}.chunks", mode=answer.mode.value):
             stored = await _chunks_of(self.chunks, version, answer, read)
         sections = [
             DocSectionOut.from_stored(version, stored[hit.chunk_id])
@@ -2966,6 +2984,240 @@ class EmbeddingRuns:
         if self.vectors is None:
             raise VectorStoreUnavailableError(NO_VECTOR_STORE)
         return self.vectors
+
+
+def _query_embedding_scopes(request: PipelineRequest) -> tuple[tuple[str, str], ...]:
+    """Name the ledger scopes a search's query embedding counts to.
+
+    An embedding (the embedding budget's scope) made for a search (the instance's, the library's
+    and the caller's scopes, as a rerank's), so every budget it may exhaust is checked.
+
+    Args:
+        request: The search.
+
+    Returns:
+        (kind, ID) of each scope, each once.
+    """
+    caller = AiCaller(library=request.version.library.casefold(), user=request.caller)
+    return tuple(dict.fromkeys([*caller.embedding_scopes(), *caller.scopes()]))
+
+
+def _bm25_answer(
+    found: Sequence[SearchHit], limit: int, reason: FallbackReason | None
+) -> PipelineAnswer:
+    """Answer with the BM25 half alone.
+
+    Args:
+        found: BM25's hits, best first (more than ``limit`` tells the answer was cut short).
+        limit: How many hits to return at most.
+        reason: Why the vectors were not used.
+
+    Returns:
+        A ``bm25`` answer.
+    """
+    return PipelineAnswer(
+        mode=RetrievalMode.BM25,
+        hits=tuple(found[:limit]),
+        candidates=len(found),
+        reranked=0,
+        complete=len(found) <= limit,
+        fallback_reason=reason,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HybridPipeline:
+    """Implements ``ports.driven.RetrievalPipeline`` for ``hybrid`` (RET-01): BM25 and vectors.
+
+    The best ``RRF_DEPTH`` chunks of each half, both scoped to the version's manifest, are fused
+    with reciprocal rank fusion (``k`` = ``RRF_K``), so exact identifiers BM25 finds stay first
+    and paraphrases only the vectors find come in. The vector half always runs, also when BM25
+    matches nothing (a synonym the docs never use): there is no similarity floor, so a hybrid
+    answer holds the nearest chunks of the version that pass the tag filter. The vectors are
+    those of ``request.space``,
+    the space the gate checked covers the version, and the query is embedded by the configured
+    model, which must be the one that made that space. When the vectors cannot be used the
+    search still answers, with BM25 and a ``fallback_reason``: ``embedding_in_progress`` while
+    the space does not match the configured model (a switch of models), ``embedding_unavailable``
+    when the model failed, timed out or could not be built (an unopenable key), and
+    ``vector_store_unavailable`` when the store cannot search. Cancellation still propagates.
+    Nothing of a library with AI off is sent.
+    """
+
+    search: SearchIndex
+    """The full-text half."""
+    vectors: VectorIndex
+    """The vector half."""
+    chunks: ChunkRepository
+    """Gives the text of chunks only the vectors found, for their snippets."""
+    runs: EmbeddingRuns
+    """The configured embedding model, which embeds the query."""
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Times the query's embedding (``<search>.embed_query``), without the query text."""
+    timeout: float = QUERY_EMBEDDING_TIMEOUT
+    """Seconds to wait for the query's embedding before answering with BM25."""
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Fuse the BM25 and vector rankings of the version's chunks.
+
+        Args:
+            request: What to search; ``space`` is the space to search; ``rerank`` is ignored
+                until a reranker exists.
+
+        Returns:
+            The best fused hits, or BM25's with the reason the vectors were not used.
+        """
+        manifest = request.version.manifest_id
+        # One more than is fused tells whether the BM25 half was cut short.
+        depth = max(RRF_DEPTH, request.limit) + 1
+        found = await self.search.search(manifest, request.query, request.tag_filter, depth)
+        near = await self._nearest(request)
+        if isinstance(near, FallbackReason):
+            return _bm25_answer(found, request.limit, near)
+        return await self._fused(request, found, near)
+
+    async def _nearest(self, request: PipelineRequest) -> list[ChunkId] | FallbackReason:
+        """Embed the query and rank the version's chunks by their vectors' distance to it.
+
+        Args:
+            request: The search; its ``space`` is the one searched.
+
+        Returns:
+            The best ``RRF_DEPTH`` chunks, nearest first, or why the vectors cannot be used.
+        """
+        space = request.space
+        if space is None:  # no embedding model resolved when the gate looked
+            return FallbackReason.EMBEDDING_UNAVAILABLE
+        vector = await self._query_vector(request, space)
+        if isinstance(vector, FallbackReason):
+            return vector
+        try:
+            near = await self.vectors.nearest(
+                space.id, request.version.manifest_id, vector, request.tag_filter, RRF_DEPTH
+            )
+        except UnknownEmbeddingSpaceError, RetiredEmbeddingSpaceError:
+            return FallbackReason.EMBEDDING_IN_PROGRESS  # retired by a switch of models meanwhile
+        except VectorStoreUnavailableError:
+            return FallbackReason.VECTOR_STORE_UNAVAILABLE
+        except VectorDimensionError, InvalidVectorError:
+            return FallbackReason.EMBEDDING_UNAVAILABLE  # the model answered an unusable vector
+        return [h.chunk_id for h in near]
+
+    async def _query_vector(
+        self, request: PipelineRequest, space: EmbeddingSpace
+    ) -> tuple[float, ...] | FallbackReason:
+        """Embed the query with the model that made ``space``.
+
+        Args:
+            request: The search.
+            space: The space searched.
+
+        Returns:
+            The query's vector, or why there is none.
+        """
+        if not (await self.runs.providers.library_modes.ai_of(request.version.library)).enabled:
+            return FallbackReason.MODE_UNAVAILABLE  # AI off: the query is never sent
+        configured = await self.runs.configured()
+        if configured is None:
+            return FallbackReason.EMBEDDING_UNAVAILABLE
+        if not configured.target.matches(space.spec):
+            return FallbackReason.EMBEDDING_IN_PROGRESS  # the model changed since the gate
+        scopes = _query_embedding_scopes(request)
+        spend = self.runs.spend
+        paid = configured.target.profile_kind not in FREE_PROFILE_KINDS
+        if spend is not None and paid and await spend.reached(scopes) is not None:
+            return FallbackReason.LLM_BUDGET_REACHED  # as a paid rerank over budget (#95)
+        try:
+            embedded = await self._embedded(request, configured)
+        except EmbeddingFailedError, ProviderUnsupportedError, TimeoutError:
+            return FallbackReason.EMBEDDING_UNAVAILABLE
+        if spend is not None:  # the one record of this call: the use case records no embedding
+            await spend.record(
+                scopes,
+                ref=configured.ref,
+                profile_kind=configured.target.profile_kind,
+                input_tokens=embedded.input_tokens,
+                requests=embedded.requests,
+            )
+        return (
+            embedded.vectors[0]
+            if len(embedded.vectors) == 1
+            else FallbackReason.EMBEDDING_UNAVAILABLE
+        )
+
+    async def _embedded(self, request: PipelineRequest, configured: _Configured) -> EmbeddedTexts:
+        """Embed the query, in its span; ``TimeoutError`` after ``timeout`` seconds.
+
+        Args:
+            request: The search.
+            configured: The embedding role, which made the space searched.
+
+        Returns:
+            The query's vector and usage.
+
+        Raises:
+            EmbeddingFailedError: The model failed, or anything else went wrong building or
+                calling it (a key the secret box cannot open, an adapter bug); only the error's
+                type is kept, never its message, which may echo a request. ``CancelledError`` is
+                no ``Exception``, so cancelling a search still propagates.
+            ProviderUnsupportedError: This process cannot call the model.
+        """
+        stage = f"{request.search}.embed_query"
+        with self.tracer.span(stage, mode=RetrievalMode.HYBRID.value):
+            async with asyncio.timeout(self.timeout):
+                try:
+                    model = await self.runs.model(configured)
+                    return await model.embed_query(request.query)
+                except EmbeddingFailedError, ProviderUnsupportedError:
+                    raise
+                except Exception as error:  # never a failed search (RET-01)
+                    # The class only: the message may echo a request, a key or the query.
+                    logger.warning(
+                        "hybrid search answers BM25: the query embedding raised %s",
+                        type(error).__name__,
+                    )
+                    raise EmbeddingFailedError(str(configured.ref), type(error).__name__) from error
+
+    async def _fused(
+        self,
+        request: PipelineRequest,
+        found: Sequence[SearchHit],
+        near: Sequence[ChunkId],
+    ) -> PipelineAnswer:
+        """Fuse the top ``RRF_DEPTH`` of both halves and give each kept chunk its snippet.
+
+        Args:
+            request: The search.
+            found: The BM25 half, best first; one more than ``RRF_DEPTH`` when it was cut short.
+            near: The vector half, nearest first.
+
+        Returns:
+            The ``hybrid`` answer; ``candidates`` counts the chunks of both halves, once each.
+        """
+        fused = reciprocal_rank_fusion([h.chunk_id for h in found[:RRF_DEPTH]], near)
+        by_id = {h.chunk_id: h for h in found}
+        kept = fused[: request.limit]
+        only_vectors = [f.chunk_id for f in kept if f.chunk_id not in by_id]
+        stored = (
+            await self.chunks.get_many(request.version.manifest_id, only_vectors)
+            if only_vectors
+            else {}
+        )
+        terms = search_terms(request.query)
+        hits = []
+        for rank in kept:
+            if (bm25 := by_id.get(rank.chunk_id)) is not None:
+                hits.append(replace(bm25, score=rank.score))
+            elif (chunk := stored.get(rank.chunk_id)) is not None:
+                hits.append(leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms))
+        cut = len(found) > RRF_DEPTH or len(near) >= RRF_DEPTH
+        return PipelineAnswer(
+            mode=RetrievalMode.HYBRID,
+            hits=tuple(hits),
+            candidates=len(fused),
+            reranked=0,
+            complete=not cut and len(fused) <= request.limit,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
