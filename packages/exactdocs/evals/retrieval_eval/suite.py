@@ -580,8 +580,8 @@ def judge(
     comparison: Comparison,
     *,
     fingerprint: str | None = None,
-    search_engine: str | None = None,
     not_judged: Mapping[RetrievalMode, str] | None = None,
+    search_engine: str | None = None,
 ) -> SuiteReport:
     """Apply the gates.
 
@@ -593,9 +593,9 @@ def judge(
             branch's stored baseline, which may not be below it (the bar only moves up) nor
             above what a gating mode measures.
         fingerprint: The dataset's fingerprint, kept in the report.
-        search_engine: The full-text search engine that answered, kept in the report.
         not_judged: Modes whose eligibility as a default this run cannot tell, and why (a
             stand-in embedding): reported ``None`` with the reason, never yes or no.
+        search_engine: The full-text search engine that answered, kept in the report.
 
     Returns:
         The report: passed only with no wrong version and no error in any mode, no recall@5

@@ -217,8 +217,8 @@ def main(argv: list[str] | None = None) -> int:
                     local_roles=frozenset(ModelRole(r) for r in roles),
                     comparison=against,
                     dataset_file=dataset_file,
-                    expect_engine=args.expect_engine,
                     not_judged=OFFLINE_NOT_JUDGED if args.offline_embedding else None,
+                    expect_engine=args.expect_engine,
                 )
             )
             report_file.parent.mkdir(parents=True, exist_ok=True)
