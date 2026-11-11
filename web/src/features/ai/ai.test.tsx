@@ -4,7 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { AiPage } from "./index";
-import { budgetWords, checkWords, explainAiError, percent } from "./model/ai";
+import {
+  type Budget,
+  budgetWords,
+  checkWords,
+  explainAiError,
+  ownBudgetNote,
+  percent,
+} from "./model/ai";
 
 const SECRET = "sk-live-never-shown";
 
@@ -112,6 +119,26 @@ const USAGE = {
       ],
     },
     { scope: "embedding", id: "", day: spent(0, 0), month: spent(0, 0), budgets: [] },
+    {
+      scope: "library",
+      id: "/acme/docs",
+      day: spent(0.25, 500),
+      month: spent(0.25, 500),
+      budgets: [
+        {
+          window: "day",
+          window_start: "2026-11-11",
+          resets_at: "2026-11-12T00:00:00Z",
+          usd_limit: 1,
+          usd_left: 0.75,
+          tokens_limit: null,
+          tokens_left: null,
+          reached: false,
+          own_usd_limit: 2,
+          own_tokens_limit: null,
+        },
+      ],
+    },
     {
       scope: "library",
       id: "/acme/payments",
@@ -249,6 +276,23 @@ describe("instance AI page", () => {
       within(library).getByText(/Today: \$0\.00 of \$1\.00 left · reached until/),
     ).toBeVisible();
     expect(usage.getByText(/LLM searches per minute per caller: 30/)).toBeInTheDocument();
+    expect(within(library).queryByText(/instance limit is lower/)).not.toBeInTheDocument();
+  });
+
+  it("shows the instance limit that applies, with a note, when a library's own is higher", async () => {
+    serve();
+    renderPage();
+    const usage = await region("Usage and budgets");
+
+    const docs = (await usage.findByRole("rowheader", { name: "Library /acme/docs" })).closest(
+      "tr",
+    ) as HTMLElement;
+    expect(within(docs).getByText("Today: $0.75 of $1.00 left")).toBeInTheDocument();
+    expect(
+      within(docs).getByText(
+        "The instance limit is lower than the library's own budget ($2.00), so it applies.",
+      ),
+    ).toBeVisible();
   });
 
   it("says when a part cannot be read, and the rest still shows", async () => {
@@ -287,6 +331,20 @@ describe("ai model", () => {
         reached: false,
       }),
     ).toBe("This month: 1,200 of 5,000 tokens left");
+    const day: Budget = {
+      window: "day",
+      window_start: "2026-11-11",
+      resets_at: "2026-11-12T00:00:00Z",
+      usd_limit: null,
+      usd_left: null,
+      tokens_limit: 5000,
+      tokens_left: 5000,
+      reached: false,
+    };
+    expect(ownBudgetNote({ ...day, own_tokens_limit: 9000 })).toBe(
+      "The instance limit is lower than the library's own budget (9,000 tokens), so it applies.",
+    );
+    expect(ownBudgetNote(day)).toBeNull();
     expect(checkWords({ ...CHECKS.checks[1], status: "error", error: null } as never)).toBe(
       "The call failed.",
     );

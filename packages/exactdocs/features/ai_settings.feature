@@ -32,3 +32,10 @@ Feature: Admins see each library's AI pipeline, its spend limits and the instanc
     Given each library may spend 2 USD a day
     When the admin sets the library's daily budget to 3 USD
     Then it is refused with "budget_above_instance" and the library keeps no budget of its own
+
+  Scenario: Usage shows the budget that really applies
+    Given the instance limits every library to 1 USD a day
+    And the library has its own budget of 2 USD a day
+    When the admin reads the AI usage
+    Then the library shows 1 USD as its effective daily limit and the money left against it
+    And the usage notes the library's own daily budget of 2 USD is higher
