@@ -24,6 +24,7 @@ from exactdocs.retrieval.constants import (
     _LOADED,
     _VECTOR_ABSENT,
     _VECTOR_COVERAGE,
+    _VECTOR_COVERAGE_MANY,
     _VECTOR_CREATE,
     _VECTOR_DELETE,
     _VECTOR_DROP,
@@ -309,6 +310,30 @@ class SqliteVectorIndex:
             await self._live(connection, space_id)
             row = (await connection.execute(statement, {"manifest": manifest_id})).one()
         return VectorCoverage(chunks=row.chunks, embedded=row.embedded)
+
+    async def coverage_many(
+        self, space_id: EmbeddingSpaceId, manifest_ids: Collection[str]
+    ) -> Mapping[str, VectorCoverage]:
+        """Count the chunk rows of these manifests and those with a vector, in one query.
+
+        Args:
+            space_id: The space.
+            manifest_ids: The manifests.
+
+        Returns:
+            The counts per manifest that has chunks.
+        """
+        if not manifest_ids:
+            return {}
+        statement = text(_VECTOR_COVERAGE_MANY.format(table=vector_table(space_id))).bindparams(
+            bindparam("manifests", expanding=True)
+        )
+        async with self.engine.connect() as connection:
+            await self._live(connection, space_id)
+            rows = await connection.execute(statement, {"manifests": list(manifest_ids)})
+            return {
+                r.manifest_id: VectorCoverage(chunks=r.chunks, embedded=r.embedded) for r in rows
+            }
 
     async def missing(
         self, space_id: EmbeddingSpaceId, manifest_id: str, limit: int

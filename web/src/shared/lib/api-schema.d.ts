@@ -595,6 +595,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/ai/embedding": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Embedding Progress
+         * @description Show the configured embedding model and how far each embedding space has got.
+         *
+         *     One entry per space that is not retired, oldest first: the active versions (of
+         *     libraries with AI on) and their chunks, and how many of each it has vectors for. While
+         *     a new model embeds, its space is `building` and the old one still answers searches.
+         */
+        readonly get: operations["ai-get_embedding_progress"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/ai/usage": {
         readonly parameters: {
             readonly query?: never;
@@ -1789,6 +1813,86 @@ export interface components {
             readonly note: string;
         };
         /**
+         * EmbeddingProgressOut
+         * @description The configured embedding model and how far each embedding space has got (RET-01).
+         */
+        readonly EmbeddingProgressOut: {
+            /**
+             * Model
+             * @description The configured embedding model, `<profile>:<model>`; null when none is.
+             */
+            readonly model: string | null;
+            /**
+             * Spaces
+             * @description Every space that is not retired, oldest first; none without a vector store.
+             */
+            readonly spaces: readonly components["schemas"]["EmbeddingSpaceProgressOut"][];
+        };
+        /**
+         * EmbeddingSpaceProgressOut
+         * @description How far one embedding space has got: the versions and chunks it has vectors for.
+         */
+        readonly EmbeddingSpaceProgressOut: {
+            /**
+             * Id
+             * @description The space's ID.
+             */
+            readonly id: number;
+            /**
+             * Profile Kind
+             * @description The kind of profile its model was called through (`openai-compatible`, `local`...).
+             */
+            readonly profile_kind: string;
+            /**
+             * Model
+             * @description The model, as its provider names it.
+             */
+            readonly model: string;
+            /**
+             * Dimensions
+             * @description Numbers per vector.
+             */
+            readonly dimensions: number;
+            /** @description `building` while its first run is under way, `active` once it is searched. */
+            readonly state: components["schemas"]["SpaceState"];
+            /**
+             * Current
+             * @description It is the configured embedding model's space; an older one is retired once it is done.
+             */
+            readonly current: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When it was created.
+             */
+            readonly created_at: string;
+            /**
+             * Activated At
+             * @description When it became the searched space; null while building.
+             */
+            readonly activated_at: string | null;
+            /**
+             * Versions
+             * @description Active versions of libraries with AI on.
+             */
+            readonly versions: number;
+            /**
+             * Versions Embedded
+             * @description Of those, the versions it has a vector for every chunk of.
+             */
+            readonly versions_embedded: number;
+            /**
+             * Chunks
+             * @description Chunks of those versions.
+             */
+            readonly chunks: number;
+            /**
+             * Chunks Embedded
+             * @description Of those, the chunks it has a vector for.
+             */
+            readonly chunks_embedded: number;
+        };
+        /**
          * ErrorResponse
          * @description The one error shape of the API: a stable machine ``error`` code and a human ``detail``.
          */
@@ -2011,6 +2115,32 @@ export interface components {
             readonly private: boolean;
         };
         /**
+         * LibraryBudgets
+         * @description A library's own spend limits per UTC day and month; null: not limited by the library.
+         */
+        readonly LibraryBudgets: {
+            /**
+             * Daily Usd
+             * @description US dollars per day.
+             */
+            readonly daily_usd?: number | null;
+            /**
+             * Monthly Usd
+             * @description US dollars per month.
+             */
+            readonly monthly_usd?: number | null;
+            /**
+             * Daily Tokens
+             * @description Tokens per day.
+             */
+            readonly daily_tokens?: number | null;
+            /**
+             * Monthly Tokens
+             * @description Tokens per month.
+             */
+            readonly monthly_tokens?: number | null;
+        };
+        /**
          * LibraryDetail
          * @description Everything known about one library.
          */
@@ -2134,6 +2264,12 @@ export interface components {
              *     (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
              */
             readonly rerank_top_n?: number | null;
+            /**
+             * @description The library's own spend limits per UTC day and month. Each may be at most the instance's
+             *     (`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of
+             *     the two applies. None by default.
+             */
+            readonly budgets?: components["schemas"]["LibraryBudgets"];
         };
         /**
          * LibraryRetrievalOut
@@ -2197,6 +2333,10 @@ export interface components {
              * @description How many candidates its searches rerank now: its own number, else the instance's.
              */
             readonly effective_rerank_top_n: number;
+            /** @description The library's own spend limits; the tighter of these and the instance's applies. */
+            readonly budgets: components["schemas"]["LibraryBudgets"];
+            /** @description The most each of the library's own limits may be (the instance's limits); null: any. */
+            readonly budget_ceilings: components["schemas"]["LibraryBudgets"];
         };
         /**
          * LibrarySearchResultOut
@@ -3282,6 +3422,12 @@ export interface components {
          * @enum {string}
          */
         readonly SettingsChange: "paths" | "chunking" | "tags";
+        /**
+         * SpaceState
+         * @description Where an embedding space is in its life.
+         * @enum {string}
+         */
+        readonly SpaceState: "building" | "active" | "retired";
         /**
          * Span
          * @description A `[start, end)` range of characters.
@@ -6745,6 +6891,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EmbeddingEstimateOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ai-get_embedding_progress": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbeddingProgressOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

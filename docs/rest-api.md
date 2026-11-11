@@ -303,7 +303,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **Retrieval mode and AI overrides** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with
   `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null,
-  "rerank_top_n": 16}` replaces the library's settings (every field is optional; an omitted one takes its default).
+  "rerank_top_n": 16, "budgets": {"daily_usd": 1, "monthly_tokens": 500000}}` replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best default mode configured, which is BM25 unless a
   mode the eval suite made a default can run, and none is yet); it must be available with the
@@ -313,13 +313,22 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   is skipped for that reason).
   `ai_enabled: false` sends nothing of the library to any AI provider: its searches are BM25.
   `llm`, `judge` and `reranker` (`<profile>:<model>`) replace the instance's role for this library
-  (404 `unknown_provider` for a profile that does not exist, 422 `invalid_model` when not written
+  (404 `unknown_provider` for a profile that does not exist, 422 `provider_unsupported` for one this
+  installation cannot call (an extra or SDK is missing), 422 `invalid_model` when not written
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
+  `budgets` are the library's own spend limits per UTC day and month (`daily_usd`, `monthly_usd`,
+  `daily_tokens`, `monthly_tokens`; `null`: not limited by the library). Each may be at most the
+  instance's: the lowest of `[ai.budgets]`'s instance and `per_library_...` ceilings of that
+  window and unit, 422 `budget_above_instance` otherwise. A stored budget the instance's limit was
+  lowered below since may be sent again unchanged or lowered (the instance's, the tighter, applies);
+  only raising it is refused, so other settings can still be saved. The tighter of the library's and the
+  instance's per-library limit applies, to its LLM steps, paid reranks and embedding alike.
   `GET .../retrieval` returns the settings with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
-  `available_modes`, the `configured_roles` of the library and the `effective_rerank_top_n`. 404 for an unknown library. A
+  `available_modes`, the `configured_roles` of the library, the `effective_rerank_top_n`, its `budgets` and the
+  `budget_ceilings` they may not exceed (`null`: no ceiling). 404 for an unknown library. A
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
   one is a 422 `mode_unavailable` as well. A `hybrid` search fuses the version's 50 best BM25
   chunks with its 50 nearest by vector (reciprocal rank fusion, `k` = 60); its `coverage.candidates`
@@ -403,6 +412,14 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   tokenizer is called. `model` is `null` and the counts 0 when no embedding model is configured;
   400 `vector_store_unavailable` on an instance without a vector store. On PostgreSQL the
   estimate counts from the stored chunks, with or without pgvector's extension.
+- `GET /ai/embedding`: the configured embedding model and how far each embedding space has got:
+  `{"model", "spaces": [{"id", "profile_kind", "model", "dimensions", "state", "current",
+  "created_at", "activated_at", "versions", "versions_embedded", "chunks", "chunks_embedded"}]}`.
+  One entry per space that is not retired, oldest first; `current` marks the configured model's
+  (while it is `building`, the older `active` one answers searches). `versions` counts the active
+  versions of libraries with AI on and `versions_embedded` those it has a vector for every chunk
+  of; `chunks` and `chunks_embedded` count per version, so a chunk two versions share counts
+  twice. `spaces` is empty without a vector store or before anything was embedded.
 - `GET /ai/usage`: what AI calls spent and what is left of each budget (`[ai.budgets]`):
   `{"at", "llm_searches_per_minute", "scopes": [{"scope", "id", "day", "month", "budgets"}]}`.
   `scope` is `instance`, `embedding` (embedding runs, instance-wide), `library` (`id` the library
@@ -411,7 +428,8 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   `{"input_tokens", "output_tokens", "tokens", "requests", "usd", "unpriced_requests"}`, as the
   providers reported (an LLM step's tokens, which the harness does not split, are input tokens).
   Each budget: `{"window", "window_start", "resets_at", "usd_limit", "usd_left", "tokens_limit",
-  "tokens_left", "reached"}` (`null` for a ceiling that is not set).
+  "tokens_left", "reached"}` (`null` for a ceiling that is not set). A library with budgets of
+  its own shows the tighter of its own and the instance's per-library ones.
 
 ## Jobs, access and health
 

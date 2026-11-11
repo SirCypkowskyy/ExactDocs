@@ -21,6 +21,8 @@ from exactdocs.retrieval.models import ModelRole, PipelineAnswer, PipelineReques
 HORSE = "correct horse battery staple"
 SETTING = "/api/v1/libraries/acme/payments/retrieval"
 
+NO_BUDGETS = {"daily_usd": None, "monthly_usd": None, "daily_tokens": None, "monthly_tokens": None}
+
 
 class NothingFound:
     """A stand-in hybrid pipeline: these tests are about which mode answers."""
@@ -103,6 +105,8 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "reranker": None,
         "rerank_top_n": None,
         "effective_rerank_top_n": 32,
+        "budgets": NO_BUDGETS,
+        "budget_ceilings": NO_BUDGETS,
     }
 
 
