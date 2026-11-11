@@ -47,7 +47,6 @@ from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.repo_context import RepoContext
 
 from exactdocs.retrieval.constants import (
-    CHARS_PER_TOKEN,
     GUIDANCE_CHUNK_READ,
     GUIDANCE_FOLDER_READS,
     GUIDANCE_LISTING,
@@ -55,7 +54,7 @@ from exactdocs.retrieval.constants import (
     GUIDANCE_ROOT,
     INSTRUCTION_FILE_NAMES,
 )
-from exactdocs.retrieval.models import GuidanceFiles
+from exactdocs.retrieval.models import GuidanceFiles, estimated_tokens
 
 
 def _absolute(path: str) -> str:
@@ -369,15 +368,18 @@ def guidance_workspace(guidance: GuidanceFiles) -> Workspace:
 
 
 def _estimated_tokens(text: bytes) -> int:
-    """Estimate tokens from text: ``CHARS_PER_TOKEN`` characters (here bytes) per token.
+    """Estimate tokens from serialized text with ``models.estimated_tokens``.
+
+    The bytes are read as UTF-8, so a CJK character counts as a token, not as 3 bytes over
+    ``CHARS_PER_TOKEN``.
 
     Args:
-        text: The serialized messages or response.
+        text: The serialized messages or response (UTF-8).
 
     Returns:
         At least one token.
     """
-    return max(1, len(text) // CHARS_PER_TOKEN)
+    return max(1, estimated_tokens(text.decode("utf-8", errors="replace")))
 
 
 class UsageFloor(WrapperModel):
@@ -387,9 +389,10 @@ class UsageFloor(WrapperModel):
     events). A server that ignores ``stream_options.include_usage`` reports zero (or a token
     count it made up), so the run's ``UsageLimits`` and ``SpendLimits`` would count nothing for
     exactly the runs that carry the most untrusted text. Each side of a streamed response
-    counts as the larger of what it reports and the decision record's estimate (4 characters
-    per token: input from the request's serialized messages, output from the response's
-    parts). The estimate undercounts real tokens (code, CJK), so an honest report is kept. The
+    counts as the larger of what it reports and ``models.estimated_tokens`` (4 characters per
+    token for ASCII, a token per other character: input from the request's serialized messages,
+    output from the response's parts). The estimate can still undercount dense code, so an
+    honest report is kept. The
     stream is read whole before it is handed on (nothing of it is shown to anyone meanwhile).
     """
 

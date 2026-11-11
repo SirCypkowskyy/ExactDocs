@@ -64,6 +64,7 @@ from exactdocs.retrieval.models import (
     AzureAuth,
     ModelRole,
     RepoGuidance,
+    RerankWith,
     TagMatch,
 )
 from exactdocs.retrieval.ports.driving import (
@@ -110,6 +111,12 @@ class LibraryRetrievalIn(BaseModel):
     rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
     """How many of its best candidates the reranker reorders (1 to 200); null: the instance's
     (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
+    """
+    rerank_with: RerankWith | None = None
+    """What reranks its searches when both are configured: `cross_encoder` (the `reranker`
+    role, cheaper) or `judge` (the `judge` role, an LLM that rates every candidate in one call);
+    null: the instance's choice (`EXACTDOCS_AI__RERANK_WITH`, `cross_encoder` by default). The
+    judge reranks only when chosen here or by the instance.
     """
     budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
     """The library's own spend limits per UTC day and month. Each may be at most the instance's

@@ -53,6 +53,7 @@ from exactdocs.retrieval.models import (
     RebuiltIndex,
     Removed,
     RepoGuidance,
+    RerankWith,
     RetrievalMode,
     RoleSource,
     SearchableVersion,
@@ -950,6 +951,9 @@ class SetLibraryRetrievalCommand(_Dto):
     """The library's own reranker, `<profile>:<model>`; empty: the instance's `reranker` role."""
     rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
     """How many of its best candidates the reranker reorders; empty: the instance's (32)."""
+    rerank_with: RerankWith | None = None
+    """What reranks its searches: `cross_encoder` (the `reranker` role) or `judge` (the `judge`
+    role, an LLM); empty: the instance's choice (`EXACTDOCS_AI__RERANK_WITH`)."""
     budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
     """The library's own spend limits, no higher than the instance's; none by default."""
     repo_guidance: RepoGuidance = RepoGuidance.OFF
@@ -1002,6 +1006,13 @@ class LibraryRetrievalOut(_Dto):
     """How many of its best candidates the reranker reorders; null: the instance's."""
     effective_rerank_top_n: int
     """How many candidates its searches rerank now: its own number, else the instance's."""
+    rerank_with: RerankWith | None = None
+    """The library's own choice of reranker; null: the instance's."""
+    instance_rerank_with: RerankWith = RerankWith.CROSS_ENCODER
+    """The instance's choice (`EXACTDOCS_AI__RERANK_WITH`)."""
+    effective_reranker: RerankWith | None = None
+    """What reranks its searches now: `cross_encoder`, `judge` (only when chosen and its role is
+    configured), or null when nothing does."""
     budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
     """The library's own spend limits; the tighter of these and the instance's applies."""
     budget_ceilings: LibraryBudgets = Field(default_factory=LibraryBudgets)

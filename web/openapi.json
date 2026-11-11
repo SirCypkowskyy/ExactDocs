@@ -9192,6 +9192,17 @@
             "title": "Rerank Top N",
             "description": "How many of its best candidates the reranker reorders (1 to 200); null: the instance's\n(`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default)."
           },
+          "rerank_with": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankWith"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What reranks its searches when both are configured: `cross_encoder` (the `reranker`\nrole, cheaper) or `judge` (the `judge` role, an LLM that rates every candidate in one call);\nnull: the instance's choice (`EXACTDOCS_AI__RERANK_WITH`, `cross_encoder` by default). The\njudge reranks only when chosen here or by the instance."
+          },
           "budgets": {
             "$ref": "#/components/schemas/LibraryBudgets",
             "description": "The library's own spend limits per UTC day and month. Each may be at most the instance's\n(`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of\nthe two applies. None by default."
@@ -9326,6 +9337,33 @@
             "title": "Effective Rerank Top N",
             "description": "How many candidates its searches rerank now: its own number, else the instance's."
           },
+          "rerank_with": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankWith"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The library's own choice of reranker; null: the instance's."
+          },
+          "instance_rerank_with": {
+            "$ref": "#/components/schemas/RerankWith",
+            "description": "The instance's choice (`EXACTDOCS_AI__RERANK_WITH`).",
+            "default": "cross_encoder"
+          },
+          "effective_reranker": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankWith"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What reranks its searches now: `cross_encoder`, `judge` (only when chosen and its role is\nconfigured), or null when nothing does."
+          },
           "budgets": {
             "$ref": "#/components/schemas/LibraryBudgets",
             "description": "The library's own spend limits; the tighter of these and the instance's applies."
@@ -9356,6 +9394,9 @@
           "reranker",
           "rerank_top_n",
           "effective_rerank_top_n",
+          "rerank_with",
+          "instance_rerank_with",
+          "effective_reranker",
           "budgets",
           "budget_ceilings",
           "repo_guidance"
@@ -11131,6 +11172,15 @@
         ],
         "title": "RepositoryRefs",
         "description": "What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most."
+      },
+      "RerankWith": {
+        "type": "string",
+        "enum": [
+          "cross_encoder",
+          "judge"
+        ],
+        "title": "RerankWith",
+        "description": "What reorders a search's best candidates when both are configured (#96)."
       },
       "ResolvedVersion": {
         "properties": {

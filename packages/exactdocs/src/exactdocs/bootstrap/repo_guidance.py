@@ -47,7 +47,9 @@ class SetRetrievalThenReprocess:
 
         Returns:
             The stored settings, as retrieval answered. A failure to queue is logged, never
-            returned: the setting is stored, and a re-sync or settings edit re-imports later.
+            returned: the setting is stored, and the versions keep no instruction files until
+            they are re-imported: edit the setting again (off, then on) or queue a reprocess.
+            A re-sync of an unchanged commit does not re-import them.
         """
         before = await self.get_library_retrieval(GetLibraryRetrievalQuery(library=command.library))
         saved = await self.set_library_retrieval(command)

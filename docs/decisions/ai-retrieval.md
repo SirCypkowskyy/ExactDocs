@@ -34,7 +34,7 @@ issue of the milestone points here instead of deciding these again. The short fo
 |---|---|
 | Chat and agents | **pydantic-ai-slim 2.60.0** models and providers, one profile per endpoint, always given explicit URLs and keys (never the SDKs' environment variables); harness 0.60.0 for Code Mode, spend limits and guardrails |
 | Embeddings | Our own `Embeddings` port; adapters over `pydantic_ai.Embedder` (remote) and **fastembed** (local) |
-| Rerankers | Our own `Reranker` port; Cohere-compatible and TEI HTTP adapters, fastembed cross-encoder, or an LLM judge |
+| Rerankers | Our own `Reranker` port (Cohere-compatible and TEI HTTP adapters, fastembed cross-encoder) and a separate `CandidateJudge` port for an LLM judge under the harness `SpendLimits`; a per-library setting chooses (default: cross-encoder) |
 | Vector store | One `VectorIndex` port; **sqlite-vec** on SQLite, **pgvector** on PostgreSQL and Supabase; one table per embedding space, exact search scoped to the manifest |
 | Databases | SQLite (default), PostgreSQL on **psycopg 3** (#103), ParadeDB for BM25 (#104), Supabase as "PostgreSQL without pg_search" (#244) |
 | Packaging | `exactdocs[ai]` and `exactdocs[local]` extras; images **base** (400 MB), **-ai** (560 MB), **-local** (950 MB, models included) |
@@ -139,9 +139,15 @@ local model cannot be added as an `EmbeddingModel` subclass. Hence retrieval dec
 ### Rerankers
 
 pydantic-ai has no rerank API. Retrieval declares a **`Reranker` driven port** (query and
-candidates in, scores out) with three adapters: HTTP in the Cohere-compatible `/v2/rerank`
+candidates in, scores out) with two kinds of adapter: HTTP in the Cohere-compatible `/v2/rerank`
 dialect (Cohere, Jina, Voyage, vLLM, LiteLLM, Azure AI Foundry) or the TEI `/rerank` dialect
-(#93), fastembed's `TextCrossEncoder` (#245), and an LLM **judge** on any chat profile (#96).
+(#93), and fastembed's `TextCrossEncoder` (#245). The LLM **judge** on any chat profile (#96) is
+a port of its own, **`CandidateJudge`**: it is an LLM step, so it takes the `LlmStep` (the
+caller and the library-merged budgets) and runs as a pydantic-ai agent under the harness
+`SpendLimits`, which a plain `Reranker` call never does. It rates the best candidates that fit
+one bounded call by positional IDs (`c1`...), and its answer is validated so it can only reorder
+them. A per-library `rerank_with` (else `EXACTDOCS_AI__RERANK_WITH`) chooses between the two;
+the cross-encoder, cheaper, is the default.
 
 ## Local and offline models
 

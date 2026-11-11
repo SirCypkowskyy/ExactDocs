@@ -398,7 +398,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   session's or token's account through a FastAPI dependency, HTTP MCP the token's `client_id`,
   stdio `None`), so every later stage sees the same choice; it skips an LLM step (`llm_budget_reached`,
   `llm_rate_limited`, answering in `ModeChoice.cheaper`, the best mode without an LLM) or a paid
-  rerank (any reranker profile but `local`). A rerank that ran (`RetrievalModes.rerank`, #93's
+  rerank (any reranker profile but `local`), or the LLM judge (an LLM step: refused for the reason
+  the search's own LLM step was, else checked against the budgets, and against the rate limit too
+  unless the search's own LLM step already counted it). A rerank that ran (`RetrievalModes.rerank`, #93's
   `Reranking`) is recorded for the caller's scopes (`ModeChoice.caller`): one request, its
   tokens estimated from the characters sent, priced with the `PriceBook`. LLM agents get `agent_limits(...)`
   (`adapters/driven/harness_spend.py`): the harness `SpendLimits` with one budget per caller
@@ -941,9 +943,9 @@ room for its 9 MB.)
   with the query text opted in (`without_prompts`): the second guard after pydantic-ai's
   `include_content=False`. Health and readiness probes (`PROBE_PATHS`) get no request span.
 - **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
-  for the search and one per stage (`version`, `rank`, `rerank` when a reranker is configured,
-  `chunks`; inside `rank`, `embed_query` for hybrid and `agent` for agentic, whose pydantic-ai
-  spans nest below it), in its mode. The query text is a
+  for the search and one per stage (`version`, `rank`, `rerank` when a reranker is configured or
+  `judge` when the LLM judge reranks, `chunks`; inside `rank`, `embed_query` for hybrid and
+  `agent` for agentic, whose pydantic-ai spans nest below it), in its mode. The query text is a
   separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without
   a tracer the use cases get `UntracedSearches`, which records nothing.
 - **Jobs:** bootstrap wraps every job handler in `TracedJobHandler` (`ingestion.<kind>` spans);
@@ -1125,6 +1127,38 @@ Cohere-compatible `/rerank` (`openai-compatible`, `vllm`, `litellm` profiles; Vo
 answer too) or TEI's (`tei` profiles), cuts the texts to `MAX_RERANK_*_CHARS`, sends batches the
 endpoint accepts concurrently (a `TaskGroup`: one failed batch cancels the rest), and turns every failure into a `RerankerError` without the URL, key
 or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client.
+
+**LLM judge (#96).** `RetrievalModes.choose` decides what reranks with `models.pick_reranker`:
+the library's `rerank_with`, else the instance's (`EXACTDOCS_AI__RERANK_WITH`, `cross_encoder`
+by default); the judge reranks only when chosen and its role resolves (`judge`, else `llm`),
+else the cross-encoder does when there is one (`ModeChoice.reranker`). `Reranking` then hands the
+best of the same candidates that fit one bounded call (`models.judge_window`: at most
+`JUDGE_MAX_CANDIDATES`, 64, while the input, the text as cut and escaped and estimated by
+`models.estimated_tokens` (ASCII at `CHARS_PER_TOKEN` per token, every other character as a token,
+since CJK runs at about one token per character), stays within `JUDGE_INPUT_TOKEN_BUDGET`,
+22,000, whose headroom covers ASCII code with escaped entities at about 1.7 characters per token
+together with the largest output cap under the step's `LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
+sent, paid for and then refused) to the `CandidateJudge` driven port under `asyncio.timeout`
+(`[ai.judge] timeout`, 10 s), with an `LlmStep` whose budgets are
+`AiSpend.budgets_for(library_ai)`. The candidates beyond the window keep their order after the
+judged ones. A timeout that strikes after the provider answered may cancel `SpendLimits` while
+it records the spend, which is then lost, as for HyDE: the in-flight overshoot the decision
+record already accepts. Its adapter (`adapters/driven/ai_judge.py`, the SDK side in
+`ai_judge_sdk.py`, loaded on first use) runs one `Agent(output_type=list[Rating])`: each rating a
+positional ID (`c1` ... `cN`, `models.judge_id`, never a chunk ID: short to answer and nothing a
+candidate could imitate usefully) and an `int` from 0 to `JUDGE_MAX_SCORE` (bounded by the schema, strict, no extra
+fields); fixed `JUDGE_INSTRUCTIONS` that say the query and the candidates are untrusted data; the
+user prompt from `models.judge_prompt` (the query in `<query>`, each candidate in
+`<candidate id="...">`, cut to `MAX_JUDGE_*_CHARS` and with `&`, `<`, `>` escaped, so no text can
+close or forge a delimiter); an output validator over `models.judged_scores` (exactly one rating
+per candidate given, each ID mapped back exactly, no unknown ID) with `retries=0`, so a refused
+answer is never asked for again; `max_tokens` from `models.judge_max_tokens` (512, plus 48 per
+candidate: a pretty-printed answer fits with room for a model's reasoning); and `agent_limits` (`SpendLimits` over the
+ledger, `UsageLimits`). `Reranking` checks the ratings again with `judged_scores` before
+`models.reorder`, so the judge can only reorder what it was given. A budget refusal answers
+`llm_budget_reached`; a timeout `reranker_timeout`; anything else (refused ratings, an error, a
+profile that cannot chat) `reranker_failed`, logged with the fault's fixed text only. Its spend
+is recorded by the harness, not by `RetrievalModes._record_rerank`.
 
 **Local models (#245).** Bootstrap's `ModelFactory` is `AiModels`: `local` profiles go to
 `LocalModels` (`bootstrap/local_models.py`), every other kind to `PydanticAiModels`. `LocalModels`

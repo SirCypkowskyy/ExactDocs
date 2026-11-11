@@ -20,7 +20,10 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.workspaces import WorkspaceReadOnlyError
 
 from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
-from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import GuidanceBackend
+from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import (
+    GuidanceBackend,
+    _estimated_tokens,
+)
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
     InMemoryDefaultVersions,
@@ -70,6 +73,7 @@ from exactdocs.retrieval.models import (
     SourceHost,
     SpendWindow,
     TagFilter,
+    estimated_tokens,
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.use_cases import VersionBrowser
@@ -524,6 +528,28 @@ async def test_a_stream_that_reports_no_usage_is_counted_by_its_characters() -> 
     result = await _search(limited)
 
     assert result.fallback_reason is FallbackReason.AGENT_LIMIT_REACHED
+
+
+async def test_a_cjk_note_that_reports_no_usage_counts_a_token_per_character() -> None:
+    note = "重试策略决定失败的调用再次运行的频率。" * 100  # 1,900 characters, 5,700 bytes
+    small = Files(kept={"m2": [InstructionFile(path="AGENTS.md", content="docs/")]})
+    cjk = Files(kept={"m2": [InstructionFile(path="AGENTS.md", content=note)]})
+    short = await _world(guided(OPEN_FOLDERS, [], billed=False), files=small)
+    await _search(short)
+    long = await _world(guided(OPEN_FOLDERS, [], billed=False), files=cjk)
+    await _search(long)
+
+    # At 4 bytes per token the note would add about 1,425 tokens; a token a character, 1,900
+    # (less the small file's few it replaces).
+    assert _tokens(long.ledger) - _tokens(short.ledger) >= len(note) - len("docs/")
+
+
+def test_the_usage_floor_reads_utf8_and_counts_non_ascii_as_whole_tokens() -> None:
+    text = "retry 重试"
+
+    assert _estimated_tokens(text.encode()) == estimated_tokens(text) == 2 + 2
+    assert estimated_tokens("x" * 9) == 3
+    assert _estimated_tokens(b"") == 1
 
 
 async def test_instruction_text_reaches_no_span_and_no_log(

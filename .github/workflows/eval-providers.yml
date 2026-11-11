@@ -9,7 +9,9 @@ name: Retrieval eval (real providers)
 #   repository variables   EVAL_PROVIDER_KIND (e.g. openai-compatible, openai, anthropic, azure),
 #                          EVAL_PROVIDER_BASE_URL, EVAL_PROVIDER_API_VERSION (azure),
 #                          EVAL_EMBEDDING_MODEL, EVAL_RERANKER_MODEL, EVAL_LLM_MODEL,
-#                          EVAL_JUDGE_MODEL (model names only; each optional)
+#                          EVAL_JUDGE_MODEL (model names only; each optional),
+#                          EVAL_RERANK_WITH (`judge` measures the LLM judge as the reranker of
+#                          every mode; unset: the cross-encoder, when EVAL_RERANKER_MODEL is set)
 #   repository secret      EVAL_PROVIDER_API_KEY
 #
 # Blank variables count as unset. Roles left empty stay unset, and the modes that need them are
@@ -47,6 +49,7 @@ jobs:
       EVAL_RERANKER_MODEL: ${{ vars.EVAL_RERANKER_MODEL }}
       EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
       EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
+      EXACTDOCS_AI__RERANK_WITH: ${{ vars.EVAL_RERANK_WITH || 'cross_encoder' }}
       EXTRA_ARGS: ${{ inputs.args }}
     steps:
       - uses: actions/checkout@v7

@@ -10,6 +10,7 @@ endpoint is a closed loopback port and the model factory never builds a client.
 
 ``offline_hyde_container`` adds an ``llm`` role answered by a pydantic-ai stand-in
 (``TestModel`` / ``FunctionModel``), so ``hybrid_hyde`` runs end to end, priced, without a network.
+``offline_judge_container`` makes such a stand-in the LLM judge that reranks every search (#96).
 """
 
 from collections.abc import Callable
@@ -34,6 +35,8 @@ LLM = "writer"
 """The stand-in LLM's name, as the ``llm`` role names it (``offline:writer``)."""
 LLM_PRICE = {"input_usd_per_mtok": 1.0, "output_usd_per_mtok": 2.0}
 """The stand-in LLM's price (``[ai.prices."offline:writer"]``), so its USD is counted."""
+JUDGE = "rater"
+"""The stand-in judge's name, as the ``judge`` role names it (``offline:rater``)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -203,6 +206,46 @@ def offline_hyde_container(chat: Callable[[], object]) -> ContainerBuilder:
             Settings(data_dir=data_dir, ai=ai),
             model_factory=MarkerFactory(chat=chat),
             embedding_models=HashEmbeddingModels(size=DIMENSIONS, by_terms=True),
+            agent_reads=agent_reads,
+        )
+
+    return build
+
+
+def offline_judge_container(chat: Callable[[], object]) -> ContainerBuilder:
+    """Build a container whose searches the stand-in judge reranks (the eval suite's ``build``).
+
+    Args:
+        chat: Builds the pydantic-ai stand-in for the judge (``FunctionModel``).
+
+    Returns:
+        The build function: BM25 runs, reranked by the priced judge, and nothing can call a
+        provider.
+    """
+
+    def build(data_dir: Path, *, agent_reads: AgentReads | None = None) -> Container:
+        """Build the container on a data directory.
+
+        Args:
+            data_dir: The data directory.
+            agent_reads: Records the agentic explorer's reads (none run here).
+
+        Returns:
+            The container.
+        """
+        ai = AiSettings.model_validate(
+            {
+                "providers": {
+                    PROFILE: {"kind": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"}
+                },
+                "judge": {"model": f"{PROFILE}:{JUDGE}"},
+                "rerank_with": "judge",
+                "prices": {f"{PROFILE}:{JUDGE}": LLM_PRICE},
+            }
+        )
+        return Container.build(
+            Settings(data_dir=data_dir, ai=ai),
+            model_factory=MarkerFactory(chat=chat),
             agent_reads=agent_reads,
         )
 
