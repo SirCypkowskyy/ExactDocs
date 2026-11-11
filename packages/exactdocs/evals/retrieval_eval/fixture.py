@@ -1,14 +1,20 @@
 """Run the suite on the fixture docs repository, imported for real into the app's container."""
 
 import dataclasses
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.retrieval.models import ModelRole
+from exactdocs.retrieval.adapters.driven.sqlite import ai_spend
+from exactdocs.retrieval.constants import MICROS_PER_USD, SPEND_SCOPE_INSTANCE
+from exactdocs.retrieval.models import ModelRole, RetrievalMode, SpendWindow
 from exactdocs.retrieval.use_cases import NoModelRoles
-from fixture_import import LIBRARY, commits, import_fixture
+from fixture_import import LIBRARY, commits, embed_fixture, import_fixture
 from fixture_repo import DocsRepo, git_bytes, headings
 from retrieval_eval.dataset import DATASET_FILE, RetrievalDataset, fingerprint, load_dataset
 from retrieval_eval.suite import (
@@ -87,6 +93,7 @@ async def run_on_fixture(
     local_roles: frozenset[ModelRole] = frozenset(),
     comparison: Comparison | None = None,
     dataset_file: Path = DATASET_FILE,
+    not_judged: Mapping[RetrievalMode, str] | None = None,
     expect_engine: str | None = None,
 ) -> SuiteReport:
     """Import every fixture version, run the dataset through each mode and apply the gates.
@@ -95,13 +102,15 @@ async def run_on_fixture(
         docs_repo: The built fixture repository.
         data_dir: An empty data directory for the container.
         build: Builds the container: model-free by default; ``configured_container`` uses the
-            environment's models, tests pass model roles and pipelines.
+            environment's models, ``offline_data_container`` the in-process term-hash
+            embedding, tests pass model roles and pipelines.
         modes: The modes to try.
         allow_providers: Run modes that call a hosted model.
         local_roles: The configured roles whose model runs on this machine.
         comparison: What to compare with (``compare``); none: no comparison.
         dataset_file: The dataset to run: the repository's by default; CI also runs
             ``develop``'s when the dataset changed.
+        not_judged: Modes whose eligibility as a default the run cannot tell, and why.
         expect_engine: The full-text search engine that must answer (CI: ``pg_search`` on
             ParadeDB); another one fails the suite, so a silent fallback cannot pass.
 
@@ -119,6 +128,8 @@ async def run_on_fixture(
         if expect_engine is not None and engine != expect_engine:
             problem = f"the search engine was {engine}, not the expected {expect_engine}"
             comparison = dataclasses.replace(comparison, problems=(*comparison.problems, problem))
+        if ModelRole.EMBEDDING in local_roles or allow_providers:
+            await embed_fixture(container)  # as the embed jobs would; a no-op without a model
         outcomes = await run_modes(
             dataset,
             retrieval=container.retrieval,
@@ -127,6 +138,7 @@ async def run_on_fixture(
             modes=modes,
             allow_providers=allow_providers,
             local_roles=local_roles,
+            spent=partial(instance_spend, container.engine),
         )
     return judge(
         dataset.name,
@@ -134,5 +146,27 @@ async def run_on_fixture(
         outcomes,
         comparison,
         fingerprint=fingerprint(dataset),
+        not_judged=not_judged,
         search_engine=engine,
     )
+
+
+async def instance_spend(engine: AsyncEngine) -> tuple[int, float]:
+    """Read what the instance's models have cost so far, from the spend ledger.
+
+    Args:
+        engine: The app's database.
+
+    Returns:
+        Input tokens and US dollars over the instance's monthly rows.
+    """
+    statement = select(
+        func.coalesce(func.sum(ai_spend.c.input_tokens), 0),
+        func.coalesce(func.sum(ai_spend.c.usd_micros), 0),
+    ).where(
+        ai_spend.c.scope_kind == SPEND_SCOPE_INSTANCE,
+        ai_spend.c.window_kind == SpendWindow.MONTH.value,
+    )
+    async with engine.connect() as connection:
+        tokens, micros = (await connection.execute(statement)).one()
+    return int(tokens), int(micros) / MICROS_PER_USD

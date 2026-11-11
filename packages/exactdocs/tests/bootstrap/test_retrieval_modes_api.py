@@ -23,7 +23,7 @@ SETTING = "/api/v1/libraries/acme/payments/retrieval"
 
 
 class NothingFound:
-    """A stand-in hybrid pipeline: the real one is #92."""
+    """A stand-in hybrid pipeline: these tests are about which mode answers."""
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         del request

@@ -120,7 +120,8 @@ class PydanticAiEmbeddings:
             return self.configured
         if not self._probed:
             result = await self._call(self.embedder.embed_query(DIMENSIONS_PROBE))
-            self._probed.append(len(result.embeddings[0]))
+            (vector,) = self._vectors(result, 1)
+            self._probed.append(len(vector))
         return self._probed[0]
 
     async def embed_documents(self, texts: Sequence[str]) -> EmbeddedTexts:
@@ -138,10 +139,7 @@ class PydanticAiEmbeddings:
             result = await self._call(
                 self.embedder.embed_documents(list(batch), settings=self._settings())
             )
-            if len(result.embeddings) != len(batch):
-                reason = f"{len(result.embeddings)} vectors for {len(batch)} texts"
-                raise EmbeddingFailedError(self.name, reason)
-            vectors.extend(tuple(float(x) for x in v) for v in result.embeddings)
+            vectors.extend(self._vectors(result, len(batch)))
             tokens += result.usage.input_tokens or 0
             requests += 1
         return EmbeddedTexts(vectors=tuple(vectors), input_tokens=tokens, requests=requests)
@@ -157,10 +155,33 @@ class PydanticAiEmbeddings:
         """
         result = await self._call(self.embedder.embed_query(text, settings=self._settings()))
         return EmbeddedTexts(
-            vectors=(tuple(float(x) for x in result.embeddings[0]),),
+            vectors=self._vectors(result, 1),
             input_tokens=result.usage.input_tokens or 0,
             requests=1,
         )
+
+    def _vectors(self, result: EmbeddingResult, expected: int) -> tuple[tuple[float, ...], ...]:
+        """Read the vectors of an answer, refusing one that does not hold one per text.
+
+        Args:
+            result: The provider's answer.
+            expected: How many texts were sent.
+
+        Returns:
+            The vectors as floats, in order.
+
+        Raises:
+            EmbeddingFailedError: The answer has another number of vectors, or a value that is
+                not a number.
+        """
+        if len(result.embeddings) != expected:
+            reason = f"{len(result.embeddings)} vectors for {expected} texts"
+            raise EmbeddingFailedError(self.name, reason)
+        try:
+            return tuple(tuple(float(x) for x in v) for v in result.embeddings)
+        except (TypeError, ValueError) as error:
+            reason = f"a value that is not a number ({type(error).__name__})"
+            raise EmbeddingFailedError(self.name, reason) from None
 
     async def _call(self, call: Awaitable[EmbeddingResult]) -> EmbeddingResult:
         """Await a call, turning any failure into ``EmbeddingFailedError``.

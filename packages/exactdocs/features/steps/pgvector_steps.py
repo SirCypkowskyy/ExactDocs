@@ -15,7 +15,7 @@ from sqlalchemy import TextClause, text
 from databases import SECRET_KEY, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
-from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.memory import StaticModelRoles
 from exactdocs.retrieval.models import ModelRole, RetrievalMode
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE, store_demo_catalog
@@ -70,12 +70,14 @@ def step_imported(context: Context, first: str, second: str) -> None:
     asyncio.run(import_versions(context, [first, second]))
 
 
-@given("an embedding model is configured")
-def step_embedding(context: Context) -> None:
+@given('an embedding model is configured and the instance mode is "{mode}"')
+def step_embedding(context: Context, mode: str) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
+    # Hybrid is no default (docs/evals.md): the instance chooses it, so skipping it is reported.
+    ai = AiSettings(mode=RetrievalMode(mode))
     container = Container.build(
-        context.settings,
+        context.settings.model_copy(update={"ai": ai}),
         model_roles=StaticModelRoles(roles=frozenset({ModelRole.EMBEDDING})),
         pipelines={RetrievalMode.HYBRID: StandInHybrid()},
     )
