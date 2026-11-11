@@ -210,3 +210,88 @@ def test_a_wheel_without_the_bundled_ui_fails(tmp_path: Path) -> None:
 
 def test_chonkie_is_not_banned() -> None:
     assert "chonkie" not in check_artifacts.ML_PACKAGES
+
+
+# The image variants (#246): what each may hold, judged from what `check_artifacts.py image`
+# reads out of a built image (its distributions, its model files, its default models).
+VARIANTS = check_artifacts.IMAGE_VARIANTS
+MODELS_DIR = check_artifacts.MODELS_DIR
+BASE_DISTRIBUTIONS = ["fastapi", "exactdocs", "dbos"]
+AI_DISTRIBUTIONS = [*BASE_DISTRIBUTIONS, "pydantic_ai_slim", "openai", "azure-identity"]
+LOCAL_DISTRIBUTIONS = [*AI_DISTRIBUTIONS, "fastembed", "onnxruntime", "tokenizers"]
+DEFAULT_MODEL_FILES = [
+    f"{MODELS_DIR}/BAAI/bge-small-en-v1.5/model_optimized.onnx",
+    f"{MODELS_DIR}/Xenova/ms-marco-MiniLM-L-6-v2/onnx/model.onnx",
+]
+ONNX_EXAMPLE = "/app/.venv/lib/python3.14/site-packages/onnxruntime/datasets/sigmoid.onnx"
+
+
+def test_each_variant_has_the_budget_of_the_decision_record() -> None:
+    assert {k: v.budget for k, v in VARIANTS.items()} == {
+        "base": 400_000_000,
+        "ai": 560_000_000,
+        "local": 950_000_000,
+    }
+    assert VARIANTS["base"].budget == check_artifacts.IMAGE_BUDGET
+
+
+@pytest.mark.parametrize(
+    ("variant", "distributions", "model_files"),
+    [
+        ("base", BASE_DISTRIBUTIONS, []),
+        ("ai", AI_DISTRIBUTIONS, []),
+        ("local", LOCAL_DISTRIBUTIONS, [*DEFAULT_MODEL_FILES, ONNX_EXAMPLE]),
+    ],
+)
+def test_a_variant_with_what_it_may_hold_passes(
+    variant: str, distributions: list[str], model_files: list[str]
+) -> None:
+    assert check_artifacts.image_problems(VARIANTS[variant], distributions, model_files, []) == []
+
+
+@pytest.mark.parametrize(
+    ("variant", "package"),
+    [
+        ("base", "pydantic-ai-slim"),
+        ("base", "onnxruntime"),
+        ("ai", "fastembed"),
+        ("ai", "onnxruntime"),
+        ("ai", "Huggingface_Hub"),
+        ("ai", "torch"),
+    ],
+)
+def test_an_ml_package_the_variant_may_not_hold_fails(variant: str, package: str) -> None:
+    problems = check_artifacts.image_problems(VARIANTS[variant], [package], [], [])
+
+    assert problems == [f"package in image: {check_artifacts.normalize(package)}"]
+
+
+@pytest.mark.parametrize("variant", ["base", "ai", "local"])
+def test_no_variant_holds_aiohttp(variant: str) -> None:
+    """Entra ID uses azure.identity's sync token provider (#241), never `azure.identity.aio`."""
+    problems = check_artifacts.image_problems(VARIANTS[variant], ["aiohttp"], [], [])
+
+    assert problems == ["package in image: aiohttp"]
+
+
+@pytest.mark.parametrize("variant", ["base", "ai"])
+def test_a_model_file_in_a_model_free_variant_fails(variant: str) -> None:
+    problems = check_artifacts.image_problems(VARIANTS[variant], [], DEFAULT_MODEL_FILES[:1], [])
+
+    assert problems == [f"model file in image: {DEFAULT_MODEL_FILES[0]}"]
+
+
+def test_a_model_file_outside_the_models_directory_of_the_local_variant_fails() -> None:
+    stray = "/data/models/BAAI/bge-small-en-v1.5/model_optimized.onnx"
+
+    problems = check_artifacts.image_problems(VARIANTS["local"], [], [stray], [])
+
+    assert problems == [f"model file in image: {stray}"]
+
+
+def test_the_local_variant_without_its_default_models_fails() -> None:
+    reason = "model BAAI/bge-small-en-v1.5 is not in /opt/exactdocs/models: run ..."
+
+    problems = check_artifacts.image_problems(VARIANTS["local"], [], [], [reason])
+
+    assert problems == [reason]

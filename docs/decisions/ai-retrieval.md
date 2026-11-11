@@ -177,8 +177,12 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
 - `[ai]` lists `pydantic-ai-harness` and `pydantic-monty` instead of
   `pydantic-ai-harness[codemode]`: that extra also pulls a DuckDuckGo search client (`ddgs`,
   `primp`, `lxml`: about 27 MB) that Code Mode does not import.
-- CI builds the three targets of one Dockerfile and checks each budget (#246); the budgets are
-  replaced by CI measurements plus about 7 % headroom when #246 lands.
+- CI builds the three targets of one Dockerfile and checks each budget (#246). Built on
+  2026-11-11 (amd64) the variants measured 352.9, 491.9 and 847.0 MB; arm64, where CI runs, adds
+  about 34 MB to each (base 386.5 MB), which leaves the budgets about 6 to 7 % of headroom, so
+  they stay as set. CI's job summary has the current numbers; `docs/releasing.md`, *Size and
+  model-free budgets*, the reasoning. The `-local` models are baked in at build time (pulled at
+  their pinned revisions), not pulled at first start: the image must work with `--network none`.
 
 ## Vector store
 

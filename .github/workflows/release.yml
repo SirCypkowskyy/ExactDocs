@@ -4,7 +4,8 @@
 #   tag on main     vX.Y.Z        -> PyPI X.Y.Z          ghcr X.Y.Z, X.Y, latest
 #   tag on develop  vX.Y.Z.devN   -> PyPI X.Y.Z.devN     ghcr X.Y.Z.devN, X.Y.Z.devN-<sha7>, dev
 #                                    (pre-release: pip/uvx skip it unless asked with --prerelease)
-# See docs/releasing.md.
+# Every image tag also comes as -ai and -local (X.Y.Z-ai, latest-local, dev-ai, ...): the three
+# variants of deploy/Dockerfile (#246). See docs/releasing.md.
 name: Release
 
 on:
@@ -152,21 +153,76 @@ jobs:
           path: dist
       - run: uv publish --trusted-publishing always dist/exactdocs-*
 
-  image:
-    name: Publish image to ghcr.io
+  # The three image variants (#246): base (BM25, model-free), -ai (exactdocs[ai]) and -local
+  # (exactdocs[ai,local] with the default models). Every variant is built natively and scanned
+  # before any is pushed: `image` needs all three scans.
+  image-scan:
+    name: Scan image (${{ matrix.variant }})
     needs: meta
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        variant: [base, ai, local]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # Debian security updates: a cached apt layer would keep the package set of an older build.
+      # (The same date in the push below, so it reuses these layers.)
+      - id: refresh
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Built natively (arm64, from the cache) and loaded; the Debian and Python packages are the
+      # same for amd64. The gate fails on a fixable CRITICAL/HIGH finding; accepted ones are in
+      # .trivyignore (docs/releasing.md).
+      - name: Build the image to scan
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: ${{ matrix.variant }}
+          load: true
+          tags: exactdocs:scan-${{ matrix.variant }}
+          build-args: |
+            VERSION=${{ needs.meta.outputs.version }}
+            DEBIAN_REFRESH=${{ steps.refresh.outputs.date }}
+          cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}
+          cache-to: type=gha,scope=exactdocs-${{ matrix.variant }},mode=max
+      - name: Size budget, packages and models
+        run: python3 deploy/check_artifacts.py image exactdocs:scan-${{ matrix.variant }} ${{ matrix.variant }}
+      - name: Trivy scan
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:scan-${{ matrix.variant }}
+          report-name: trivy-report-${{ matrix.variant }}
+          retention-days: 30
+
+  image:
+    name: Publish image to ghcr.io (${{ matrix.variant }})
+    needs: [meta, image-scan]
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 90
     permissions:
       contents: read
       packages: write
       id-token: write # keyless cosign signing
+    strategy:
+      matrix:
+        include:
+          - variant: base
+            suffix: ""
+            title: ExactDocs
+          - variant: ai
+            suffix: -ai
+            title: ExactDocs (AI)
+          - variant: local
+            suffix: -local
+            title: ExactDocs (local models)
     steps:
       - uses: actions/checkout@v7
       # The Python stages cross-build linux/amd64 natively on the ARM64 runner; only the runtime
       # stage's apt-get runs under the QEMU binfmt that the runner VMs have (deploy/runners).
+      # The default models of -local are platform-independent and pulled once, natively.
       - uses: docker/setup-buildx-action@v4
-      # Debian security updates: a cached apt layer would keep the package set of an older build.
       - id: refresh
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v4
@@ -174,42 +230,27 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # <v>, <v>-ai, <v>-local; stable also X.Y and latest, dev also <v>-<sha7> and dev, each with
+      # the variant's suffix (latest-ai, dev-local, ...).
       - id: tags
         uses: docker/metadata-action@v6
         with:
           images: ${{ needs.meta.outputs.image }}
           flavor: latest=false
           tags: |
-            type=raw,value=${{ needs.meta.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.meta.outputs.version }},enable=${{ needs.meta.outputs.channel == 'stable' }}
-            type=raw,value=latest,enable=${{ needs.meta.outputs.channel == 'stable' }}
-            type=raw,value=${{ needs.meta.outputs.version }}-${{ needs.meta.outputs.short_sha }},enable=${{ needs.meta.outputs.channel == 'dev' }}
-            type=raw,value=dev,enable=${{ needs.meta.outputs.channel == 'dev' }}
-      # Scan before anything is pushed. The image is built natively (arm64, from the cache) and
-      # loaded; the Debian and Python packages are the same for amd64. The gate fails on a fixable
-      # CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
-      - name: Build the image to scan
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          load: true
-          tags: exactdocs:scan
-          build-args: |
-            VERSION=${{ needs.meta.outputs.version }}
-            DEBIAN_REFRESH=${{ steps.refresh.outputs.date }}
-          cache-from: type=gha,scope=exactdocs
-          cache-to: type=gha,scope=exactdocs,mode=max
-      - name: Trivy scan
-        uses: ./.github/actions/trivy-gate
-        with:
-          image: exactdocs:scan
-          retention-days: 30
+            type=raw,value=${{ needs.meta.outputs.version }}${{ matrix.suffix }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.meta.outputs.version }},suffix=${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'stable' }}
+            type=raw,value=latest${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'stable' }}
+            type=raw,value=${{ needs.meta.outputs.version }}-${{ needs.meta.outputs.short_sha }}${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'dev' }}
+            type=raw,value=dev${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'dev' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
       - id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
+          target: ${{ matrix.variant }}
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
@@ -220,8 +261,8 @@ jobs:
           annotations: ${{ steps.tags.outputs.annotations }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=exactdocs
-          cache-to: type=gha,scope=exactdocs,mode=max
+          cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}
+          cache-to: type=gha,scope=exactdocs-${{ matrix.variant }},mode=max
       - uses: sigstore/cosign-installer@v4.1.2 # upstream has no floating major tag
       - name: Sign image (keyless)
         run: cosign sign --yes "${{ needs.meta.outputs.image }}@${{ steps.build.outputs.digest }}"

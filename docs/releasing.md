@@ -57,6 +57,11 @@ to release. `exactdocs` pins `exactdocs-kernel==<same version>`.
 | `v0.1.3` | `main` | `exactdocs 0.1.3`, `exactdocs-kernel 0.1.3` | `0.1.3`, `0.1`, `latest` | release, marked latest |
 | `v0.1.3.dev2` | `develop` | `0.1.3.dev2` (pre-release) | `0.1.3.dev2`, `0.1.3.dev2-<sha7>`, `dev` | pre-release |
 
+Every image tag is published three times, once per variant of `deploy/Dockerfile` (#246): the
+base image under the tags above, `exactdocs[ai]` with the suffix `-ai` and `exactdocs[ai,local]`
+with the default local models with `-local` (`0.1.3-ai`, `0.1-local`, `latest-ai`,
+`0.1.3.dev2-<sha7>-local`, `dev-ai`, ...). See [Size and model-free budgets](#size-and-model-free-budgets).
+
 Dev tags use the PEP 440 developmental-release form `X.Y.Z.devN`, meaning "work towards X.Y.Z",
 so `0.1.3.dev2 < 0.1.3`. pip and `uvx exactdocs` ignore them unless asked
 (`uvx --prerelease allow exactdocs@0.1.3.dev2`). PyPI forbids local versions (`+sha`), so the
@@ -134,7 +139,9 @@ Why: <what search finds better after it>.
 ## Image retention
 
 `.github/workflows/ghcr-retention.yml` keeps the registry small: the **5 newest dev images**
-(`X.Y.Z.devN`) and the **10 newest stable images** (`X.Y.Z`); a multi-arch image is removed with
+(`X.Y.Z.devN`) and the **10 newest stable images** (`X.Y.Z`) of each variant (base, `-ai`,
+`-local`, counted separately, so a release's three images do not push out another variant's
+older ones); a multi-arch image is removed with
 its platform images, cosign signature and attestations, and untagged leftovers are deleted. It
 runs after every release, weekly, and on demand (`gh workflow run ghcr-retention.yml -f
 dry-run=true` shows what would be deleted). Change `KEEP_DEV` / `KEEP_STABLE` in the workflow to
@@ -142,13 +149,52 @@ adjust. PyPI releases are never deleted.
 
 ## Size and model-free budgets
 
-RUN-02: many installs only ever use BM25, so the artifacts hold no models and no ML libraries. CI
-enforces it (`deploy/check_artifacts.py`, CI job *Docker image*; the sizes land in the job summary):
+RUN-02: many installs only ever use BM25, so the wheel and the base image hold no models and no ML
+libraries. Operators who want AI retrieval should not have to build their own image, so the image
+comes in three variants, the build targets of one `deploy/Dockerfile` (#246; decision record
+[*Image variants*](decisions/ai-retrieval.md#image-variants)). CI enforces each budget
+(`deploy/check_artifacts.py`, CI jobs *Docker image* and *Docker image variants*, and the
+release's *Scan image* jobs; the sizes land in the job summary):
 
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
 | wheel (with the UI) | 5 MB | 0.9 MB (CI, PR #237) | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image (unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 384.4 MB (CI, PR #237) | no such model file anywhere in the filesystem |
+| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 386.5 MB (CI, arm64); 352.9 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
+| image `ai` (`<v>-ai`: `exactdocs[ai]`) | 560 MB | 491.9 MB on amd64 (+139 MB); arm64 in CI's summary | as `base`, except that pydantic-ai(-slim) is allowed: it calls models over HTTP and runs none |
+| image `local` (`<v>-local`: `exactdocs[ai,local]` + default models) | 950 MB | 847.0 MB on amd64 (+494 MB: 335 MB of packages, 159 MB of models); arm64 in CI's summary | both default models at their pinned revisions in `/opt/exactdocs/models` (checked with the server's own marker check), which UID 10001 cannot write, and `EXACTDOCS_MODELS_DIR` set to it; model files nowhere else (but ONNX Runtime's own few-KB examples); no aiohttp |
+
+**Why these budgets.** The decision record estimated 531 MB for `-ai` and 887 MB for `-local` from
+the extras' site-packages (measured 2026-11-07 on x86_64) and set 560 MB and 950 MB. Built from
+the Dockerfile (2026-11-11, amd64), the variants add 139 MB (`[ai]`) and 494 MB (`[ai,local]`
+with the models) to the base image. arm64, where CI runs, measures the base image 33.6 MB larger
+than amd64 (386.5 vs 352.9 MB), so CI's numbers are the ones that count: about 525 MB and 880 MB
+expected, which leaves about 6 % and 7 % of headroom, the same margin as the base image's.
+Raising a budget needs a reason in the PR; dropping a dependency to stay inside it is the first
+choice.
+
+- **Only `-local` may hold ONNX Runtime and model files.** The `-ai` image is checked against
+  `ML_PACKAGES` like the base one, minus `pydantic-ai` and `pydantic-ai-slim`
+  (`LLM_CLIENT_PACKAGES`). No variant holds **aiohttp**: Entra ID uses `azure.identity`'s sync
+  token provider (#241), never `azure.identity.aio`.
+- **The `-local` models are baked in, not pulled at first start.** The image must work with
+  `--network none`, so the build runs `exactdocs models pull`, which fetches each default model at
+  its pinned Hub revision (`PINNED_MODEL_REVISIONS`), into a BuildKit cache mount (a rebuild
+  contacts no Hub) natively on the build platform (the files are the same for amd64 and arm64),
+  and copies the two folders into the image, owned by root and read-only.
+  `EXACTDOCS_MODELS_DIR=/opt/exactdocs/models` is set in the image. A model of your own goes into
+  another directory (a volume) with `exactdocs models pull` and its own `EXACTDOCS_MODELS_DIR`.
+- **Smoke tests.** Every variant runs `deploy/smoke.sh` (read-only root filesystem, no
+  capabilities) with no model configured: the `-ai` and `-local` images stay BM25 servers until
+  a role is set. The `-ai` image also runs `deploy/check_sqlite_vec.py` (the vector store in the
+  image's own Python), and the `-local` one `deploy/smoke_local.py` inside a container started
+  with **`--network none`** and the default models on the embedding and reranker roles: it
+  imports the fixture, waits for the version to be embedded, and the search must answer with
+  `retrieval_mode` `hybrid` and `reranked: true`.
+- **CI time.** The variants are built, checked, scanned and smoke-tested in their own job, in
+  parallel with the base image's; `local` builds on the `ai` stages, and the runner VM's BuildKit
+  keeps their layers and the models' cache mount between jobs.
+- **Locally:** `just docker-build 0.0.0.dev0 ai` (or `local`) builds `exactdocs:local-ai`, and
+  `just docker-check ai` runs the same check.
 
 The unit tests add that the default dependency graph in `uv.lock` (from `exactdocs`, optional
 extras excluded) holds no torch, transformers, sentence-transformers, huggingface-hub, onnx,
@@ -157,15 +203,15 @@ onnxruntime, model2vec, tensorflow or pydantic-ai, and that a started app import
 `deploy/check_artifacts.py`, shared by the script and the test. Optional AI extras (`[ai]`) are
 allowed to carry them: both checks skip `extra ==` requirements.
 
-**Planned image variants** ([AI retrieval decisions](decisions/ai-retrieval.md#image-variants), #246):
-this image stays as it is; `exactdocs:<v>-ai` adds `exactdocs[ai]` (budget 560 MB, still free of
-ML packages and models) and `exactdocs:<v>-local` adds `exactdocs[local]` with its two default
-ONNX models (budget 950 MB).
+They also check what `check_artifacts.py image` decides for each variant from what it reads out
+of a built image: its installed distributions, its model files and its default models.
 
 **Chonkie is not banned** (the chunker is markdown-it-py, issue #27; Chonkie's Markdown recipe needs the
 HF Hub and network, which breaks RUN-02). If it is ever added, these extras must stay off: anything
 pulling torch, transformers, sentence-transformers, onnx/onnxruntime, huggingface-hub or model2vec
 (for Chonkie: the `semantic`, `neural`, `embeddings`, `code` and `all` extras).
+
+### How the base image got to its budget
 
 **Why 375 MB and not the 300 MB first planned** (before DBOS; see below for 400 MB). The floor is the `python:3.14-slim` base (~120 MB),
 git and ssh (~25 MB git-core plus libraries; Perl is already purged) and the virtualenv (167 MB). 57 MB
@@ -202,11 +248,13 @@ CI's *Docker image* job reports the exact size.
 
 ## Image scan
 
-Every PR (CI job *Docker image*) and every release scans the built image with
+Every PR (CI jobs *Docker image* and *Docker image variants*) and every release scans each built
+image variant with
 [Trivy](https://trivy.dev) and lints `deploy/Dockerfile` with hadolint (CI only; its one accepted
 rule, with the reason, is in `.hadolint.yaml`). The scan **fails on a CRITICAL or HIGH
 vulnerability that has a fix** (`--ignore-unfixed`); the table is in the job log and in the
-`trivy-report` artifact. A release is not pushed while the scan fails.
+`trivy-report` artifact (`trivy-report-ai`, `trivy-report-local`, and per variant in a release).
+No image of a release is pushed while the scan of any variant fails.
 
 When it fails:
 
@@ -238,7 +286,7 @@ a stale scanner stops finding new vulnerabilities.
 
 The CI Docker job uses the runner VM's own BuildKit (`driver: docker`), so layers and cache mounts
 persist between jobs on the same VM (see `deploy/runners/README.md`); the release uses the GitHub
-Actions cache instead (`scope=exactdocs`), because it builds multi-arch with a throwaway builder.
+Actions cache instead (`scope=exactdocs-<variant>`), because it builds multi-arch with a throwaway builder.
 
 ## CI/CD and runners
 
@@ -250,9 +298,9 @@ flowchart LR
     gh["GitHub<br/>PR, push to main or develop, tag v*"]
     subgraph gb10 ["Dell Pro Max GB10 (ARM64)"]
         subgraph vms ["LXD runner VMs: exactdocs-runner-1, -2"]
-            ci["CI<br/>python, web, image, uvx + browser e2e"]
+            ci["CI<br/>python, web, image, image variants, uvx + browser e2e"]
             docs["Docs<br/>Mermaid check, zensical build --strict"]
-            rel["Release<br/>meta, web, python, pypi-kernel, pypi, image, github-release"]
+            rel["Release<br/>meta, web, python, pypi-kernel, pypi, image-scan, image, github-release"]
             ret["GHCR retention"]
         end
     end
@@ -262,7 +310,7 @@ flowchart LR
     rel -->|after each release, weekly, on demand| ret
     docs -->|push to main| pages["GitHub Pages"]
     rel --> pypi["PyPI (trusted publishing)"]
-    rel --> ghcr["ghcr.io image, multi-arch, signed"]
+    rel --> ghcr["ghcr.io images (base, -ai, -local), multi-arch, signed"]
     rel --> ghrel["GitHub Release"]
     ret --> ghcr
 ```
@@ -276,10 +324,13 @@ flowchart LR
 3. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
 4. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
-5. **image**: builds the image natively and scans it (see *Image scan*), then multi-arch
-   (`linux/amd64`, `linux/arm64`) build, push, SBOM + provenance attestations, keyless **cosign**
-   signature. Only the runtime stage's `apt-get` runs under QEMU for amd64; the Python stages
-   cross-build natively.
+5. **image-scan**, then **image**, once per variant (`base`, `ai`, `local`): each variant is
+   built natively, checked against its size budget (`deploy/check_artifacts.py`) and scanned
+   (see *Image scan*); only when all three pass, each is built multi-arch (`linux/amd64`,
+   `linux/arm64`), pushed with its tags (suffix `-ai` / `-local`), with SBOM + provenance
+   attestations and a keyless **cosign** signature. Only the runtime stage's `apt-get` runs under
+   QEMU for amd64; the Python stages cross-build natively, and the `-local` models are pulled
+   once, natively. Each variant has its own GitHub Actions cache scope (`exactdocs-<variant>`).
 6. **github-release**: creates or updates the release with the distributions.
 
 ## One-time setup

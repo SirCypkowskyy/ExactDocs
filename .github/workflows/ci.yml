@@ -259,6 +259,7 @@ jobs:
         with:
           context: .
           file: deploy/Dockerfile
+          target: base
           load: true
           tags: exactdocs:ci
           build-args: |
@@ -266,9 +267,10 @@ jobs:
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # RUN-02: size budgets and no model weights (budgets and reasoning: docs/releasing.md).
-      - name: Image size budget and no model files
-        run: python3 deploy/check_artifacts.py image exactdocs:ci
+      # RUN-02: size budgets, no ML package and no model weights (budgets and reasoning:
+      # docs/releasing.md). The -ai and -local variants: job image-variants.
+      - name: Image size budget, no ML package and no model files
+        run: python3 deploy/check_artifacts.py image exactdocs:ci base
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
       - name: Wheel size budget, no model files, no ML dependencies
         run: |
@@ -371,21 +373,123 @@ jobs:
           slots=$("${compose[@]}" exec -T db psql -U exactdocs -d exactdocs -Atc \
             "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1163412547 AND objsubid = 2")
           test "$slots" = 2 || { echo "::error::expected 2 executor slots, got $slots"; exit 1; }
-      # #242: the vector store needs a Python that loads SQLite extensions. The image's Python
-      # (python:3.14-slim-trixie) is checked natively here (arm64). amd64 cannot be checked on this
-      # runner: tried once in #257 (run 42399925910), `docker run --platform linux/amd64` of the
-      # image's python3 died with "x86_64-binfmt-P: QEMU internal SIGSEGV" and then hung until
-      # killed. It was checked by hand on an amd64 host instead (PR #257). The base image has no
-      # `[ai]` extra, so the locked sqlite-vec wheel for the image's platform goes on PYTHONPATH.
-      - name: sqlite-vec loads and searches in the image's Python
+
+  # #246: the two AI variants of the image, from the same Dockerfile (targets `ai` and `local`),
+  # one after the other in one job: `local` builds on `ai`'s layers, and the runners are two.
+  # Each gets its own size budget, package and model-file check, Trivy scan and smoke test; the
+  # `-local` one also searches with `--network none`, on the models baked into the image.
+  image-variants:
+    name: Docker image variants (-ai, -local)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - id: created
         run: |
-          pin=$(uv export --frozen --no-hashes --no-header --no-annotate --no-emit-workspace \
-            --no-dev --package exactdocs --extra ai | grep '^sqlite-vec==')
-          uv pip install --target "$RUNNER_TEMP/sqlite-vec" --no-deps --python-version 3.14 \
-            --python-platform aarch64-unknown-linux-gnu "$pin"
+          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - name: Build -ai
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: ai
+          load: true
+          tags: exactdocs:ci-ai
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # The default models are pulled at their pinned revisions into a BuildKit cache mount on
+      # the runner VM: the first build on a VM downloads them (about 160 MB), later ones do not.
+      - name: Build -local
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: local
+          load: true
+          tags: exactdocs:ci-local
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # Budgets and reasoning: docs/releasing.md. -ai: no ML package but pydantic-ai, no model
+      # file; -local: the default models at their pinned revisions, read-only. Neither: aiohttp.
+      - name: Image size budgets, packages and models
+        if: ${{ !cancelled() }}
+        run: |
+          status=0
+          python3 deploy/check_artifacts.py image exactdocs:ci-ai ai || status=1
+          python3 deploy/check_artifacts.py image exactdocs:ci-local local || status=1
+          exit "$status"
+      - name: Trivy scan (-ai)
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci-ai
+          report-name: trivy-report-ai
+      - name: Trivy scan (-local)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci-local
+          report-name: trivy-report-local
+      - name: Build a fixture docs repository
+        if: ${{ !cancelled() }}
+        run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
+      # The same flow as the base image's smoke test, with no model configured: both variants
+      # stay BM25 servers until a role is set (RUN-02).
+      - name: Smoke test -ai and -local (read-only rootfs, no capabilities)
+        if: ${{ !cancelled() }}
+        run: |
+          flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
+          sha=$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)
+          trap 'for n in ai local; do docker logs "exactdocs-ci-$n" 2>&1 | tail -n 50; docker stop "exactdocs-ci-$n" 2>/dev/null; done' EXIT
+          for variant in ai local; do
+            name="exactdocs-ci-$variant"
+            echo "::group::$variant"
+            docker run -d --rm --name "$name" "${flags[@]}" -p 127.0.0.1::3000 \
+              -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" "exactdocs:ci-$variant"
+            port=$(docker port "$name" 3000/tcp | head -n1 | cut -d: -f2)
+            deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0 "$sha"
+            test "$(docker exec "$name" id -u)" = 10001
+            docker exec "$name" sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
+            docker stop "$name"
+            echo "::endgroup::"
+          done
+      # #242: the vector store needs a Python that loads SQLite extensions: the image's own
+      # (python:3.14-slim-trixie) with the sqlite-vec of the [ai] extra, natively (arm64). amd64
+      # cannot be checked on this runner: tried once in #257 (run 42399925910), `docker run
+      # --platform linux/amd64` of the image's python3 died with "x86_64-binfmt-P: QEMU internal
+      # SIGSEGV" and then hung until killed. It was checked by hand on an amd64 host (PR #257).
+      - name: sqlite-vec loads and searches in the -ai image's Python
+        if: ${{ !cancelled() }}
+        run: |
           docker run --rm -i --network none --read-only --tmpfs /tmp --cap-drop ALL \
-            -v "$RUNNER_TEMP/sqlite-vec:/opt/sqlite-vec:ro" -e PYTHONPATH=/opt/sqlite-vec \
-            --entrypoint python exactdocs:ci - < deploy/check_sqlite_vec.py
+            --entrypoint python exactdocs:ci-ai - < deploy/check_sqlite_vec.py
+      # The scenario of #246: no network at all, the fixture imported and searched in hybrid
+      # mode with the default embedding model and reranker of the image. The reranker's timeout
+      # is raised as in the local-models eval: a runner's CPU may take more than 5 s for 32
+      # long candidates, and a timed-out rerank would say `reranked: false`.
+      - name: -local with --network none searches hybrid, reranked
+        if: ${{ !cancelled() }}
+        run: |
+          docker run -d --rm --name exactdocs-ci-offline --network none \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+            -e EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local \
+            -e EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5 \
+            -e EXACTDOCS_AI__RERANKER__MODEL=local:Xenova/ms-marco-MiniLM-L-6-v2 \
+            -e EXACTDOCS_AI__RERANKER__TIMEOUT=30 \
+            -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci-local
+          trap 'docker logs exactdocs-ci-offline 2>&1 | tail -n 80; docker stop exactdocs-ci-offline' EXIT
+          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' exactdocs-ci-offline)" = none
+          docker exec -i exactdocs-ci-offline python - file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            < deploy/smoke_local.py
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
