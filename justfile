@@ -6,7 +6,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-euo", "pipefail", "-c"]
 set dotenv-load := true
 
-image := "exactdocs:local"
+image := "exactdocs:build"
 web := "web"
 
 # List recipes
@@ -97,9 +97,14 @@ build version="": web-build
     cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
     if [ -n "{{ version }}" ]; then export UV_DYNAMIC_VERSIONING_BYPASS="{{ version }}"; fi;       uv build --all-packages --out-dir dist
 
-# Build the Docker image for the local platform
-docker-build version="0.0.0.dev0":
-    docker build -f deploy/Dockerfile --build-arg VERSION={{ version }} -t {{ image }} .
+# Build the Docker image for the local platform: variant base, ai or local (tag exactdocs:build, -ai, -local)
+docker-build version="0.0.0.dev0" variant="base":
+    docker build -f deploy/Dockerfile --target {{ variant }} --build-arg VERSION={{ version }} \
+      -t {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} .
+
+# Check a built variant's size budget, packages and models, as CI does (docs/releasing.md)
+docker-check variant="base":
+    python3 deploy/check_artifacts.py image {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} {{ variant }}
 
 # Run the local image on :3000 with a named data volume, hardened like CI and the Team compose example
 docker-run: docker-build

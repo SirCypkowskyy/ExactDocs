@@ -40,6 +40,19 @@ uvx exactdocs serve
 Python and the Docker image have it, otherwise ExactDocs refuses to start). Then open <http://localhost:3000>. For an
 agent that only reads an existing database, `uvx exactdocs serve --stdio` needs no `git` and no port.
 
+The image comes in three variants, built from one Dockerfile; all three start as a BM25 server
+until a model role is configured:
+
+| Tag | Holds | For |
+|---|---|---|
+| `:<version>`, `:latest` | BM25 on SQLite or PostgreSQL; no model, no ML library | most installs |
+| `:<version>-ai`, `:latest-ai` | `exactdocs[ai]`: the hosted and self-hosted model providers, sqlite-vec, pgvector | [AI providers](#ai-providers-and-model-roles) over the network |
+| `:<version>-local`, `:latest-local` | `exactdocs[ai,local]` and the two default [local models](#local-models), read-only in `/opt/exactdocs/models` (their licenses, MIT and Apache-2.0, in its `NOTICE`) | air-gapped instances: hybrid search and reranking with no network |
+
+The `uvx` equivalents are `uvx --from 'exactdocs[ai]' exactdocs serve` and
+`uvx --from 'exactdocs[ai,local]' exactdocs serve` (then `exactdocs models pull`). Dev builds
+carry the same suffixes (`:dev-ai`, `:0.4.0.dev1-local`).
+
 A fresh instance offers nothing but its setup: until the first admin account exists, every
 `/api/v1` request is refused with `403 setup_required`. Open <http://localhost:3000> and create the
 admin on the setup page, or from the command line, or over the API:
@@ -708,8 +721,21 @@ model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
 # 32 long candidates in about 0.2 to 2 s, more with fewer cores
 ```
 
+The `-local` image has both default models already, so the same settings in its environment are
+all it needs, even with no network at all (CI runs it with `--network none`):
+
+```bash
+docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
+  -e EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local \
+  -e EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5 \
+  -e EXACTDOCS_AI__RERANKER__MODEL=local:Xenova/ms-marco-MiniLM-L-6-v2 \
+  -e EXACTDOCS_AI__MODE=hybrid \
+  ghcr.io/sircypkowskyy/exactdocs:latest-local
+```
+
 - **Where models live:** `EXACTDOCS_MODELS_DIR` (default `<data dir>/models`; the `-local` image
-  sets its read-only `/opt/exactdocs/models`), one folder per model (`BAAI/bge-small-en-v1.5/`)
+  sets its read-only `/opt/exactdocs/models`, where the two defaults were pulled when the image
+  was built, so it needs no `models pull` and no network), one folder per model (`BAAI/bge-small-en-v1.5/`)
   with its ONNX file, its tokenizer and a marker `models pull` writes last. A model already there
   is skipped, so a cached directory makes the command offline.
 - **Pinned revisions:** the two defaults are pulled at a fixed Hub commit (bge-small's
