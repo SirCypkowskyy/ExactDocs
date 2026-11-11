@@ -47,6 +47,7 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
+    BudgetLimit,
     CatalogLibrary,
     InstanceRoles,
     KeySource,
@@ -61,6 +62,7 @@ from exactdocs.retrieval.models import (
     ProviderProfile,
     RetrievalMode,
     RoleSource,
+    SpendWindow,
     bind_role,
 )
 from exactdocs.retrieval.module import RetrievalModule
@@ -893,6 +895,27 @@ async def test_library_overrides_are_stored_and_forgotten(
     assert await modes.ai_of("/acme/payments") == ai
     assert await modes.mode_of("/acme/payments") is None
     await modes.forget("/acme/PAYMENTS")
+    assert await modes.ai_of("/acme/payments") == LibraryAi()
+
+
+async def test_a_librarys_own_budgets_are_stored_with_it(
+    stores: tuple[ProviderProfiles, LibraryModes],
+) -> None:
+    _, modes = stores
+    usd = 5_000_000_000  # 5,000 US dollars in millionths: past a 32-bit column
+    ai = LibraryAi(
+        budgets=(
+            BudgetLimit(scope_kind="library", window=SpendWindow.DAY, usd_micros=usd),
+            BudgetLimit(
+                scope_kind="library", window=SpendWindow.MONTH, usd_micros=usd, tokens=10**10
+            ),
+        )
+    )
+
+    await modes.save("/Acme/Payments", None, ai)
+
+    assert await modes.ai_of("/acme/payments") == ai
+    await modes.save("/acme/payments", None, LibraryAi())
     assert await modes.ai_of("/acme/payments") == LibraryAi()
 
 

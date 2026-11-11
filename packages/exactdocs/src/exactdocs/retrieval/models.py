@@ -35,6 +35,8 @@ from exactdocs.retrieval.constants import (
     EMBEDDING_INPUT_FORMAT,
     HEADER_NAME,
     HEADING_SEPARATOR,
+    LIBRARY_BUDGET_NOT_LIBRARY,
+    LIBRARY_BUDGET_TWICE,
     MASK,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_FLOAT32,
@@ -65,6 +67,7 @@ from exactdocs.retrieval.errors import (
     InvalidModelRefError,
     InvalidProviderError,
     InvalidVectorError,
+    LibraryBudgetAboveInstanceError,
     UnavailableModeError,
     UnknownSpendKeyError,
     VectorDimensionError,
@@ -657,8 +660,8 @@ class ModeChoice:
     """How many of the best candidates the reranker reorders (the library's, else the
     instance's); 0 when there is no reranking."""
     library_ai: LibraryAi | None = None
-    """The library's AI overrides as read for this search, so the reranker resolves from the same
-    read; ``None`` when there is no reranking."""
+    """The library's AI overrides as read for this search, so the reranker and the library's own
+    budgets resolve from the same read; ``None`` when the choice was not made for a library."""
     caller: str | None = None
     """The account the search counts to (set with the budgets, ``within_budget``); ``None`` for a
     stdio MCP process."""
@@ -1642,6 +1645,31 @@ class LibraryAi:
     """Its own reranker instead of the instance's."""
     rerank_top_n: int | None = None
     """How many of its best candidates the reranker reorders; ``None``: the instance's."""
+    budgets: tuple[BudgetLimit, ...] = ()
+    """Its own spend limits (scope kind ``library``, at most one per window), within the
+    instance's: the tighter of the two applies."""
+
+    def __post_init__(self) -> None:
+        """Refuse own budgets that limit another scope kind, or two for one window.
+
+        Raises:
+            InvalidBudgetError: A budget limits another scope kind, or a window has two.
+        """
+        if any(limit.scope_kind != SPEND_SCOPE_LIBRARY for limit in self.budgets):
+            raise InvalidBudgetError(LIBRARY_BUDGET_NOT_LIBRARY)
+        if len({limit.window for limit in self.budgets}) != len(self.budgets):
+            raise InvalidBudgetError(LIBRARY_BUDGET_TWICE)
+
+    def budget(self, window: SpendWindow) -> BudgetLimit | None:
+        """Find the library's own budget for a window.
+
+        Args:
+            window: Day or month.
+
+        Returns:
+            The budget, or ``None`` when it has none.
+        """
+        return next((limit for limit in self.budgets if limit.window is window), None)
 
     def override(self, role: ModelRole) -> ModelRef | None:
         """Read the library's own model for ``role``.
@@ -1673,6 +1701,7 @@ class LibraryAi:
             self.enabled
             and not (self.llm or self.judge or self.reranker)
             and self.rerank_top_n is None
+            and not self.budgets
         )
 
     def profiles(self) -> frozenset[str]:
@@ -2386,6 +2415,33 @@ class ReachedBudget:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class BudgetCeiling:
+    """The most one library may spend in a window, as the instance's limits set it."""
+
+    usd_micros: int | None = None
+    """Millionths of a US dollar; ``None``: not limited."""
+    tokens: int | None = None
+    """Tokens; ``None``: not limited."""
+
+
+def _tighter(first: int | None, second: int | None) -> int | None:
+    """Pick the lower of two ceilings, where ``None`` is no ceiling.
+
+    Args:
+        first: One ceiling.
+        second: The other.
+
+    Returns:
+        The lower one; ``None`` only when neither is set.
+    """
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return min(first, second)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Budgets:
     """The instance's spend limits and its LLM search rate limit (docs/decisions/ai-retrieval.md).
 
@@ -2415,6 +2471,99 @@ class Budgets:
             True when one is.
         """
         return any(limit.usd_micros is not None for limit in self.limits)
+
+    def ceiling(self, window: SpendWindow) -> BudgetCeiling:
+        """Say how much one library may spend in a window at most, as the instance sets it.
+
+        Args:
+            window: Day or month.
+
+        Returns:
+            The lowest instance and per-library ceilings of the window; ``None`` parts are
+            not limited.
+        """
+        usd = [
+            limit.usd_micros
+            for limit in self.limits
+            if limit.window is window
+            and limit.scope_kind in {SPEND_SCOPE_INSTANCE, SPEND_SCOPE_LIBRARY}
+            and limit.usd_micros is not None
+        ]
+        tokens = [
+            limit.tokens
+            for limit in self.limits
+            if limit.window is window
+            and limit.scope_kind in {SPEND_SCOPE_INSTANCE, SPEND_SCOPE_LIBRARY}
+            and limit.tokens is not None
+        ]
+        return BudgetCeiling(
+            usd_micros=min(usd) if usd else None, tokens=min(tokens) if tokens else None
+        )
+
+    def check_library(self, own: Sequence[BudgetLimit]) -> None:
+        """Refuse a library's own budgets that go over what the instance allows a library.
+
+        Args:
+            own: The library's budgets.
+
+        Raises:
+            LibraryBudgetAboveInstanceError: One goes over the instance's ceiling.
+        """
+        for limit in own:
+            ceiling = self.ceiling(limit.window)
+            period = "daily" if limit.window is SpendWindow.DAY else "monthly"
+            if (
+                limit.usd_micros is not None
+                and ceiling.usd_micros is not None
+                and limit.usd_micros > ceiling.usd_micros
+            ):
+                what, most = f"{period}_usd", f"{ceiling.usd_micros / MICROS_PER_USD:g} USD"
+                raise LibraryBudgetAboveInstanceError(what, most)
+            if (
+                limit.tokens is not None
+                and ceiling.tokens is not None
+                and limit.tokens > ceiling.tokens
+            ):
+                what, most = f"{period}_tokens", f"{ceiling.tokens} tokens"
+                raise LibraryBudgetAboveInstanceError(what, most)
+
+    def for_library(self, own: Sequence[BudgetLimit]) -> Budgets:
+        """Apply a library's own budgets: per window, the tighter of its own and the instance's.
+
+        Args:
+            own: The library's budgets (scope kind ``library``).
+
+        Returns:
+            The limits a call of that library is checked against; these limits when it has none.
+        """
+        if not own:
+            return self
+        merged: list[BudgetLimit] = [
+            limit for limit in self.limits if limit.scope_kind != SPEND_SCOPE_LIBRARY
+        ]
+        for window in SpendWindow:
+            mine = next((limit for limit in own if limit.window is window), None)
+            theirs = next(
+                (
+                    limit
+                    for limit in self.limits
+                    if limit.scope_kind == SPEND_SCOPE_LIBRARY and limit.window is window
+                ),
+                None,
+            )
+            if mine is None or theirs is None:
+                if (kept := mine or theirs) is not None:
+                    merged.append(kept)
+                continue
+            merged.append(
+                BudgetLimit(
+                    scope_kind=SPEND_SCOPE_LIBRARY,
+                    window=window,
+                    usd_micros=_tighter(mine.usd_micros, theirs.usd_micros),
+                    tokens=_tighter(mine.tokens, theirs.tokens),
+                )
+            )
+        return replace(self, limits=tuple(merged))
 
     def keys(self, scopes: Sequence[tuple[str, str]], at: datetime) -> tuple[SpendKey, ...]:
         """List the rows the limits on these scopes read.

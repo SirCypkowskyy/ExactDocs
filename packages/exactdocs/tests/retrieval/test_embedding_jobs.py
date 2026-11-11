@@ -27,6 +27,7 @@ from exactdocs.retrieval.dtos import (
     ChunkIn,
     EmbedBatchCommand,
     EmbeddingPlanOut,
+    EmbeddingProgressOut,
     EmbedVersionCommand,
     FinishEmbeddingCommand,
     IndexManifestCommand,
@@ -616,3 +617,52 @@ def test_a_target_matches_its_spaces_whatever_their_size_unless_one_is_configure
     assert not EmbeddingTarget(profile_kind="openai", model="a", dimensions=256).matches(spec)
     assert not EmbeddingTarget(profile_kind="azure", model="a").matches(spec)
     assert not EmbeddingTarget(profile_kind="openai", model="a", input_format=2).matches(spec)
+
+
+# ---------------------------------------------------------------- progress per space (#102)
+
+
+async def test_progress_counts_the_versions_and_chunks_each_space_has_vectors_for(
+    stores: Stores,
+) -> None:
+    first = _module(stores, model="a")
+    await _two_versions(stores, first)
+    await _embed(first, LIB, "v1")
+    await _embed(first, LIB, "v2")
+    second = _module(stores, model="b")  # the operator switched models: b covers v1 only
+    await _embed(second, LIB, "v1")
+
+    progress = await second.get_embedding_progress()
+
+    assert progress.model == "corp:b"
+    old, new = progress.spaces
+    assert (old.model, old.state, old.current) == ("a", SpaceState.ACTIVE, False)
+    assert (old.versions, old.versions_embedded, old.chunks, old.chunks_embedded) == (2, 2, 7, 7)
+    assert (new.model, new.state, new.current) == ("b", SpaceState.BUILDING, True)
+    # v2 shares v1's blob: 3 of its 4 chunks already have vectors in b, counted per version.
+    assert (new.versions, new.versions_embedded, new.chunks, new.chunks_embedded) == (2, 1, 7, 6)
+    assert (new.profile_kind, new.activated_at) == ("openai-compatible", None)
+
+    await _embed(second, LIB, "v2")  # b covers everything: a is retired and left out
+    (done,) = (await second.get_embedding_progress()).spaces
+    assert (done.model, done.state, done.versions_embedded) == ("b", SpaceState.ACTIVE, 2)
+
+
+async def test_progress_leaves_out_libraries_with_ai_off(stores: Stores) -> None:
+    module = _module(stores)
+    await _two_versions(stores, module)
+    await _embed(module, LIB, "v1")
+    await stores.modes.save(LIB, None, LibraryAi(enabled=False))
+
+    (space,) = (await module.get_embedding_progress()).spaces
+
+    assert (space.versions, space.chunks) == (0, 0)
+
+
+async def test_progress_without_a_model_or_a_vector_store_has_no_space(stores: Stores) -> None:
+    assert await _module(stores, model=None).get_embedding_progress() == EmbeddingProgressOut(
+        model=None, spaces=[]
+    )
+    assert await _module(stores, vectors=None).get_embedding_progress() == EmbeddingProgressOut(
+        model="corp:a", spaces=[]
+    )

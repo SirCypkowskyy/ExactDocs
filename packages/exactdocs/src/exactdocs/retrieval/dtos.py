@@ -1,5 +1,6 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Annotated, Literal, Self
 
@@ -30,10 +31,12 @@ from exactdocs.retrieval.constants import (
     MAX_URL,
     MICROS_PER_USD,
     PROFILE_NAME_PATTERN,
+    SPEND_SCOPE_LIBRARY,
 )
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
+    BudgetCeiling,
     BudgetLimit,
     Candidate,
     EmbeddingSkip,
@@ -824,6 +827,91 @@ class GetLibraryRetrievalQuery(_Dto):
     """`/owner/repo`, any letter case."""
 
 
+class LibraryBudgets(_Dto):
+    """A library's own spend limits per UTC day and month; null: not limited by the library."""
+
+    daily_usd: float | None = Field(default=None, gt=0)
+    """US dollars per day."""
+    monthly_usd: float | None = Field(default=None, gt=0)
+    """US dollars per month."""
+    daily_tokens: int | None = Field(default=None, ge=1)
+    """Tokens per day."""
+    monthly_tokens: int | None = Field(default=None, ge=1)
+    """Tokens per month."""
+
+    def limits(self) -> tuple[BudgetLimit, ...]:
+        """Turn the settings into the library's own limits.
+
+        Returns:
+            One limit per window that has a ceiling.
+        """
+        found: list[BudgetLimit] = []
+        for window, usd, tokens in (
+            (SpendWindow.DAY, self.daily_usd, self.daily_tokens),
+            (SpendWindow.MONTH, self.monthly_usd, self.monthly_tokens),
+        ):
+            if usd is None and tokens is None:
+                continue
+            found.append(
+                BudgetLimit(
+                    scope_kind=SPEND_SCOPE_LIBRARY,
+                    window=window,
+                    usd_micros=None if usd is None else max(1, round(usd * MICROS_PER_USD)),
+                    tokens=tokens,
+                )
+            )
+        return tuple(found)
+
+    @classmethod
+    def from_limits(cls, limits: Sequence[BudgetLimit]) -> Self:
+        """Show a library's own limits.
+
+        Args:
+            limits: The limits, at most one per window.
+
+        Returns:
+            The DTO.
+        """
+        by = {limit.window: limit for limit in limits}
+        day, month = by.get(SpendWindow.DAY), by.get(SpendWindow.MONTH)
+        return cls(
+            daily_usd=_usd(day.usd_micros if day else None),
+            monthly_usd=_usd(month.usd_micros if month else None),
+            daily_tokens=day.tokens if day else None,
+            monthly_tokens=month.tokens if month else None,
+        )
+
+    @classmethod
+    def from_ceilings(cls, day: BudgetCeiling, month: BudgetCeiling) -> Self:
+        """Show the most a library's own limits may be.
+
+        Args:
+            day: The instance's ceiling per day.
+            month: Its ceiling per month.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            daily_usd=_usd(day.usd_micros),
+            monthly_usd=_usd(month.usd_micros),
+            daily_tokens=day.tokens,
+            monthly_tokens=month.tokens,
+        )
+
+
+def _usd(micros: int | None) -> float | None:
+    """Turn millionths of a US dollar into dollars.
+
+    Args:
+        micros: Millionths, or ``None``.
+
+    Returns:
+        US dollars, or ``None``.
+    """
+    return None if micros is None else micros / MICROS_PER_USD
+
+
 class SetLibraryRetrievalCommand(_Dto):
     """Set (or clear, with no ``mode``) the retrieval mode a library's searches use by default."""
 
@@ -844,6 +932,8 @@ class SetLibraryRetrievalCommand(_Dto):
     """The library's own reranker, `<profile>:<model>`; empty: the instance's `reranker` role."""
     rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
     """How many of its best candidates the reranker reorders; empty: the instance's (32)."""
+    budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
+    """The library's own spend limits, no higher than the instance's; none by default."""
 
     @field_validator("mode", "llm", "judge", "reranker", mode="before")
     @classmethod
@@ -891,6 +981,10 @@ class LibraryRetrievalOut(_Dto):
     """How many of its best candidates the reranker reorders; null: the instance's."""
     effective_rerank_top_n: int
     """How many candidates its searches rerank now: its own number, else the instance's."""
+    budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
+    """The library's own spend limits; the tighter of these and the instance's applies."""
+    budget_ceilings: LibraryBudgets = Field(default_factory=LibraryBudgets)
+    """The most each of the library's own limits may be (the instance's limits); null: any."""
 
 
 class ForgetLibraryCommand(_Dto):
@@ -1347,6 +1441,44 @@ class EmbeddingEstimateOut(_Dto):
     """The estimated tokens at that price; null without a price."""
     note: str = Field(default=ESTIMATE_NOTE)
     """How the numbers were made."""
+
+
+class EmbeddingSpaceProgressOut(_Dto):
+    """How far one embedding space has got: the versions and chunks it has vectors for."""
+
+    id: int
+    """The space's ID."""
+    profile_kind: str
+    """The kind of profile its model was called through (`openai-compatible`, `local`...)."""
+    model: str
+    """The model, as its provider names it."""
+    dimensions: int
+    """Numbers per vector."""
+    state: SpaceState
+    """`building` while its first run is under way, `active` once it is searched."""
+    current: bool
+    """It is the configured embedding model's space; an older one is retired once it is done."""
+    created_at: datetime
+    """When it was created."""
+    activated_at: datetime | None
+    """When it became the searched space; null while building."""
+    versions: int
+    """Active versions of libraries with AI on."""
+    versions_embedded: int
+    """Of those, the versions it has a vector for every chunk of."""
+    chunks: int
+    """Chunks of those versions."""
+    chunks_embedded: int
+    """Of those, the chunks it has a vector for."""
+
+
+class EmbeddingProgressOut(_Dto):
+    """The configured embedding model and how far each embedding space has got (RET-01)."""
+
+    model: str | None
+    """The configured embedding model, `<profile>:<model>`; null when none is."""
+    spaces: list[EmbeddingSpaceProgressOut]
+    """Every space that is not retired, oldest first; none without a vector store."""
 
 
 class SpentOut(_Dto):

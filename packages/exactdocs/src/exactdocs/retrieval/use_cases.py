@@ -26,6 +26,7 @@ from exactdocs.retrieval.constants import (
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
+    SPEND_SCOPE_LIBRARY,
     UNKNOWN_MANIFEST_GRACE,
 )
 from exactdocs.retrieval.dtos import (
@@ -45,7 +46,9 @@ from exactdocs.retrieval.dtos import (
     EmbeddedBatchOut,
     EmbeddingEstimateOut,
     EmbeddingPlanOut,
+    EmbeddingProgressOut,
     EmbeddingSpaceOut,
+    EmbeddingSpaceProgressOut,
     EmbedVersionCommand,
     FinishedEmbeddingOut,
     FinishEmbeddingCommand,
@@ -54,6 +57,7 @@ from exactdocs.retrieval.dtos import (
     GetLibraryRetrievalQuery,
     IndexedManifestOut,
     IndexManifestCommand,
+    LibraryBudgets,
     LibraryFacetOut,
     LibraryMatchOut,
     LibraryRetrievalOut,
@@ -115,6 +119,7 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import (
     AiCaller,
+    BudgetLimit,
     Budgets,
     Candidate,
     CatalogLibrary,
@@ -425,33 +430,72 @@ class AiSpend:
     """Prices what is recorded."""
     clock: Clock = field(default_factory=SystemClock)
     """Decides the UTC windows."""
+    library_modes: LibraryModes | None = None
+    """Each library's own budgets; without it only the instance's limits apply."""
 
-    async def reached(self, scopes: Sequence[tuple[str, str]]) -> ReachedBudget | None:
+    async def own_budgets(self, library: str) -> tuple[BudgetLimit, ...]:
+        """Read a library's own budgets.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its budgets; none without ``library_modes``.
+        """
+        if self.library_modes is None:
+            return ()
+        return (await self.library_modes.ai_of(library)).budgets
+
+    async def limits_for(
+        self, scopes: Sequence[tuple[str, str]], own: Sequence[BudgetLimit] | None = None
+    ) -> Budgets:
+        """Find the limits a call that counts to these scopes is checked against.
+
+        Args:
+            scopes: (kind, ID) of each scope a call would count to.
+            own: The library's own budgets as already read; ``None`` reads them.
+
+        Returns:
+            The instance's limits, with the library's own applied where they are tighter.
+        """
+        if own is None:
+            library = next((i for kind, i in scopes if kind == SPEND_SCOPE_LIBRARY), None)
+            own = () if library is None else await self.own_budgets(library)
+        return self.budgets.for_library(own)
+
+    async def reached(
+        self, scopes: Sequence[tuple[str, str]], own: Sequence[BudgetLimit] | None = None
+    ) -> ReachedBudget | None:
         """Find a limit one of these scopes has used up now.
 
         Args:
             scopes: (kind, ID) of each scope a call would count to.
+            own: The library's own budgets as already read; ``None`` reads them.
 
         Returns:
             The limit, or ``None`` when the call may be made.
         """
         now = self.clock.now()
-        keys = self.budgets.keys(scopes, now)
+        budgets = await self.limits_for(scopes, own)
+        keys = budgets.keys(scopes, now)
         if not keys:
             return None
-        return self.budgets.reached(scopes, await self.ledger.get(keys), now)
+        return budgets.reached(scopes, await self.ledger.get(keys), now)
 
-    async def llm_step(self, caller: AiCaller) -> FallbackReason | None:
+    async def llm_step(
+        self, caller: AiCaller, own: Sequence[BudgetLimit] | None = None
+    ) -> FallbackReason | None:
         """Decide whether a search may run its LLM step now (and count it if so).
 
         Args:
             caller: The library and the account searching.
+            own: The library's own budgets as already read; ``None`` reads them.
 
         Returns:
             ``llm_budget_reached`` or ``llm_rate_limited`` when the step must be skipped, else
             ``None``. A search refused for its budget is not counted against the rate limit.
         """
-        if await self.reached(caller.scopes()) is not None:
+        if await self.reached(caller.scopes(), own) is not None:
             return FallbackReason.LLM_BUDGET_REACHED
         limit = self.budgets.llm_searches_per_minute
         if (
@@ -462,16 +506,19 @@ class AiSpend:
             return FallbackReason.LLM_RATE_LIMITED
         return None
 
-    async def paid_call(self, caller: AiCaller) -> FallbackReason | None:
+    async def paid_call(
+        self, caller: AiCaller, own: Sequence[BudgetLimit] | None = None
+    ) -> FallbackReason | None:
         """Decide whether a paid call that is not an LLM search (a rerank) may be made now.
 
         Args:
             caller: The library and the account searching.
+            own: The library's own budgets as already read; ``None`` reads them.
 
         Returns:
             ``llm_budget_reached`` when a limit is used up, else ``None``.
         """
-        if await self.reached(caller.scopes()) is not None:
+        if await self.reached(caller.scopes(), own) is not None:
             return FallbackReason.LLM_BUDGET_REACHED
         return None
 
@@ -551,11 +598,12 @@ class GetAiUsageUseCase:
             at=now,
             llm_searches_per_minute=self.spend.budgets.llm_searches_per_minute,
             scopes=[
-                self._scope(kind, scope_id, rows, today, month, now) for kind, scope_id in scopes
+                await self._scope(kind, scope_id, rows, today, month, now)
+                for kind, scope_id in scopes
             ],
         )
 
-    def _scope(
+    async def _scope(
         self,
         kind: str,
         scope_id: str,
@@ -575,7 +623,7 @@ class GetAiUsageUseCase:
             now: When the rows were read.
 
         Returns:
-            Its spend today and this month, and its budgets.
+            Its spend today and this month, and its budgets (a library's own applied).
         """
 
         def row(window: SpendWindow, start: date) -> SpendEntry:
@@ -595,6 +643,9 @@ class GetAiUsageUseCase:
             SpendWindow.DAY: row(SpendWindow.DAY, today),
             SpendWindow.MONTH: row(SpendWindow.MONTH, month),
         }
+        budgets = self.spend.budgets
+        if kind == SPEND_SCOPE_LIBRARY:
+            budgets = await self.spend.limits_for([(kind, scope_id)])
         return ScopeUsageOut(
             scope=kind,
             id=scope_id,
@@ -602,7 +653,7 @@ class GetAiUsageUseCase:
             month=SpentOut.from_model(spent[SpendWindow.MONTH]),
             budgets=[
                 BudgetOut.from_model(limit, spent[limit.window], now)
-                for limit in self.spend.budgets.limits
+                for limit in budgets.limits
                 if limit.scope_kind == kind
             ],
         )
@@ -692,11 +743,12 @@ class RetrievalModes:
                 library=await self.library_modes.mode_of(library),
                 instance=self.instance_mode,
             )
+        choice = replace(choice, library_ai=ai)
         if not choice.rerank:
             return choice
         if self.reranking is None:
             return replace(choice, rerank=False)
-        return replace(choice, rerank_top_n=self.rerank_top_n(ai), library_ai=ai)
+        return replace(choice, rerank_top_n=self.rerank_top_n(ai))
 
     async def run(
         self,
@@ -766,13 +818,15 @@ class RetrievalModes:
         if self.spend is None:
             return choice
         who = AiCaller(library=library.casefold(), user=caller)
-        if choice.mode.needs_llm and (reason := await self.spend.llm_step(who)) is not None:
+        own = None if choice.library_ai is None else choice.library_ai.budgets
+        if choice.mode.needs_llm and (reason := await self.spend.llm_step(who, own)) is not None:
             choice = choice.without_llm(reason)
         if (
             choice.rerank
-            and self.spend.budgets.limits  # no limit: no need to read the reranker's profile
+            # no limit: no need to read the reranker's profile
+            and (self.spend.budgets.limits or own)
             and await self._paid_rerank(who.library, choice.library_ai)
-            and (reason := await self.spend.paid_call(who)) is not None
+            and (reason := await self.spend.paid_call(who, own)) is not None
         ):
             choice = replace(choice, rerank=False, fallback_reason=choice.fallback_reason or reason)
         return choice
@@ -1893,6 +1947,7 @@ async def _library_retrieval(
     """
     registry = await modes.registry(library, ai)
     choice = registry.choose(asked=None, library=mode, instance=modes.instance_mode)
+    budgets = modes.spend.budgets if modes.spend is not None else Budgets()
     return LibraryRetrievalOut(
         library=library,
         mode=mode,
@@ -1907,6 +1962,10 @@ async def _library_retrieval(
         reranker=_ref_text(ai.reranker),
         rerank_top_n=ai.rerank_top_n,
         effective_rerank_top_n=modes.rerank_top_n(ai),
+        budgets=LibraryBudgets.from_limits(ai.budgets),
+        budget_ceilings=LibraryBudgets.from_ceilings(
+            budgets.ceiling(SpendWindow.DAY), budgets.ceiling(SpendWindow.MONTH)
+        ),
     )
 
 
@@ -1969,7 +2028,10 @@ class SetLibraryRetrievalUseCase:
             judge=_parse_ref(command.judge),
             reranker=_parse_ref(command.reranker),
             rerank_top_n=command.rerank_top_n,
+            budgets=command.budgets.limits(),
         )
+        if self.modes.spend is not None:
+            self.modes.spend.budgets.check_library(ai.budgets)
         for name in sorted(ai.profiles()):
             if await self.providers.profile(name) is None:
                 raise UnknownProviderError(name)
@@ -3198,3 +3260,46 @@ class EstimateEmbeddingUseCase:
             )
             found |= {(manifest_id, path): title for path, title in titles.items()}
         return found
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetEmbeddingProgressUseCase:
+    """Implements ``ports.driving.GetEmbeddingProgress``."""
+
+    runs: EmbeddingRuns
+    """The embedding model and its spaces."""
+
+    async def __call__(self) -> EmbeddingProgressOut:
+        """Count, per space that is not retired, the versions and chunks it has vectors for.
+
+        Returns:
+            The configured model and the spaces, oldest first; no space without a vector store.
+        """
+        configured = await self.runs.configured()
+        model = None if configured is None else str(configured.ref)
+        if self.runs.vectors is None:
+            return EmbeddingProgressOut(model=model, spaces=[])
+        store = self.runs.store()
+        spaces = [s for s in await store.spaces() if s.state is not SpaceState.RETIRED]
+        current = None if configured is None else await self.runs.space(configured.target)
+        versions = await self.runs.active_versions() if spaces else []
+        progress: list[EmbeddingSpaceProgressOut] = []
+        for space in spaces:
+            covered = [await store.coverage(space.id, v.manifest_id) for v in versions]
+            progress.append(
+                EmbeddingSpaceProgressOut(
+                    id=space.id,
+                    profile_kind=space.spec.profile_kind,
+                    model=space.spec.model,
+                    dimensions=space.spec.dimensions,
+                    state=space.state,
+                    current=current is not None and current.id == space.id,
+                    created_at=space.created_at,
+                    activated_at=space.activated_at,
+                    versions=len(versions),
+                    versions_embedded=sum(c.complete for c in covered),
+                    chunks=sum(c.chunks for c in covered),
+                    chunks_embedded=sum(min(c.embedded, c.chunks) for c in covered),
+                )
+            )
+        return EmbeddingProgressOut(model=model, spaces=progress)

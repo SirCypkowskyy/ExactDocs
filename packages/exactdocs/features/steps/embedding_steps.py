@@ -48,7 +48,7 @@ class AnswersHybrid:
         )
 
 
-def _gateway(context: Context, hold: threading.Event | None = None) -> FakeGateway:
+def start_gateway(context: Context, hold: threading.Event | None = None) -> FakeGateway:
     """Start a fake embedding endpoint for this scenario.
 
     Args:
@@ -63,7 +63,7 @@ def _gateway(context: Context, hold: threading.Event | None = None) -> FakeGatew
     return stack.enter_context(gateway(hold))
 
 
-def _ai(endpoint: FakeGateway, model: str) -> AiSettings:
+def embedding_ai(endpoint: FakeGateway, model: str) -> AiSettings:
     """Configure one OpenAI-compatible profile and its embedding model.
 
     Args:
@@ -81,7 +81,7 @@ def _ai(endpoint: FakeGateway, model: str) -> AiSettings:
     )
 
 
-def _serve(context: Context, ai: AiSettings) -> None:
+def serve_embedding(context: Context, ai: AiSettings) -> None:
     """Serve the same data again with this ``ai`` configuration (and the stand-in hybrid).
 
     Args:
@@ -169,8 +169,8 @@ def _search(context: Context) -> dict:
 
 @given('chunks were embedded with model "{model}"')
 def step_embedded_with(context: Context, model: str) -> None:
-    context.first = _gateway(context)
-    _serve(context, _ai(context.first, model))
+    context.first = start_gateway(context)
+    serve_embedding(context, embedding_ai(context.first, model))
     jobs = wait_for_embedding(context, LIBRARY)
     assert {job["version"] for job in jobs} == {"v1.3.0", "v1.4.0"}, jobs
     assert all(job["state"] == "succeeded" for job in jobs), jobs
@@ -184,8 +184,8 @@ def step_embedded_with(context: Context, model: str) -> None:
 def step_switch(context: Context, model: str) -> None:
     held = threading.Event()
     context.add_cleanup(held.set)
-    context.second = _gateway(context, hold=held)
-    _serve(context, _ai(context.second, model))
+    context.second = start_gateway(context, hold=held)
+    serve_embedding(context, embedding_ai(context.second, model))
     # The new model's jobs wait for the gateway: the instance is mid-way through re-embedding.
     context.during = [_search(context), _search(context)]
     held.set()
@@ -237,8 +237,8 @@ def step_library_off(context: Context, library: str) -> None:
 
 @when("the embedding jobs run")
 def step_jobs_run(context: Context) -> None:
-    context.endpoint = _gateway(context)
-    _serve(context, _ai(context.endpoint, "e5"))
+    context.endpoint = start_gateway(context)
+    serve_embedding(context, embedding_ai(context.endpoint, "e5"))
     # Queued by hand as well: the job itself refuses a library with AI off.
     command = EnqueueJobCommand(kind="embed", library=context.library, version="v1.4.0")
     context.client.portal.call(context.container.ingestion.enqueue_job, command)
@@ -255,7 +255,7 @@ def step_nothing_sent(context: Context, library: str) -> None:
 
 @given("an embedding model is configured and nothing is embedded yet")
 def step_configured(context: Context) -> None:
-    context.endpoint = _gateway(context)
+    context.endpoint = start_gateway(context)
     prefix = "EXACTDOCS_AI__PROVIDERS__CORP__"
     context.ai_env = {
         f"{prefix}KIND": "openai-compatible",

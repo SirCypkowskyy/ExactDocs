@@ -48,6 +48,7 @@ from exactdocs.retrieval.ports.driving import (
     ForgetLibrary,
     GetAiUsage,
     GetChunkSets,
+    GetEmbeddingProgress,
     GetLibraryRetrieval,
     GetProvider,
     GetSearchIndexState,
@@ -86,6 +87,7 @@ from exactdocs.retrieval.use_cases import (
     ForgetLibraryUseCase,
     GetAiUsageUseCase,
     GetChunkSetsUseCase,
+    GetEmbeddingProgressUseCase,
     GetLibraryRetrievalUseCase,
     GetProviderUseCase,
     GetSearchIndexStateUseCase,
@@ -171,6 +173,8 @@ class RetrievalModule:
     """The versions to queue ``embed`` jobs for."""
     estimate_embedding: EstimateEmbedding
     """Chunks, tokens and US dollars of embedding what is not embedded yet."""
+    get_embedding_progress: GetEmbeddingProgress
+    """How far each embedding space has got (``GET /api/v1/ai/embedding``)."""
     get_ai_usage: GetAiUsage
     """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
 
@@ -246,6 +250,7 @@ class RetrievalModule:
             rates=call_rates,
             prices=PriceBook(listed=prices, overrides=dict(price_overrides or {})),
             clock=clock,
+            library_modes=library_modes,
         )
         runs = EmbeddingRuns(
             providers=providers,
@@ -329,5 +334,6 @@ class RetrievalModule:
             finish_embedding=FinishEmbeddingUseCase(runs=runs),
             list_unembedded_versions=ListUnembeddedVersionsUseCase(runs=runs),
             estimate_embedding=EstimateEmbeddingUseCase(runs=runs),
+            get_embedding_progress=GetEmbeddingProgressUseCase(runs=runs),
             get_ai_usage=GetAiUsageUseCase(spend=ai_spend),
         )
