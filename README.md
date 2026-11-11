@@ -688,9 +688,12 @@ call `list_articles`, `article_outline`, `read_article`, `read_chunk` and `searc
 each with a typed result, all bound to the one version searched: no argument names a library or
 a version. It answers with chunk IDs and one sentence each; every ID is then checked against the
 version's manifest and the call's tags, so a result of another version (or a made-up ID) is
-dropped, never returned. Each result carries its `justification` and `explored_path` (the read
+dropped, never returned. The call's tags apply to every read too, so the agent never sees an
+article they exclude. Each result carries its `justification` and `explored_path` (the read
 calls up to the one that reached its article, such as `search_docs(retry)`,
-`article_outline(docs/guide/resilience.md)`).
+`article_outline(docs/guide/resilience.md)`). Both are model output, marked so in the schema and
+the MCP notice: control characters are removed, a justification is cut at 600 characters, a
+path keeps at most 50 calls with each argument cut at 120.
 
 Only the question and what the agent reads are sent to the model, never a library name or a user.
 A run is bounded per search by `[ai.agentic]` (or `EXACTDOCS_AI__AGENTIC__...`) and by the
@@ -704,13 +707,18 @@ max_tokens = 60000           # input and output tokens per search
 sandbox_seconds = 5.0        # each run_code snippet's execution time (time awaiting a tool does not count)
 sandbox_memory = 67108864    # each snippet's heap, in bytes
 sandbox_suspensions = 500    # the sandbox's host calls per search
-timeout = 120.0              # seconds per search, model calls included
+timeout = 120.0              # seconds per search, model calls included (more than sandbox_seconds)
 ```
+
+A snippet running when `timeout` passes stops at its own `sandbox_seconds`, so a search can last
+up to `timeout` plus `sandbox_seconds`; `sandbox_seconds` must be less than `timeout`.
 
 Passing any of them ends the run, and the search answers with the best mode without an LLM step
 (BM25, or hybrid when an embedding model is set) and `fallback_reason: agent_limit_reached`; a
 budget reached during the run gives `llm_budget_reached`; a model that fails or keeps answering
-something unusable, `agent_failed`. Failures are logged by kind, never with the question. Traces
+something unusable, `agent_failed`, as does a read that fails on the server (the database, the
+catalog): its error is never shown to the model, only a fixed text, and the run ends. Failures
+are logged by kind, never with the question or the error's text. Traces
 show the run as the `agent` stage, with one span per model request and per tool call (the read
 calls nested in `run_code`), never with prompts, answers or tool arguments; `/metrics` shows its
 tokens (`gen_ai.client.token.usage`).

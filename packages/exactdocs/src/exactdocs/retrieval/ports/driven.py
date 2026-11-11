@@ -1005,14 +1005,15 @@ class VersionArticles(Protocol):
     """
 
     async def list(
-        self, version: SearchableVersion, prefix: str, limit: int
+        self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
     ) -> Sequence[ArticleEntry]:
-        """List the version's articles under a folder, by path.
+        """List the version's articles under a folder, by path, that the tag filter keeps.
 
         Args:
             version: The exact version.
             prefix: A folder (``guide``); empty for every article.
             limit: How many to return at most.
+            tag_filter: The search's tag filter.
 
         Returns:
             At most ``limit`` articles.

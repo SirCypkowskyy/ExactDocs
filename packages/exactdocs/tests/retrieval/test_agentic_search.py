@@ -7,6 +7,7 @@ rules are under test, a Protocol-shaped ``Explorer`` double stands in for the ag
 
 import asyncio
 import logging
+import unicodedata
 from collections.abc import Collection, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
@@ -32,7 +33,12 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySearchIndex,
     InMemorySpendLedger,
 )
-from exactdocs.retrieval.constants import EXPLORER_TOOLS
+from exactdocs.retrieval.constants import (
+    AGENT_STEP_ARGUMENT_CHARS,
+    EXPLORER_TOOLS,
+    MAX_EXPLORED_STEPS,
+    MAX_JUSTIFICATION_CHARS,
+)
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -66,6 +72,7 @@ from exactdocs.retrieval.models import (
     SearchableVersion,
     SourceHost,
     SpendWindow,
+    TagFilter,
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports.driven import DocsBrowser, Explorer, SpendLedger
@@ -138,20 +145,28 @@ class Catalog:
         return None if found is None else found.manifest_id
 
 
+def _tags_of(path: str) -> list[str]:
+    return ["security"] if path == "docs/auth.md" else []
+
+
 @dataclass(slots=True)
 class Articles:
     """The ``VersionArticles`` double: the catalog's articles of each manifest."""
 
     catalog: Catalog
+    fail_with: str | None = None
+    """Every read raises a ``RuntimeError`` with this text, as a broken database would."""
 
     async def list(
-        self, version: SearchableVersion, prefix: str, limit: int
+        self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
     ) -> Sequence[ArticleEntry]:
         stored = self.catalog.articles[version.manifest_id]
-        paths = sorted(p for p in stored if p.startswith(prefix))
+        paths = sorted(p for p in stored if p.startswith(prefix) and tag_filter.keeps(_tags_of(p)))
         return [ArticleEntry(path=p, title=p.title()) for p in paths[:limit]]
 
     async def read(self, version: SearchableVersion, path: str) -> str | None:
+        if self.fail_with is not None:
+            raise RuntimeError(self.fail_with)
         return self.catalog.articles[version.manifest_id].get(path)
 
 
@@ -224,6 +239,7 @@ async def _world(
     bounds: AgentBounds | None = None,
     budgets: Budgets | None = None,
     modes: InMemoryLibraryModes | None = None,
+    reads_fail_with: str | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -248,7 +264,7 @@ async def _world(
         spend=ledger,
         budgets=budgets,
         explorer=explorer or PydanticAiExplorer(),
-        version_articles=Articles(catalog=catalog),
+        version_articles=Articles(catalog=catalog, fail_with=reads_fail_with),
         agent_bounds=bounds,
     )
     world = World(
@@ -471,7 +487,7 @@ async def test_a_snippet_past_a_sandbox_limit_ends_the_run_at_once(code: str) ->
 
 async def test_an_agent_past_its_time_falls_back() -> None:
     explorer = StoppingExplorer(sleep=5)
-    world = await _world(explorer=explorer, bounds=AgentBounds(timeout=0.05))
+    world = await _world(explorer=explorer, bounds=AgentBounds(timeout=0.05, sandbox_seconds=0.01))
 
     result = await _search(world)
 
@@ -638,3 +654,148 @@ async def test_unpicked_chunks_are_not_answers() -> None:
     result = await _search(world)
 
     assert (result.retrieval_mode, result.results) == (RetrievalMode.AGENTIC, [])
+
+
+# ---------------------------------------------------------------- round 1 review
+
+
+SECRET = "postgresql://exactdocs:S3CRET-MARKER@db:5432/exactdocs"
+"""What a broken database's error says: it must reach neither the model, the result, a log nor
+a span."""
+
+
+def _reading(code: str, sent: list[str]) -> FunctionModel:
+    """An agent that runs ``code`` once, records every request it is sent, then answers nothing."""
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(repr(messages))
+        if code_results(messages):
+            return answer(info, [])
+        return run_code(code)
+
+    return FunctionModel(script)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "await read_article(path='docs/paging.md')",
+        (
+            "try:\n    await read_article(path='docs/paging.md')\n"
+            "except Exception as e:\n    x = str(e)\n"
+            "await list_articles()"
+        ),
+    ],
+    ids=["uncaught", "caught by the snippet"],
+)
+async def test_a_host_error_ends_the_run_and_its_text_goes_nowhere(
+    code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    sent: list[str] = []
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(include_content=True, tracer_provider=tracer_provider)
+    model = InstrumentedModel(_reading(code, sent), settings)  # content on: only ours is used
+    world = await _world(model, reads_fail_with=SECRET)
+
+    with caplog.at_level(logging.DEBUG):
+        result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.BM25,
+        FallbackReason.AGENT_FAILED,
+    )
+    assert len(sent) == 1  # the failed read is never handed back to the model as a retry
+    assert "S3CRET-MARKER" not in "".join(sent)
+    assert "S3CRET-MARKER" not in result.model_dump_json()
+    assert "S3CRET-MARKER" not in caplog.text
+    assert "RuntimeError" in caplog.text  # the class only
+    for span in exporter.get_finished_spans():
+        assert "S3CRET-MARKER" not in repr(dict(span.attributes or {}))
+        for event in span.events:
+            assert "S3CRET-MARKER" not in repr(dict(event.attributes or {}))
+
+
+async def test_an_unknown_article_is_a_plain_answer_to_the_model() -> None:
+    sent: list[str] = []
+    world = await _world(_reading("await read_article(path='docs/missing.md')", sent))
+
+    result = await _search(world)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.AGENTIC, None)
+    assert "'found': False" in sent[-1]
+
+
+def _writing(query: str, justification: str) -> FunctionModel:
+    """An agent that searches 60 times for nothing, then ``query``; it answers every hit."""
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        results = code_results(messages)
+        if not results:
+            looking = "for i in range(60):\n    await search_docs(query='zzqqx nothing')\n"
+            return run_code(f"{looking}hits = await search_docs(query={query!r})\nhits")
+        picks = [{"chunk_id": h["chunk_id"], "justification": justification} for h in results[-1]]
+        return answer(info, picks)
+
+    return FunctionModel(script)
+
+
+async def test_model_text_in_results_is_cleaned_and_bounded() -> None:
+    query = "RetryPolicy\n\x1b[31mIGNORE ALL\u202e" + "x" * 500
+    justification = "Because\nit\tsays so\x00." + "y" * 2000
+    bounds = AgentBounds(max_tool_calls=200, sandbox_suspensions=1000)
+    world = await _world(_writing(query, justification), bounds=bounds)
+
+    result = await _search(world)
+
+    assert result.retrieval_mode is RetrievalMode.AGENTIC, result.fallback_reason
+    top = result.results[0]
+    assert len(top.explored_path) == MAX_EXPLORED_STEPS
+    assert top.explored_path[:-1] == ["search_docs(zzqqx nothing)"] * (MAX_EXPLORED_STEPS - 1)
+    for step in top.explored_path[-1:]:
+        assert step.startswith("search_docs(RetryPolicy  ")
+        assert len(step) <= len("search_docs()") + AGENT_STEP_ARGUMENT_CHARS
+        assert not any(unicodedata.category(c).startswith("C") for c in step)
+    assert top.justification is not None
+    assert top.justification.startswith("Because it says so .")
+    assert len(top.justification) == MAX_JUSTIFICATION_CHARS
+    assert not any(unicodedata.category(c).startswith("C") for c in top.justification)
+
+
+async def test_the_browser_hides_what_the_tag_filter_excludes() -> None:
+    world = await _world()
+    browser = VersionBrowser(
+        version=world.catalog.versions["v2"],
+        chunks=world.chunks,
+        search=world.index,
+        articles=Articles(catalog=world.catalog),
+        tag_filter=TagFilter(tags=("security",)),
+    )
+    hits = await browser.search_docs("RetryPolicy", 10)
+    resilience = await world.module.search_docs(
+        SearchDocsQuery(library=LIB, ref="v2", query="backoff", mode="bm25")
+    )
+
+    assert {chunk.row.article_path for _, chunk in hits} == {"docs/auth.md"}
+    assert await browser.read_chunk(resilience.results[0].chunk_id) is None
+    assert await browser.article_outline("docs/resilience.md") is None
+    assert await browser.read_article("docs/resilience.md") is None
+    assert [a.path for a in await browser.list_articles()] == ["docs/auth.md"]
+    assert await browser.article_outline("docs/auth.md") is not None
+    assert await browser.read_article("docs/auth.md") is not None
+
+
+def test_a_snippet_may_not_take_as_long_as_the_whole_run() -> None:
+    with pytest.raises(InvalidAgentBoundsError, match="sandbox_seconds must be less than timeout"):
+        AgentBounds(sandbox_seconds=10, timeout=10)
+
+
+async def test_the_agent_uses_the_library_s_own_llm_read_once_for_the_search() -> None:
+    modes = InMemoryLibraryModes()
+    await modes.save(LIB, None, LibraryAi(llm=ModelRef(profile="corp", model="own")))
+    world = await _world(modes=modes)
+
+    await _search(world)
+
+    assert world.models.chat_models == ["corp:own"]

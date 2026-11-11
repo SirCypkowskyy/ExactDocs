@@ -9,7 +9,9 @@ one version searched: no tool argument names a library or a version.
 A run is bounded by ``UsageLimits`` (tool calls, ``run_code`` included, requests and tokens),
 Code Mode's ``max_tool_calls`` per snippet, Monty's resource limits, and the harness
 ``SpendLimits`` over the spend ledger (#95). Passing any of them ends the run: a Monty limit that
-Code Mode would hand back to the model as a retry ends it too (``_SandboxLimitsEndTheRun``).
+Code Mode would hand back to the model as a retry ends it too (``_RunEnders``). So does a read that
+fails on the host: its error is recorded by class and the sandbox sees only ``READ_FAILED``, so no
+SQL, DSN or path reaches the model, a result or a span.
 
 Telemetry: the model is instrumented with ``include_content=False`` (the factory's, or ours when
 it is not), so the agent run, each model request and each tool call get a span without prompts,
@@ -17,7 +19,9 @@ answers or tool arguments; the read tools' spans nest inside ``run_code``'s. Tok
 the global meter (``gen_ai.client.token.usage``).
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from typing import TypedDict
 
 import pydantic_monty
@@ -48,6 +52,8 @@ from exactdocs.retrieval.constants import (
     EXPLORER_INSTRUCTIONS,
     EXPLORER_TOOLS,
     MAX_AGENT_PICKS,
+    READ_FAILED,
+    RUN_CODE,
     SANDBOX_LIMIT_MARKERS,
 )
 from exactdocs.retrieval.errors import AgentStoppedError, ProviderUnsupportedError
@@ -136,7 +142,56 @@ class SearchHitItem(TypedDict):
     """The matching part of its text."""
 
 
-async def list_articles(ctx: RunContext[DocsBrowser], prefix: str = "") -> list[ArticleItem]:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Reads:
+    """The agent's ``deps``: the browser of the version searched, and its failed reads."""
+
+    browser: DocsBrowser
+    """The read tools, bound to the version searched."""
+    failures: list[str] = field(default_factory=list)
+    """The class of each exception a read raised; any ends the run (``agent_failed``)."""
+
+
+class _ReadFailedError(RuntimeError):
+    """What the sandbox sees when a read fails: a fixed text, never the host's error."""
+
+    def __init__(self) -> None:
+        """Say a read failed, and nothing else."""
+        super().__init__(READ_FAILED)
+
+
+class _HostFailureError(Exception):
+    """A read failed on the host (the database, the catalog): the run ends."""
+
+
+async def _guarded[T](ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awaitable[T]]) -> T:
+    """Run one read; a host error is recorded by class and replaced by a fixed one.
+
+    The host's message (SQL, a DSN, a path) never reaches the sandbox, the model or a span;
+    ``_RunEnders`` ends the run once the snippet returns.
+
+    Args:
+        ctx: The run.
+        read: The read, given the browser.
+
+    Returns:
+        What the read returned.
+
+    Raises:
+        _ReadFailedError: The read raised anything.
+    """
+    # Gathered rather than caught, so the fixed error is raised with no chained host error
+    # (a span's stack trace would quote it).
+    (outcome,) = await asyncio.gather(read(ctx.deps.browser), return_exceptions=True)
+    if isinstance(outcome, Exception):
+        ctx.deps.failures.append(type(outcome).__name__)
+        raise _ReadFailedError
+    if isinstance(outcome, BaseException):  # cancellation and the like pass through
+        raise outcome
+    return outcome
+
+
+async def list_articles(ctx: RunContext[Reads], prefix: str = "") -> list[ArticleItem]:
     """List the articles of the documentation, by path.
 
     Args:
@@ -146,7 +201,7 @@ async def list_articles(ctx: RunContext[DocsBrowser], prefix: str = "") -> list[
     Returns:
         The articles (at most 200).
     """
-    found = await ctx.deps.list_articles(prefix)
+    found = await _guarded(ctx, lambda browser: browser.list_articles(prefix))
     return [ArticleItem(path=a.path, title=a.title) for a in found]
 
 
@@ -169,7 +224,7 @@ def _headings(nodes: Sequence[OutlineNode], parents: tuple[str, ...]) -> list[Ou
     return flat
 
 
-async def article_outline(ctx: RunContext[DocsBrowser], path: str) -> ArticleOutlineResult:
+async def article_outline(ctx: RunContext[Reads], path: str) -> ArticleOutlineResult:
     """Read the headings of one article, each with the chunk that holds it (no body text).
 
     Args:
@@ -179,7 +234,7 @@ async def article_outline(ctx: RunContext[DocsBrowser], path: str) -> ArticleOut
     Returns:
         The headings in document order.
     """
-    found = await ctx.deps.article_outline(path)
+    found = await _guarded(ctx, lambda browser: browser.article_outline(path))
     if found is None:
         return ArticleOutlineResult(path=path, found=False, headings=[])
     headings = _headings(found.sections, ())
@@ -189,7 +244,7 @@ async def article_outline(ctx: RunContext[DocsBrowser], path: str) -> ArticleOut
     return ArticleOutlineResult(path=path, found=True, headings=headings)
 
 
-async def read_article(ctx: RunContext[DocsBrowser], path: str) -> ArticleRead:
+async def read_article(ctx: RunContext[Reads], path: str) -> ArticleRead:
     """Read one article's Markdown (long articles are cut; prefer outlines and chunks).
 
     Args:
@@ -199,13 +254,13 @@ async def read_article(ctx: RunContext[DocsBrowser], path: str) -> ArticleRead:
     Returns:
         The article's text.
     """
-    found = await ctx.deps.read_article(path)
+    found = await _guarded(ctx, lambda browser: browser.read_article(path))
     if found is None:
         return ArticleRead(path=path, found=False, content="", truncated=False)
     return ArticleRead(path=path, found=True, content=found.content, truncated=found.truncated)
 
 
-async def read_chunk(ctx: RunContext[DocsBrowser], chunk_id: str) -> ChunkRead:
+async def read_chunk(ctx: RunContext[Reads], chunk_id: str) -> ChunkRead:
     """Read one chunk (a section of an article) by its ID.
 
     Args:
@@ -215,7 +270,7 @@ async def read_chunk(ctx: RunContext[DocsBrowser], chunk_id: str) -> ChunkRead:
     Returns:
         The chunk's text and where it is.
     """
-    found = await ctx.deps.read_chunk(chunk_id)
+    found = await _guarded(ctx, lambda browser: browser.read_chunk(chunk_id))
     if found is None:
         return ChunkRead(
             chunk_id=chunk_id,
@@ -238,9 +293,7 @@ async def read_chunk(ctx: RunContext[DocsBrowser], chunk_id: str) -> ChunkRead:
     )
 
 
-async def search_docs(
-    ctx: RunContext[DocsBrowser], query: str, limit: int = 10
-) -> list[SearchHitItem]:
+async def search_docs(ctx: RunContext[Reads], query: str, limit: int = 10) -> list[SearchHitItem]:
     """Search the documentation with keywords (BM25); identifiers and exact words work best.
 
     Args:
@@ -251,7 +304,8 @@ async def search_docs(
     Returns:
         The best hits, best first.
     """
-    found = await ctx.deps.search_docs(query, min(limit, AGENT_SEARCH_LIMIT))
+    wanted = min(limit, AGENT_SEARCH_LIMIT)
+    found = await _guarded(ctx, lambda browser: browser.search_docs(query, wanted))
     return [
         SearchHitItem(
             chunk_id=str(hit.chunk_id),
@@ -319,19 +373,23 @@ def _tripped(error: BaseException) -> bool:
     return False
 
 
-class _SandboxLimitsEndTheRun(AbstractCapability[DocsBrowser]):
-    """Ends the run when a snippet trips a Monty resource limit, instead of a model retry."""
+class _RunEnders(AbstractCapability[Reads]):
+    """Ends the run on a tripped Monty limit or a failed read, instead of a model retry.
+
+    Both are checked when a ``run_code`` call ends; a failed read ends the run even when the
+    snippet caught its error.
+    """
 
     async def wrap_tool_execute(
         self,
-        ctx: RunContext[DocsBrowser],
+        ctx: RunContext[Reads],
         *,
         call: ToolCallPart,
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> object:
-        """Run the tool; a tripped sandbox limit becomes ``_SandboxLimitError``.
+        """Run the tool; for ``run_code``, end the run on a tripped limit or a failed read.
 
         Args:
             ctx: The run.
@@ -344,15 +402,23 @@ class _SandboxLimitsEndTheRun(AbstractCapability[DocsBrowser]):
             What the tool returned.
 
         Raises:
+            _HostFailureError: A read of the snippet failed on the host.
             _SandboxLimitError: The snippet tripped a resource limit.
         """
-        del ctx, call, tool_def
-        try:
+        del tool_def
+        if call.tool_name != RUN_CODE:
             return await handler(args)
+        try:
+            result = await handler(args)
         except ToolRetryError as error:
+            if ctx.deps.failures:
+                raise _HostFailureError from None
             if _tripped(error):
                 raise _SandboxLimitError from error
             raise
+        if ctx.deps.failures:
+            raise _HostFailureError
+        return result
 
 
 def _instrumented(model: object) -> Model:
@@ -378,7 +444,7 @@ def _instrumented(model: object) -> Model:
     return InstrumentedModel(model, InstrumentationSettings(include_content=False))
 
 
-def _code_mode(bounds: AgentBounds) -> CodeMode[DocsBrowser]:
+def _code_mode(bounds: AgentBounds) -> CodeMode[Reads]:
     """Put the read tools behind ``run_code``, within Monty's resource limits.
 
     Args:
@@ -434,19 +500,23 @@ async def explore(
     agent = Agent(
         _instrumented(model),
         name="exactdocs-explorer",
-        deps_type=DocsBrowser,
+        deps_type=Reads,
         output_type=_Answer,
         instructions=EXPLORER_INSTRUCTIONS,
         tools=read_tools(),
-        capabilities=[_code_mode(bounds), limits.spend, _SandboxLimitsEndTheRun()],
+        capabilities=[_code_mode(bounds), limits.spend, _RunEnders()],
     )
+    reads = Reads(browser=browser)
     try:
-        result = await agent.run(run.question, deps=browser, usage_limits=usage)
+        result = await agent.run(run.question, deps=reads, usage_limits=usage)
     except SpendLimitExceeded as error:  # a UsageLimitExceeded too: checked first
         reason, detail = FallbackReason.LLM_BUDGET_REACHED, "spend limit"
         raise AgentStoppedError(reason.value, detail) from error
     except UsageLimitExceeded as error:
         reason, detail = FallbackReason.AGENT_LIMIT_REACHED, "usage limit"
+        raise AgentStoppedError(reason.value, detail) from error
+    except _HostFailureError as error:
+        reason, detail = FallbackReason.AGENT_FAILED, ",".join(dict.fromkeys(reads.failures))
         raise AgentStoppedError(reason.value, detail) from error
     except _SandboxLimitError as error:
         reason, detail = FallbackReason.AGENT_LIMIT_REACHED, "sandbox limit"

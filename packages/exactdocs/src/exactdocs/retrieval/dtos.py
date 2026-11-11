@@ -176,12 +176,13 @@ class SearchResultOut(_Dto):
     highlights: list[Span]
     """Offsets into `snippet` of the words that matched."""
     justification: str | None = None
-    """`agentic`: why the agent picked this chunk, in its own words (untrusted model text); null
-    for the other modes."""
+    """Model output, untrusted: `agentic`: why the agent picked this chunk, in the LLM's own words
+    (control characters removed, at most 600 characters); null for the other modes."""
     explored_path: list[str] = Field(default_factory=list)
-    """`agentic`: the read calls the agent made up to the one that reached this chunk's article,
-    in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)`; empty for the
-    other modes."""
+    """Model output, untrusted: `agentic`: the read calls the LLM made up to the one that reached
+    this chunk's article, in order, e.g. `search_docs(retry)`,
+    `article_outline(guide/resilience.md)` (at most 50; each argument is the model's, control
+    characters removed, at most 120 characters); empty for the other modes."""
 
     @classmethod
     def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:

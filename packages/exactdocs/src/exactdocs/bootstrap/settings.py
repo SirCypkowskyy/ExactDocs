@@ -1,11 +1,11 @@
 import os
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from croniter import croniter
 from platformdirs import user_data_path
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     InitSettingsSource,
@@ -48,6 +48,7 @@ from exactdocs.retrieval.constants import (
     MAX_SANDBOX_MEMORY,
     MAX_SANDBOX_SECONDS,
     MAX_SANDBOX_SUSPENSIONS,
+    SANDBOX_NOT_BELOW_TIMEOUT,
 )
 from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RetrievalMode
 
@@ -229,7 +230,7 @@ class AgenticSettings(BaseModel):
     """Input and output tokens per search."""
     sandbox_seconds: float = Field(default=DEFAULT_SANDBOX_SECONDS, gt=0, le=MAX_SANDBOX_SECONDS)
     """Execution time of each `run_code` snippet in the Monty sandbox (waiting for a tool does not
-    count)."""
+    count); less than `timeout`."""
     sandbox_memory: int = Field(default=DEFAULT_SANDBOX_MEMORY, ge=1, le=MAX_SANDBOX_MEMORY)
     """Heap of each snippet, in bytes."""
     sandbox_suspensions: int = Field(
@@ -237,7 +238,23 @@ class AgenticSettings(BaseModel):
     )
     """Host interactions (tool calls, name lookups) of the sandbox per search."""
     timeout: float = Field(default=DEFAULT_AGENT_TIMEOUT, gt=0, le=MAX_AGENT_TIMEOUT)
-    """Seconds one agentic search may take, model calls included."""
+    """Seconds one agentic search may take, model calls included, before it falls back. A snippet
+    running then stops at its own `sandbox_seconds`, so a search can last up to `timeout` plus
+    `sandbox_seconds`."""
+
+    @model_validator(mode="after")
+    def _snippet_shorter_than_run(self) -> Self:
+        """Refuse a snippet time as long as the whole run's.
+
+        Returns:
+            The settings.
+
+        Raises:
+            ValueError: `sandbox_seconds` is not less than `timeout`.
+        """
+        if self.sandbox_seconds >= self.timeout:
+            raise ValueError(SANDBOX_NOT_BELOW_TIMEOUT)
+        return self
 
 
 class PriceSettings(BaseModel):

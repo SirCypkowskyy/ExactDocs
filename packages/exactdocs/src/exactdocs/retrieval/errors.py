@@ -524,15 +524,16 @@ class AgentStoppedError(DomainError):
         """
         super().__init__(f"the agentic search stopped ({reason}): {_data(detail)}")
         self.reason = reason
+        self.detail = detail
 
 
 class InvalidAgentBoundsError(ValidationError):
     """A limit of the agentic explorer that cannot be enforced as written."""
 
-    def __init__(self, name: str) -> None:
-        """Name the limit.
+    def __init__(self, problem: str) -> None:
+        """Say what is wrong.
 
         Args:
-            name: The limit's field name.
+            problem: A fixed text naming the limit and the rule it breaks.
         """
-        super().__init__(f"invalid agentic limit: {name} must be positive")
+        super().__init__(f"invalid agentic limit: {problem}")

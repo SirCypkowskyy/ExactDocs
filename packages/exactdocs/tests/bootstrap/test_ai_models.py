@@ -893,3 +893,22 @@ async def test_a_failed_sdk_load_at_start_is_a_warning_not_a_stop(
     assert [r.levelname for r in warnings] == ["WARNING"]
     assert "(ImportError)" in warnings[0].getMessage()
     assert "openai" not in caplog.text
+
+
+def test_the_agentic_limits_refuse_a_snippet_as_long_as_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__AGENTIC__SANDBOX_SECONDS", "30")
+    monkeypatch.setenv("EXACTDOCS_AI__AGENTIC__TIMEOUT", "30")
+
+    with pytest.raises(ValidationError, match="sandbox_seconds must be less than timeout"):
+        Settings()
+
+
+def test_the_agentic_limits_reach_the_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__AGENTIC__MAX_TOOL_CALLS", "7")
+    monkeypatch.setenv("EXACTDOCS_AI__AGENTIC__SANDBOX_SECONDS", "2")
+
+    agentic = Settings().ai.agentic
+
+    assert (agentic.max_tool_calls, agentic.sandbox_seconds, agentic.timeout) == (7, 2.0, 120.0)

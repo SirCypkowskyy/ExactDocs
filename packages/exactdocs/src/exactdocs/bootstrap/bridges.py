@@ -58,6 +58,12 @@ from exactdocs.catalog.dtos import (
     Removal as CatalogRemoval,
 )
 from exactdocs.catalog.dtos import (
+    TagFilter as CatalogTagFilter,
+)
+from exactdocs.catalog.dtos import (
+    TagMatch as CatalogTagMatch,
+)
+from exactdocs.catalog.dtos import (
     VersionOrigin as CatalogVersionOrigin,
 )
 from exactdocs.catalog.errors import ArticleNotFoundError as CatalogArticleNotFoundError
@@ -146,6 +152,7 @@ from exactdocs.retrieval.models import (
     ManifestStatus,
     SearchableVersion,
     SourceHost,
+    TagFilter,
 )
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
@@ -988,14 +995,15 @@ class CatalogVersionArticles:
     """The catalog's article read."""
 
     async def list(
-        self, version: SearchableVersion, prefix: str, limit: int
+        self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
     ) -> Sequence[ArticleEntry]:
-        """List the version's articles under a folder (one page).
+        """List the version's articles under a folder that the tag filter keeps (one page).
 
         Args:
             version: The exact version.
             prefix: A folder; empty for every article.
             limit: How many at most (the catalog pages at ``MAX_LIMIT``).
+            tag_filter: The search's tag filter, applied by the catalog.
 
         Returns:
             The articles; none when the folder is invalid or the manifest is no longer active.
@@ -1005,6 +1013,9 @@ class CatalogVersionArticles:
                 library=version.library,
                 ref=version.version,
                 path_prefix=prefix,
+                tag_filter=CatalogTagFilter(
+                    tags=list(tag_filter.tags), match=CatalogTagMatch(tag_filter.match.value)
+                ),
                 limit=min(max(limit, 1), MAX_LIMIT),
             )
             page = await self.list_articles(query)

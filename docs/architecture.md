@@ -1114,10 +1114,15 @@ like the embedding one: `adapters/driven/ai_explorer.py` imports nothing of `[ai
 browser as `deps` (never a tool argument), harness `CodeMode` around the five read tools (typed
 `TypedDict` returns; `run_code` is the model's only tool; Monty limits from `AgentBounds`), the
 `SpendLimits` of `harness_spend.agent_limits` over the ledger (budgets from
-`AiSpend.budgets_for(library)`: the instance's today, the seam where a library's own budgets are
-merged), and `UsageLimits` (`tool_calls_limit` counts `run_code` and each read call). Code Mode
-hands a tripped Monty limit back to the model as a retry; `_SandboxLimitsEndTheRun` (a capability
-wrapping tool execution) turns it into the end of the run instead. The model is instrumented with
+`AiSpend.budgets_for(ai)`, given the `LibraryAi` the search read once and carried in
+`ModeChoice.library_ai` / `PipelineRequest.library_ai`: the instance's today, the seam where a
+library's own budgets are merged), and `UsageLimits` (`tool_calls_limit` counts `run_code` and each read call). Code Mode
+hands a tripped Monty limit back to the model as a retry; `_RunEnders` (a capability wrapping the
+`run_code` call) turns it into the end of the run instead. A read that raises on the host is
+recorded by class in the agent's `deps` and the sandbox sees only the fixed `READ_FAILED`, so no
+SQL, DSN or path reaches the model; `_RunEnders` then ends the run (`agent_failed`), even when the
+snippet caught the error. The browser applies the call's tag filter to every read, and
+`explored_path` and `justification` go through `models.model_text` (no control characters, cut). The model is instrumented with
 `include_content=False` (the factory's, or wrapped there), so the agent run, its model requests and
 its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,
 without content.

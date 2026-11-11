@@ -1020,6 +1020,12 @@ AGENT_SNIPPET_CHARS: Final[int] = 300
 """The characters of each ``search_docs`` hit the agent sees."""
 MAX_JUSTIFICATION_CHARS: Final[int] = 600
 """A justification longer than this is cut (the model's own words, shown to the caller)."""
+AGENT_STEP_ARGUMENT_CHARS: Final[int] = 120
+"""The most characters of a read call's argument (model-written) kept in an ``explored_path``."""
+MAX_EXPLORED_STEPS: Final[int] = 50
+"""The most read calls one result's ``explored_path`` lists (the last ones before it)."""
+SANDBOX_NOT_BELOW_TIMEOUT: Final[str] = "sandbox_seconds must be less than timeout"
+"""Why ``AgentBounds`` refuses a snippet time as long as the run's whole time."""
 MAX_AGENT_PICKS: Final[int] = 50
 """The most picks the agent's answer may hold, whatever the limit asked."""
 
@@ -1044,6 +1050,10 @@ EXPLORER_TOOLS: Final[tuple[str, ...]] = (
     "search_docs",
 )
 """The explorer's read tools: functions inside ``run_code`` only, never tools of their own."""
+RUN_CODE: Final[str] = "run_code"
+"""Code Mode's one model-visible tool."""
+READ_FAILED: Final[str] = "the documentation could not be read"
+"""What the sandbox sees when a read fails on the host (never the host's error); the run ends."""
 SANDBOX_LIMIT_MARKERS: Final[tuple[str, ...]] = (
     "time limit exceeded",
     "memory limit exceeded",

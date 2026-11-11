@@ -56,6 +56,7 @@ from exactdocs.retrieval.constants import (
     RATE_LIMIT_BELOW_ONE,
     REPLAY_RETAIN_DAYS,
     RRF_K,
+    SANDBOX_NOT_BELOW_TIMEOUT,
     SEARCH_DOCS,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
@@ -100,6 +101,21 @@ class SearchText:
     def __post_init__(self) -> None:
         if not self.value.strip():
             raise EmptySearchTextError
+
+
+def model_text(text: str, limit: int) -> str:
+    """Make model-written text safe to show: no control characters, at most ``limit`` long.
+
+    Args:
+        text: What the model wrote (a justification, a read call's argument).
+        limit: The most characters kept.
+
+    Returns:
+        The text with every control or format character (newlines too) replaced by a space,
+        cut to ``limit`` characters (``...`` at the end when it was cut).
+    """
+    clean = "".join(" " if unicodedata.category(c).startswith("C") else c for c in text).strip()
+    return clean if len(clean) <= limit else clean[: limit - 3] + "..."
 
 
 def _is_mark(char: str) -> bool:
@@ -1023,6 +1039,9 @@ class PipelineRequest:
     caller: str | None = None
     """The account the search counts to (``ModeChoice.caller``): a paid call the pipeline makes
     (the query's embedding) is checked against and recorded to its budgets too."""
+    library_ai: LibraryAi | None = None
+    """The library's AI overrides as the search read them (``ModeChoice.library_ai``); ``None``:
+    the pipeline reads them."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2689,7 +2708,9 @@ class AgentBounds:
     sandbox_suspensions: int = DEFAULT_SANDBOX_SUSPENSIONS
     """Monty's host interactions per sandbox session."""
     timeout: float = DEFAULT_AGENT_TIMEOUT
-    """Seconds the whole run may take."""
+    """Seconds the whole run may take before it falls back; a ``run_code`` snippet running then
+    is stopped by its own ``sandbox_seconds`` only, so the run can last up to
+    ``timeout + sandbox_seconds``. Must be more than ``sandbox_seconds``."""
 
     def __post_init__(self) -> None:
         """Refuse a limit that is not positive.
@@ -2707,7 +2728,12 @@ class AgentBounds:
             "timeout",
         ):
             if getattr(self, name) <= 0:
-                raise InvalidAgentBoundsError(name)
+                problem = f"{name} must be positive"
+                raise InvalidAgentBoundsError(problem)
+        if self.sandbox_seconds >= self.timeout:
+            # A run can last its timeout plus the snippet running then: a snippet is stopped by
+            # Monty's own limit only, never by the run's timeout.
+            raise InvalidAgentBoundsError(SANDBOX_NOT_BELOW_TIMEOUT)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

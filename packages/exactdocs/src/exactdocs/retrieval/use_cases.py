@@ -13,11 +13,13 @@ from exactdocs.retrieval.constants import (
     AGENT_READ_CHARS,
     AGENT_SEARCH_LIMIT,
     AGENT_STAGE,
+    AGENT_STEP_ARGUMENT_CHARS,
     CHARS_PER_TOKEN,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     FOOTER_CHARS,
     FREE_PROFILE_KINDS,
+    MAX_EXPLORED_STEPS,
     MAX_JUSTIFICATION_CHARS,
     MAX_RESOLVED,
     MAX_SEARCHED_LIBRARIES,
@@ -194,6 +196,7 @@ from exactdocs.retrieval.models import (
     estimated_usd,
     language_first,
     leading_hit,
+    model_text,
     name_match,
     outline,
     rank_matches,
@@ -468,19 +471,20 @@ class AiSpend:
             return None
         return self.budgets.reached(scopes, await self.ledger.get(keys), now)
 
-    async def budgets_for(self, library: str) -> Budgets:
+    def budgets_for(self, ai: LibraryAi) -> Budgets:
         """Name the spend limits an LLM agent of a library's search runs under.
 
-        The seam where a library's own budgets meet the instance's (#102 merges them here): the
-        agentic explorer's harness ``SpendLimits`` take their ceilings from it.
+        The seam where a library's own budgets meet the instance's (#102 merges them here, from
+        the overrides the search read once): the agentic explorer's harness ``SpendLimits`` take
+        their ceilings from it.
 
         Args:
-            library: The library searched, any letter case.
+            ai: The library's overrides, as read for the search.
 
         Returns:
             The limits: the instance's.
         """
-        del library
+        del ai
         return self.budgets
 
     async def llm_step(self, caller: AiCaller) -> FallbackReason | None:
@@ -734,11 +738,12 @@ class RetrievalModes:
                 library=await self.library_modes.mode_of(library),
                 instance=self.instance_mode,
             )
+        choice = replace(choice, library_ai=ai)  # read once, for every later stage
         if not choice.rerank:
             return choice
         if self.reranking is None:
             return replace(choice, rerank=False)
-        return replace(choice, rerank_top_n=self.rerank_top_n(ai), library_ai=ai)
+        return replace(choice, rerank_top_n=self.rerank_top_n(ai))
 
     async def run(
         self,
@@ -781,6 +786,7 @@ class RetrievalModes:
             rerank=choice.rerank,
             search=search,
             caller=choice.caller,
+            library_ai=choice.library_ai,
         )
         if choice.mode.needs_vectors and self.embedded is not None:
             found = await self.embedded.search_space(version.manifest_id)
@@ -3183,9 +3189,11 @@ class VersionBrowser:
 
     Every read goes to ``version.manifest_id`` (chunks, outlines, BM25) or to the catalog's
     articles of that same manifest, so nothing of another version can reach the agent. The
-    search's tag filter applies to ``search_docs``. Each call is recorded as a step of the
-    explored path, and the first step that reached each article is remembered, so each result
-    can say how the agent got to it.
+    search's tag filter applies to every read: an article or chunk it excludes reads as not
+    found, so the agent never sees it. Each call is recorded as a step of the explored path (its
+    argument is model-written text: control characters are dropped and it is cut at
+    ``AGENT_STEP_ARGUMENT_CHARS``), and the first step that reached each article is remembered,
+    so each result can say how the agent got to it.
     """
 
     version: SearchableVersion
@@ -3205,14 +3213,15 @@ class VersionBrowser:
     seen: set[ChunkId] = field(default_factory=set)
     """Every chunk a call returned or named."""
 
-    def _step(self, call: str, paths: Sequence[str] = ()) -> None:
+    def _step(self, tool: str, argument: str, paths: Sequence[str] = ()) -> None:
         """Record a call and the articles it reached.
 
         Args:
-            call: The call, e.g. ``article_outline(guide/auth.md)``.
+            tool: The read function, e.g. ``article_outline``.
+            argument: Its argument as the model wrote it.
             paths: The article paths it returned or read.
         """
-        self.steps.append(call)
+        self.steps.append(f"{tool}({model_text(argument, AGENT_STEP_ARGUMENT_CHARS)})")
         for path in paths:
             self.reached.setdefault(path, len(self.steps) - 1)
 
@@ -3223,10 +3232,28 @@ class VersionBrowser:
             article_path: The article of a picked chunk.
 
         Returns:
-            The calls, in order; every call made when none reached it.
+            The calls, in order, at most the last ``MAX_EXPLORED_STEPS`` up to the one that
+            reached it; every call made (as many) when none reached it.
         """
-        end = self.reached.get(article_path, len(self.steps) - 1)
-        return tuple(self.steps[: end + 1])
+        end = self.reached.get(article_path, len(self.steps) - 1) + 1
+        return tuple(self.steps[max(0, end - MAX_EXPLORED_STEPS) : end])
+
+    async def _kept(self, path: str) -> bool:
+        """Say whether the search's tag filter keeps an article of the version.
+
+        Args:
+            path: The article's path.
+
+        Returns:
+            True when there is no filter, or the article's tags pass it.
+        """
+        if not self.tag_filter.tags:
+            return True
+        sections = await self.chunks.article(self.version.manifest_id, path)
+        if not sections:
+            return False
+        first = await self.chunks.get(self.version.manifest_id, sections[0].chunk_id)
+        return first is not None and self.tag_filter.keeps(first.row.tags)
 
     async def list_articles(self, prefix: str = "") -> Sequence[ArticleEntry]:
         """List the version's articles under a folder.
@@ -3237,10 +3264,10 @@ class VersionBrowser:
         Returns:
             At most ``AGENT_LIST_LIMIT`` articles.
         """
-        self._step(f"list_articles({prefix})")
+        self._step("list_articles", prefix)
         if self.articles is None:
             return ()
-        return await self.articles.list(self.version, prefix, AGENT_LIST_LIMIT)
+        return await self.articles.list(self.version, prefix, AGENT_LIST_LIMIT, self.tag_filter)
 
     async def article_outline(self, path: str) -> Outline | None:
         """Read an article's heading tree from the version's chunk rows.
@@ -3252,7 +3279,9 @@ class VersionBrowser:
             The outline, or ``None`` when the version has no such article.
         """
         sections = await self.chunks.article(self.version.manifest_id, path)
-        self._step(f"article_outline({path})", [path] if sections else [])
+        if sections and not await self._kept(path):
+            sections = []
+        self._step("article_outline", path, [path] if sections else [])
         if not sections:
             return None
         self.seen.update(s.chunk_id for s in sections)
@@ -3267,8 +3296,10 @@ class VersionBrowser:
         Returns:
             Its text, or ``None`` when the version has no such article.
         """
-        content = None if self.articles is None else await self.articles.read(self.version, path)
-        self._step(f"read_article({path})", [] if content is None else [path])
+        content = None
+        if self.articles is not None and await self._kept(path):
+            content = await self.articles.read(self.version, path)
+        self._step("read_article", path, [] if content is None else [path])
         if content is None:
             return None
         return ArticleText(
@@ -3287,7 +3318,9 @@ class VersionBrowser:
             The chunk, or ``None`` when the version has no such chunk.
         """
         stored = await self.chunks.get(self.version.manifest_id, ChunkId(chunk_id))
-        self._step(f"read_chunk({chunk_id})", [] if stored is None else [stored.row.article_path])
+        if stored is not None and not self.tag_filter.keeps(stored.row.tags):
+            stored = None
+        self._step("read_chunk", chunk_id, [] if stored is None else [stored.row.article_path])
         if stored is None:
             return None
         self.seen.add(stored.row.chunk_id)
@@ -3305,14 +3338,14 @@ class VersionBrowser:
             The best hits with their chunks, best first; nothing for a blank query.
         """
         if not query.strip():
-            self._step(f"search_docs({query})")
+            self._step("search_docs", query)
             return ()
         wanted = min(max(limit, 1), AGENT_SEARCH_LIMIT)
         manifest = self.version.manifest_id
         found = await self.search.search(manifest, query, self.tag_filter, wanted)
         stored = await self.chunks.get_many(manifest, [h.chunk_id for h in found])
         pairs = [(h, stored[h.chunk_id]) for h in found if h.chunk_id in stored]
-        self._step(f"search_docs({query})", [c.row.article_path for _, c in pairs])
+        self._step("search_docs", query, [c.row.article_path for _, c in pairs])
         self.seen.update(h.chunk_id for h, _ in pairs)
         return pairs
 
@@ -3385,7 +3418,8 @@ class AgenticPipeline:
         Raises:
             AgentStoppedError: The run ended without an answer.
         """
-        found = await self.providers.resolved(ModelRole.LLM, library)
+        ai = request.library_ai or await self.providers.library_modes.ai_of(library)
+        found = await self.providers.resolved(ModelRole.LLM, library, ai)
         if found is None:
             raise AgentStoppedError(FallbackReason.MODE_UNAVAILABLE.value, "no llm role")
         ref, kind = found
@@ -3393,7 +3427,7 @@ class AgenticPipeline:
             question=request.query,
             limit=request.limit,
             bounds=self.bounds,
-            budgets=await self.spend.budgets_for(library),
+            budgets=self.spend.budgets_for(ai),
             caller=AiCaller(library=library.casefold(), user=request.caller),
             price=self.spend.prices.price(ref, kind),
         )
@@ -3404,7 +3438,9 @@ class AgenticPipeline:
                     model, browser, run, ledger=self.spend.ledger, clock=self.spend.clock
                 )
         except AgentStoppedError as stopped:
-            logger.warning("the agentic search of %s stopped: %s", library, stopped.reason)
+            logger.warning(
+                "the agentic search of %s stopped: %s (%s)", library, stopped.reason, stopped.detail
+            )
             raise
         except TimeoutError as error:
             logger.warning("the agentic search of %s ran past its time limit", library)
@@ -3463,7 +3499,7 @@ class AgenticPipeline:
             hits.append(
                 replace(
                     hit,
-                    justification=why[chunk.row.chunk_id][:MAX_JUSTIFICATION_CHARS],
+                    justification=model_text(why[chunk.row.chunk_id], MAX_JUSTIFICATION_CHARS),
                     explored_path=browser.path_to(chunk.row.article_path),
                 )
             )
